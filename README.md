@@ -21,9 +21,14 @@ Rust port of [`claudebar`](https://github.com/mryll/claudebar) (drop-in compatib
 
 ### Arch (AUR)
 
+Two packages — pick one:
+
 ```bash
-yay -S ai-usagebar     # or paru -S, etc.
+yay -S ai-usagebar-bin    # prebuilt binary from GitHub Releases (fast, ~5s install)
+yay -S ai-usagebar        # compiles from source (~30-60s, hermetic)
 ```
+
+The `-bin` variant downloads the same x86_64 ELF that CI built and tested; the source variant compiles locally with your toolchain. Both install identical binaries to `/usr/bin/`. If you already have one, switching is `yay -S` the other — pacman handles the swap via `conflicts`/`provides`.
 
 ### From source
 

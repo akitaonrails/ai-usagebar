@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or commit to build (e.g. v0.2.0)"
+        required: true
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact: ai-usagebar-linux-x86_64
+          # aarch64 is cross-compiled. Listed in the PKGBUILD but currently
+          # gated behind nasm/ring availability for the cross target.
+          # Uncomment + add `cross` or zigbuild once Linux ARM is requested.
+          # - target: aarch64-unknown-linux-gnu
+          #   artifact: ai-usagebar-linux-aarch64
+
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install nasm (required by ring's x86_64 asm)
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - name: Test
+        run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: Create tarball (both bins + LICENSE + config example)
+        run: |
+          STAGE=$(mktemp -d)
+          cp target/${{ matrix.target }}/release/ai-usagebar \
+             target/${{ matrix.target }}/release/ai-usagebar-tui \
+             "$STAGE/"
+          cp LICENSE README.md config.example.toml "$STAGE/"
+          tar czf ${{ matrix.artifact }}.tar.gz -C "$STAGE" .
+          rm -rf "$STAGE"
+
+      - name: Compute SHA256
+        run: |
+          SHA=$(sha256sum ${{ matrix.artifact }}.tar.gz | awk '{print $1}')
+          echo "$SHA  ${{ matrix.artifact }}.tar.gz" > ${{ matrix.artifact }}.tar.gz.sha256
+          echo "Built ${{ matrix.artifact }}.tar.gz sha256=$SHA"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.tar.gz.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate release body
+        run: |
+          {
+            echo "## Install"
+            echo
+            echo "### Arch (AUR)"
+            echo
+            echo '```bash'
+            echo "yay -S ai-usagebar-bin      # prebuilt binary from this release"
+            echo "yay -S ai-usagebar          # compiles from source"
+            echo '```'
+            echo
+            echo "### Manual"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://github.com/akitaonrails/ai-usagebar/releases/download/${GITHUB_REF_NAME}/ai-usagebar-linux-x86_64.tar.gz | tar xz -C ~/.local/bin ai-usagebar ai-usagebar-tui"
+            echo '```'
+            echo
+            echo "## Checksums (SHA256)"
+            echo '```'
+            cat artifacts/*.sha256
+            echo '```'
+          } > body.md
+
+      - name: Create / update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.ref || github.ref_name }}"
+          # Replace any pre-existing assets so re-runs (workflow_dispatch on
+          # an existing tag) overwrite cleanly.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.sha256 \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file body.md
+          else
+            gh release create "$TAG" artifacts/*.tar.gz artifacts/*.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --notes-file body.md \
+              --latest
+          fi
