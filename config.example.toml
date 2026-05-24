@@ -1,0 +1,26 @@
+# ai-usagebar configuration. Defaults shown; copy to
+# ~/.config/ai-usagebar/config.toml and edit as needed. Every section and
+# every field is optional — missing config is treated as defaults.
+
+[anthropic]
+enabled = true
+# Override path to the Claude CLI's OAuth credentials file.
+# credentials_path = "/home/you/.claude/.credentials.json"
+
+[openai]
+enabled = true
+# Primary path: Codex OAuth from ~/.codex/auth.json (run `codex login` once).
+# Gives 5h/weekly windows like Claude. No env var needed for OAuth.
+# codex_auth_path = "/home/you/.codex/auth.json"
+# Optional fallback for API-key-only users — admin key for MTD spend.
+admin_key_env = "OPENAI_ADMIN_KEY"
+
+[zai]
+enabled = true
+api_key_env = "ZAI_API_KEY"
+# Display-only — used when the API doesn't return a `level` field.
+# plan_tier = "lite"   # lite | pro | max
+
+[openrouter]
+enabled = true
+api_key_env = "OPENROUTER_API_KEY"

@@ -1,0 +1,50 @@
+[package]
+name = "ai-usagebar"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "MIT"
+description = "Waybar widget + TUI for AI plan usage across Anthropic, OpenAI, Z.AI, and OpenRouter"
+
+[lib]
+name = "ai_usagebar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ai-usagebar"
+path = "src/bin/ai-usagebar.rs"
+
+[[bin]]
+name = "ai-usagebar-tui"
+path = "src/bin/ai-usagebar-tui.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time", "fs", "process", "signal"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+chrono = { version = "0.4", features = ["serde"] }
+fs2 = "0.4"
+tempfile = "3"
+directories = "5"
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ratatui = "0.29"
+crossterm = "0.28"
+
+[dev-dependencies]
+mockito = "1"
+insta = { version = "1", features = ["json"] }
+pretty_assertions = "1"
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

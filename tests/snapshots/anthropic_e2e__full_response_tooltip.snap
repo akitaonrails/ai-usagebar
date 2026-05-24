@@ -1,0 +1,29 @@
+---
+source: tests/anthropic_e2e.rs
+assertion_line: 96
+expression: "&out.tooltip"
+---
+<span foreground='#61afef'>╭───────────────────────────────╮</span>
+<span foreground='#61afef'>│</span>         <span font_weight='bold' foreground='#61afef'>Claude Max 5x</span>         <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>─────────────────────────────</span> <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>                               <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#abb2bf'>  󰔟  Session</span>                  <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>   <span foreground='#e5c07b'>████████████</span><span foreground='#3e4451'>░░░░░░░░</span>  <span font_weight='bold' foreground='#e5c07b'>62% ↓</span> <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>  ⏱  Resets in 1h 30m</span>         <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>                               <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#abb2bf'>  󰃰  Weekly</span>                   <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>   <span foreground='#98c379'>█████</span><span foreground='#3e4451'>░░░░░░░░░░░░░░░</span>  <span font_weight='bold' foreground='#98c379'>27% ↓</span> <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>  ⏱  Resets in 4d 1h</span>          <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>                               <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#abb2bf'>  󱤔  Sonnet only</span>              <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>   <span foreground='#98c379'></span><span foreground='#3e4451'>░░░░░░░░░░░░░░░░░░░░</span>  <span font_weight='bold' foreground='#98c379'>4%</span>    <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>  ⏱  Resets in 2h 24m</span>         <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>                               <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>─────────────────────────────</span> <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#abb2bf'>  󰄑  Extra usage</span>              <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>   <span foreground='#98c379'>█</span><span foreground='#3e4451'>░░░░░░░░░░░░░░░░░░░</span>  <span font_weight='bold' foreground='#98c379'>$2.50</span> <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>  󰀓  Limit: $50.00</span>            <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>                               <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>─────────────────────────────</span> <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>  󰅐  Updated 12:00</span>            <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>╰───────────────────────────────╯</span>

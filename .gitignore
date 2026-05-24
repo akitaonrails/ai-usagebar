@@ -1,0 +1,13 @@
+/target
+**/*.rs.bk
+
+# Sandbox marker, not part of the project.
+.ai-jail
+
+# Local secrets — never commit
+.env
+.env.local
+*.credentials.json
+
+# Snapshot review files from `cargo insta`
+*.snap.new

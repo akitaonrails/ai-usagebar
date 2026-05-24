@@ -1,0 +1,22 @@
+{
+  "five_hour": {
+    "utilization": 62.0,
+    "resets_at": "2026-05-23T13:30:00Z"
+  },
+  "seven_day": {
+    "utilization": 27.0,
+    "resets_at": "2026-05-27T13:00:00Z"
+  },
+  "seven_day_sonnet": {
+    "utilization": 4.0,
+    "resets_at": "2026-05-23T14:24:00Z"
+  },
+  "seven_day_opus": null,
+  "tangelo": null,
+  "extra_usage": {
+    "is_enabled": true,
+    "monthly_limit": 5000,
+    "used_credits": 250.0,
+    "currency": "USD"
+  }
+}

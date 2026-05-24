@@ -1,0 +1,194 @@
+//! Command-line interface — claudebar-compatible flags plus the new
+//! local-testing additions (`--pretty`, `--watch`, `--json`).
+//!
+//! Mirrors claudebar:54-93. The defaults are identical so existing waybar
+//! configs that invoke `claudebar ...` can be retargeted to
+//! `ai-usagebar --vendor anthropic ...` without changing any flags.
+
+use clap::{Parser, ValueEnum};
+
+#[derive(Parser, Debug, Clone)]
+#[command(
+    name = "ai-usagebar",
+    about = "Waybar widget for AI plan usage (Anthropic / OpenAI / Z.AI / OpenRouter)",
+    long_about = "\
+Drop-in replacement for `claudebar` with multi-vendor support.
+
+Output modes:
+  - Default: Waybar JSON ({text, tooltip, class}). Used when stdout is piped.
+  - --pretty: human-readable terminal output for local testing. Auto-enabled
+    when stdout is a TTY, so just running `ai-usagebar --vendor anthropic`
+    in a terminal Does The Right Thing.
+  - --watch N: like --pretty but refreshes every N seconds, clearing the screen
+    between ticks. Useful while iterating on `--format` or `--tooltip-format`.
+  - --json: force JSON output even when stdout is a TTY (for scripting)."
+)]
+pub struct Cli {
+    /// Which vendor to query. Phase 2 only supports `anthropic`.
+    #[arg(long, value_enum, default_value_t = Vendor::Anthropic)]
+    pub vendor: Vendor,
+
+    /// Optional icon prepended to the bar text (Nerd Font glyph / emoji /
+    /// Pango span). claudebar `--icon`.
+    #[arg(long)]
+    pub icon: Option<String>,
+
+    /// Bar-text format string with `{placeholder}` substitutions.
+    /// Defaults to `{session_pct}% · {session_reset}`.
+    #[arg(long)]
+    pub format: Option<String>,
+
+    /// Custom tooltip format. Overrides the default bordered tooltip when
+    /// set; identical placeholder set as `--format`.
+    #[arg(long)]
+    pub tooltip_format: Option<String>,
+
+    /// Tolerance band (in percentage points) for ratio-based pacing icons.
+    #[arg(long, default_value_t = 5)]
+    pub pace_tolerance: u32,
+
+    /// Color pace placeholders individually per window (instead of the
+    /// global usage-based color). Claudebar `--format-pace-color`.
+    #[arg(long)]
+    pub format_pace_color: bool,
+
+    /// Use point-based pacing in the tooltip's pace column (vs ratio-based).
+    /// Also enables an elapsed-position marker on the tooltip progress bars.
+    /// Claudebar `--tooltip-pace-pts`.
+    #[arg(long)]
+    pub tooltip_pace_pts: bool,
+
+    /// Override the low-usage color (#RRGGBB).
+    #[arg(long)]
+    pub color_low: Option<String>,
+    /// Override the mid-usage color (#RRGGBB).
+    #[arg(long)]
+    pub color_mid: Option<String>,
+    /// Override the high-usage color (#RRGGBB).
+    #[arg(long)]
+    pub color_high: Option<String>,
+    /// Override the critical-usage color (#RRGGBB).
+    #[arg(long)]
+    pub color_critical: Option<String>,
+
+    /// Render human-readable terminal output (ANSI colors + box drawing)
+    /// instead of Waybar JSON. Auto-on when stdout is a TTY.
+    #[arg(long)]
+    pub pretty: bool,
+
+    /// Force JSON output even on a TTY (useful when piping into `jq` from
+    /// an interactive shell).
+    #[arg(long, conflicts_with = "pretty")]
+    pub json: bool,
+
+    /// Re-render every N seconds, clearing the screen between ticks. Implies
+    /// `--pretty`. Press Ctrl-C to exit.
+    #[arg(long, value_name = "SECS")]
+    pub watch: Option<u64>,
+
+    /// Override the cache directory (for tests / debugging).
+    #[arg(long, hide = true)]
+    pub cache_dir: Option<std::path::PathBuf>,
+
+    /// Override the credentials file path (for tests / debugging).
+    #[arg(long, hide = true)]
+    pub creds_path: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum Vendor {
+    Anthropic,
+    Openai,
+    Zai,
+    Openrouter,
+}
+
+impl Vendor {
+    pub fn to_id(self) -> crate::vendor::VendorId {
+        match self {
+            Vendor::Anthropic => crate::vendor::VendorId::Anthropic,
+            Vendor::Openai => crate::vendor::VendorId::Openai,
+            Vendor::Zai => crate::vendor::VendorId::Zai,
+            Vendor::Openrouter => crate::vendor::VendorId::Openrouter,
+        }
+    }
+}
+
+impl Cli {
+    /// True when we should emit Waybar JSON. Default behavior: JSON when
+    /// stdout is piped, pretty when on a TTY (unless `--json` is set).
+    pub fn output_json(&self) -> bool {
+        if self.json {
+            return true;
+        }
+        if self.pretty || self.watch.is_some() {
+            return false;
+        }
+        // Auto-detect: emit pretty when stdout is a TTY.
+        !is_stdout_tty()
+    }
+}
+
+fn is_stdout_tty() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn defaults_match_claudebar() {
+        let cli = Cli::parse_from(["ai-usagebar"]);
+        assert_eq!(cli.vendor, Vendor::Anthropic);
+        assert_eq!(cli.pace_tolerance, 5);
+        assert!(cli.format.is_none());
+        assert!(cli.tooltip_format.is_none());
+        assert!(cli.icon.is_none());
+        assert!(!cli.format_pace_color);
+        assert!(!cli.tooltip_pace_pts);
+        assert!(!cli.pretty);
+        assert!(!cli.json);
+        assert!(cli.watch.is_none());
+    }
+
+    #[test]
+    fn claudebar_compatible_flag_surface() {
+        let cli = Cli::parse_from([
+            "ai-usagebar",
+            "--icon", "󰚩",
+            "--format", "{session_pct}% · {session_reset}",
+            "--tooltip-format", "S:{session_pct}",
+            "--pace-tolerance", "10",
+            "--format-pace-color",
+            "--tooltip-pace-pts",
+            "--color-low", "#50fa7b",
+            "--color-mid", "#f1fa8c",
+            "--color-high", "#ffb86c",
+            "--color-critical", "#ff5555",
+        ]);
+        assert_eq!(cli.icon.as_deref(), Some("󰚩"));
+        assert_eq!(cli.format.as_deref(), Some("{session_pct}% · {session_reset}"));
+        assert_eq!(cli.tooltip_format.as_deref(), Some("S:{session_pct}"));
+        assert_eq!(cli.pace_tolerance, 10);
+        assert!(cli.format_pace_color);
+        assert!(cli.tooltip_pace_pts);
+        assert_eq!(cli.color_low.as_deref(), Some("#50fa7b"));
+        assert_eq!(cli.color_critical.as_deref(), Some("#ff5555"));
+    }
+
+    #[test]
+    fn pretty_and_json_conflict() {
+        let res = Cli::try_parse_from(["ai-usagebar", "--pretty", "--json"]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn watch_disables_json_output() {
+        let cli = Cli::parse_from(["ai-usagebar", "--watch", "5"]);
+        assert_eq!(cli.watch, Some(5));
+        assert!(!cli.output_json());
+    }
+}

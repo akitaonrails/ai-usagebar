@@ -1,0 +1,6 @@
+---
+source: tests/anthropic_e2e.rs
+assertion_line: 95
+expression: "&out.text"
+---
+<span foreground='#e5c07b'>62% · 1h 30m</span>
