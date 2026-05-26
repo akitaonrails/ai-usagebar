@@ -9,6 +9,31 @@
 //! placeholder set and the rendering code doesn't need to know what they are.
 
 use std::collections::HashMap;
+use std::time::Duration;
+
+use chrono::{DateTime, Local, Utc};
+
+pub fn local_time_hm(when: DateTime<Utc>) -> String {
+    when.with_timezone(&Local).format("%H:%M").to_string()
+}
+
+pub fn local_time_hms(when: DateTime<Utc>) -> String {
+    when.with_timezone(&Local).format("%H:%M:%S").to_string()
+}
+
+pub fn updated_at_hm(now: DateTime<Utc>, cache_age: Option<Duration>) -> String {
+    match cache_age {
+        Some(age) => local_time_hm(now - chrono::Duration::from_std(age).unwrap_or_default()),
+        None => "—".to_string(),
+    }
+}
+
+pub fn updated_at_hms(now: DateTime<Utc>, cache_age: Option<Duration>) -> String {
+    match cache_age {
+        Some(age) => local_time_hms(now - chrono::Duration::from_std(age).unwrap_or_default()),
+        None => "—".to_string(),
+    }
+}
 
 /// Substitute every `{key}` in `template` with `values[key]`. Unknown keys
 /// are left as-is.

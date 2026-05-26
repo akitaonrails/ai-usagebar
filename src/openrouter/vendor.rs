@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::format::{placeholders, substitute};
+use crate::format::{placeholders, substitute, updated_at_hm};
 use crate::pacing::PaceSeverity;
 use crate::pango::{self, color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
@@ -206,13 +206,7 @@ fn render_tooltip(
         }
     }
 
-    let updated = match outcome.cache_age {
-        Some(age) => {
-            let when = now - chrono::Duration::from_std(age).unwrap_or_default();
-            when.format("%H:%M").to_string()
-        }
-        None => "—".to_string(),
-    };
+    let updated = updated_at_hm(now, outcome.cache_age);
     lines.push(TooltipLine::Body("".into()));
     lines.push(TooltipLine::Sep);
     lines.push(TooltipLine::Body(format!(

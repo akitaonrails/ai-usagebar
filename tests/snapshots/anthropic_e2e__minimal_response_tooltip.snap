@@ -16,5 +16,5 @@ expression: "&out.tooltip"
 <span foreground='#61afef'>│</span> <span foreground='#5c6370'>  ⏱  Resets in 4d 1h</span>          <span foreground='#61afef'>│</span>
 <span foreground='#61afef'>│</span>                               <span foreground='#61afef'>│</span>
 <span foreground='#61afef'>│</span> <span foreground='#5c6370'>─────────────────────────────</span> <span foreground='#61afef'>│</span>
-<span foreground='#61afef'>│</span> <span foreground='#5c6370'>  󰅐  Updated 12:00</span>            <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span> <span foreground='#5c6370'>  󰅐  Updated HH:MM</span>            <span foreground='#61afef'>│</span>
 <span foreground='#61afef'>╰───────────────────────────────╯</span>

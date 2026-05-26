@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 
 use crate::anthropic::fetch::FetchOutcome;
 use crate::countdown;
-use crate::format::{placeholders, substitute};
+use crate::format::{placeholders, substitute, updated_at_hm};
 use crate::pacing;
 use crate::pango::{self, color_span, escape, severity_for};
 use crate::theme::Theme;
@@ -443,13 +443,7 @@ fn render_default_tooltip(input: &RenderInput) -> String {
         }
     }
 
-    let updated = match input.outcome.cache_age {
-        Some(age) => {
-            let when = input.now - chrono::Duration::from_std(age).unwrap_or_default();
-            when.format("%H:%M").to_string()
-        }
-        None => "—".to_string(),
-    };
+    let updated = updated_at_hm(input.now, input.outcome.cache_age);
     lines.push(Line::Body("".into()));
     lines.push(Line::Sep);
     lines.push(Line::Body(format!(

@@ -17,6 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Gauge, Paragraph};
 
 use crate::countdown;
+use crate::format::updated_at_hms;
 use crate::pacing::{self, PaceSeverity};
 use crate::pango::severity_for;
 use crate::theme::Theme;
@@ -87,13 +88,7 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                 }
             }
             sections.push(Section::Spacer);
-            let updated = match cache_age {
-                Some(age) => {
-                    let when = now - chrono::Duration::from_std(*age).unwrap_or_default();
-                    when.format("Updated %H:%M:%S").to_string()
-                }
-                None => "Updated —".into(),
-            };
+            let updated = format!("Updated {}", updated_at_hms(now, *cache_age));
             sections.push(Section::Text {
                 label: "".into(),
                 value: format!("  {updated}"),

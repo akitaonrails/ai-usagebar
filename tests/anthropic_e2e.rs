@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use ai_usagebar::anthropic::{self, fetch::Endpoints};
 use ai_usagebar::cache::Cache;
+use ai_usagebar::format::updated_at_hm;
 use ai_usagebar::theme::Theme;
 use ai_usagebar::widget::render::{DEFAULT_FORMAT, RenderInput, render_anthropic};
 use chrono::{TimeZone, Utc};
@@ -46,6 +47,20 @@ fn read_fixture(name: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!("missing fixture {}: {e}", path.display());
     })
+}
+
+fn normalize_updated_time(
+    tooltip: &str,
+    now: chrono::DateTime<Utc>,
+    cache_age: Option<Duration>,
+) -> String {
+    let updated = updated_at_hm(now, cache_age);
+    let expected = format!("Updated {updated}");
+    assert!(
+        tooltip.contains(&expected),
+        "tooltip did not contain {expected:?}"
+    );
+    tooltip.replace(&expected, "Updated HH:MM")
 }
 
 #[tokio::test]
@@ -93,7 +108,10 @@ async fn full_response_renders_expected_waybar_json() {
     };
     let out = render_anthropic(&input);
     insta::assert_snapshot!("full_response_bar_text", &out.text);
-    insta::assert_snapshot!("full_response_tooltip", &out.tooltip);
+    insta::assert_snapshot!(
+        "full_response_tooltip",
+        normalize_updated_time(&out.tooltip, now, outcome.cache_age)
+    );
     assert_eq!(format!("{:?}", out.class), "Mid");
 }
 
@@ -141,7 +159,10 @@ async fn no_sonnet_no_extra_renders_minimal_tooltip() {
     let out = render_anthropic(&input);
     assert!(!out.tooltip.contains("Sonnet only"));
     assert!(!out.tooltip.contains("Extra usage"));
-    insta::assert_snapshot!("minimal_response_tooltip", &out.tooltip);
+    insta::assert_snapshot!(
+        "minimal_response_tooltip",
+        normalize_updated_time(&out.tooltip, now, outcome.cache_age)
+    );
 }
 
 #[tokio::test]
