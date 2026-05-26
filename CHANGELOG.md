@@ -11,6 +11,20 @@ Each release is also published at
 
 Nothing yet.
 
+## [0.4.1] — 2026-05-26
+
+### Changed
+
+- Centralized local-time formatting for cache update timestamps across the
+  widget, vendor tooltips, and TUI.
+
+### Fixed
+
+- Fixed user-facing `Updated` timestamps to display in the local timezone
+  instead of UTC.
+- Kept timestamp snapshot tests deterministic across machines with different
+  local timezones.
+
 ## [0.4.0] — 2026-05-24
 
 ### Added
@@ -194,7 +208,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.1
 [0.4.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.0
 [0.3.3]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.3.3
 [0.3.2]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.3.2
