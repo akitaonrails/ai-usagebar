@@ -9,7 +9,12 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **Release notes** — `release.yml` now extracts the matching
+  `CHANGELOG.md` section into the GitHub Release body and appends a
+  `Full diff` compare link against the previous tag. Replaces the
+  prior install-and-checksums-only body.
 
 ## [0.4.1] — 2026-05-26
 
