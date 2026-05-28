@@ -88,6 +88,10 @@ fn draw_body(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    // The "updated HH:MM:SS" suffix used to live here, but it was
+    // (a) redundant with the per-tab "Updated …" now right-aligned on the
+    // title row of every panel, and (b) prone to getting cropped on narrow
+    // 875x600 windows. Keep the footer to just the keybinding hints.
     let dim_color = parse_hex(&app.theme.dim).unwrap_or(Color::DarkGray);
     let text = Line::from(vec![
         Span::styled(" [Tab/h-l]", Style::default().fg(accent(&app.theme))),
@@ -98,13 +102,6 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         Span::styled(" settings · ", Style::default().fg(dim_color)),
         Span::styled("[q]", Style::default().fg(accent(&app.theme))),
         Span::styled(" quit", Style::default().fg(dim_color)),
-        Span::styled(
-            format!(
-                "   ·   updated {}",
-                crate::format::local_time_hms(app.last_refresh)
-            ),
-            Style::default().fg(dim_color),
-        ),
     ]);
     f.render_widget(Paragraph::new(text), area);
 }

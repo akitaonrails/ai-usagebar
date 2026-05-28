@@ -9,12 +9,33 @@ Each release is also published at
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.4.2] — 2026-05-28
+
 ### Changed
 
+- **TUI panel header** — the "Updated HH:MM:SS" timestamp is now
+  right-aligned on the title row (next to the plan label like
+  `Claude Max 20x`) instead of taking its own body row at the
+  bottom of the panel. Tighter rhythm and one less line of body
+  content. Also dropped the duplicate `· updated …` suffix from
+  the global footer — was cropped on 875x600 windows anyway.
 - **Release notes** — `release.yml` now extracts the matching
-  `CHANGELOG.md` section into the GitHub Release body and appends a
-  `Full diff` compare link against the previous tag. Replaces the
-  prior install-and-checksums-only body.
+  `CHANGELOG.md` section into the GitHub Release body and appends
+  a `Full diff` compare link against the previous tag (thanks
+  @sombraSoft, PR #3). Replaces the prior install-and-checksums
+  body. Merged with two small regex hardenings so version dots
+  (`v0.4.1`) aren't treated as wildcards.
+
+### Fixed
+
+- **Drifting "Updated" timestamp** — the previous panel-body
+  timestamp recomputed `now - cache_age` on every redraw, so the
+  displayed clock ticked upward continuously instead of holding
+  at the actual cache-write moment. Snapshot the absolute
+  `fetched_at` instant once when the tab is built and format
+  from that; redraws no longer affect it.
 
 ## [0.4.1] — 2026-05-26
 
@@ -213,7 +234,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.2
 [0.4.1]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.1
 [0.4.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.0
 [0.3.3]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.3.3

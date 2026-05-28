@@ -28,7 +28,11 @@ pub struct ReadyTab {
     pub snapshot: crate::usage::VendorSnapshot,
     pub stale: bool,
     pub last_error: Option<(u16, String)>,
-    pub cache_age: Option<std::time::Duration>,
+    /// Absolute moment the cache was written (i.e. the API response landed).
+    /// Snapshotted once at TabState build time so the rendered "Updated …"
+    /// timestamp stays stable across redraws instead of drifting with the
+    /// passing wall clock.
+    pub fetched_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug)]
@@ -94,12 +98,22 @@ impl App {
 /// Fetch and render one vendor — returns a `TabState`.
 pub async fn refresh_one(client: &Client, config: &Config, vendor: VendorId) -> TabState {
     match build_outcome(client, config, vendor).await {
-        Ok(outcome) => TabState::Ready(Box::new(ReadyTab {
-            snapshot: outcome.snapshot,
-            stale: outcome.stale,
-            last_error: outcome.last_error,
-            cache_age: outcome.cache_age,
-        })),
+        Ok(outcome) => {
+            // Resolve the cache age (a duration from "now" at fetch time) into an
+            // absolute instant ONCE. Without this, sections_for would recompute
+            // `Utc::now() - cache_age` on every draw and the displayed time would
+            // tick upward in real time instead of holding at the last refresh.
+            let now = Utc::now();
+            let fetched_at = outcome.cache_age.map(|age| {
+                now - chrono::Duration::from_std(age).unwrap_or_default()
+            });
+            TabState::Ready(Box::new(ReadyTab {
+                snapshot: outcome.snapshot,
+                stale: outcome.stale,
+                last_error: outcome.last_error,
+                fetched_at,
+            }))
+        }
         Err(e) => TabState::Error(e.to_string()),
     }
 }

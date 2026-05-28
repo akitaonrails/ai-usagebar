@@ -17,7 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Gauge, Paragraph};
 
 use crate::countdown;
-use crate::format::updated_at_hms;
+use crate::format::local_time_hms;
 use crate::pacing::{self, PaceSeverity};
 use crate::pango::severity_for;
 use crate::theme::Theme;
@@ -27,8 +27,11 @@ use crate::usage::VendorSnapshot;
 /// One row of the panel body. Vendors emit a `Vec<Section>`; the renderer
 /// turns them into ratatui widgets.
 pub enum Section {
-    /// Title row at the top. Bold, accent-colored.
-    Title(String),
+    /// Title row at the top. `left` is the plan/vendor label (accent-colored,
+    /// bold); `right` is an optional right-aligned annotation, used for the
+    /// "Updated HH:MM:SS" timestamp so it shares the title row instead of
+    /// taking a separate body row + duplicating the global footer's clock.
+    Title { left: String, right: Option<String> },
     /// A metric: label + gauge + value annotation + dim footnote.
     Metric {
         label: String,
@@ -70,14 +73,23 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
         TabState::Ready(r) => {
             let snapshot = &r.snapshot;
             let last_error = &r.last_error;
-            let cache_age = &r.cache_age;
             let mut sections = match snapshot {
                 VendorSnapshot::Anthropic(s) => anthropic_sections(s, now, pace_tolerance),
                 VendorSnapshot::Openai(s) => openai_sections(s, now, pace_tolerance),
                 VendorSnapshot::Zai(s) => zai_sections(s, now),
                 VendorSnapshot::Openrouter(s) => openrouter_sections(s),
             };
-            // Common footer: error (if any) + updated time.
+            // Inject the (already-absolute) fetched-at instant into the title
+            // row, right-aligned. Pre-snapshotted in app::refresh_one so it
+            // doesn't drift between redraws.
+            let updated = match r.fetched_at {
+                Some(at) => format!("Updated {}", local_time_hms(at)),
+                None => "Updated —".to_string(),
+            };
+            if let Some(Section::Title { right, .. }) = sections.first_mut() {
+                *right = Some(updated);
+            }
+            // Error footer (when present) still lives in the body.
             if let Some((code, msg)) = last_error {
                 if *code != 0 {
                     sections.push(Section::Spacer);
@@ -87,12 +99,6 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                     });
                 }
             }
-            sections.push(Section::Spacer);
-            let updated = format!("Updated {}", updated_at_hms(now, *cache_age));
-            sections.push(Section::Text {
-                label: "".into(),
-                value: format!("  {updated}"),
-            });
             sections
         }
     }
@@ -103,7 +109,10 @@ fn anthropic_sections(
     now: DateTime<Utc>,
     tol: u32,
 ) -> Vec<Section> {
-    let mut v = vec![Section::Title(format!("Claude {}", s.plan))];
+    let mut v = vec![Section::Title {
+        left: format!("Claude {}", s.plan),
+        right: None,
+    }];
 
     push_window(&mut v, "Session (5h)", &s.session, now, tol, true);
     push_window(&mut v, "Weekly (7d)", &s.weekly, now, tol, true);
@@ -125,7 +134,10 @@ fn anthropic_sections(
 }
 
 fn openai_sections(s: &crate::usage::OpenAiSnapshot, now: DateTime<Utc>, tol: u32) -> Vec<Section> {
-    let mut v = vec![Section::Title(s.plan.clone())];
+    let mut v = vec![Section::Title {
+        left: s.plan.clone(),
+        right: None,
+    }];
     push_window(&mut v, "Codex 5h", &s.session, now, tol, true);
     push_window(&mut v, "Codex weekly", &s.weekly, now, tol, true);
     if let Some(cr) = &s.code_review {
@@ -154,7 +166,10 @@ fn openai_sections(s: &crate::usage::OpenAiSnapshot, now: DateTime<Utc>, tol: u3
 }
 
 fn zai_sections(s: &crate::usage::ZaiSnapshot, now: DateTime<Utc>) -> Vec<Section> {
-    let mut v = vec![Section::Title(s.plan.clone())];
+    let mut v = vec![Section::Title {
+        left: s.plan.clone(),
+        right: None,
+    }];
     if let Some(w) = &s.session {
         push_window(&mut v, "Session (5h)", w, now, 5, false);
     }
@@ -175,7 +190,10 @@ fn zai_sections(s: &crate::usage::ZaiSnapshot, now: DateTime<Utc>) -> Vec<Sectio
 }
 
 fn openrouter_sections(s: &crate::usage::OpenRouterSnapshot) -> Vec<Section> {
-    let mut v = vec![Section::Title(s.label.clone())];
+    let mut v = vec![Section::Title {
+        left: s.label.clone(),
+        right: None,
+    }];
     let pct = s.consumed_pct().clamp(0, 100) as u16;
     v.push(Section::Spacer);
     v.push(Section::Metric {
@@ -290,7 +308,7 @@ pub fn render(f: &mut Frame, area: Rect, theme: &Theme, sections: &[Section]) {
 
 fn section_height(s: &Section) -> Constraint {
     match s {
-        Section::Title(_) => Constraint::Length(2),
+        Section::Title { .. } => Constraint::Length(2),
         Section::Metric { .. } => Constraint::Length(3),
         Section::Text { .. } => Constraint::Length(1),
         Section::Block { body, .. } => Constraint::Length(1 + body.len() as u16),
@@ -304,12 +322,22 @@ fn render_section(f: &mut Frame, area: Rect, theme: &Theme, s: &Section) {
     let fg = parse_hex(&theme.fg).unwrap_or(Color::White);
 
     match s {
-        Section::Title(t) => {
-            let line = Line::from(Span::styled(
-                format!("  {t}"),
+        Section::Title { left, right } => {
+            // Left: bold accent-colored plan/vendor label. Right: dim-styled
+            // "Updated HH:MM:SS" pinned to the right edge of the title row.
+            let left_line = Line::from(Span::styled(
+                format!("  {left}"),
                 Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ));
-            f.render_widget(Paragraph::new(line), area);
+            f.render_widget(Paragraph::new(left_line), area);
+            if let Some(rt) = right {
+                let right_line = Line::from(Span::styled(
+                    format!("{rt}  "),
+                    Style::default().fg(dim),
+                ))
+                .right_aligned();
+                f.render_widget(Paragraph::new(right_line), area);
+            }
         }
         Section::Metric {
             label,
@@ -456,7 +484,7 @@ mod tests {
             snapshot,
             stale: false,
             last_error: None,
-            cache_age: Some(std::time::Duration::from_secs(15)),
+            fetched_at: Some(now() - chrono::Duration::seconds(15)),
         }))
     }
 
@@ -485,10 +513,16 @@ mod tests {
             }),
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
-        // Title + 4 metrics (3 windows + extra) each with a Spacer before, plus
-        // a trailing Spacer + Updated text. That's 1 + 4*2 + 2 = 11 sections.
-        assert_eq!(sections.len(), 11);
-        assert!(matches!(sections[0], Section::Title(_)));
+        // Title (carries "Updated …" inline now) + 4 metrics (3 windows +
+        // extra) each preceded by a Spacer. 1 + 4*2 = 9 sections.
+        assert_eq!(sections.len(), 9);
+        assert!(matches!(sections[0], Section::Title { .. }));
+        // Title's right-aligned slot should carry the timestamp.
+        if let Section::Title { right, .. } = &sections[0] {
+            assert!(right.as_deref().is_some_and(|r| r.starts_with("Updated ")));
+        } else {
+            panic!("expected first section to be Title");
+        }
         let metric_count = sections
             .iter()
             .filter(|s| matches!(s, Section::Metric { .. }))
@@ -535,7 +569,7 @@ mod tests {
             limit_remaining: None,
         };
         let sections = sections_for(&ready(VendorSnapshot::Openrouter(snap)), now(), 5);
-        assert!(matches!(sections[0], Section::Title(_)));
+        assert!(matches!(sections[0], Section::Title { .. }));
         assert!(
             sections
                 .iter()
