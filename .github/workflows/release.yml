@@ -84,6 +84,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout source (for CHANGELOG + previous tag)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v5
         with:
           path: artifacts
@@ -93,7 +99,30 @@ jobs:
         env:
           TAG: ${{ inputs.ref || github.ref_name }}
         run: |
+          VERSION="${TAG#v}"
+          # `-Fxv "$TAG"`: -F treats TAG as a fixed string (dots aren't regex
+          # wildcards), -x requires whole-line match. Robust against the dots
+          # in version strings like `v0.4.1`.
+          PREV_TAG=$(git tag --sort=-v:refname | grep -Fxv "$TAG" | head -1)
+
+          # Extract matching section from CHANGELOG.md (between "## [VERSION]"
+          # and the next "## [" header). Empty file if no match.
+          # `index(s, t) == 1` is a string prefix-equality match — no regex,
+          # so dots in `ver` (e.g. `0.4.1`) stay literal.
+          awk -v ver="$VERSION" '
+            BEGIN { hdr = "## [" ver "]" }
+            index($0, hdr) == 1 { flag=1; next }
+            flag && index($0, "## [") == 1 { exit }
+            flag { print }
+          ' CHANGELOG.md > changelog_section.md
+
           {
+            if [ -s changelog_section.md ]; then
+              echo "## What's changed"
+              echo
+              cat changelog_section.md
+            fi
+
             echo "## Install"
             echo
             echo "### Arch (AUR)"
@@ -106,13 +135,18 @@ jobs:
             echo "### Manual"
             echo
             echo '```bash'
-            echo "curl -fsSL https://github.com/akitaonrails/ai-usagebar/releases/download/${TAG}/ai-usagebar-linux-x86_64.tar.gz | tar xz -C ~/.local/bin ai-usagebar ai-usagebar-tui"
+            echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/ai-usagebar-linux-x86_64.tar.gz | tar xz -C ~/.local/bin ai-usagebar ai-usagebar-tui"
             echo '```'
             echo
             echo "## Checksums (SHA256)"
             echo '```'
             cat artifacts/*.sha256
             echo '```'
+
+            if [ -n "$PREV_TAG" ]; then
+              echo
+              echo "**Full diff**: https://github.com/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...${TAG}"
+            fi
           } > body.md
 
       - name: Create / update GitHub Release
