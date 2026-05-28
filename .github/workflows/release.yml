@@ -202,3 +202,74 @@ jobs:
             exit 0
           fi
           exit "$status"
+
+  publish-aur:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.ref != ''
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # Compute the real sha256s and inject them into both PKGBUILDs so the
+      # AUR deploy action publishes pinned hashes (the in-tree PKGBUILDs
+      # carry `SKIP` between releases by convention — see CLAUDE.md).
+      - name: Pin sha256s in PKGBUILDs
+        env:
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          SRC_URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
+          SRC_SHA=$(curl -fsSL "$SRC_URL" | sha256sum | awk '{print $1}')
+          sed -i "s/^sha256sums=.*/sha256sums=('$SRC_SHA')/" packaging/aur/PKGBUILD
+
+          X86_SHA=$(awk '{print $1}' artifacts/ai-usagebar-linux-x86_64.tar.gz.sha256)
+          ARM_SHA=$(awk '{print $1}' artifacts/ai-usagebar-linux-aarch64.tar.gz.sha256)
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$X86_SHA')/" packaging/aur/PKGBUILD-bin
+          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('$ARM_SHA')/" packaging/aur/PKGBUILD-bin
+
+      - name: Check AUR_SSH_KEY presence
+        id: aur_key
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "set=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping AUR push — no AUR_SSH_KEY secret set"
+          else
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `KSXGitHub/github-actions-deploy-aur` spins up an Arch container,
+      # regenerates .SRCINFO via makepkg, then commits + pushes via SSH.
+      # Pinned to a specific tag to limit supply-chain surface.
+      - name: Publish ai-usagebar (source) to AUR
+        if: steps.aur_key.outputs.set == 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: ai-usagebar
+          pkgbuild: ./packaging/aur/PKGBUILD
+          commit_username: AkitaOnRails (GitHub Actions)
+          commit_email: boss@akitaonrails.com
+          ssh_private_key: ${{ secrets.AUR_SSH_KEY }}
+          commit_message: "ai-usagebar ${{ inputs.ref || github.ref_name }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+          force_push: 'false'
+
+      - name: Publish ai-usagebar-bin to AUR
+        if: steps.aur_key.outputs.set == 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: ai-usagebar-bin
+          pkgbuild: ./packaging/aur/PKGBUILD-bin
+          commit_username: AkitaOnRails (GitHub Actions)
+          commit_email: boss@akitaonrails.com
+          ssh_private_key: ${{ secrets.AUR_SSH_KEY }}
+          commit_message: "ai-usagebar-bin ${{ inputs.ref || github.ref_name }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+          force_push: 'false'

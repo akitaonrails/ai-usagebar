@@ -46,7 +46,14 @@ When cutting a new version (patch, minor, or major):
    cd packaging/aur && makepkg --printsrcinfo > .SRCINFO
    # And from a scratch dir with the bin PKGBUILD: makepkg --printsrcinfo > .SRCINFO-bin
    ```
-10. **Push to both AUR repos** (separate git repos):
+10. **AUR push is automated via CI** when `AUR_SSH_KEY` is set (since
+    v0.4.4). The `publish-aur` job in `.github/workflows/release.yml`
+    runs after `build` + `release` succeed, pins the real sha256s into
+    both PKGBUILDs, and pushes via `KSXGitHub/github-actions-deploy-aur`.
+    Step 10 below is the manual fallback when the secret isn't
+    configured or when CI is unavailable.
+
+    **Manual fallback** — separate AUR git repos:
     - `~/Projects/aur-ai-usagebar` → `ssh://aur@aur.archlinux.org/ai-usagebar.git`
     - `~/Projects/aur-ai-usagebar-bin` → `ssh://aur@aur.archlinux.org/ai-usagebar-bin.git`
 

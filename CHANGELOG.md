@@ -9,7 +9,17 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **CI now publishes both AUR packages automatically** on every
+  `v*` tag push. New `publish-aur` job in `.github/workflows/release.yml`
+  computes the real sha256s (source tarball + both arch binaries),
+  injects them into `packaging/aur/PKGBUILD{,bin}`, and pushes via
+  the `KSXGitHub/github-actions-deploy-aur@v2.7.2` action — which
+  spins up an Arch container to regenerate `.SRCINFO`s, then commits
+  + pushes to the two AUR git repos. Skips gracefully when the
+  `AUR_SSH_KEY` secret isn't set, leaving the existing manual flow
+  as a fallback.
 
 ## [0.4.3] — 2026-05-28
 
