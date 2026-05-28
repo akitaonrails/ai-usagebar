@@ -9,6 +9,10 @@ Each release is also published at
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.4.4] — 2026-05-28
+
 ### Changed
 
 - **CI now publishes both AUR packages automatically** on every
@@ -18,8 +22,13 @@ Each release is also published at
   the `KSXGitHub/github-actions-deploy-aur@v2.7.2` action — which
   spins up an Arch container to regenerate `.SRCINFO`s, then commits
   + pushes to the two AUR git repos. Skips gracefully when the
-  `AUR_SSH_KEY` secret isn't set, leaving the existing manual flow
-  as a fallback.
+  `AUR_SSH_KEY` secret isn't set, leaving the manual flow (described
+  in `CLAUDE.md`) as a fallback.
+- **Release loop is now one tag push end-to-end.** A `git push origin
+  vX.Y.Z` now builds binaries (x86_64 + aarch64) once, uploads them
+  to the GitHub Release, runs `cargo publish`, and updates both AUR
+  packages — all without leaving the laptop or touching any AUR
+  clone. Whole cycle takes ~5 minutes.
 
 ## [0.4.3] — 2026-05-28
 
@@ -272,7 +281,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.4
 [0.4.3]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.3
 [0.4.2]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.2
 [0.4.1]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.4.1
