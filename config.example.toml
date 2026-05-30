@@ -8,7 +8,7 @@
 [ui]
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.
-# Valid: anthropic | openai | zai | openrouter
+# Valid: anthropic | openai | zai | openrouter | deepseek
 # primary = "anthropic"
 
 [anthropic]
@@ -38,3 +38,9 @@ api_key_env = "ZAI_API_KEY"      # checked first; if set + non-empty, used
 enabled = true
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
+
+[deepseek]
+# Disabled by default — enable once you've set a key (env var or inline).
+enabled = false
+api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
+# api_key = "sk-..."              # fallback; chmod 600 the file if you use it

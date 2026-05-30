@@ -104,9 +104,9 @@ pub async fn refresh_one(client: &Client, config: &Config, vendor: VendorId) -> 
             // `Utc::now() - cache_age` on every draw and the displayed time would
             // tick upward in real time instead of holding at the last refresh.
             let now = Utc::now();
-            let fetched_at = outcome.cache_age.map(|age| {
-                now - chrono::Duration::from_std(age).unwrap_or_default()
-            });
+            let fetched_at = outcome
+                .cache_age
+                .map(|age| now - chrono::Duration::from_std(age).unwrap_or_default());
             TabState::Ready(Box::new(ReadyTab {
                 snapshot: outcome.snapshot,
                 stale: outcome.stale,
@@ -194,6 +194,19 @@ async fn build_outcome(
             let endpoints = crate::openai::fetch::Endpoints::default();
             let outcome =
                 crate::openai::fetch_snapshot(client, &creds_path, &cache, &endpoints, DEFAULT_TTL)
+                    .await?;
+            Ok(outcome.into())
+        }
+        VendorId::Deepseek => {
+            let api_key = crate::config::resolve_api_key(
+                "DeepSeek",
+                &config.deepseek.api_key_env,
+                config.deepseek.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("deepseek")?;
+            let endpoints = crate::deepseek::fetch::Endpoints::default();
+            let outcome =
+                crate::deepseek::fetch_snapshot(client, &api_key, &cache, &endpoints, DEFAULT_TTL)
                     .await?;
             Ok(outcome.into())
         }

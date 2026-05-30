@@ -78,6 +78,7 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                 VendorSnapshot::Openai(s) => openai_sections(s, now, pace_tolerance),
                 VendorSnapshot::Zai(s) => zai_sections(s, now),
                 VendorSnapshot::Openrouter(s) => openrouter_sections(s),
+                VendorSnapshot::Deepseek(s) => deepseek_sections(s),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -229,6 +230,43 @@ fn openrouter_sections(s: &crate::usage::OpenRouterSnapshot) -> Vec<Section> {
         } else {
             "paid tier".into()
         }],
+    });
+    v
+}
+
+fn deepseek_sections(s: &crate::usage::DeepseekSnapshot) -> Vec<Section> {
+    let currency = &s.currency;
+    let fmt = |v: f64| match currency.as_str() {
+        "USD" => format!("${v:.2}"),
+        "CNY" => format!("¥{v:.2}"),
+        _ => format!("{v:.2} {currency}"),
+    };
+    let avail = if s.is_available {
+        "available"
+    } else {
+        "unavailable"
+    };
+    let mut v = vec![Section::Title {
+        left: "DeepSeek".into(),
+        right: None,
+    }];
+    v.push(Section::Spacer);
+    v.push(Section::Text {
+        label: "Balance".into(),
+        value: fmt(s.balance),
+    });
+    v.push(Section::Block {
+        label: "Breakdown".into(),
+        body: vec![format!(
+            "granted {} · topped-up {}",
+            fmt(s.granted),
+            fmt(s.topped_up)
+        )],
+    });
+    v.push(Section::Spacer);
+    v.push(Section::Block {
+        label: "API".into(),
+        body: vec![avail.into()],
     });
     v
 }

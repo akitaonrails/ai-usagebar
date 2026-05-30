@@ -27,6 +27,7 @@ pub struct Config {
     pub openai: OpenAiConfig,
     pub zai: ZaiConfig,
     pub openrouter: OpenRouterConfig,
+    pub deepseek: DeepseekConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -118,6 +119,24 @@ impl Default for OpenRouterConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DeepseekConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+
+impl Default for DeepseekConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "DEEPSEEK_API_KEY".to_string(),
+            api_key: None,
+        }
+    }
+}
+
 /// Resolve an API key for a vendor: env var wins, then inline config, then
 /// a clear error naming both fields. Used by Z.AI and OpenRouter vendors.
 pub fn resolve_api_key(
@@ -168,6 +187,7 @@ impl Config {
             VendorId::Openai => self.openai.enabled,
             VendorId::Zai => self.zai.enabled,
             VendorId::Openrouter => self.openrouter.enabled,
+            VendorId::Deepseek => self.deepseek.enabled,
         }
     }
 
@@ -205,6 +225,8 @@ mod tests {
         assert!(c.is_enabled(VendorId::Openai));
         assert!(c.is_enabled(VendorId::Zai));
         assert!(c.is_enabled(VendorId::Openrouter));
+        // DeepSeek requires an explicit API key, so it defaults to disabled.
+        assert!(!c.is_enabled(VendorId::Deepseek));
         assert_eq!(c.enabled_vendors().len(), 4);
     }
 
@@ -345,6 +367,8 @@ enabled = false
 
     #[test]
     fn enabled_vendors_preserves_canonical_order() {
+        // DeepSeek is disabled by default (requires explicit API key config),
+        // so it is absent from the enabled list unless the user enables it.
         let c = Config::default();
         assert_eq!(
             c.enabled_vendors(),
@@ -352,8 +376,23 @@ enabled = false
                 VendorId::Anthropic,
                 VendorId::Openai,
                 VendorId::Zai,
-                VendorId::Openrouter
+                VendorId::Openrouter,
             ]
         );
+    }
+
+    #[test]
+    fn deepseek_appears_when_enabled() {
+        let f = write_toml(
+            r#"
+            [deepseek]
+            enabled = true
+            api_key = "sk-test"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert!(c.is_enabled(VendorId::Deepseek));
+        assert!(c.enabled_vendors().contains(&VendorId::Deepseek));
+        assert_eq!(c.deepseek.api_key.as_deref(), Some("sk-test"));
     }
 }

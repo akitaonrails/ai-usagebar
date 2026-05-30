@@ -58,6 +58,7 @@ fn parse_slug(s: &str) -> Option<VendorId> {
         "openai" => Some(VendorId::Openai),
         "zai" => Some(VendorId::Zai),
         "openrouter" => Some(VendorId::Openrouter),
+        "deepseek" => Some(VendorId::Deepseek),
         _ => None,
     }
 }

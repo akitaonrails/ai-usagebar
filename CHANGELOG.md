@@ -9,7 +9,15 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **DeepSeek vendor** (`--vendor deepseek`): fetches credit balance from
+  `GET /user/balance`, preferring USD over CNY when both currencies are
+  present. Severity thresholds are scaled per currency (CNY ≈ 7× USD).
+  API key is read from `DEEPSEEK_API_KEY` env var or `[deepseek] api_key`
+  in config. Disabled by default (requires explicit opt-in).
+- DeepSeek API key field added to the TUI Settings overlay (`s` key),
+  consistent with Z.AI and OpenRouter.
 
 ## [0.4.5] — 2026-05-28
 

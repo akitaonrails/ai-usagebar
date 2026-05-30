@@ -1,6 +1,6 @@
 # ai-usagebar
 
-Waybar widget and tabbed TUI for AI plan usage across **Anthropic Claude**, **OpenAI Codex/ChatGPT**, **Z.AI (GLM)**, and **OpenRouter**.
+Waybar widget and tabbed TUI for AI plan usage across **Anthropic Claude**, **OpenAI Codex/ChatGPT**, **Z.AI (GLM)**, **OpenRouter**, and **DeepSeek**.
 
 This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar) and stays drop-in compatible with it. It keeps the minimalist Pango-bordered tooltip, Omarchy theme auto-detection, and flock-protected OAuth refresh, then adds three more vendors and a proper testable codebase instead of one long shell script.
 
@@ -60,6 +60,7 @@ Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth c
 | OpenAI | OAuth, read from `~/.codex/auth.json` | Run `codex login` once. Token auto-refreshes. |
 | Z.AI | API key (`ZAI_API_KEY` env or `[zai] api_key` in config) | Set either. |
 | OpenRouter | API key (`OPENROUTER_API_KEY` env or `[openrouter] api_key` in config) | Set either. |
+| DeepSeek | API key (`DEEPSEEK_API_KEY` env or `[deepseek] api_key` in config) | Set either. Disabled by default — add `[deepseek] enabled = true` to config. |
 
 ### Credential resolution order (for API-key vendors)
 
@@ -77,13 +78,13 @@ For each API-key vendor, ai-usagebar checks in this order:
 
 ## Configuration
 
-`~/.config/ai-usagebar/config.toml` (optional — defaults enable all four vendors). Full example:
+`~/.config/ai-usagebar/config.toml` (optional — defaults enable all four OAuth/env-key vendors). Full example:
 
 ```toml
 [ui]
 # Which vendor the widget shows when --vendor is omitted, AND which tab
 # is selected when the TUI opens. Defaults to anthropic when not set.
-# primary = "anthropic"   # anthropic | openai | zai | openrouter
+# primary = "anthropic"   # anthropic | openai | zai | openrouter | deepseek
 
 [anthropic]
 enabled = true
@@ -103,6 +104,11 @@ api_key_env = "ZAI_API_KEY"
 enabled = true
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
+
+[deepseek]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "DEEPSEEK_API_KEY"
+# api_key = "sk-..."       # used if DEEPSEEK_API_KEY is unset; chmod 600 the file!
 ```
 
 ## Quick start
@@ -113,6 +119,7 @@ ai-usagebar                        # uses [ui] primary (defaults to anthropic)
 ai-usagebar --vendor openai
 ai-usagebar --vendor zai
 ai-usagebar --vendor openrouter
+ai-usagebar --vendor deepseek
 
 # Force Waybar JSON (e.g. piping into jq).
 ai-usagebar --json

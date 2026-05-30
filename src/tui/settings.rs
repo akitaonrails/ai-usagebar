@@ -26,6 +26,7 @@ pub enum Focus {
     Primary,
     ZaiKey,
     OpenrouterKey,
+    DeepseekKey,
     SaveButton,
 }
 
@@ -34,7 +35,8 @@ impl Focus {
         match self {
             Focus::Primary => Focus::ZaiKey,
             Focus::ZaiKey => Focus::OpenrouterKey,
-            Focus::OpenrouterKey => Focus::SaveButton,
+            Focus::OpenrouterKey => Focus::DeepseekKey,
+            Focus::DeepseekKey => Focus::SaveButton,
             Focus::SaveButton => Focus::Primary,
         }
     }
@@ -43,7 +45,8 @@ impl Focus {
             Focus::Primary => Focus::SaveButton,
             Focus::ZaiKey => Focus::Primary,
             Focus::OpenrouterKey => Focus::ZaiKey,
-            Focus::SaveButton => Focus::OpenrouterKey,
+            Focus::DeepseekKey => Focus::OpenrouterKey,
+            Focus::SaveButton => Focus::DeepseekKey,
         }
     }
 }
@@ -149,6 +152,7 @@ pub struct SettingsState {
     pub primary: VendorId,
     pub zai: KeyInput,
     pub openrouter: KeyInput,
+    pub deepseek: KeyInput,
     /// One-line status displayed in the footer ("Saved", "Error: ...", "").
     pub status: String,
 }
@@ -160,6 +164,7 @@ impl SettingsState {
             primary: cfg.ui.primary.unwrap_or(VendorId::Anthropic),
             zai: KeyInput::from_config(cfg.zai.api_key.as_deref()),
             openrouter: KeyInput::from_config(cfg.openrouter.api_key.as_deref()),
+            deepseek: KeyInput::from_config(cfg.deepseek.api_key.as_deref()),
             status: String::new(),
         }
     }
@@ -200,6 +205,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
         match state.focus {
             Focus::ZaiKey => state.zai.toggle_reveal(),
             Focus::OpenrouterKey => state.openrouter.toggle_reveal(),
+            Focus::DeepseekKey => state.deepseek.toggle_reveal(),
             _ => {}
         }
         return Action::Continue;
@@ -231,6 +237,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
         Focus::Primary => handle_primary(state, code),
         Focus::ZaiKey => handle_input(&mut state.zai, code),
         Focus::OpenrouterKey => handle_input(&mut state.openrouter, code),
+        Focus::DeepseekKey => handle_input(&mut state.deepseek, code),
         Focus::SaveButton => {
             if matches!(code, KeyCode::Enter) {
                 return match save_to_config_default(state) {
@@ -313,6 +320,10 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
     if state.openrouter.dirty && !state.openrouter.buf.is_empty() {
         set_string(&mut doc, "openrouter", "api_key", &state.openrouter.buf)?;
     }
+    // [deepseek].api_key — same
+    if state.deepseek.dirty && !state.deepseek.buf.is_empty() {
+        set_string(&mut doc, "deepseek", "api_key", &state.deepseek.buf)?;
+    }
 
     let bytes = doc.to_string();
     crate::cache::atomic_write(path, bytes.as_bytes())?;
@@ -380,17 +391,19 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // primary label
-            Constraint::Length(2), // primary radio row
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // zai label
-            Constraint::Length(2), // zai input
-            Constraint::Length(1), // openrouter label
-            Constraint::Length(2), // openrouter input
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // save button
-            Constraint::Length(1), // status
-            Constraint::Min(0),    // hint
+            Constraint::Length(1), // [0] primary label
+            Constraint::Length(2), // [1] primary radio row
+            Constraint::Length(1), // [2] spacer
+            Constraint::Length(1), // [3] zai label
+            Constraint::Length(2), // [4] zai input
+            Constraint::Length(1), // [5] openrouter label
+            Constraint::Length(2), // [6] openrouter input
+            Constraint::Length(1), // [7] deepseek label
+            Constraint::Length(2), // [8] deepseek input
+            Constraint::Length(1), // [9] spacer
+            Constraint::Length(1), // [10] save button
+            Constraint::Length(1), // [11] status
+            Constraint::Min(0),    // [12] hint
         ])
         .split(inner);
 
@@ -451,6 +464,27 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
         chunks[6],
     );
 
+    // DeepSeek key.
+    f.render_widget(
+        Paragraph::new(label(
+            "DeepSeek API key (DEEPSEEK_API_KEY env wins if set)",
+            state.focus == Focus::DeepseekKey,
+            fg,
+            accent,
+        )),
+        chunks[7],
+    );
+    f.render_widget(
+        Paragraph::new(render_input(
+            &state.deepseek,
+            state.focus == Focus::DeepseekKey,
+            fg,
+            accent,
+            dim,
+        )),
+        chunks[8],
+    );
+
     // Save button.
     let save_style = if state.focus == Focus::SaveButton {
         Style::default()
@@ -464,7 +498,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             "   [ Save (Ctrl-S) ]   ",
             save_style,
         ))),
-        chunks[8],
+        chunks[10],
     );
 
     // Status line.
@@ -474,7 +508,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
                 state.status.clone(),
                 Style::default().fg(dim),
             ))),
-            chunks[9],
+            chunks[11],
         );
     }
 
@@ -483,7 +517,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
         "  Tab/↑↓ move · ←→ pick vendor · Ctrl-V reveal · Ctrl-S save · Esc cancel",
         Style::default().fg(dim),
     )]);
-    f.render_widget(Paragraph::new(hint), chunks[10]);
+    f.render_widget(Paragraph::new(hint), chunks[12]);
 }
 
 fn label(text: &str, focused: bool, fg: Color, accent: Color) -> Line<'static> {
@@ -518,6 +552,7 @@ fn vendor_label(v: VendorId) -> &'static str {
         VendorId::Openai => "OpenAI",
         VendorId::Zai => "Z.AI",
         VendorId::Openrouter => "OpenRouter",
+        VendorId::Deepseek => "DeepSeek",
     }
 }
 
@@ -582,6 +617,7 @@ mod tests {
             primary,
             zai: KeyInput::from_config(Some(zai)),
             openrouter: KeyInput::from_config(Some(opr)),
+            deepseek: KeyInput::default(),
             status: String::new(),
         };
         // Mark dirty so save writes them.
@@ -596,11 +632,13 @@ mod tests {
             Focus::Primary,
             Focus::ZaiKey,
             Focus::OpenrouterKey,
+            Focus::DeepseekKey,
             Focus::SaveButton,
         ];
+        let n = order.len();
         for (i, f) in order.iter().enumerate() {
-            assert_eq!(f.next(), order[(i + 1) % 4]);
-            assert_eq!(f.prev(), order[(i + 3) % 4]);
+            assert_eq!(f.next(), order[(i + 1) % n]);
+            assert_eq!(f.prev(), order[(i + n - 1) % n]);
         }
     }
 
@@ -734,6 +772,7 @@ api_key_env = "OPENROUTER_API_KEY"
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
             status: String::new(),
         };
         assert_eq!(
@@ -755,6 +794,7 @@ api_key_env = "OPENROUTER_API_KEY"
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
             status: String::new(),
         };
         assert_eq!(
@@ -770,6 +810,7 @@ api_key_env = "OPENROUTER_API_KEY"
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
             status: String::new(),
         };
         handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
@@ -787,6 +828,7 @@ api_key_env = "OPENROUTER_API_KEY"
             primary: VendorId::Anthropic,
             zai: KeyInput::from_config(Some("secret")),
             openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
             status: String::new(),
         };
         assert!(!s.zai.revealed);

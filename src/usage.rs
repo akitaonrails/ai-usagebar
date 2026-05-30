@@ -77,6 +77,34 @@ impl ExtraUsage {
     }
 }
 
+/// DeepSeek — credit balance from `/user/balance`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeepseekSnapshot {
+    pub is_available: bool,
+    /// Current balance (prefer USD, fallback to CNY).
+    pub balance: f64,
+    /// Free-granted credits component.
+    pub granted: f64,
+    /// Topped-up (purchased) credits component.
+    pub topped_up: f64,
+    /// The currency of the above amounts ("USD", "CNY", etc.).
+    pub currency: String,
+}
+
+impl Eq for DeepseekSnapshot {}
+
+impl Default for DeepseekSnapshot {
+    fn default() -> Self {
+        Self {
+            is_available: false,
+            balance: 0.0,
+            granted: 0.0,
+            topped_up: 0.0,
+            currency: String::new(),
+        }
+    }
+}
+
 /// Discriminated union of vendor-specific snapshots. The widget and TUI match
 /// on this to pick a renderer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +113,7 @@ pub enum VendorSnapshot {
     Openai(OpenAiSnapshot),
     Zai(ZaiSnapshot),
     Openrouter(OpenRouterSnapshot),
+    Deepseek(DeepseekSnapshot),
 }
 
 /// OpenAI Codex OAuth — mirrors Anthropic's two-window + extras pattern.

@@ -36,6 +36,7 @@ fn vendor_label(id: VendorId) -> &'static str {
         VendorId::Openai => "OpenAI",
         VendorId::Zai => "GLM (Z.AI)",
         VendorId::Openrouter => "OpenRouter",
+        VendorId::Deepseek => "DeepSeek",
     }
 }
 
