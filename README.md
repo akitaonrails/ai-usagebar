@@ -176,6 +176,14 @@ The `{vendor_short}` placeholder always expands to a 3-letter vendor ID (`cld` /
 
 `signal: 13` lets the scroll-cycle commands refresh the bar instantly (via `SIGRTMIN+13`) instead of waiting for the next 300s interval.
 
+If your Waybar theme puts a tray expander immediately after `custom/aibar`, such as Omarchy's `group/tray-expander` with `custom/expand-icon`, the usage text can sit very close to the expand icon. Add right padding for the module in your Waybar CSS if you want extra spacing:
+
+```css
+#custom-aibar {
+    padding-right: 18px;
+}
+```
+
 ### Per-vendor modules
 
 If you'd rather see them all at once:
