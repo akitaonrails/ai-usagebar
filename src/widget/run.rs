@@ -102,7 +102,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         )));
     }
     match vendor {
-        Vendor::Anthropic => anthropic_output(cli).await,
+        Vendor::Anthropic => anthropic_output(cli, &config).await,
         Vendor::Openrouter => openrouter_output(cli, &config).await,
         Vendor::Openai => openai_output(cli, &config).await,
         Vendor::Zai => zai_output(cli, &config).await,
@@ -241,12 +241,15 @@ async fn deepseek_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     ))
 }
 
-async fn anthropic_output(cli: &Cli) -> Result<WaybarOutput> {
+async fn anthropic_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
     let cache = vendor_cache(cli, "anthropic")?;
     let creds_path = match cli.creds_path.as_deref() {
         Some(p) => p.to_path_buf(),
-        None => anthropic::creds::default_path()?,
+        None => match config.anthropic.credentials_path.as_deref() {
+            Some(p) => p.to_path_buf(),
+            None => anthropic::creds::default_path()?,
+        },
     };
     let endpoints = anthropic::fetch::Endpoints::default();
     let outcome = match anthropic::fetch_snapshot(
