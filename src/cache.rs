@@ -235,6 +235,19 @@ fn xdg_cache_dir() -> Result<PathBuf> {
         .ok_or_else(|| AppError::Other("could not resolve XDG cache dir (no HOME?)".into()))
 }
 
+/// The user's home directory, resolved cross-platform via `directories`
+/// (`$HOME` on Unix/macOS, `%USERPROFILE%` / the Known Folder on Windows).
+///
+/// The OAuth-credential vendors (`anthropic`, `openai`) read their CLI-managed
+/// files from fixed dotfiles under `$HOME`; they share this resolver the same
+/// way they already share [`atomic_write`], so home resolution lives in one
+/// place rather than being reimplemented per vendor.
+pub fn home_dir() -> Result<PathBuf> {
+    directories::BaseDirs::new()
+        .map(|b| b.home_dir().to_path_buf())
+        .ok_or_else(|| AppError::Other("could not resolve home directory (no HOME?)".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

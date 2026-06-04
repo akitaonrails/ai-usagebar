@@ -50,6 +50,25 @@ sudo make install                  # → /usr/local/bin
 make install PREFIX=$HOME/.local   # → ~/.local/bin
 ```
 
+### Windows
+
+The **Waybar widget is Wayland-only and does not apply to Windows.** The
+**`ai-usagebar-tui`** binary, however, runs natively, and `ai-usagebar --json`
+/ `--pretty` work too (handy for feeding a custom tray/widget). Build with a
+standard Rust toolchain:
+
+```powershell
+cargo build --release
+# binaries land in target\release\ai-usagebar.exe and ai-usagebar-tui.exe
+```
+
+Credentials are read from the Windows user profile rather than `$HOME`:
+`%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
+`%USERPROFILE%\.codex\auth.json` (OpenAI Codex). Run the official `claude` /
+`codex` CLI once on Windows to populate them, exactly as on Linux/macOS.
+API-key vendors (Z.AI, OpenRouter, DeepSeek) work unchanged via environment
+variables or `config.toml`.
+
 ## Authentication
 
 Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth credentials that their official CLIs already wrote to disk, so **no env vars are needed.** Z.AI and OpenRouter use API keys. You can pass those through env vars or, if you don't source secrets in your shell, put them inline in `config.toml`.

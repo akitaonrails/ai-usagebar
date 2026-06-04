@@ -34,7 +34,6 @@
 //! - **OpenRouter**: `/credits` returns `{data:{total_credits,total_usage}}`
 //!   and `/key` returns `{data:{usage,is_free_tier}}`.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use ai_usagebar::anthropic;
@@ -60,10 +59,7 @@ fn assert_pct(label: &str, p: i32) {
 #[tokio::test]
 #[ignore = "live API; run with --ignored"]
 async fn anthropic_live() {
-    let creds_path = match std::env::var_os("HOME") {
-        Some(home) => PathBuf::from(home).join(".claude/.credentials.json"),
-        None => panic!("HOME not set"),
-    };
+    let creds_path = anthropic::creds::default_path().expect("resolve home directory");
     assert!(
         creds_path.exists(),
         "no Claude credentials at {} — log in with `claude` first",
@@ -111,10 +107,7 @@ async fn anthropic_live() {
 #[tokio::test]
 #[ignore = "live API; run with --ignored"]
 async fn openai_live() {
-    let creds_path = match std::env::var_os("HOME") {
-        Some(home) => PathBuf::from(home).join(".codex/auth.json"),
-        None => panic!("HOME not set"),
-    };
+    let creds_path = openai::creds::default_path().expect("resolve home directory");
     assert!(
         creds_path.exists(),
         "no Codex credentials at {} — log in with `codex login` first",

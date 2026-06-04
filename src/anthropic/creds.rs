@@ -99,10 +99,15 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
-/// Default location: `~/.claude/.credentials.json`.
+/// Default location: `~/.claude/.credentials.json` (Unix/macOS) or
+/// `%USERPROFILE%\.claude\.credentials.json` (Windows).
+///
+/// Home is resolved through [`crate::cache::home_dir`] so every platform's
+/// convention is honored in one place.
 pub fn default_path() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").ok_or_else(|| AppError::Other("HOME not set".into()))?;
-    Ok(PathBuf::from(home).join(".claude/.credentials.json"))
+    Ok(crate::cache::home_dir()?
+        .join(".claude")
+        .join(".credentials.json"))
 }
 
 pub fn read_from(path: &Path) -> Result<CredentialsFile> {
@@ -264,6 +269,24 @@ mod tests {
         let path = std::path::Path::new("/nonexistent/ai-usagebar/.credentials.json");
         let err = read_from(path).unwrap_err();
         assert!(matches!(err, AppError::Io { .. }));
+    }
+
+    #[test]
+    fn default_path_ends_with_claude_credentials() {
+        let p = default_path().unwrap();
+        // The trailing two segments are stable across platforms; only the home
+        // prefix differs (resolved by directories::BaseDirs).
+        assert!(p.ends_with(std::path::Path::new(".claude").join(".credentials.json")));
+    }
+
+    // On Windows the home prefix is %USERPROFILE%, not $HOME — assert the
+    // resolver honors it so the credential file is found natively.
+    #[cfg(windows)]
+    #[test]
+    fn default_path_uses_userprofile_on_windows() {
+        let p = default_path().unwrap();
+        let userprofile = std::env::var("USERPROFILE").expect("USERPROFILE set on Windows");
+        assert!(p.starts_with(std::path::Path::new(&userprofile)));
     }
 
     #[test]
