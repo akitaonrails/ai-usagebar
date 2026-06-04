@@ -9,7 +9,26 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Native Windows support for the `ai-usagebar` and `ai-usagebar-tui`
+  binaries.** Credential paths now resolve the home directory through
+  `directories::BaseDirs` (a new shared `cache::home_dir()` helper) instead
+  of reading `$HOME` directly, so Anthropic (`%USERPROFILE%\.claude\.credentials.json`)
+  and OpenAI Codex (`%USERPROFILE%\.codex\auth.json`) credentials are found
+  natively on Windows. The Waybar refresh (`pkill -RTMIN+13 waybar`) is gated
+  to Unix and becomes a no-op elsewhere, since Waybar is Wayland-only. Linux
+  and macOS behavior is unchanged. The Waybar widget itself remains
+  Wayland-only; on Windows the TUI is the entry point.
+
+### Fixed
+
+- **TUI double-processed keystrokes on Windows Terminal.** Terminals that
+  report key `Repeat`/`Release` events in addition to `Press` (Windows
+  Terminal, and emulators advertising the Kitty keyboard protocol) made one
+  Tab/arrow press move several tabs and holding a key fly through them. The
+  TUI now acts only on `KeyEventKind::Press`. Harmless and beneficial on all
+  platforms.
 
 ## [0.5.1] — 2026-06-01
 

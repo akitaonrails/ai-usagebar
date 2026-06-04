@@ -16,7 +16,7 @@ use ai_usagebar::tui::view::draw;
 use ai_usagebar::vendor::{HTTP_CLIENT_TIMEOUT, VendorId};
 use chrono::Utc;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -103,6 +103,16 @@ async fn event_loop<B: ratatui::backend::Backend>(
                 let polled = res.unwrap_or(Ok(false)).unwrap_or(false);
                 if polled {
                     if let Ok(Event::Key(k)) = event::read() {
+                        // On Windows Terminal (and terminals advertising the
+                        // Kitty keyboard protocol) crossterm reports key Repeat
+                        // (auto-repeat while held) and Release events in addition
+                        // to Press. Acting on anything but Press makes one tap
+                        // move several tabs and holding a key fly through them.
+                        // Treat each *press* as exactly one action; ignore
+                        // Repeat and Release entirely.
+                        if k.kind != KeyEventKind::Press {
+                            continue;
+                        }
                         // Settings overlay consumes all keys when open.
                         if let Some(s) = app.settings.as_mut() {
                             use ai_usagebar::tui::settings::{Action as SAction, handle_key as shandle};
