@@ -609,7 +609,21 @@ pub use crossterm::event::{KeyCode, KeyModifiers};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
+    use tempfile::TempDir;
+
+    /// A config path inside a fresh `TempDir`, with no open handle on the file.
+    /// `save_to_path` rewrites atomically (rename over destination), which on
+    /// Windows fails if the destination is still open — so tests must not hold a
+    /// live `NamedTempFile` handle on the target. Returns the dir (kept alive by
+    /// the caller) and the path; the file may or may not exist yet.
+    fn temp_config(initial: Option<&str>) -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        if let Some(contents) = initial {
+            std::fs::write(&path, contents).unwrap();
+        }
+        (dir, path)
+    }
 
     fn state_with(zai: &str, opr: &str, primary: VendorId) -> SettingsState {
         let mut s = SettingsState {
@@ -688,10 +702,10 @@ mod tests {
 
     #[test]
     fn save_to_path_writes_minimal_toml_when_starting_empty() {
-        let f = NamedTempFile::new().unwrap();
+        let (_dir, path) = temp_config(None);
         let s = state_with("zk", "ok", VendorId::Zai);
-        save_to_path(&s, f.path()).unwrap();
-        let raw = std::fs::read_to_string(f.path()).unwrap();
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("primary = \"zai\""));
         assert!(raw.contains("[zai]"));
         assert!(raw.contains("api_key = \"zk\""));
@@ -701,9 +715,7 @@ mod tests {
 
     #[test]
     fn save_to_path_preserves_existing_comments_and_unrelated_fields() {
-        let f = NamedTempFile::new().unwrap();
-        std::fs::write(
-            f.path(),
+        let (_dir, path) = temp_config(Some(
             r##"# my comment
 [ui]
 # pre-existing comment
@@ -719,13 +731,12 @@ plan_tier = "pro"
 enabled = true
 api_key_env = "OPENROUTER_API_KEY"
 "##,
-        )
-        .unwrap();
+        ));
 
         let s = state_with("zk2", "ok2", VendorId::Openrouter);
-        save_to_path(&s, f.path()).unwrap();
+        save_to_path(&s, &path).unwrap();
 
-        let raw = std::fs::read_to_string(f.path()).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
         // Comments survive.
         assert!(raw.contains("# my comment"));
         assert!(raw.contains("# pre-existing comment"));
@@ -742,14 +753,14 @@ api_key_env = "OPENROUTER_API_KEY"
 
     #[test]
     fn save_does_not_write_empty_key_when_dirty_but_blank() {
-        let f = NamedTempFile::new().unwrap();
+        let (_dir, path) = temp_config(None);
         let mut s = state_with("", "", VendorId::Anthropic);
         // Mark dirty but leave buf empty (user opened dialog with empty
         // field, focused it, did nothing).
         s.zai.dirty = true;
         s.openrouter.dirty = true;
-        save_to_path(&s, f.path()).unwrap();
-        let raw = std::fs::read_to_string(f.path()).unwrap();
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
         // No `api_key = ""` lines should be written.
         assert!(!raw.contains("api_key ="));
     }
@@ -758,10 +769,10 @@ api_key_env = "OPENROUTER_API_KEY"
     #[cfg(unix)]
     fn save_chmods_to_600() {
         use std::os::unix::fs::PermissionsExt;
-        let f = NamedTempFile::new().unwrap();
+        let (_dir, path) = temp_config(None);
         let s = state_with("zk", "ok", VendorId::Zai);
-        save_to_path(&s, f.path()).unwrap();
-        let mode = std::fs::metadata(f.path()).unwrap().permissions().mode();
+        save_to_path(&s, &path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
 
@@ -840,13 +851,12 @@ api_key_env = "OPENROUTER_API_KEY"
 
     #[test]
     fn handle_key_ctrl_s_attempts_save_from_any_field() {
-        let f = NamedTempFile::new().unwrap();
-        let path_str = f.path().to_string_lossy().into_owned();
+        let (_dir, path) = temp_config(None);
         // We can't easily redirect default_config_path() in the test, so we
         // exercise save_to_path directly instead.
         let s = state_with("zk", "ok", VendorId::Zai);
-        save_to_path(&s, f.path()).unwrap();
-        let raw = std::fs::read_to_string(&path_str).unwrap();
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("api_key = \"zk\""));
     }
 }

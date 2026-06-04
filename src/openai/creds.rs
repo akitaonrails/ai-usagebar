@@ -101,13 +101,23 @@ fn parse_jwt_claims(token: &str) -> Option<serde_json::Value> {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
 
     fn write_auth(s: &str) -> NamedTempFile {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(s.as_bytes()).unwrap();
         f.flush().unwrap();
         f
+    }
+
+    /// Like `write_auth`, but writes to a named file inside a `TempDir` and
+    /// closes the handle, so `write_back`'s atomic rename-over-destination
+    /// succeeds on Windows (which refuses to replace a still-open file).
+    fn write_auth_closed(s: &str) -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("auth.json");
+        std::fs::write(&path, s).unwrap();
+        (dir, path)
     }
 
     /// Build a fake JWT with the given claims (no signature verification).
@@ -173,13 +183,13 @@ mod tests {
             r#"{{"tokens":{{"access_token":"AT","refresh_token":"RT","id_token":"{jwt}"}},
                 "some_other_field":"keep-me"}}"#
         );
-        let f = write_auth(&body);
-        let mut auth = read_from(f.path()).unwrap();
+        let (_dir, path) = write_auth_closed(&body);
+        let mut auth = read_from(&path).unwrap();
         auth.tokens.access_token = "NEW".into();
-        write_back(f.path(), &auth).unwrap();
+        write_back(&path, &auth).unwrap();
 
         let v: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(f.path()).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(v["some_other_field"], "keep-me");
         assert_eq!(v["tokens"]["access_token"], "NEW");
     }

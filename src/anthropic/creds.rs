@@ -177,13 +177,25 @@ pub fn write_back(path: &Path, new_oauth: &OauthCreds) -> Result<()> {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
 
     fn write_creds(s: &str) -> NamedTempFile {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(s.as_bytes()).unwrap();
         f.flush().unwrap();
         f
+    }
+
+    /// Like `write_creds`, but writes to a named file inside a `TempDir` and
+    /// closes the handle. `write_back` rewrites the file via an atomic
+    /// rename-over-destination, which on Windows fails if the destination is
+    /// still open (as a live `NamedTempFile` handle would be). Returns the dir
+    /// (kept alive by the caller) and the closed file's path.
+    fn write_creds_closed(s: &str) -> (TempDir, std::path::PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+        std::fs::write(&path, s).unwrap();
+        (dir, path)
     }
 
     #[test]
@@ -328,13 +340,13 @@ mod tests {
 
     #[test]
     fn write_back_round_trips_and_preserves_unknown_fields() {
-        let f = write_creds(
+        let (_dir, path) = write_creds_closed(
             r#"{"claudeAiOauth":{
                 "accessToken":"OLD","refreshToken":"OLD","expiresAt": 0,
                 "subscriptionType":"pro","rateLimitTier":""
             },"someOtherField":"keep me"}"#,
         );
-        let creds = read_from(f.path()).unwrap();
+        let creds = read_from(&path).unwrap();
         let new_oauth = OauthCreds {
             access_token: "NEW".into(),
             refresh_token: "NEW_RT".into(),
@@ -343,9 +355,9 @@ mod tests {
             rate_limit_tier: "".into(),
             scopes: creds.claude_ai_oauth.scopes.clone(),
         };
-        write_back(f.path(), &new_oauth).unwrap();
+        write_back(&path, &new_oauth).unwrap();
         // Re-read & verify the unknown field survived.
-        let raw = std::fs::read_to_string(f.path()).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["someOtherField"], "keep me");
         assert_eq!(v["claudeAiOauth"]["accessToken"], "NEW");
