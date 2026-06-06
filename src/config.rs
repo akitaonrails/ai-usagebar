@@ -158,8 +158,9 @@ pub fn resolve_api_key(
     }
     Err(crate::error::AppError::Credentials(format!(
         "{vendor_label}: no API key. Either export {env_var_name} or set \
-         `api_key` under [{}] in ~/.config/ai-usagebar/config.toml (chmod 600).",
-        vendor_label.to_lowercase()
+         `api_key` under [{}] in {}.",
+        vendor_label.to_lowercase(),
+        config_path_hint()
     )))
 }
 
@@ -200,9 +201,19 @@ impl Config {
     }
 }
 
-fn default_path() -> Option<PathBuf> {
+pub fn default_path() -> Option<PathBuf> {
     let proj = directories::ProjectDirs::from("", "", "ai-usagebar")?;
     Some(proj.config_dir().join("config.toml"))
+}
+
+/// Resolved `config.toml` path as a string for user-facing messages. Uses the
+/// platform's config dir (`directories::ProjectDirs`), so it reads correctly on
+/// Linux, macOS, and Windows instead of hard-coding the Unix `~/.config` path.
+/// Falls back to the bare filename if the path can't be resolved.
+pub fn config_path_hint() -> String {
+    default_path()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "config.toml".to_string())
 }
 
 #[cfg(test)]
@@ -330,6 +341,13 @@ enabled = false
             }
             other => panic!("expected Credentials error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn config_path_hint_ends_with_config_toml() {
+        // Platform-resolved (Linux/macOS/Windows), but always ends in the
+        // config filename — the trailing segment is what messages rely on.
+        assert!(config_path_hint().ends_with("config.toml"));
     }
 
     #[test]

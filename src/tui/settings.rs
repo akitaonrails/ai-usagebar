@@ -181,6 +181,24 @@ pub enum Action {
     SavedAndClose,
 }
 
+/// Permission note appended to the "saved" status line. The overlay `chmod
+/// 600`s the file on Unix; Windows has no such step, so the note is empty there
+/// (keeps the message platform-honest).
+#[cfg(unix)]
+const PERMS_NOTE: &str = " (chmod 600)";
+#[cfg(not(unix))]
+const PERMS_NOTE: &str = "";
+
+/// Status line after a successful save: the platform-resolved config path plus
+/// the platform-appropriate permission note.
+fn saved_status() -> String {
+    format!(
+        "saved to {}{}",
+        crate::config::config_path_hint(),
+        PERMS_NOTE
+    )
+}
+
 /// Key map. Returns the action to perform after the keypress.
 pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) -> Action {
     // Esc always closes without saving.
@@ -191,7 +209,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
     if matches!(code, KeyCode::Char('s')) && mods.contains(KeyModifiers::CONTROL) {
         return match save_to_config_default(state) {
             Ok(()) => {
-                state.status = "saved to ~/.config/ai-usagebar/config.toml (chmod 600)".into();
+                state.status = saved_status();
                 Action::SavedAndClose
             }
             Err(e) => {
@@ -242,8 +260,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
             if matches!(code, KeyCode::Enter) {
                 return match save_to_config_default(state) {
                     Ok(()) => {
-                        state.status =
-                            "saved to ~/.config/ai-usagebar/config.toml (chmod 600)".into();
+                        state.status = saved_status();
                         Action::SavedAndClose
                     }
                     Err(e) => {
@@ -366,8 +383,7 @@ fn set_string(doc: &mut DocumentMut, section: &str, key: &str, new_value: &str) 
 }
 
 fn default_config_path() -> Result<PathBuf> {
-    directories::ProjectDirs::from("", "", "ai-usagebar")
-        .map(|p| p.config_dir().join("config.toml"))
+    crate::config::default_path()
         .ok_or_else(|| AppError::Other("could not resolve config dir".into()))
 }
 

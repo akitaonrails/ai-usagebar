@@ -97,8 +97,9 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
     let vendor = cli.resolved_vendor(&config);
     if !config.is_enabled(vendor.to_id()) {
         return Err(AppError::Other(format!(
-            "vendor {:?} is disabled in ~/.config/ai-usagebar/config.toml",
-            vendor
+            "vendor {:?} is disabled in {}",
+            vendor,
+            crate::config::config_path_hint()
         )));
     }
     match vendor {

@@ -298,7 +298,19 @@ mod tests {
     fn default_path_uses_userprofile_on_windows() {
         let p = default_path().unwrap();
         let userprofile = std::env::var("USERPROFILE").expect("USERPROFILE set on Windows");
-        assert!(p.starts_with(std::path::Path::new(&userprofile)));
+        // directories::BaseDirs resolves the home via SHGetKnownFolderPath, which
+        // can differ from %USERPROFILE% in casing or path separator. Compare on a
+        // normalized basis (lowercased, backslashes) rather than Path::starts_with,
+        // which compares components case-sensitively even on Windows.
+        let norm = |s: &str| s.to_lowercase().replace('/', "\\");
+        let p_norm = norm(&p.to_string_lossy());
+        let up_norm = norm(&userprofile);
+        assert!(
+            p_norm.starts_with(up_norm.as_str()),
+            "{} should live under {}",
+            p.display(),
+            userprofile
+        );
     }
 
     #[test]

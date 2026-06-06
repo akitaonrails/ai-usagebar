@@ -39,7 +39,10 @@ async fn run() -> io::Result<()> {
     let mut config = Config::load().unwrap_or_default();
     let vendors = config.enabled_vendors();
     if vendors.is_empty() {
-        eprintln!("No vendors are enabled in ~/.config/ai-usagebar/config.toml. Exiting.");
+        eprintln!(
+            "No vendors are enabled in {}. Exiting.",
+            ai_usagebar::config::config_path_hint()
+        );
         return Ok(());
     }
 
