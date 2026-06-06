@@ -1,0 +1,32 @@
+name: CI
+
+# Native Windows test signal for PRs. The Waybar widget is Wayland-only, so the
+# Linux gate lives in the maintainer's existing flow; this job proves the CLI +
+# TUI build and test on a real windows-latest runner (no WSL).
+on:
+  push:
+    branches: [main, windows-backend]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: test (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # ring assembles its primitives on x86_64 and needs nasm; the runner does
+      # not ship it on PATH. No-op if a future image already provides it.
+      - uses: ilammy/setup-nasm@v1
+
+      - name: Test
+        run: cargo test --all-targets --locked
