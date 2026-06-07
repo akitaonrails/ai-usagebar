@@ -81,6 +81,17 @@ patch version instead.
   the user's choice (and `chmod 600`ed by the Settings overlay), but
   **never commit** a real key. The `.gitignore` covers `.env`,
   `*.credentials.json`, and `.claude/`.
+- **Tests are hermetic.** A `#[test]`/`#[tokio::test]` must never read or
+  write a real `$HOME`/`$XDG` path (config, cache, creds, Omarchy theme)
+  or branch on an ambient env var — the AUR `check()` runs `cargo test`
+  during `makepkg`, so any test that reads a user's *customized* files
+  fails the install on their machine. Always inject the path/dependency
+  via the test seam, never the real-path resolver:
+  `Cache::at` not `for_vendor`, `active::{read_from,write_to,cycle_at}`
+  not `{read,write,cycle}`, `creds::read_from` not `default_path`,
+  `Theme::merged_with_omarchy_file` not `merged_with_omarchy`,
+  `Cli::resolve_vendor_with` not `resolved_vendor`, `App::with_theme`
+  not `new`. Live API tests stay behind `#[ignore]` (see `tests/live.rs`).
 
 ## Secret-discipline rules (learned the hard way)
 

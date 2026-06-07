@@ -49,12 +49,23 @@ pub struct App {
 
 impl App {
     pub fn new(vendors: Vec<VendorId>) -> Self {
+        // Production: resolve the palette from the environment (Omarchy theme
+        // if present, else One Dark).
+        Self::with_theme(vendors, Theme::default().merged_with_omarchy())
+    }
+
+    /// Like [`App::new`] but with an explicit theme. Lets tests build an `App`
+    /// without reading the real Omarchy theme file
+    /// (`$HOME/.config/omarchy/current/theme/colors.toml`) — `new` resolves
+    /// that path and the `$HOME` env var via `merged_with_omarchy`, which is
+    /// not hermetic. Production code uses `new`/`new_with_primary`.
+    pub fn with_theme(vendors: Vec<VendorId>, theme: Theme) -> Self {
         let n = vendors.len();
         Self {
             vendors,
             active: 0,
             tabs: vec![TabState::Loading; n],
-            theme: Theme::default().merged_with_omarchy(),
+            theme,
             last_refresh: Utc::now(),
             quit: false,
             settings: None,
@@ -221,16 +232,20 @@ pub const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 mod tests {
     use super::*;
 
+    // Use `App::with_theme(.., Theme::default())` rather than `App::new`, which
+    // would read the real Omarchy theme file + `$HOME`. The tab-selection logic
+    // under test is theme-agnostic.
     #[test]
     fn select_primary_moves_to_enabled_vendor() {
-        let mut app = App::new(vec![VendorId::Anthropic, VendorId::Openrouter]);
+        let mut app =
+            App::with_theme(vec![VendorId::Anthropic, VendorId::Openrouter], Theme::default());
         app.select_primary(Some(VendorId::Openrouter));
         assert_eq!(app.active_vendor(), Some(VendorId::Openrouter));
     }
 
     #[test]
     fn select_primary_ignores_disabled_vendor() {
-        let mut app = App::new(vec![VendorId::Anthropic]);
+        let mut app = App::with_theme(vec![VendorId::Anthropic], Theme::default());
         app.select_primary(Some(VendorId::Openai));
         assert_eq!(app.active_vendor(), Some(VendorId::Anthropic));
     }

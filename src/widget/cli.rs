@@ -135,11 +135,38 @@ impl Cli {
     ///   2. persisted scroll-cycle state (`~/.cache/ai-usagebar/active_vendor`)
     ///   3. `[ui] primary` from config
     ///   4. anthropic (lowest)
+    ///
+    /// This reads the persisted scroll-cycle state from disk via
+    /// [`crate::active::read`]. The pure precedence logic lives in
+    /// [`Cli::resolve_vendor_with`] so it can be unit-tested without touching
+    /// `~/.cache/ai-usagebar/active_vendor`.
     pub fn resolved_vendor(&self, config: &crate::config::Config) -> Vendor {
+        // Only consult the scroll-cycle state file when it could actually
+        // matter. An explicit `--vendor` wins outright (precedence #1), so we
+        // skip the disk read entirely in that case — preserving the original
+        // short-circuit and keeping the documented `--vendor` widget config off
+        // the `active_vendor` read path.
+        let active = if self.vendor.is_some() {
+            None
+        } else {
+            crate::active::read()
+        };
+        self.resolve_vendor_with(config, active)
+    }
+
+    /// Pure precedence resolution given an explicit scroll-cycle `active`
+    /// override (i.e. whatever [`crate::active::read`] returned). Split out
+    /// from the disk read so tests exercise the precedence rules hermetically
+    /// instead of depending on the developer's real `active_vendor` file.
+    pub fn resolve_vendor_with(
+        &self,
+        config: &crate::config::Config,
+        active: Option<crate::vendor::VendorId>,
+    ) -> Vendor {
         if let Some(v) = self.vendor {
             return v;
         }
-        if let Some(id) = crate::active::read() {
+        if let Some(id) = active {
             if config.is_enabled(id) {
                 return id_to_vendor(id);
             }
@@ -190,9 +217,12 @@ mod tests {
     fn defaults_match_claudebar() {
         let cli = Cli::parse_from(["ai-usagebar"]);
         assert_eq!(cli.vendor, None);
-        // Without explicit --vendor and with default config, resolve to anthropic.
+        // Without explicit --vendor, no scroll-cycle override, and default
+        // config, resolve to anthropic. Use `resolve_vendor_with(.., None)`
+        // rather than `resolved_vendor` so the test never reads the real
+        // ~/.cache/ai-usagebar/active_vendor file.
         let cfg = crate::config::Config::default();
-        assert_eq!(cli.resolved_vendor(&cfg), Vendor::Anthropic);
+        assert_eq!(cli.resolve_vendor_with(&cfg, None), Vendor::Anthropic);
         assert_eq!(cli.pace_tolerance, 5);
         assert!(cli.format.is_none());
         assert!(cli.tooltip_format.is_none());
@@ -206,18 +236,45 @@ mod tests {
 
     #[test]
     fn primary_from_config_wins_when_vendor_unset() {
+        // No --vendor and no scroll-cycle override → [ui] primary wins.
         let cli = Cli::parse_from(["ai-usagebar"]);
         let mut cfg = crate::config::Config::default();
         cfg.ui.primary = Some(crate::vendor::VendorId::Openrouter);
-        assert_eq!(cli.resolved_vendor(&cfg), Vendor::Openrouter);
+        assert_eq!(cli.resolve_vendor_with(&cfg, None), Vendor::Openrouter);
     }
 
     #[test]
-    fn explicit_vendor_overrides_config_primary() {
+    fn explicit_vendor_overrides_everything() {
+        // Explicit --vendor beats BOTH a persisted scroll-cycle override and
+        // [ui] primary.
         let cli = Cli::parse_from(["ai-usagebar", "--vendor", "zai"]);
         let mut cfg = crate::config::Config::default();
         cfg.ui.primary = Some(crate::vendor::VendorId::Openrouter);
-        assert_eq!(cli.resolved_vendor(&cfg), Vendor::Zai);
+        let active = Some(crate::vendor::VendorId::Openai);
+        assert_eq!(cli.resolve_vendor_with(&cfg, active), Vendor::Zai);
+    }
+
+    #[test]
+    fn active_override_wins_over_config_primary_when_enabled() {
+        // Precedence rule #2: a persisted scroll-cycle vendor beats [ui]
+        // primary, as long as it is still enabled.
+        let cli = Cli::parse_from(["ai-usagebar"]);
+        let mut cfg = crate::config::Config::default();
+        cfg.ui.primary = Some(crate::vendor::VendorId::Openrouter);
+        let active = Some(crate::vendor::VendorId::Zai);
+        assert_eq!(cli.resolve_vendor_with(&cfg, active), Vendor::Zai);
+    }
+
+    #[test]
+    fn disabled_active_override_falls_back_to_config_primary() {
+        // A persisted active vendor the user has since disabled is skipped;
+        // resolution falls through to [ui] primary.
+        let cli = Cli::parse_from(["ai-usagebar"]);
+        let mut cfg = crate::config::Config::default();
+        cfg.zai.enabled = false;
+        cfg.ui.primary = Some(crate::vendor::VendorId::Openrouter);
+        let active = Some(crate::vendor::VendorId::Zai);
+        assert_eq!(cli.resolve_vendor_with(&cfg, active), Vendor::Openrouter);
     }
 
     #[test]
