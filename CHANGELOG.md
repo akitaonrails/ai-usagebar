@@ -9,7 +9,16 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- The TUI now fires `SIGRTMIN+13` after every refresh that hits the live API
+  (initial load, `r`/`R`, and the 60-second auto-refresh), so a Waybar module
+  configured with `signal: 13` re-execs against the freshly written cache and
+  shows the same numbers as the TUI. Previously only the Settings overlay
+  signaled Waybar, so the bar could keep displaying usage up to `interval`
+  seconds (300s in the sample config) older than the TUI open right next to
+  it. The signaled re-exec reuses the fresh cache, so no extra API call is
+  made.
 
 ## [0.7.1] — 2026-06-08
 

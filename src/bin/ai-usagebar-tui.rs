@@ -95,8 +95,18 @@ where
             // Snapshot results from background tasks.
             Some((idx, state)) = rx.recv() => {
                 if let Some(slot) = app.tabs.get_mut(idx) {
+                    // A live fetch just rewrote this vendor's on-disk cache,
+                    // so the bar can disagree with the TUI sitting next to it
+                    // for up to `interval` seconds. Nudge Waybar the same way
+                    // the Settings overlay does after a save: a `signal: 13`
+                    // module re-execs against the still-fresh cache (no extra
+                    // API call); without the signal it's a no-op.
+                    let fresh = matches!(&state, TabState::Ready(t) if t.fresh_fetch);
                     *slot = state;
                     app.last_refresh = Utc::now();
+                    if fresh {
+                        ai_usagebar::waybar::request_refresh();
+                    }
                 }
             }
             // Periodic auto-refresh of all tabs.

@@ -531,6 +531,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: Some(now() - chrono::Duration::seconds(15)),
+            fresh_fetch: false,
         }))
     }
 

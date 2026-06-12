@@ -33,6 +33,12 @@ pub struct ReadyTab {
     /// timestamp stays stable across redraws instead of drifting with the
     /// passing wall clock.
     pub fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// True when this refresh hit the live API (and therefore rewrote the
+    /// on-disk cache) rather than reusing a still-fresh cached payload.
+    /// The TUI binary uses this to nudge Waybar (`SIGRTMIN+13`) so the bar
+    /// re-execs against the just-written cache instead of showing a number
+    /// up to `interval` seconds older than the TUI sitting next to it.
+    pub fresh_fetch: bool,
 }
 
 #[derive(Debug)]
@@ -123,10 +129,19 @@ pub async fn refresh_one(client: &Client, config: &Config, vendor: VendorId) -> 
                 stale: outcome.stale,
                 last_error: outcome.last_error,
                 fetched_at,
+                fresh_fetch: is_live_fetch(outcome.cache_age),
             }))
         }
         Err(e) => TabState::Error(e.to_string()),
     }
+}
+
+/// True when `cache_age` says the bytes came from the API during this call.
+/// Every vendor's `fetch_snapshot` reports `Some(Duration::ZERO)` exactly on
+/// a successful live fetch; cache reuse reports the payload file's real
+/// (mtime-derived, nonzero) age, and fallback paths report it too.
+fn is_live_fetch(cache_age: Option<Duration>) -> bool {
+    cache_age.is_some_and(|age| age.is_zero())
 }
 
 async fn build_outcome(
@@ -250,5 +265,16 @@ mod tests {
         let mut app = App::with_theme(vec![VendorId::Anthropic], Theme::default());
         app.select_primary(Some(VendorId::Openai));
         assert_eq!(app.active_vendor(), Some(VendorId::Anthropic));
+    }
+
+    #[test]
+    fn is_live_fetch_only_on_zero_cache_age() {
+        // Live fetch — every vendor reports exactly ZERO.
+        assert!(is_live_fetch(Some(Duration::ZERO)));
+        // Cache reuse / fallback — mtime-derived, nonzero age.
+        assert!(!is_live_fetch(Some(Duration::from_millis(5))));
+        assert!(!is_live_fetch(Some(Duration::from_secs(59))));
+        // No cache age at all (e.g. payload missing).
+        assert!(!is_live_fetch(None));
     }
 }

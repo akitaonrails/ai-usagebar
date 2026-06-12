@@ -356,6 +356,8 @@ Save writes to `~/.config/ai-usagebar/config.toml` via `toml_edit` so your exist
 
 After save, the Settings overlay fires `SIGRTMIN+13` so any Waybar module configured with `signal: 13` refreshes immediately. You don't need to wait for the next 300-second interval or kick the bar by hand. The TUI's own tabs also re-fetch right away, so a freshly set API key takes effect on the spot.
 
+The TUI fires the same signal whenever one of its refreshes hits the live API (on open, on `r`/`R`, and on its 60-second auto-refresh). Since a live fetch rewrites the shared on-disk cache, the signaled bar re-execs against that fresh cache — no extra API call — and stays in sync with the TUI instead of showing a number up to `interval` seconds older.
+
 If your module doesn't use `signal: 13`, the signal is a no-op and the bar will refresh on its next normal tick (up to `interval` seconds away). To force-refresh manually: `pkill -SIGUSR2 waybar` (full reload).
 
 ## Theming
