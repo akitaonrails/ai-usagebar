@@ -60,11 +60,16 @@ fn assert_pct(label: &str, p: i32) {
 #[ignore = "live API; run with --ignored"]
 async fn anthropic_live() {
     let creds_path = anthropic::creds::default_path().expect("resolve home directory");
-    assert!(
-        creds_path.exists(),
-        "no Claude credentials at {} — log in with `claude` first",
-        creds_path.display()
-    );
+    // Claude Code stores creds either in this file (Linux) or, on recent macOS
+    // builds, in the login Keychain — in which case the file is absent. Only the
+    // file path is observable here; if it's missing, let the production reader
+    // try the Keychain fallback and skip cleanly when neither source exists, so
+    // this stays a no-op on machines without creds (as the module doc promises)
+    // rather than a hard failure on a macOS Keychain-only setup.
+    if !creds_path.exists() && anthropic::creds::read_from(&creds_path).is_err() {
+        eprintln!("anthropic_live: no Claude credentials (file or Keychain) — skipping");
+        return;
+    }
     let cache = xdg_cache_for("anthropic");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))

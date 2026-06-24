@@ -24,6 +24,11 @@ Each release is also published at
   headers the live endpoint actually accepts — `Authorization`, `anthropic-beta`,
   a Claude Code `User-Agent` (without which the endpoint hard-rate-limits to
   `429`), and `Content-Type`.
+- **`anthropic_live` smoke test no longer hard-fails on macOS Keychain-only
+  setups.** It assumed `~/.claude/.credentials.json` always exists, but recent
+  Claude Code keeps the blob in the login Keychain (no file). The test now falls
+  back to the Keychain reader and skips cleanly when no credentials exist at all,
+  matching the module doc's "won't fail on machines without creds" promise.
 
 ## [0.7.1] — 2026-06-08
 
