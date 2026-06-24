@@ -127,6 +127,21 @@ pub fn needs_refresh(expires_at_secs: i64, now_secs: i64) -> bool {
     expires_at_secs < now_secs + REFRESH_BUFFER_SECS
 }
 
+/// True when we actually hold a refresh token to refresh *with*.
+///
+/// Recent Claude Code builds (macOS, ≥ 2.1.x) rotate the access token via a
+/// host-side "trusted device" flow and leave `refreshToken` **empty** in the
+/// shared credential blob — they refresh and write back the access token
+/// themselves. POSTing that empty string as a `refresh_token` grant makes the
+/// token endpoint return `400 {"type":"invalid_request_error","message":
+/// "Invalid request format"}`, which then poisons the cache with a zeroed
+/// snapshot (0% everywhere). When the token is absent we must skip the refresh
+/// entirely and let the still-valid access token (or the live client's own
+/// refresh) carry us.
+pub fn can_refresh(refresh_token: &str) -> bool {
+    !refresh_token.trim().is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +155,13 @@ mod tests {
         assert!(!needs_refresh(now + 1000, now));
         // Already expired → refresh.
         assert!(needs_refresh(now - 1, now));
+    }
+
+    #[test]
+    fn can_refresh_false_for_empty_or_blank_token() {
+        assert!(!can_refresh(""));
+        assert!(!can_refresh("   "));
+        assert!(can_refresh("sk-ant-ort01-real-token"));
     }
 
     #[test]

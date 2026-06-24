@@ -17,6 +17,11 @@ use super::types::UsageResponse;
 
 pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 pub const USAGE_BETA_HEADER: &str = "oauth-2025-04-20";
+/// The usage endpoint rate-limits hard unless the request carries a Claude Code
+/// `User-Agent`. A bare `claude-code/<version>` is what the official client and
+/// the community monitors send; the exact patch version is not validated, so a
+/// stable recent value is fine and avoids hammering a build-time lookup.
+pub const USAGE_USER_AGENT: &str = "claude-code/2.1.183";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(25);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(45);
@@ -76,7 +81,18 @@ pub async fn fetch_snapshot(
     let mut auth_ok = true;
     let mut refresh_transient = false;
     let now = Utc::now().timestamp();
-    if oauth::needs_refresh(creds.claude_ai_oauth.expires_at_secs(), now) {
+    let stale_token = oauth::needs_refresh(creds.claude_ai_oauth.expires_at_secs(), now);
+    let have_refresh = oauth::can_refresh(&creds.claude_ai_oauth.refresh_token);
+    if stale_token && !have_refresh {
+        // No refresh token to refresh with — the Claude Code client owns token
+        // rotation (trusted-device flow) and leaves `refreshToken` empty. Don't
+        // POST an empty grant (the token endpoint answers 400 "Invalid request
+        // format" and we'd cache a zeroed snapshot). Treat as transient: reuse
+        // the last good cache silently and let the live client refresh the
+        // shared credential out from under us on its own cadence.
+        refresh_transient = true;
+        auth_ok = false;
+    } else if stale_token {
         match tokio::time::timeout(
             REFRESH_TIMEOUT,
             oauth::refresh(
@@ -234,6 +250,13 @@ async fn fetch_usage(client: &reqwest::Client, url: &str, creds: &OauthCreds) ->
         .get(url)
         .header("Authorization", format!("Bearer {}", creds.access_token))
         .header("anthropic-beta", USAGE_BETA_HEADER)
+        // The endpoint gates on a Claude Code `User-Agent`: without it you hit
+        // an aggressively rate-limited bucket (429). With it, this plain GET +
+        // these four headers returns 200 — verified against the live endpoint.
+        // (Adding `x-app`/`anthropic-version` is unnecessary and only widens the
+        // surface for the endpoint to reject; keep the request minimal.)
+        .header("User-Agent", USAGE_USER_AGENT)
+        .header("Content-Type", "application/json")
         .send()
         .await?;
 
@@ -270,6 +293,23 @@ mod tests {
         let s = format!(
             r#"{{"claudeAiOauth":{{
                 "accessToken":"AT","refreshToken":"RT",
+                "expiresAt": {expires_ms},
+                "subscriptionType":"max","rateLimitTier":"default_claude_max_5x"
+            }}}}"#
+        );
+        f.write_all(s.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    /// Expired access token AND an empty `refreshToken` — the trusted-device
+    /// shape recent Claude Code builds leave in the shared credential blob.
+    fn expired_creds_no_refresh() -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        let expires_ms = (Utc::now().timestamp_millis()) - 3_600_000; // 1h ago
+        let s = format!(
+            r#"{{"claudeAiOauth":{{
+                "accessToken":"AT","refreshToken":"",
                 "expiresAt": {expires_ms},
                 "subscriptionType":"max","rateLimitTier":"default_claude_max_5x"
             }}}}"#
@@ -391,6 +431,59 @@ mod tests {
             outcome.last_error.as_ref().map(|(_, m)| m.as_str()),
             Some("slow down")
         );
+    }
+
+    #[tokio::test]
+    async fn empty_refresh_token_skips_refresh_and_reuses_cache_silently() {
+        // Token is expired but there's no refresh token to refresh with. The
+        // widget must NOT POST an empty grant (→ 400 "Invalid request format")
+        // nor poison `.last_error`; it should silently reuse the good cache.
+        let mut server = mockito::Server::new_async().await;
+        // If refresh is (wrongly) attempted, this 400 mock would fire and the
+        // assertion on last_error below would catch it.
+        let m = server
+            .mock("POST", "/v1/oauth/token")
+            .with_status(400)
+            .with_body(
+                r#"{"error":{"type":"invalid_request_error","message":"Invalid request format"}}"#,
+            )
+            .expect(0)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache
+            .write_payload(
+                br#"{"five_hour":{"utilization":17,"resets_at":"2026-06-25T17:30:00Z"},
+                     "seven_day":{"utilization":77,"resets_at":"2026-06-26T12:00:00Z"}}"#,
+            )
+            .unwrap();
+
+        let creds = expired_creds_no_refresh();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/api/oauth/usage", server.url()),
+            token: format!("{}/v1/oauth/token", server.url()),
+        };
+        let outcome = fetch_snapshot(
+            &client,
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+
+        // Reused the cached snapshot, marked stale, and wrote NO last_error.
+        assert!(outcome.stale);
+        assert_eq!(outcome.snapshot.session.utilization_pct, 17);
+        assert!(
+            outcome.last_error.is_none(),
+            "empty-refresh path must not poison .last_error, got {:?}",
+            outcome.last_error
+        );
+        m.assert_async().await; // refresh endpoint was never called
     }
 
     #[tokio::test]

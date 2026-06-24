@@ -9,7 +9,21 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Anthropic widget no longer shows a false `0%` on recent Claude Code (macOS).**
+  Newer Claude Code builds rotate the OAuth access token via a host-side
+  trusted-device flow and leave `refreshToken` **empty** in the shared
+  credential blob (Keychain / `~/.claude/.credentials.json`). Once the access
+  token expired, the widget POSTed that empty string as a `refresh_token` grant,
+  the token endpoint answered `400 "Invalid request format"`, and the bar cached
+  a zeroed snapshot — `0%` on session/weekly/sonnet with an `HTTP 400` tooltip.
+  The fetch now skips the refresh when no refresh token is present and silently
+  reuses the last good cache (letting the live client refresh the shared
+  credential on its own cadence). The usage request was also trimmed to the four
+  headers the live endpoint actually accepts — `Authorization`, `anthropic-beta`,
+  a Claude Code `User-Agent` (without which the endpoint hard-rate-limits to
+  `429`), and `Content-Type`.
 
 ## [0.7.1] — 2026-06-08
 
