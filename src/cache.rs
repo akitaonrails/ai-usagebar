@@ -149,6 +149,11 @@ impl Cache {
         let _ = atomic_write(&path, body.as_bytes());
     }
 
+    /// Best-effort removal of the `.last_error` marker.
+    pub fn clear_last_error(&self) {
+        let _ = fs::remove_file(self.last_error_path());
+    }
+
     pub fn read_last_error(&self) -> Option<(u16, String)> {
         let raw = fs::read_to_string(self.last_error_path()).ok()?;
         let mut lines = raw.lines();

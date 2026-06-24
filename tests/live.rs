@@ -38,6 +38,7 @@ use std::time::Duration;
 
 use ai_usagebar::anthropic;
 use ai_usagebar::cache::Cache;
+use ai_usagebar::error::AppError;
 use ai_usagebar::openai;
 use ai_usagebar::openrouter;
 use ai_usagebar::zai;
@@ -56,15 +57,27 @@ fn assert_pct(label: &str, p: i32) {
     );
 }
 
+fn is_missing_credentials(err: &AppError) -> bool {
+    matches!(err, AppError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound)
+}
+
 #[tokio::test]
 #[ignore = "live API; run with --ignored"]
 async fn anthropic_live() {
     let creds_path = anthropic::creds::default_path().expect("resolve home directory");
-    assert!(
-        creds_path.exists(),
-        "no Claude credentials at {} — log in with `claude` first",
-        creds_path.display()
-    );
+    // Creds live in this file (Linux) or the login Keychain (recent macOS, no
+    // file). Skip cleanly when neither source resolves — a no-op on machines
+    // without creds, as the module doc promises, not a hard failure.
+    if !creds_path.exists() {
+        match anthropic::creds::read_from(&creds_path) {
+            Ok(_) => {}
+            Err(err) if is_missing_credentials(&err) => {
+                eprintln!("anthropic_live: no Claude credentials (file or Keychain) — skipping");
+                return;
+            }
+            Err(err) => panic!("anthropic_live: failed to read Claude credentials: {err}"),
+        }
+    }
     let cache = xdg_cache_for("anthropic");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))

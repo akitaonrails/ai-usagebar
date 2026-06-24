@@ -127,6 +127,12 @@ pub fn needs_refresh(expires_at_secs: i64, now_secs: i64) -> bool {
     expires_at_secs < now_secs + REFRESH_BUFFER_SECS
 }
 
+/// True when we actually hold a refresh token to refresh *with*. (See the
+/// caller in `fetch_snapshot` for why an empty one must skip the refresh.)
+pub fn can_refresh(refresh_token: &str) -> bool {
+    !refresh_token.trim().is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +146,13 @@ mod tests {
         assert!(!needs_refresh(now + 1000, now));
         // Already expired → refresh.
         assert!(needs_refresh(now - 1, now));
+    }
+
+    #[test]
+    fn can_refresh_false_for_empty_or_blank_token() {
+        assert!(!can_refresh(""));
+        assert!(!can_refresh("   "));
+        assert!(can_refresh("sk-ant-ort01-real-token"));
     }
 
     #[test]
