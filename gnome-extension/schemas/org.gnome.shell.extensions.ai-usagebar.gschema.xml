@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.ai-usagebar"
+          path="/org/gnome/shell/extensions/ai-usagebar/">
+
+    <key name="refresh-interval" type="i">
+      <default>30</default>
+      <range min="5" max="3600"/>
+      <summary>Refresh interval in seconds</summary>
+    </key>
+
+    <key name="vendor" type="s">
+      <default>'anthropic'</default>
+      <summary>Vendor to display (anthropic shows the 5h + weekly windows)</summary>
+    </key>
+
+    <key name="binary-path" type="s">
+      <default>''</default>
+      <summary>Absolute path to the ai-usagebar binary (empty = auto-detect on PATH / ~/.cargo/bin)</summary>
+    </key>
+
+    <key name="bar-width" type="i">
+      <default>8</default>
+      <range min="4" max="20"/>
+      <summary>Width of each bar in cells</summary>
+    </key>
+
+    <key name="show-percent" type="b">
+      <default>true</default>
+      <summary>Show the numeric percentage next to each bar</summary>
+    </key>
+
+    <key name="show-session" type="b">
+      <default>true</default>
+      <summary>Show the 5-hour session bar</summary>
+    </key>
+
+    <key name="show-weekly" type="b">
+      <default>true</default>
+      <summary>Show the weekly bar</summary>
+    </key>
+
+    <key name="panel-box" type="s">
+      <choices>
+        <choice value="left"/>
+        <choice value="center"/>
+        <choice value="right"/>
+      </choices>
+      <default>'right'</default>
+      <summary>Which panel area to live in (right = next to network/clock)</summary>
+    </key>
+
+    <key name="panel-index" type="i">
+      <default>0</default>
+      <range min="0" max="20"/>
+      <summary>Position index within the chosen panel area</summary>
+    </key>
+
+    <key name="show-extra" type="b">
+      <default>false</default>
+      <summary>Show the extra-usage (cost) bar as a third bar</summary>
+    </key>
+
+    <key name="show-bars" type="b">
+      <default>true</default>
+      <summary>Draw the bars; when off, show only the percentages</summary>
+    </key>
+
+    <key name="color-low" type="s">
+      <default>'#98c379'</default>
+      <summary>Bar color for &lt;50% usage</summary>
+    </key>
+
+    <key name="color-mid" type="s">
+      <default>'#e5c07b'</default>
+      <summary>Bar color for 50-74% usage</summary>
+    </key>
+
+    <key name="color-high" type="s">
+      <default>'#d19a66'</default>
+      <summary>Bar color for 75-89% usage</summary>
+    </key>
+
+    <key name="color-critical" type="s">
+      <default>'#e06c75'</default>
+      <summary>Bar color for 90%+ usage</summary>
+    </key>
+
+    <key name="color-empty" type="s">
+      <default>'#3e4451'</default>
+      <summary>Color of the empty part of the bar</summary>
+    </key>
+
+  </schema>
+</schemalist>

@@ -1,0 +1,11 @@
+{
+  "uuid": "ai-usagebar@akitaonrails.github.io",
+  "name": "AI Usage Bar",
+  "description": "Anthropic Claude (and other vendors') plan usage in the GNOME top panel, next to the clock/network: the 5-hour session bar and the weekly bar, with the full bordered tooltip in a dropdown. Backed by the `ai-usagebar` binary (https://github.com/akitaonrails/ai-usagebar).",
+  "version": 1,
+  "version-name": "0.1.0",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/akitaonrails/ai-usagebar",
+  "settings-schema": "org.gnome.shell.extensions.ai-usagebar",
+  "gettext-domain": "ai-usagebar"
+}

@@ -1,0 +1,31 @@
+/* Panel label: monospace so the █/░ bar cells line up evenly. */
+.aiub-label {
+    font-family: monospace;
+    font-feature-settings: "tnum";
+    padding: 0 4px;
+}
+
+/* Dropdown rows — native St layout, font-independent alignment. */
+.aiub-header {
+    font-weight: bold;
+    padding: 4px 12px 2px 12px;
+}
+
+.aiub-row {
+    spacing: 2px;
+    padding: 3px 12px;
+    min-width: 240px;
+}
+
+.aiub-row-name {
+    font-weight: bold;
+}
+
+.aiub-row-bar {
+    font-family: monospace;
+}
+
+.aiub-row-reset {
+    font-size: 0.85em;
+    color: #888888;
+}

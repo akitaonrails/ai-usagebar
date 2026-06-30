@@ -20,3 +20,6 @@ packaging/aur/pkg/
 packaging/aur/src/
 packaging/aur/*.pkg.tar.*
 packaging/aur/*.tar.gz
+
+# GNOME extension - compiled schema (build artifact)
+gnome-extension/schemas/gschemas.compiled
