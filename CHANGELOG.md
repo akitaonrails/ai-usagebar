@@ -11,6 +11,18 @@ Each release is also published at
 
 Nothing yet.
 
+## [0.8.0] — 2026-07-01
+
+### Added
+
+- **GNOME Shell extension** under `gnome-extension/` for showing the 5-hour,
+  weekly, optional Sonnet-only, and optional extra-usage bars in the GNOME top
+  panel. It shells out to the existing `ai-usagebar` binary, renders native `St`
+  widgets, includes libadwaita preferences, and adds vendor credential helpers.
+- **macOS menu bar app** under `macos/` for showing the same usage bars as a
+  native `NSStatusItem` menu-bar agent with SwiftUI preferences, LaunchAgent
+  install helper, vendor credential status, and login/config helper actions.
+
 ## [0.7.2] — 2026-06-24
 
 ### Fixed
@@ -404,7 +416,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.8.0
 [0.7.2]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.7.2
 [0.7.1]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.7.1
 [0.7.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.7.0

@@ -2,7 +2,7 @@
 
 pkgname=ai-usagebar-bin
 _pkgname=ai-usagebar
-pkgver=0.7.2
+pkgver=0.8.0
 pkgrel=1
 pkgdesc="Waybar widget + TUI for AI plan usage (prebuilt binary)"
 arch=('x86_64' 'aarch64')
