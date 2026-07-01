@@ -64,6 +64,22 @@ function spawnInTerminal(command) {
     return false;
 }
 
+function spawnArgvInTerminal(commandArgv) {
+    for (const argv of [
+        ['kgx', '--', ...commandArgv],
+        ['gnome-terminal', '--', ...commandArgv],
+        ['xterm', '-e', ...commandArgv],
+    ]) {
+        if (!GLib.find_program_in_path(argv[0]))
+            continue;
+        try {
+            Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+            return true;
+        } catch (e) {}
+    }
+    return false;
+}
+
 // Is `cli` on the login-shell PATH? (npm-global / nvm bins often aren't on the
 // prefs process PATH, so we ask a login shell.)
 function checkCliInstalled(cli, callback) {
@@ -113,8 +129,7 @@ function bindCombo(settings, key, comboRow, values) {
         if (v !== undefined && v !== settings.get_string(key))
             settings.set_string(key, v);
     });
-    const id = settings.connect(`changed::${key}`, sync);
-    comboRow.connect('destroy', () => settings.disconnect(id));
+    settings.connect(`changed::${key}`, sync);
 }
 
 function rgbaToHex(rgba) {
@@ -143,8 +158,7 @@ function colorRow(settings, key, title) {
         if (!updating)
             settings.set_string(key, rgbaToHex(btn.get_rgba()));
     });
-    const id = settings.connect(`changed::${key}`, load);
-    row.connect('destroy', () => settings.disconnect(id));
+    settings.connect(`changed::${key}`, load);
     row.add_suffix(btn);
     row.activatable_widget = btn;
     return row;
@@ -304,7 +318,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
                 } else {
                     const tui = GLib.find_program_in_path('ai-usagebar-tui') ||
                         `${GLib.get_home_dir()}/.cargo/bin/ai-usagebar-tui`;
-                    spawnInTerminal(`"${tui}"`);
+                    spawnArgvInTerminal([tui]);
                 }
                 GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => {
                     update();

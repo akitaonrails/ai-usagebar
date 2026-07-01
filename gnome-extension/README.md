@@ -2,7 +2,7 @@
 
 A native GNOME top-panel indicator for [`ai-usagebar`](../README.md). It puts
 the **5-hour session** and **weekly** usage bars next to the clock/network,
-and shows the full bordered tooltip in a click dropdown.
+with optional Sonnet-only and extra-usage rows in a native click dropdown.
 
 This is the GNOME counterpart to the project's Waybar widget: Waybar is
 Wayland-only (Sway/Hyprland) and can't dock into the GNOME top bar, so this
@@ -60,14 +60,15 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 It runs:
 
 ```
-ai-usagebar --vendor <vendor> --format '{session_pct};;{weekly_pct}'
+ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit}'
 ```
 
-parses the Waybar JSON (`{text, tooltip, class}`), and draws two bars from the
-percentages. Colors mirror the binary's default One Dark theme and
-`severity_for()` thresholds (≥90 red · ≥75 orange · ≥50 yellow · else green),
-so it matches the Waybar widget. The dropdown shows the binary's own
-`tooltip` markup verbatim.
+parses the Waybar JSON (`{text, tooltip, class}`), extracts the formatted
+fields from `text`, and draws the plan, session, weekly, optional Sonnet-only,
+and optional extra-usage values with native `St` widgets. Colors mirror the
+binary's default One Dark theme and `severity_for()` thresholds (≥90 red · ≥75
+orange · ≥50 yellow · else green), so it matches the Waybar widget. The
+dropdown is a native aligned menu, not the tooltip markup rendered verbatim.
 
 The subprocess is spawned **asynchronously** (`Gio.Subprocess` +
 `communicate_utf8_async`) so it never blocks the shell, and all timers /

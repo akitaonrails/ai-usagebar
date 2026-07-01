@@ -28,6 +28,7 @@ const RED = '#e06c75';
 // All ten fields we pull from the binary, joined by ';;'.
 const FORMAT = '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;' +
     '{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit}';
+const REFRESH_TIMEOUT_SECS = 60;
 
 // severity_for(pct) from src/pango.rs: >=90 critical, >=75 high, >=50 mid, else low.
 function colorForPct(pct, colors) {
@@ -78,7 +79,10 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         this._data = null;          // parsed snapshot for redraws
         this._busy = false;
         this._timer = 0;
-        this._cancellable = new Gio.Cancellable();
+        this._refreshTimeoutId = 0;
+        this._refreshCancellable = null;
+        this._refreshProc = null;
+        this._refreshToken = 0;
         this._rows = {};
 
         // Panel: one markup label holds tags + percentages + bars.
@@ -197,10 +201,13 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         if (this._busy)
             return;
         this._busy = true;
+        const token = ++this._refreshToken;
 
         const bin = resolveBinary(this._settings);
         const vendor = this._settings.get_string('vendor') || 'anthropic';
         const argv = [bin, '--vendor', vendor, '--format', FORMAT];
+        const cancellable = new Gio.Cancellable();
+        this._refreshCancellable = cancellable;
 
         let proc;
         try {
@@ -208,25 +215,60 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                 argv,
                 flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             });
-            proc.init(this._cancellable);
+            proc.init(cancellable);
         } catch (e) {
             this._busy = false;
+            this._refreshCancellable = null;
             this._setError(`não consegui executar "${bin}"`, String(e));
             return;
         }
+        this._refreshProc = proc;
 
-        proc.communicate_utf8_async(null, this._cancellable, (p, res) => {
-            this._busy = false;
+        let timedOut = false;
+        const timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_TIMEOUT_SECS, () => {
+            timedOut = true;
+            if (this._refreshTimeoutId === timeoutId)
+                this._refreshTimeoutId = 0;
+            try {
+                proc.force_exit();
+            } catch (e) {}
+            cancellable.cancel();
+            if (this._refreshToken === token) {
+                this._busy = false;
+                this._setError('ai-usagebar demorou demais', `timeout após ${REFRESH_TIMEOUT_SECS}s`);
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+        this._refreshTimeoutId = timeoutId;
+
+        const cleanup = () => {
+            if (this._refreshTimeoutId === timeoutId) {
+                GLib.source_remove(timeoutId);
+                this._refreshTimeoutId = 0;
+            }
+            if (this._refreshCancellable === cancellable)
+                this._refreshCancellable = null;
+            if (this._refreshProc === proc)
+                this._refreshProc = null;
+        };
+
+        proc.communicate_utf8_async(null, cancellable, (p, res) => {
+            if (this._refreshToken === token)
+                this._busy = false;
             try {
                 const [, out, err] = p.communicate_utf8_finish(res);
+                cleanup();
+                if (timedOut)
+                    return;
                 if ((!out || !out.trim()) && !p.get_successful()) {
                     this._setError('ai-usagebar falhou', err || '');
                     return;
                 }
                 this._consume(out || '');
             } catch (e) {
+                cleanup();
                 if (!(e instanceof GLib.Error &&
-                      e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)))
+                      e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) && !timedOut)
                     this._setError('erro ao ler a saída', String(e));
             }
         });
@@ -248,16 +290,24 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             this._label.clutter_text.set_markup(`<span foreground="${FG}">${esc(raw) || '…'}</span>`);
             return;
         }
+        const isPlaceholder = s => /^\{[^}]+\}$/.test(String(s).trim());
+        const field = s => {
+            const t = String(s ?? '').trim();
+            return t && !isPlaceholder(t) ? t : '';
+        };
         const num = s => {
-            const n = parseInt(s, 10);
+            const t = field(s);
+            if (!t)
+                return null;
+            const n = parseInt(t, 10);
             return Number.isFinite(n) ? n : null;
         };
         this._data = {
-            plan: f[0].trim(),
-            session: {pct: num(f[1]) ?? 0, reset: f[2].trim()},
-            weekly: {pct: num(f[3]) ?? 0, reset: f[4].trim()},
-            sonnet: {pct: num(f[5]), reset: f[6].trim()},
-            extra: {pct: num(f[7]) ?? 0, spent: f[8].trim(), limit: f[9].trim()},
+            plan: field(f[0]),
+            session: {pct: num(f[1]) ?? 0, reset: field(f[2])},
+            weekly: {pct: num(f[3]) ?? 0, reset: field(f[4])},
+            sonnet: {pct: num(f[5]), reset: field(f[6])},
+            extra: {pct: num(f[7]), spent: field(f[8]), limit: field(f[9])},
         };
         this._render();
     }
@@ -293,7 +343,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             parts.push(seg('5h', d.session.pct, `${d.session.pct}%`));
         if (this._settings.get_boolean('show-weekly'))
             parts.push(seg('7d', d.weekly.pct, `${d.weekly.pct}%`));
-        if (this._settings.get_boolean('show-extra') && d.extra.spent)
+        if (this._settings.get_boolean('show-extra') &&
+            d.extra.pct != null && d.extra.spent && d.extra.limit)
             parts.push(seg('ex', d.extra.pct, d.extra.spent));
 
         const gap = `<span foreground="${DIM}">   </span>`;
@@ -321,7 +372,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         upd('session', d.session.pct, `${d.session.pct}%`, d.session.reset, true);
         upd('weekly', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.reset, true);
         upd('sonnet', d.sonnet.pct, `${d.sonnet.pct ?? 0}%`, d.sonnet.reset, d.sonnet.pct != null);
-        upd('extra', d.extra.pct, `${d.extra.spent} / ${d.extra.limit}`, null, !!d.extra.spent);
+        upd('extra', d.extra.pct, `${d.extra.spent} / ${d.extra.limit}`, null,
+            d.extra.pct != null && !!d.extra.spent && !!d.extra.limit);
     }
 
     _setError(short, detail) {
@@ -359,7 +411,18 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             GLib.source_remove(this._timer);
             this._timer = 0;
         }
-        this._cancellable.cancel();
+        if (this._refreshTimeoutId) {
+            GLib.source_remove(this._refreshTimeoutId);
+            this._refreshTimeoutId = 0;
+        }
+        if (this._refreshCancellable)
+            this._refreshCancellable.cancel();
+        if (this._refreshProc) {
+            try {
+                this._refreshProc.force_exit();
+            } catch (e) {}
+            this._refreshProc = null;
+        }
         for (const id of this._viewIds ?? [])
             this._settings.disconnect(id);
         for (const id of this._sourceIds ?? [])
