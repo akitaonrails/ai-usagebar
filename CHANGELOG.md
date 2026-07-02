@@ -81,6 +81,14 @@ Nothing yet.
 
 ### Fixed
 
+- **The widget now honors `[anthropic] credentials_path` from config.**
+  `anthropic_output()` only consulted the `--creds-path` CLI flag before
+  falling back to the default `~/.claude/.credentials.json`, silently
+  ignoring a `credentials_path` set in `config.toml` — so the widget
+  errored on the default path while the TUI (which already read the
+  config value) worked. Resolution order is now `--creds-path` flag →
+  config `credentials_path` → default, mirroring the existing OpenAI
+  behavior. (thanks @mauricio-ms)
 - **AUR source install no longer fails for users with a customized
   `active_vendor`.** The PKGBUILD's `check()` runs `cargo test --release`
   against the building user's real `$HOME`, so a planted
