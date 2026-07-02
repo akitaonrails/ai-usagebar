@@ -93,7 +93,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    const ALL_FOUR: [VendorId; 4] = [
+    // Deliberately excludes Deepseek so the not-in-enabled-set fallback test
+    // below has a real vendor to persist that is outside this cycle set.
+    const CYCLE_SET: [VendorId; 4] = [
         VendorId::Anthropic,
         VendorId::Openai,
         VendorId::Zai,
@@ -133,12 +135,12 @@ mod tests {
         let path = td.path().join("active_vendor");
 
         // No state yet → starts at `start`, steps forward to Openai.
-        let v = cycle_at(&path, &ALL_FOUR, VendorId::Anthropic, 1).unwrap();
+        let v = cycle_at(&path, &CYCLE_SET, VendorId::Anthropic, 1).unwrap();
         assert_eq!(v, VendorId::Openai);
         assert_eq!(read_from(&path), Some(VendorId::Openai));
 
         // Next forward step reads the persisted Openai → Zai.
-        let v = cycle_at(&path, &ALL_FOUR, VendorId::Anthropic, 1).unwrap();
+        let v = cycle_at(&path, &CYCLE_SET, VendorId::Anthropic, 1).unwrap();
         assert_eq!(v, VendorId::Zai);
         assert_eq!(read_from(&path), Some(VendorId::Zai));
     }
@@ -151,12 +153,12 @@ mod tests {
 
         // backward from Anthropic wraps to Openrouter
         assert_eq!(
-            cycle_at(&path, &ALL_FOUR, VendorId::Anthropic, -1).unwrap(),
+            cycle_at(&path, &CYCLE_SET, VendorId::Anthropic, -1).unwrap(),
             VendorId::Openrouter
         );
         // forward from Openrouter wraps back to Anthropic
         assert_eq!(
-            cycle_at(&path, &ALL_FOUR, VendorId::Anthropic, 1).unwrap(),
+            cycle_at(&path, &CYCLE_SET, VendorId::Anthropic, 1).unwrap(),
             VendorId::Anthropic
         );
     }

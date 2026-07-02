@@ -186,16 +186,11 @@ mod tests {
         f
     }
 
-    /// Like `write_creds`, but writes to a named file inside a `TempDir` and
-    /// closes the handle. `write_back` rewrites the file via an atomic
-    /// rename-over-destination, which on Windows fails if the destination is
-    /// still open (as a live `NamedTempFile` handle would be). Returns the dir
-    /// (kept alive by the caller) and the closed file's path.
+    /// Like `write_creds`, but with no open handle on the file, so
+    /// `write_back`'s atomic rename-over-destination succeeds on Windows.
+    /// See [`crate::cache::closed_temp_file`].
     fn write_creds_closed(s: &str) -> (TempDir, std::path::PathBuf) {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("credentials.json");
-        std::fs::write(&path, s).unwrap();
-        (dir, path)
+        crate::cache::closed_temp_file("credentials.json", Some(s))
     }
 
     #[test]

@@ -253,6 +253,22 @@ pub fn home_dir() -> Result<PathBuf> {
         .ok_or_else(|| AppError::Other("could not resolve home directory (no HOME?)".into()))
 }
 
+/// Test-only: a named file inside a fresh `TempDir` with **no open handle** on
+/// it. [`atomic_write`] replaces its destination via rename, which on Windows
+/// fails while the destination is held open (as a live `NamedTempFile` handle
+/// would be) — so tests that exercise a write-back must target a closed file.
+/// Returns the dir (the caller keeps it alive) and the file's path; the file
+/// exists only when `contents` is given.
+#[cfg(test)]
+pub(crate) fn closed_temp_file(name: &str, contents: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join(name);
+    if let Some(c) = contents {
+        std::fs::write(&path, c).unwrap();
+    }
+    (dir, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

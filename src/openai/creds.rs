@@ -110,14 +110,11 @@ mod tests {
         f
     }
 
-    /// Like `write_auth`, but writes to a named file inside a `TempDir` and
-    /// closes the handle, so `write_back`'s atomic rename-over-destination
-    /// succeeds on Windows (which refuses to replace a still-open file).
+    /// Like `write_auth`, but with no open handle on the file, so
+    /// `write_back`'s atomic rename-over-destination succeeds on Windows.
+    /// See [`crate::cache::closed_temp_file`].
     fn write_auth_closed(s: &str) -> (TempDir, std::path::PathBuf) {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("auth.json");
-        std::fs::write(&path, s).unwrap();
-        (dir, path)
+        crate::cache::closed_temp_file("auth.json", Some(s))
     }
 
     /// Build a fake JWT with the given claims (no signature verification).

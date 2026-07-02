@@ -610,18 +610,11 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// A config path inside a fresh `TempDir`, with no open handle on the file.
-    /// `save_to_path` rewrites atomically (rename over destination), which on
-    /// Windows fails if the destination is still open — so tests must not hold a
-    /// live `NamedTempFile` handle on the target. Returns the dir (kept alive by
-    /// the caller) and the path; the file may or may not exist yet.
+    /// A config path with no open handle on the file, so `save_to_path`'s
+    /// atomic rename-over-destination succeeds on Windows.
+    /// See [`crate::cache::closed_temp_file`].
     fn temp_config(initial: Option<&str>) -> (TempDir, std::path::PathBuf) {
-        let dir = TempDir::new().unwrap();
-        let path = dir.path().join("config.toml");
-        if let Some(contents) = initial {
-            std::fs::write(&path, contents).unwrap();
-        }
-        (dir, path)
+        crate::cache::closed_temp_file("config.toml", initial)
     }
 
     fn state_with(zai: &str, opr: &str, primary: VendorId) -> SettingsState {
