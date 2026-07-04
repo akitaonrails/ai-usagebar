@@ -3,6 +3,7 @@
 //! into a fallback `⚠` JSON / pretty line so Waybar never hides the module.
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -244,14 +245,7 @@ async fn deepseek_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 
 async fn anthropic_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
-    let cache = vendor_cache(cli, "anthropic")?;
-    let creds_path = match cli.creds_path.as_deref() {
-        Some(p) => p.to_path_buf(),
-        None => match config.anthropic.credentials_path.as_deref() {
-            Some(p) => p.to_path_buf(),
-            None => anthropic::creds::default_path()?,
-        },
-    };
+    let (creds_path, cache) = anthropic_target(cli, config)?;
     let endpoints = anthropic::fetch::Endpoints::default();
     let outcome = match anthropic::fetch_snapshot(
         &client,
@@ -306,6 +300,46 @@ fn vendor_cache(cli: &Cli, vendor: &str) -> Result<Cache> {
         Some(p) => Ok(Cache::at(p.join(vendor))),
         None => Cache::for_vendor(vendor),
     }
+}
+
+/// Resolve the Anthropic credentials file + cache for this run, honoring
+/// `--account` (issue #14). `--cache-dir` still overrides the cache location;
+/// `--account <label>` selects a configured extra account (its credentials
+/// file and an `anthropic/<label>` cache subdir); with neither, the default
+/// account behaves byte-identically to before.
+fn anthropic_target(cli: &Cli, config: &Config) -> Result<(PathBuf, Cache)> {
+    match cli.account.as_deref() {
+        Some(label) => named_account_target(cli, config, label),
+        None => Ok((
+            anthropic_default_creds(cli, config)?,
+            vendor_cache(cli, "anthropic")?,
+        )),
+    }
+}
+
+/// A configured extra account (`--account <label>`): its own credentials file
+/// and an isolated `anthropic/<label>` cache. `--account` conflicts with
+/// `--creds-path`, so the account's file is the only credentials source here.
+fn named_account_target(cli: &Cli, config: &Config, label: &str) -> Result<(PathBuf, Cache)> {
+    let account = config.anthropic.account(label)?;
+    let cache = match cli.cache_dir.as_deref() {
+        Some(p) => Cache::at(p.join("anthropic").join(label)),
+        None => Cache::for_vendor_account("anthropic", label)?,
+    };
+    Ok((account.credentials_path.clone(), cache))
+}
+
+/// Default-account credentials: `--creds-path` wins, then the singular
+/// `[anthropic] credentials_path`, then the platform default file. This is the
+/// pre-#14 resolution, kept intact so default output never changes.
+fn anthropic_default_creds(cli: &Cli, config: &Config) -> Result<PathBuf> {
+    if let Some(p) = cli.creds_path.as_deref() {
+        return Ok(p.to_path_buf());
+    }
+    if let Some(p) = config.anthropic.credentials_path.as_deref() {
+        return Ok(p.to_path_buf());
+    }
+    anthropic::creds::default_path()
 }
 
 fn theme_from_cli(cli: &Cli) -> Theme {
@@ -391,5 +425,68 @@ mod tests {
         let out = fallback(&err, &cli_default());
         assert_eq!(out.text, "⚠");
         assert!(out.tooltip.contains("missing token"));
+    }
+
+    // --- issue #14: multi-account Anthropic target resolution ---------------
+    // All hermetic: paths are only *resolved*, never opened, and every cache
+    // uses an explicit --cache-dir (Cache::at) so no test touches real XDG.
+
+    fn cli_with(account: Option<&str>, creds: Option<&str>, cache: Option<&str>) -> Cli {
+        let mut c = cli_default();
+        c.account = account.map(str::to_string);
+        c.creds_path = creds.map(PathBuf::from);
+        c.cache_dir = cache.map(PathBuf::from);
+        c
+    }
+
+    fn config_with_account(label: &str, creds: &str) -> Config {
+        let mut config = Config::default();
+        config
+            .anthropic
+            .accounts
+            .push(crate::config::AnthropicAccount {
+                label: label.into(),
+                credentials_path: creds.into(),
+            });
+        config
+    }
+
+    #[test]
+    fn default_account_target_is_unchanged() {
+        // No --account: creds come from --creds-path and the cache stays at the
+        // vendor root (…/anthropic) — byte-identical to the pre-#14 path.
+        let cli = cli_with(None, Some("/tmp/creds.json"), Some("/tmp/cache"));
+        let (creds, cache) = anthropic_target(&cli, &Config::default()).unwrap();
+        assert_eq!(creds, PathBuf::from("/tmp/creds.json"));
+        assert_eq!(cache.dir(), std::path::Path::new("/tmp/cache/anthropic"));
+    }
+
+    #[test]
+    fn named_account_uses_its_creds_and_label_subdir() {
+        let config = config_with_account("work", "/creds/work.json");
+        let cli = cli_with(Some("work"), None, Some("/tmp/cache"));
+        let (creds, cache) = anthropic_target(&cli, &config).unwrap();
+        assert_eq!(creds, PathBuf::from("/creds/work.json"));
+        assert_eq!(
+            cache.dir(),
+            std::path::Path::new("/tmp/cache/anthropic/work")
+        );
+    }
+
+    #[test]
+    fn unknown_account_errors_listing_known_labels() {
+        let config = config_with_account("work", "/creds/work.json");
+        let cli = cli_with(Some("nope"), None, Some("/tmp/cache"));
+        let err = anthropic_target(&cli, &config).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("nope"), "names the bad label: {msg}");
+        assert!(msg.contains("work"), "lists known labels: {msg}");
+    }
+
+    #[test]
+    fn account_conflicts_with_creds_path() {
+        use clap::Parser;
+        let res = Cli::try_parse_from(["ai-usagebar", "--account", "work", "--creds-path", "/x"]);
+        assert!(res.is_err(), "--account and --creds-path must conflict");
     }
 }

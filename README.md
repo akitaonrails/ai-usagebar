@@ -281,11 +281,50 @@ credentials file and its own cache directory:
   API-key vendors (Z.AI, OpenRouter, DeepSeek) point each module at a
   different key via a wrapper script that sets the env var, plus its own
   `--cache-dir`.
-- The TUI shows one tab per vendor (not per account); first-class
-  multi-account is tracked in
+- The TUI still shows one tab per vendor (not per account); per-account TUI
+  tabs are tracked in
   [#14](https://github.com/akitaonrails/ai-usagebar/issues/14).
 - On macOS, the login Keychain can hold only one Claude credential per OS
   user, so additional accounts must be file-based as shown above.
+
+#### Config-driven accounts (`--account`)
+
+Instead of repeating `--creds-path`/`--cache-dir` on every module, name your
+extra Anthropic accounts once in config and select them with `--account
+<label>`:
+
+```toml
+[anthropic]
+# The default account. `--vendor anthropic` with no `--account` uses this,
+# exactly as before. Optional — falls back to ~/.claude/.credentials.json.
+# credentials_path = "~/.claude/.credentials.json"
+
+[[anthropic.accounts]]
+label = "work"
+credentials_path = "~/.config/ai-usagebar/accounts/work.json"
+
+[[anthropic.accounts]]
+label = "personal"
+credentials_path = "~/.config/ai-usagebar/accounts/personal.json"
+```
+
+```jsonc
+"custom/claude-work": {
+    "exec": "ai-usagebar --vendor anthropic --account work --format 'w {session_pct}% · {session_reset}'",
+    "return-type": "json",
+    "interval": 300,
+    "tooltip": true
+}
+```
+
+- The **default account** is the singular `[anthropic] credentials_path` (or the
+  platform default file). `--vendor anthropic` without `--account` uses it, with
+  the same output and the same `~/.cache/ai-usagebar/anthropic/` cache as today.
+- Each `--account <label>` gets an isolated cache at
+  `~/.cache/ai-usagebar/anthropic/<label>/` automatically — no `--cache-dir`
+  needed. Only *extra* accounts get a subdir; the default never moves.
+- `--account` is Anthropic-only and can't be combined with `--creds-path` (both
+  name a credentials file). A typo'd label fails loudly, listing the known ones.
 
 ## Hyprland: float the TUI window
 

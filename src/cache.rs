@@ -42,6 +42,18 @@ impl Cache {
         Ok(Self { dir: base })
     }
 
+    /// Cache for a specific named account of a vendor, rooted at
+    /// `~/.cache/ai-usagebar/<vendor>/<label>`. Only *extra* accounts use
+    /// this; the default account keeps [`Cache::for_vendor`] so its path never
+    /// moves (issue #14, back-compat rule 2).
+    pub fn for_vendor_account(vendor: &str, label: &str) -> Result<Self> {
+        let base = xdg_cache_dir()?
+            .join("ai-usagebar")
+            .join(vendor)
+            .join(label);
+        Ok(Self { dir: base })
+    }
+
     /// Cache rooted at an arbitrary directory — for tests.
     pub fn at(path: PathBuf) -> Self {
         Self { dir: path }

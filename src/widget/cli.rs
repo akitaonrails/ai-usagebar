@@ -112,6 +112,14 @@ pub struct Cli {
     /// accounts" in the README.
     #[arg(long, value_name = "FILE")]
     pub creds_path: Option<std::path::PathBuf>,
+
+    /// Select a named Anthropic account from `[[anthropic.accounts]]` in
+    /// config (issue #14). Without it, `--vendor anthropic` uses the default
+    /// account — the singular `[anthropic] credentials_path` — with unchanged
+    /// output and cache path. Anthropic only; conflicts with the lower-level
+    /// `--creds-path` (they both name a credentials file).
+    #[arg(long, value_name = "LABEL", conflicts_with = "creds_path")]
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
