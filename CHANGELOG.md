@@ -9,7 +9,17 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **`--cache-dir` and `--creds-path` are now documented, supported flags**
+  (previously hidden, "for tests / debugging"). Together they are the
+  official way to track multiple accounts of the same vendor: one widget
+  instance per account, each with its own credentials file and cache
+  directory. `--creds-path` applies to the Anthropic vendor only. See the
+  new "Multiple accounts (advanced)" section in the README. Behavior is
+  unchanged — the flags parse and act exactly as before; they only became
+  visible in `--help` and part of the stable CLI surface. First-class
+  `[[accounts]]` config remains under discussion in #14.
 
 ## [0.8.0] — 2026-07-01
 

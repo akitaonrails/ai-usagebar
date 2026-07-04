@@ -245,6 +245,48 @@ If you'd rather see them all at once:
 
 > Why 300s? The Anthropic and OpenAI Codex endpoints are undocumented and rate-limit aggressively below ~300s. The cache TTL is 60s so multi-monitor instances coexist, but Waybar's polling interval should stay at 300s.
 
+### Multiple accounts (advanced)
+
+To watch **more than one account of the same vendor** — say a personal and a
+work Claude subscription — run one module per account, giving each its own
+credentials file and its own cache directory:
+
+```jsonc
+"modules-right": ["custom/claude-personal", "custom/claude-work", ...],
+
+"custom/claude-personal": {
+    "exec": "ai-usagebar --vendor anthropic --icon '󰚩' --format 'p {session_pct}% · {session_reset}'",
+    "return-type": "json",
+    "interval": 300,
+    "tooltip": true
+},
+"custom/claude-work": {
+    "exec": "ai-usagebar --vendor anthropic --icon '󰚩' --format 'w {session_pct}% · {session_reset}' --creds-path ~/.config/ai-usagebar/accounts/work.credentials.json --cache-dir ~/.cache/ai-usagebar/anthropic-work",
+    "return-type": "json",
+    "interval": 300,
+    "tooltip": true
+}
+```
+
+- `--creds-path` points the module at a different OAuth credentials file
+  (same JSON shape Claude Code writes). To capture a second account's file,
+  log in with `claude` under that account and copy
+  `~/.claude/.credentials.json` somewhere stable — token refreshes are
+  written back to whatever file the flag names, so each account keeps
+  itself alive independently. `chmod 600` the copies.
+- `--cache-dir` gives the module a private cache so the two accounts don't
+  overwrite each other's 60-second cache window. Any directory works; the
+  per-vendor default is `~/.cache/ai-usagebar/<vendor>`.
+- `--creds-path` currently applies to the **Anthropic vendor only**. For
+  API-key vendors (Z.AI, OpenRouter, DeepSeek) point each module at a
+  different key via a wrapper script that sets the env var, plus its own
+  `--cache-dir`.
+- The TUI shows one tab per vendor (not per account); first-class
+  multi-account is tracked in
+  [#14](https://github.com/akitaonrails/ai-usagebar/issues/14).
+- On macOS, the login Keychain can hold only one Claude credential per OS
+  user, so additional accounts must be file-based as shown above.
+
 ## Hyprland: float the TUI window
 
 By default Hyprland tiles the TUI. To make `ai-usagebar-tui` open as a centered floating window, the same way Omarchy floats its own settings TUIs (Wi-Fi/`impala`, audio/`wiremix`, Bluetooth/`bluetui`), add this to `~/.config/hypr/hyprland.conf` or any sourced `.conf`, such as `looknfeel.conf`:

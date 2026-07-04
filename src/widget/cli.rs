@@ -99,12 +99,18 @@ pub struct Cli {
     #[arg(long, conflicts_with_all = ["cycle_next", "watch", "pretty", "json"])]
     pub cycle_prev: bool,
 
-    /// Override the cache directory (for tests / debugging).
-    #[arg(long, hide = true)]
+    /// Override the cache directory (default: ~/.cache/ai-usagebar/<vendor>).
+    /// Give each instance its own directory to track multiple accounts of
+    /// the same vendor side by side — see "Multiple accounts" in the README.
+    #[arg(long, value_name = "DIR")]
     pub cache_dir: Option<std::path::PathBuf>,
 
-    /// Override the credentials file path (for tests / debugging).
-    #[arg(long, hide = true)]
+    /// Override the Anthropic credentials file (default:
+    /// ~/.claude/.credentials.json, or `[anthropic] credentials_path` from
+    /// config). Only the Anthropic vendor reads this flag. Combine with
+    /// --cache-dir to track multiple Claude accounts — see "Multiple
+    /// accounts" in the README.
+    #[arg(long, value_name = "FILE")]
     pub creds_path: Option<std::path::PathBuf>,
 }
 
@@ -232,6 +238,30 @@ mod tests {
         assert!(!cli.pretty);
         assert!(!cli.json);
         assert!(cli.watch.is_none());
+    }
+
+    #[test]
+    fn multi_account_flags_are_stable_api() {
+        // --cache-dir and --creds-path are the documented multi-account
+        // mechanism (README "Multiple accounts") since they were promoted
+        // from hidden debug flags. Renaming either is a breaking change.
+        let cli = Cli::parse_from([
+            "ai-usagebar",
+            "--vendor",
+            "anthropic",
+            "--cache-dir",
+            "/tmp/acct-a",
+            "--creds-path",
+            "/tmp/acct-a/credentials.json",
+        ]);
+        assert_eq!(
+            cli.cache_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/acct-a"))
+        );
+        assert_eq!(
+            cli.creds_path.as_deref(),
+            Some(std::path::Path::new("/tmp/acct-a/credentials.json"))
+        );
     }
 
     #[test]
