@@ -9,7 +9,15 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Per-account tabs in the TUI** (#17, follow-up to #14). `ai-usagebar-tui`
+  now shows the default Claude tab plus one tab per `[[anthropic.accounts]]`
+  entry, each fetching with its own credentials file and `anthropic/<label>`
+  cache (the same resolution the widget's `--account` uses, extracted into a
+  shared `AnthropicConfig::account_target`). Anthropic-only; other vendors are
+  still one tab each. With no extra accounts configured the tab set and order
+  are unchanged.
 
 ## [0.10.0] — 2026-07-05
 

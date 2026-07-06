@@ -317,15 +317,14 @@ fn anthropic_target(cli: &Cli, config: &Config) -> Result<(CredsTarget, Cache)> 
 /// an Explicit target, so a missing/broken file fails loudly instead of
 /// falling back to the (different account's) macOS Keychain item (#15).
 fn named_account_target(cli: &Cli, config: &Config, label: &str) -> Result<(CredsTarget, Cache)> {
-    let account = config.anthropic.account(label)?;
+    let (creds, default_cache) = config.anthropic.account_target(label)?;
+    // `--cache-dir` still wins for scripted/multi-monitor setups; otherwise use
+    // the account's default `anthropic/<label>` cache from account_target.
     let cache = match cli.cache_dir.as_deref() {
         Some(p) => Cache::at(p.join("anthropic").join(label)),
-        None => Cache::for_vendor_account("anthropic", label)?,
+        None => default_cache,
     };
-    Ok((
-        CredsTarget::Explicit(account.credentials_path.clone()),
-        cache,
-    ))
+    Ok((creds, cache))
 }
 
 /// Default-account credentials: `--creds-path` wins, then the singular

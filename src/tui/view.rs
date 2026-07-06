@@ -8,6 +8,7 @@ use ratatui_bubbletea_components::{Help, KeyBinding, ListItem, SelectList};
 
 use crate::format::local_time_hms;
 use crate::tui::app::App;
+use crate::tui::app::TabId;
 use crate::tui::app::TabState;
 use crate::tui::panels;
 use crate::tui::style::bubble_theme;
@@ -56,17 +57,38 @@ fn compact_vendor_label(id: VendorId) -> &'static str {
     }
 }
 
+/// Tab label for the header/sidebar/detail title. A named Anthropic account
+/// (#14/#17) appends its label, e.g. `Claude · work`; a plain vendor tab is
+/// just the vendor name.
+fn tab_label(tab: &TabId) -> String {
+    match &tab.account {
+        Some(acct) => format!("{} · {}", vendor_label(tab.vendor), acct),
+        None => vendor_label(tab.vendor).to_string(),
+    }
+}
+
+/// Compact variant for the narrow top-nav strip.
+fn compact_tab_label(tab: &TabId) -> String {
+    match &tab.account {
+        Some(acct) => format!("{} · {}", compact_vendor_label(tab.vendor), acct),
+        None => compact_vendor_label(tab.vendor).to_string(),
+    }
+}
+
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let theme = bubble_theme(&app.theme);
     let block = theme.titled_block(" ai-usagebar ");
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let active = app.active_vendor().map(vendor_label).unwrap_or("no vendor");
+    let active = app
+        .active_tab_id()
+        .map(tab_label)
+        .unwrap_or_else(|| "no vendor".to_string());
     let line = Line::from(vec![
         theme.accent("  Usage dashboard"),
         theme.muted(" · "),
-        theme.span(format!("{} vendors", app.vendors.len())),
+        theme.span(format!("{} tabs", app.tabs_meta.len())),
         theme.muted(" · "),
         theme.span(format!("active {active}")),
         theme.muted(" · "),
@@ -102,11 +124,11 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, area);
 
     let items = app
-        .vendors
+        .tabs_meta
         .iter()
         .enumerate()
-        .map(|(index, vendor)| {
-            ListItem::new(vendor_label(*vendor)).description(tab_status(app.tabs.get(index)))
+        .map(|(index, tab)| {
+            ListItem::new(tab_label(tab)).description(tab_status(app.tabs.get(index)))
         })
         .collect::<Vec<_>>();
     let mut list = SelectList::new(items).theme(theme);
@@ -123,7 +145,7 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(block, area);
 
     let mut spans = vec![theme.muted(" ")];
-    for (index, vendor) in app.vendors.iter().enumerate() {
+    for (index, tab) in app.tabs_meta.iter().enumerate() {
         if index > 0 {
             spans.push(theme.muted("  "));
         }
@@ -137,7 +159,7 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
         let label_style = if selected { theme.selected } else { theme.text };
         spans.push(Span::styled(marker, marker_style));
         spans.push(theme.span(" "));
-        spans.push(Span::styled(compact_vendor_label(*vendor), label_style));
+        spans.push(Span::styled(compact_tab_label(tab), label_style));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
@@ -145,8 +167,8 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
 fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let theme = bubble_theme(&app.theme);
     let title = app
-        .active_vendor()
-        .map(|vendor| format!(" {} ", vendor_label(vendor)))
+        .active_tab_id()
+        .map(|tab| format!(" {} ", tab_label(tab)))
         .unwrap_or_else(|| " details ".to_string());
     let block = theme.titled_block(title);
     let inner = block.inner(area);

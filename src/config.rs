@@ -16,6 +16,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::anthropic::creds::CredsTarget;
+use crate::cache::Cache;
 use crate::error::{AppError, Result};
 use crate::vendor::VendorId;
 
@@ -98,6 +100,20 @@ impl AnthropicConfig {
                      known labels: {known:?}"
                 ))
             })
+    }
+
+    /// Resolve a named account to the credentials target + isolated cache it
+    /// fetches through: a strict [`CredsTarget::Explicit`] on the account's file
+    /// (never the Keychain — issue #15) and an `anthropic/<label>` cache subdir.
+    /// Shared by the widget (`--account`) and the TUI's per-account tab (#14,
+    /// #17) so both resolve accounts identically; the widget layers its
+    /// `--cache-dir` override on top of the cache returned here.
+    pub fn account_target(&self, label: &str) -> Result<(CredsTarget, Cache)> {
+        let account = self.account(label)?;
+        Ok((
+            CredsTarget::Explicit(account.credentials_path.clone()),
+            Cache::for_vendor_account("anthropic", label)?,
+        ))
     }
 }
 

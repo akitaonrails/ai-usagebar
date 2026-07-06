@@ -1,4 +1,5 @@
-//! Interactive TUI — one tab per enabled vendor.
+//! Interactive TUI — one tab per enabled vendor, plus one extra tab per
+//! configured Anthropic account (`[[anthropic.accounts]]`, issues #14/#17).
 //!
 //! Controls:
 //!   Tab / l / →   next tab
@@ -11,9 +12,11 @@ use std::io;
 use std::time::Duration;
 
 use ai_usagebar::config::Config;
-use ai_usagebar::tui::app::{App, REFRESH_INTERVAL, TabState, refresh_one};
+use ai_usagebar::tui::app::{
+    App, REFRESH_INTERVAL, TabId, TabState, refresh_one, tabs_from_config,
+};
 use ai_usagebar::tui::view::draw;
-use ai_usagebar::vendor::{HTTP_CLIENT_TIMEOUT, VendorId};
+use ai_usagebar::vendor::HTTP_CLIENT_TIMEOUT;
 use chrono::Utc;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -37,8 +40,8 @@ async fn main() {
 
 async fn run() -> io::Result<()> {
     let mut config = Config::load().unwrap_or_default();
-    let vendors = config.enabled_vendors();
-    if vendors.is_empty() {
+    let tabs = tabs_from_config(&config);
+    if tabs.is_empty() {
         eprintln!(
             "No vendors are enabled in {}. Exiting.",
             ai_usagebar::config::config_path_hint()
@@ -51,7 +54,7 @@ async fn run() -> io::Result<()> {
         .build()
         .map_err(io::Error::other)?;
 
-    let mut app = App::new_with_primary(vendors, config.ui.primary);
+    let mut app = App::new_with_primary(tabs, config.ui.primary);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -151,10 +154,10 @@ where
                     }
                     // Refresh-on-key handling.
                     if matches!(k.code, KeyCode::Char('r'))
-                        && let Some(v) = app.active_vendor()
+                        && let Some(tab) = app.active_tab_id().cloned()
                     {
                         let idx = app.active;
-                        spawn_one(app, idx, v, client, config, &tx);
+                        spawn_one(app, idx, tab, client, config, &tx);
                     }
                     if matches!(k.code, KeyCode::Char('R')) {
                         spawn_all(app, client, config, &tx);
@@ -175,15 +178,15 @@ fn spawn_all(
     config: &Config,
     tx: &mpsc::UnboundedSender<(usize, TabState)>,
 ) {
-    for (i, v) in app.vendors.clone().into_iter().enumerate() {
-        spawn_one(app, i, v, client, config, tx);
+    for (i, tab) in app.tabs_meta.clone().into_iter().enumerate() {
+        spawn_one(app, i, tab, client, config, tx);
     }
 }
 
 fn spawn_one(
     app: &mut App,
     idx: usize,
-    vendor: VendorId,
+    tab: TabId,
     client: &Client,
     config: &Config,
     tx: &mpsc::UnboundedSender<(usize, TabState)>,
@@ -193,7 +196,7 @@ fn spawn_one(
     let cfg = config.clone();
     app.tabs[idx] = TabState::Loading;
     tokio::spawn(async move {
-        let state = refresh_one(&client, &cfg, vendor).await;
+        let state = refresh_one(&client, &cfg, &tab).await;
         let _ = tx.send((idx, state));
     });
 }

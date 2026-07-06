@@ -35,9 +35,54 @@ pub struct ReadyTab {
     pub fetched_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// Identity of one TUI tab. Usually a whole vendor; for Anthropic it can also
+/// name a specific configured account (issues #14 / #17). `account: None` is a
+/// plain vendor tab — the default Claude account, or any non-Anthropic vendor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabId {
+    pub vendor: VendorId,
+    pub account: Option<String>,
+}
+
+impl TabId {
+    /// A plain vendor tab (default account for Anthropic).
+    pub fn vendor(vendor: VendorId) -> Self {
+        Self {
+            vendor,
+            account: None,
+        }
+    }
+
+    /// A named Anthropic account tab (`[[anthropic.accounts]]` label).
+    pub fn account(label: impl Into<String>) -> Self {
+        Self {
+            vendor: VendorId::Anthropic,
+            account: Some(label.into()),
+        }
+    }
+}
+
+/// Expand enabled vendors into the tab list. Anthropic yields its default
+/// account tab followed by one tab per `[[anthropic.accounts]]` entry, in
+/// config order; every other vendor is a single tab. With no extra accounts
+/// configured the result equals `config.enabled_vendors()` — identical tab set
+/// and order to before (issue #14/#17 back-compat).
+pub fn tabs_from_config(config: &Config) -> Vec<TabId> {
+    let mut tabs = Vec::new();
+    for vendor in config.enabled_vendors() {
+        tabs.push(TabId::vendor(vendor));
+        if vendor == VendorId::Anthropic {
+            for acct in &config.anthropic.accounts {
+                tabs.push(TabId::account(acct.label.clone()));
+            }
+        }
+    }
+    tabs
+}
+
 #[derive(Debug)]
 pub struct App {
-    pub vendors: Vec<VendorId>,
+    pub tabs_meta: Vec<TabId>,
     pub active: usize,
     pub tabs: Vec<TabState>,
     pub theme: Theme,
@@ -48,10 +93,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(vendors: Vec<VendorId>) -> Self {
+    pub fn new(tabs_meta: Vec<TabId>) -> Self {
         // Production: resolve the palette from the environment (Omarchy theme
         // if present, else One Dark).
-        Self::with_theme(vendors, Theme::default().merged_with_omarchy())
+        Self::with_theme(tabs_meta, Theme::default().merged_with_omarchy())
     }
 
     /// Like [`App::new`] but with an explicit theme. Lets tests build an `App`
@@ -59,10 +104,10 @@ impl App {
     /// (`$HOME/.config/omarchy/current/theme/colors.toml`) — `new` resolves
     /// that path and the `$HOME` env var via `merged_with_omarchy`, which is
     /// not hermetic. Production code uses `new`/`new_with_primary`.
-    pub fn with_theme(vendors: Vec<VendorId>, theme: Theme) -> Self {
-        let n = vendors.len();
+    pub fn with_theme(tabs_meta: Vec<TabId>, theme: Theme) -> Self {
+        let n = tabs_meta.len();
         Self {
-            vendors,
+            tabs_meta,
             active: 0,
             tabs: vec![TabState::Loading; n],
             theme,
@@ -74,41 +119,47 @@ impl App {
 
     /// Construct with an initial active tab — usually `[ui] primary` from
     /// config. Silently falls through to index 0 if the requested vendor
-    /// isn't in `vendors` (e.g. it was disabled).
-    pub fn new_with_primary(vendors: Vec<VendorId>, primary: Option<VendorId>) -> Self {
-        let mut app = Self::new(vendors);
+    /// isn't present (e.g. it was disabled).
+    pub fn new_with_primary(tabs_meta: Vec<TabId>, primary: Option<VendorId>) -> Self {
+        let mut app = Self::new(tabs_meta);
         app.select_primary(primary);
         app
     }
 
-    pub fn active_vendor(&self) -> Option<VendorId> {
-        self.vendors.get(self.active).copied()
+    pub fn active_tab_id(&self) -> Option<&TabId> {
+        self.tabs_meta.get(self.active)
     }
 
+    pub fn active_vendor(&self) -> Option<VendorId> {
+        self.tabs_meta.get(self.active).map(|t| t.vendor)
+    }
+
+    /// Move to the first tab of `primary`'s vendor (the default account tab,
+    /// since it precedes any of that vendor's account tabs).
     pub fn select_primary(&mut self, primary: Option<VendorId>) {
         if let Some(p) = primary
-            && let Some(idx) = self.vendors.iter().position(|v| *v == p)
+            && let Some(idx) = self.tabs_meta.iter().position(|t| t.vendor == p)
         {
             self.active = idx;
         }
     }
 
     pub fn next_tab(&mut self) {
-        if !self.vendors.is_empty() {
-            self.active = (self.active + 1) % self.vendors.len();
+        if !self.tabs_meta.is_empty() {
+            self.active = (self.active + 1) % self.tabs_meta.len();
         }
     }
 
     pub fn prev_tab(&mut self) {
-        if !self.vendors.is_empty() {
-            self.active = (self.active + self.vendors.len() - 1) % self.vendors.len();
+        if !self.tabs_meta.is_empty() {
+            self.active = (self.active + self.tabs_meta.len() - 1) % self.tabs_meta.len();
         }
     }
 }
 
-/// Fetch and render one vendor — returns a `TabState`.
-pub async fn refresh_one(client: &Client, config: &Config, vendor: VendorId) -> TabState {
-    match build_outcome(client, config, vendor).await {
+/// Fetch and render one tab — returns a `TabState`.
+pub async fn refresh_one(client: &Client, config: &Config, tab: &TabId) -> TabState {
+    match build_outcome(client, config, tab).await {
         Ok(outcome) => {
             // Resolve the cache age (a duration from "now" at fetch time) into an
             // absolute instant ONCE. Without this, sections_for would recompute
@@ -129,21 +180,25 @@ pub async fn refresh_one(client: &Client, config: &Config, vendor: VendorId) -> 
     }
 }
 
-async fn build_outcome(
-    client: &Client,
-    config: &Config,
-    vendor: VendorId,
-) -> Result<VendorOutcome> {
-    match vendor {
+async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<VendorOutcome> {
+    match tab.vendor {
         VendorId::Anthropic => {
-            let cache = crate::cache::Cache::for_vendor("anthropic")?;
-            // Config credentials_path is an explicit choice (strict read);
-            // only the platform default gets the macOS Keychain fallback.
-            let creds_target = match config.anthropic.credentials_path.clone() {
-                Some(p) => crate::anthropic::creds::CredsTarget::Explicit(p),
-                None => crate::anthropic::creds::CredsTarget::Default(
-                    crate::anthropic::creds::default_path().unwrap_or_default(),
-                ),
+            // A named account resolves to its own file + `anthropic/<label>`
+            // cache, shared with the widget via `account_target` (#14/#17).
+            // The default tab keeps the pre-existing resolution: config
+            // `credentials_path` is an explicit strict read, and only the
+            // platform default gets the macOS Keychain fallback.
+            let (creds_target, cache) = match tab.account.as_deref() {
+                Some(label) => config.anthropic.account_target(label)?,
+                None => {
+                    let target = match config.anthropic.credentials_path.clone() {
+                        Some(p) => crate::anthropic::creds::CredsTarget::Explicit(p),
+                        None => crate::anthropic::creds::CredsTarget::Default(
+                            crate::anthropic::creds::default_path().unwrap_or_default(),
+                        ),
+                    };
+                    (target, crate::cache::Cache::for_vendor("anthropic")?)
+                }
             };
             let endpoints = crate::anthropic::fetch::Endpoints::default();
             let outcome = crate::anthropic::fetch_snapshot(
@@ -241,7 +296,10 @@ mod tests {
     #[test]
     fn select_primary_moves_to_enabled_vendor() {
         let mut app = App::with_theme(
-            vec![VendorId::Anthropic, VendorId::Openrouter],
+            vec![
+                TabId::vendor(VendorId::Anthropic),
+                TabId::vendor(VendorId::Openrouter),
+            ],
             Theme::default(),
         );
         app.select_primary(Some(VendorId::Openrouter));
@@ -250,8 +308,66 @@ mod tests {
 
     #[test]
     fn select_primary_ignores_disabled_vendor() {
-        let mut app = App::with_theme(vec![VendorId::Anthropic], Theme::default());
+        let mut app = App::with_theme(vec![TabId::vendor(VendorId::Anthropic)], Theme::default());
         app.select_primary(Some(VendorId::Openai));
         assert_eq!(app.active_vendor(), Some(VendorId::Anthropic));
+    }
+
+    fn config_with_accounts(labels: &[&str]) -> Config {
+        let mut config = Config::default();
+        // Keep only Anthropic enabled so the test asserts on account expansion,
+        // not on the full default vendor set.
+        config.openai.enabled = false;
+        config.zai.enabled = false;
+        config.openrouter.enabled = false;
+        config.anthropic.accounts = labels
+            .iter()
+            .map(|l| crate::config::AnthropicAccount {
+                label: (*l).to_string(),
+                credentials_path: format!("/creds/{l}.json").into(),
+            })
+            .collect();
+        config
+    }
+
+    #[test]
+    fn tabs_expand_anthropic_accounts_after_default() {
+        // Default Claude tab first, then each account in config order.
+        let tabs = tabs_from_config(&config_with_accounts(&["work", "personal"]));
+        assert_eq!(
+            tabs,
+            vec![
+                TabId::vendor(VendorId::Anthropic),
+                TabId::account("work"),
+                TabId::account("personal"),
+            ]
+        );
+    }
+
+    #[test]
+    fn tabs_without_accounts_are_just_enabled_vendors() {
+        // No [[anthropic.accounts]] → one tab per enabled vendor, unchanged.
+        let config = Config::default();
+        let tabs = tabs_from_config(&config);
+        let vendors: Vec<VendorId> = tabs.iter().map(|t| t.vendor).collect();
+        assert_eq!(vendors, config.enabled_vendors());
+        assert!(tabs.iter().all(|t| t.account.is_none()));
+    }
+
+    #[test]
+    fn select_primary_lands_on_default_account_tab() {
+        // With account tabs present, `primary = anthropic` selects the default
+        // Claude tab (index 0), not one of its account tabs.
+        let app = {
+            let tabs = tabs_from_config(&config_with_accounts(&["work"]));
+            let mut a = App::with_theme(tabs, Theme::default());
+            a.select_primary(Some(VendorId::Anthropic));
+            a
+        };
+        assert_eq!(app.active, 0);
+        assert_eq!(
+            app.active_tab_id(),
+            Some(&TabId::vendor(VendorId::Anthropic))
+        );
     }
 }

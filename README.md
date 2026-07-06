@@ -281,9 +281,9 @@ credentials file and its own cache directory:
   API-key vendors (Z.AI, OpenRouter, DeepSeek) point each module at a
   different key via a wrapper script that sets the env var, plus its own
   `--cache-dir`.
-- The TUI still shows one tab per vendor (not per account); per-account TUI
-  tabs are tracked in
-  [#14](https://github.com/akitaonrails/ai-usagebar/issues/14).
+- The TUI shows the default Claude tab plus one tab per configured
+  `[[anthropic.accounts]]` entry (see the config example below); Tab / `h` / `l`
+  cycle through them like any other tab.
 - On macOS, the login Keychain can hold only one Claude credential per OS
   user, so additional accounts must be file-based as shown above.
 
@@ -325,6 +325,9 @@ credentials_path = "~/.config/ai-usagebar/accounts/personal.json"
   needed. Only *extra* accounts get a subdir; the default never moves.
 - `--account` is Anthropic-only and can't be combined with `--creds-path` (both
   name a credentials file). A typo'd label fails loudly, listing the known ones.
+- **`ai-usagebar-tui`** reads the same `[[anthropic.accounts]]` and shows one
+  tab per account (after the default Claude tab), so the config above wires up
+  the widget and the TUI at once.
 
 ## Hyprland: float the TUI window
 
