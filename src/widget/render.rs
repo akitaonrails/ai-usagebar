@@ -368,6 +368,42 @@ fn render_default_tooltip(input: &RenderInput) -> String {
         cd = escape(&countdown::format(snap.weekly.resets_at, input.now))
     )));
 
+    for sw in &snap.scoped {
+        let scoped_color = pango::severity_color(severity_for(sw.window.utilization_pct), theme);
+        let scoped_pacing = pacing::calc(
+            sw.window.utilization_pct,
+            sw.window.resets_at,
+            input.now,
+            sw.window.window_duration,
+            input.pace_tolerance,
+        );
+        let scoped_bar = if input.tooltip_pace_pts {
+            pango::progress_bar(
+                sw.window.utilization_pct,
+                scoped_color,
+                theme,
+                Some(scoped_pacing.elapsed_pct),
+            )
+        } else {
+            pango::progress_bar(sw.window.utilization_pct, scoped_color, theme, None)
+        };
+        lines.push(Line::Body("".into()));
+        lines.push(Line::Body(format!(
+            " <span foreground='{fg}'>  󰆧  {label} weekly</span>",
+            label = escape(&sw.label)
+        )));
+        lines.push(Line::Body(format!(
+            "   {bar}  <span font_weight='bold' foreground='{color}'>{pct}%</span>",
+            bar = scoped_bar,
+            color = scoped_color,
+            pct = sw.window.utilization_pct
+        )));
+        lines.push(Line::Body(format!(
+            " <span foreground='{dim}'>  ⏱  Resets in {cd}</span>",
+            cd = escape(&countdown::format(sw.window.resets_at, input.now))
+        )));
+    }
+
     if let Some(sw) = snap.sonnet.as_ref() {
         let sonnet_color = pango::severity_color(severity_for(sw.utilization_pct), theme);
         let sonnet_pacing = pacing::calc(
@@ -515,6 +551,7 @@ mod tests {
             session,
             weekly,
             sonnet: Some(sonnet),
+            scoped: vec![],
             extra: Some(ExtraUsage {
                 limit: Cents(5000),
                 spent: Cents(250),

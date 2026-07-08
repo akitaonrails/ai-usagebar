@@ -54,8 +54,21 @@ pub struct AnthropicSnapshot {
     /// Some vendors of Claude (Pro, some Max tiers) don't have a separate
     /// Sonnet bucket — in which case this is None.
     pub sonnet: Option<UsageWindow>,
+    /// Model-scoped weekly windows from the newer `limits[]` array
+    /// (`kind == "weekly_scoped"`), e.g. the Fable weekly cap. Labels come
+    /// from the API (`scope.model.display_name`), so new models show up
+    /// without a code change. Empty when the account has none.
+    pub scoped: Vec<ScopedWindow>,
     /// `None` when `extra_usage.is_enabled` is false or the block is absent.
     pub extra: Option<ExtraUsage>,
+}
+
+/// A usage window scoped to a specific model, labeled by the API
+/// (e.g. "Fable"). Weekly (7d) duration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedWindow {
+    pub label: String,
+    pub window: UsageWindow,
 }
 
 /// "Extra usage" pay-as-you-go block (claudebar's `extra_usage`).
@@ -207,13 +220,19 @@ pub fn anthropic_severity(snap: &AnthropicSnapshot) -> crate::pacing::PaceSeveri
     {
         max = s.utilization_pct;
     }
+    for sw in &snap.scoped {
+        if sw.window.utilization_pct > max {
+            max = sw.window.utilization_pct;
+        }
+    }
     // Extra usage only promotes severity if a rate-limit window is at 100%.
     let any_at_cap = snap.session.utilization_pct >= 100
         || snap.weekly.utilization_pct >= 100
         || snap
             .sonnet
             .as_ref()
-            .is_some_and(|s| s.utilization_pct >= 100);
+            .is_some_and(|s| s.utilization_pct >= 100)
+        || snap.scoped.iter().any(|s| s.window.utilization_pct >= 100);
     if any_at_cap && let Some(extra) = snap.extra {
         let p = extra.percent();
         if p > max {
@@ -243,6 +262,7 @@ mod tests {
             session: w(s),
             weekly: w(w_),
             sonnet: sonnet.map(w),
+            scoped: vec![],
             extra: extra.map(|(limit, spent)| ExtraUsage {
                 limit: Cents(limit),
                 spent: Cents(spent),

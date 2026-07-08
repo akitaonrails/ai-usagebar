@@ -9,7 +9,16 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Model-scoped weekly limits (e.g. the Fable weekly cap)** now render in the
+  widget tooltip, the TUI Claude tab, and the bar's severity class. Anthropic's
+  usage endpoint reports these only inside the newer `limits[]` array
+  (`kind == "weekly_scoped"`, labeled by `scope.model.display_name`) — there is
+  no dedicated `seven_day_<model>` field — so they were previously invisible:
+  a Fable week at 84%/warning showed nothing while the bar stayed green on a
+  55% overall weekly. Labels come from the API, so future scoped models show
+  up without a code change. Accounts without scoped limits are unchanged.
 
 ## [0.11.0] — 2026-07-06
 

@@ -123,6 +123,9 @@ fn anthropic_sections(
     if let Some(w) = &s.sonnet {
         push_window(&mut v, "Sonnet only", w, now, tol, false);
     }
+    for sw in &s.scoped {
+        push_window(&mut v, &format!("{} (7d)", sw.label), &sw.window, now, tol, false);
+    }
     if let Some(e) = &s.extra {
         v.push(Section::Spacer);
         let pct = e.percent().clamp(0, 100) as u16;
@@ -553,6 +556,7 @@ mod tests {
                 resets_at: Some(now() + chrono::Duration::hours(2)),
                 window_duration: chrono::Duration::days(7),
             }),
+            scoped: vec![],
             extra: Some(ExtraUsage {
                 limit: Cents(5000),
                 spent: Cents(250),
@@ -591,6 +595,7 @@ mod tests {
                 window_duration: chrono::Duration::days(7),
             },
             sonnet: None,
+            scoped: vec![],
             extra: None,
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
