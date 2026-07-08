@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::usage::{AnthropicSnapshot, Cents, ExtraUsage, UsageWindow};
+use crate::usage::{AnthropicSnapshot, Cents, ExtraUsage, ScopedWindow, UsageWindow};
 
 /// Top-level response from `GET /api/oauth/usage`.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
@@ -20,6 +20,38 @@ pub struct UsageResponse {
     pub seven_day_sonnet: Option<Window>,
     #[serde(default)]
     pub extra_usage: Option<ExtraUsageBlock>,
+    /// Newer per-limit array. Carries model-scoped weekly windows
+    /// (`kind == "weekly_scoped"`, e.g. the Fable weekly cap) that have no
+    /// dedicated `seven_day_*` field.
+    #[serde(default)]
+    pub limits: Vec<LimitEntry>,
+}
+
+/// One entry of the `limits[]` array. Only `weekly_scoped` entries with a
+/// model display name are lifted into the snapshot; everything else in the
+/// array duplicates `five_hour`/`seven_day`.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
+pub struct LimitEntry {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub percent: Option<f64>,
+    #[serde(default)]
+    pub resets_at: Option<String>,
+    #[serde(default)]
+    pub scope: Option<LimitScope>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
+pub struct LimitScope {
+    #[serde(default)]
+    pub model: Option<LimitModel>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
+pub struct LimitModel {
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 /// A single usage window — `utilization` is `0..=100` (integer percent).
@@ -107,12 +139,29 @@ impl UsageResponse {
                 limit: Cents(e.monthly_limit),
                 spent: Cents(e.used_credits),
             });
+        let scoped = self
+            .limits
+            .into_iter()
+            .filter(|l| l.kind.as_deref() == Some("weekly_scoped"))
+            .filter_map(|l| {
+                let label = l.scope?.model?.display_name?;
+                let window = to_window(
+                    Some(Window {
+                        utilization: l.percent.unwrap_or(0.0),
+                        resets_at: l.resets_at,
+                    }),
+                    WEEKLY,
+                );
+                Some(ScopedWindow { label, window })
+            })
+            .collect();
 
         AnthropicSnapshot {
             plan: plan_label,
             session,
             weekly,
             sonnet,
+            scoped,
             extra,
         }
     }
@@ -138,6 +187,47 @@ mod tests {
         assert_eq!(snap.extra.unwrap().limit.0, 5000);
         assert_eq!(snap.extra.unwrap().spent.0, 250);
         assert!(snap.session.resets_at.is_some());
+    }
+
+    #[test]
+    fn parses_weekly_scoped_limits() {
+        // Real shape observed 2026-07-08: the Fable weekly cap only exists
+        // inside `limits[]`; there is no `seven_day_fable` field.
+        let raw = r#"{
+            "five_hour": {"utilization": 10.0, "resets_at": "2026-07-08T22:59:59Z"},
+            "seven_day": {"utilization": 55.0, "resets_at": "2026-07-10T10:59:59Z"},
+            "limits": [
+                {"kind": "session", "group": "session", "percent": 10,
+                 "severity": "normal", "resets_at": "2026-07-08T22:59:59Z",
+                 "scope": null, "is_active": false},
+                {"kind": "weekly_all", "group": "weekly", "percent": 55,
+                 "severity": "normal", "resets_at": "2026-07-10T10:59:59Z",
+                 "scope": null, "is_active": false},
+                {"kind": "weekly_scoped", "group": "weekly", "percent": 84,
+                 "severity": "warning", "resets_at": "2026-07-10T10:59:59Z",
+                 "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null},
+                 "is_active": true}
+            ]
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let snap = resp.into_snapshot("Pro".into());
+        assert_eq!(snap.scoped.len(), 1);
+        assert_eq!(snap.scoped[0].label, "Fable");
+        assert_eq!(snap.scoped[0].window.utilization_pct, 84);
+        assert!(snap.scoped[0].window.resets_at.is_some());
+        // Unscoped entries never duplicate into `scoped`.
+        assert_eq!(snap.weekly.utilization_pct, 55);
+    }
+
+    #[test]
+    fn missing_limits_array_yields_empty_scoped() {
+        let raw = r#"{
+            "five_hour": {"utilization": 0, "resets_at": "2026-05-23T17:30:00Z"},
+            "seven_day": {"utilization": 0, "resets_at": "2026-05-30T12:00:00Z"}
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let snap = resp.into_snapshot("Pro".into());
+        assert!(snap.scoped.is_empty());
     }
 
     #[test]

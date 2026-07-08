@@ -54,8 +54,21 @@ pub struct AnthropicSnapshot {
     /// Some vendors of Claude (Pro, some Max tiers) don't have a separate
     /// Sonnet bucket — in which case this is None.
     pub sonnet: Option<UsageWindow>,
+    /// Model-scoped weekly windows from the newer `limits[]` array
+    /// (`kind == "weekly_scoped"`), e.g. the Fable weekly cap. Labels come
+    /// from the API (`scope.model.display_name`), so new models show up
+    /// without a code change. Empty when the account has none.
+    pub scoped: Vec<ScopedWindow>,
     /// `None` when `extra_usage.is_enabled` is false or the block is absent.
     pub extra: Option<ExtraUsage>,
+}
+
+/// A usage window scoped to a specific model, labeled by the API
+/// (e.g. "Fable"). Weekly (7d) duration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopedWindow {
+    pub label: String,
+    pub window: UsageWindow,
 }
 
 /// "Extra usage" pay-as-you-go block (claudebar's `extra_usage`).
@@ -207,13 +220,19 @@ pub fn anthropic_severity(snap: &AnthropicSnapshot) -> crate::pacing::PaceSeveri
     {
         max = s.utilization_pct;
     }
+    for sw in &snap.scoped {
+        if sw.window.utilization_pct > max {
+            max = sw.window.utilization_pct;
+        }
+    }
     // Extra usage only promotes severity if a rate-limit window is at 100%.
     let any_at_cap = snap.session.utilization_pct >= 100
         || snap.weekly.utilization_pct >= 100
         || snap
             .sonnet
             .as_ref()
-            .is_some_and(|s| s.utilization_pct >= 100);
+            .is_some_and(|s| s.utilization_pct >= 100)
+        || snap.scoped.iter().any(|s| s.window.utilization_pct >= 100);
     if any_at_cap && let Some(extra) = snap.extra {
         let p = extra.percent();
         if p > max {
@@ -243,6 +262,7 @@ mod tests {
             session: w(s),
             weekly: w(w_),
             sonnet: sonnet.map(w),
+            scoped: vec![],
             extra: extra.map(|(limit, spent)| ExtraUsage {
                 limit: Cents(limit),
                 spent: Cents(spent),
@@ -313,6 +333,30 @@ mod tests {
     fn severity_falls_through_to_extra_when_extra_higher_than_capped_window() {
         // session = 100, weekly = 50, extra = 100% → max should be 100.
         let s = snap(100, 50, None, Some((10000, 10000)));
+        assert_eq!(anthropic_severity(&s), PaceSeverity::Critical);
+    }
+
+    fn with_scoped(mut s: AnthropicSnapshot, pct: i32) -> AnthropicSnapshot {
+        s.scoped.push(ScopedWindow {
+            label: "Fable".into(),
+            window: w(pct),
+        });
+        s
+    }
+
+    #[test]
+    fn severity_includes_scoped_windows() {
+        // The PR #19 scenario: overall weekly at 55 (Mid) but a scoped Fable
+        // week at 84 → the bar class must escalate to High.
+        let s = with_scoped(snap(10, 55, None, None), 84);
+        assert_eq!(anthropic_severity(&s), PaceSeverity::High);
+    }
+
+    #[test]
+    fn severity_promotes_extra_when_scoped_at_100() {
+        // A scoped window at cap counts as a rate-limit cap hit, so extra
+        // usage above the window max is promoted — same rule as session/weekly.
+        let s = with_scoped(snap(10, 50, None, Some((10000, 9900))), 100);
         assert_eq!(anthropic_severity(&s), PaceSeverity::Critical);
     }
 }
