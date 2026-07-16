@@ -16,6 +16,15 @@ Each release is also published at
   common case is one, e.g. **Fable**) exposed as flat fields. The tooltip
   already rendered every `snap.scoped` entry, but the desktop surfaces redraw
   from `--format` and had no way to read them.
+- **The meta reference (pace marker) now renders on the macOS menu bar and GNOME
+  desktop bars**, matching the Waybar tooltip. Each time-windowed bar draws a
+  thin blue `│` at the elapsed-time position; the fill stays in the calm
+  absolute-usage color up to the marker, and only the part that overshoots it —
+  how far ahead of pace you are, i.e. the risk of spilling into **paid extra
+  usage** if you keep the pace — is painted in the warning color. So a bar at
+  41% used but only 20% into the week reads calm with a small red tail, not all
+  red. macOS adds a *"Mostrar referência da meta"* toggle to switch it off;
+  GNOME draws it whenever the window reports a reset.
 
 ### Fixed
 

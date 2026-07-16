@@ -24,12 +24,20 @@ const ROLE = 'ai-usagebar';
 const DIM = '#5c6370';
 const FG = '#abb2bf';
 const RED = '#e06c75';
+// The meta marker (pace/elapsed reference line) is a fixed blue, matching the
+// binary's default `marker` theme color and distinct from the over-pace warning
+// fill. Pace tolerance mirrors the binary's `--pace-tolerance` default of 5.
+const MARKER = '#61afef';
+const PACE_TOL = 5;
 
-// The fields we pull from the binary, joined by ';;'. The trailing `{scoped_*}`
-// carry the model-scoped weekly window (e.g. Fable) from the API's `limits[]`.
+// The fields we pull from the binary, joined by ';;'. `{scoped_*}` carry the
+// model-scoped weekly window (e.g. Fable) from `limits[]`; the trailing
+// `*_elapsed` carry the meta (pace) position — empty when the window has no
+// reset, which we treat as "no marker".
 const FORMAT = '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;' +
     '{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;' +
-    '{scoped_model};;{scoped_pct};;{scoped_reset}';
+    '{scoped_model};;{scoped_pct};;{scoped_reset};;' +
+    '{session_elapsed};;{weekly_elapsed};;{scoped_elapsed}';
 const REFRESH_TIMEOUT_SECS = 60;
 
 // severity_for(pct) from src/pango.rs: >=90 critical, >=75 high, >=50 mid, else low.
@@ -43,6 +51,15 @@ function colorForPct(pct, colors) {
     return colors.low;
 }
 
+// pace_fill_severity(delta) from src/pacing.rs: <=0 green, <=tol amber, else red.
+function colorForDelta(delta, colors) {
+    if (delta <= 0)
+        return colors.low;
+    if (delta <= PACE_TOL)
+        return colors.high;
+    return colors.critical;
+}
+
 function esc(s) {
     return String(s)
         .replace(/&/g, '&amp;')
@@ -50,12 +67,35 @@ function esc(s) {
         .replace(/>/g, '&gt;');
 }
 
-// Two-segment block bar as Pango markup, `width` cells wide.
-function barMarkup(pct, width, colors) {
+// Block bar as Pango markup, `width` cells wide. When `elapsed` (0..100) is a
+// number, the fill stays in the calm absolute-usage color up to a blue marker at
+// the elapsed position and only the part that overshoots the meta (how far ahead
+// of pace you are → risk of paid extra usage) is painted in the warning color;
+// otherwise it's a plain two-segment absolute-color bar with no marker.
+function barMarkup(pct, width, colors, elapsed) {
     const p = Math.max(0, Math.min(100, Math.round(pct)));
     const filled = Math.round((p * width) / 100);
-    return `<span foreground="${colorForPct(p, colors)}">${'█'.repeat(filled)}</span>` +
-        `<span foreground="${colors.empty}">${'░'.repeat(width - filled)}</span>`;
+
+    if (!Number.isFinite(elapsed)) {
+        return `<span foreground="${colorForPct(p, colors)}">${'█'.repeat(filled)}</span>` +
+            `<span foreground="${colors.empty}">${'░'.repeat(width - filled)}</span>`;
+    }
+
+    const e = Math.max(0, Math.min(100, Math.round(elapsed)));
+    const base = colorForPct(p, colors);
+    const over = colorForDelta(p - e, colors);
+    let m = Math.floor((e * width) / 100);
+    if (m > width - 1)
+        m = width - 1;
+    const preF = Math.min(filled, m);
+    const postF = filled > m + 1 ? filled - m - 1 : 0;
+    const preE = m - preF;
+    const postE = width - m - 1 - postF;
+    return `<span foreground="${base}">${'█'.repeat(preF)}</span>` +
+        `<span foreground="${colors.empty}">${'░'.repeat(preE)}</span>` +
+        `<span foreground="${MARKER}">│</span>` +
+        `<span foreground="${over}">${'█'.repeat(postF)}</span>` +
+        `<span foreground="${colors.empty}">${'░'.repeat(postE)}</span>`;
 }
 
 function resolveBinary(settings) {
@@ -306,15 +346,15 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         };
         this._data = {
             plan: field(f[0]),
-            session: {pct: num(f[1]) ?? 0, reset: field(f[2])},
-            weekly: {pct: num(f[3]) ?? 0, reset: field(f[4])},
+            session: {pct: num(f[1]) ?? 0, reset: field(f[2]), elapsed: num(f[13])},
+            weekly: {pct: num(f[3]) ?? 0, reset: field(f[4]), elapsed: num(f[14])},
             // Per-model weekly bar: prefer the model-scoped window (scoped_*,
             // e.g. Fable); fall back to the legacy flat sonnet window.
             sonnet: (() => {
                 const scopedReset = field(f[12]);
                 if (scopedReset && scopedReset !== '—')
-                    return {pct: num(f[11]), reset: scopedReset, label: field(f[10]) || 'Sonnet only'};
-                return {pct: num(f[5]), reset: field(f[6]), label: 'Sonnet only'};
+                    return {pct: num(f[11]), reset: scopedReset, label: field(f[10]) || 'Sonnet only', elapsed: num(f[15])};
+                return {pct: num(f[5]), reset: field(f[6]), label: 'Sonnet only', elapsed: null};
             })(),
             extra: {pct: num(f[7]), spent: field(f[8]), limit: field(f[9])},
         };
@@ -336,12 +376,12 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         const showPct = this._settings.get_boolean('show-percent');
         const showBars = this._settings.get_boolean('show-bars');
 
-        const seg = (tag, pct, valueText) => {
+        const seg = (tag, pct, valueText, elapsed) => {
             const toks = [`<span foreground="${DIM}">${tag}</span>`];
             if (showPct)
                 toks.push(`<span foreground="${colorForPct(pct, colors)}">${esc(valueText)}</span>`);
             if (showBars)
-                toks.push(barMarkup(pct, w, colors));
+                toks.push(barMarkup(pct, w, colors, elapsed));
             if (!showPct && !showBars) // never render an empty segment
                 toks.push(`<span foreground="${colorForPct(pct, colors)}">${esc(valueText)}</span>`);
             return toks.join(' ');
@@ -349,12 +389,12 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
         const parts = [];
         if (this._settings.get_boolean('show-session'))
-            parts.push(seg('5h', d.session.pct, `${d.session.pct}%`));
+            parts.push(seg('5h', d.session.pct, `${d.session.pct}%`, d.session.elapsed));
         if (this._settings.get_boolean('show-weekly'))
-            parts.push(seg('7d', d.weekly.pct, `${d.weekly.pct}%`));
+            parts.push(seg('7d', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.elapsed));
         if (this._settings.get_boolean('show-extra') &&
             d.extra.pct != null && d.extra.spent && d.extra.limit)
-            parts.push(seg('ex', d.extra.pct, d.extra.spent));
+            parts.push(seg('ex', d.extra.pct, d.extra.spent, null)); // $ budget → no meta
 
         const gap = `<span foreground="${DIM}">   </span>`;
         this._label.clutter_text.set_markup(parts.join(gap) || ' ');
@@ -363,13 +403,13 @@ class AiUsageBarIndicator extends PanelMenu.Button {
     _renderDropdown(d, colors) {
         this._planLabel.text = d.plan || 'AI Usage';
 
-        const upd = (key, pct, valueText, reset, visible) => {
+        const upd = (key, pct, valueText, reset, visible, elapsed) => {
             const r = this._rows[key];
             r.item.visible = visible;
             if (!visible)
                 return;
             r.valL.text = valueText;
-            r.barL.clutter_text.set_markup(barMarkup(pct ?? 0, 18, colors));
+            r.barL.clutter_text.set_markup(barMarkup(pct ?? 0, 18, colors, elapsed));
             if (reset) {
                 r.resetL.text = `↺ resets in ${reset}`;
                 r.resetL.visible = true;
@@ -378,13 +418,13 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             }
         };
 
-        upd('session', d.session.pct, `${d.session.pct}%`, d.session.reset, true);
-        upd('weekly', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.reset, true);
+        upd('session', d.session.pct, `${d.session.pct}%`, d.session.reset, true, d.session.elapsed);
+        upd('weekly', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.reset, true, d.weekly.elapsed);
         // Label the per-model weekly row by the scoped model (e.g. "Fable").
         this._rows.sonnet.nameL.text = d.sonnet.label || 'Sonnet only';
-        upd('sonnet', d.sonnet.pct, `${d.sonnet.pct ?? 0}%`, d.sonnet.reset, d.sonnet.pct != null);
+        upd('sonnet', d.sonnet.pct, `${d.sonnet.pct ?? 0}%`, d.sonnet.reset, d.sonnet.pct != null, d.sonnet.elapsed);
         upd('extra', d.extra.pct, `${d.extra.spent} / ${d.extra.limit}`, null,
-            d.extra.pct != null && !!d.extra.spent && !!d.extra.limit);
+            d.extra.pct != null && !!d.extra.spent && !!d.extra.limit, null); // $ budget → no meta
     }
 
     _setError(short, detail) {
