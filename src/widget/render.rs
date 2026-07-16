@@ -145,6 +145,29 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
         String::new()
     };
 
+    // Primary model-scoped weekly window (the common case is exactly one, e.g.
+    // "Fable"). The tooltip renders every entry of `snap.scoped`, but the
+    // desktop surfaces (macOS menu bar, GNOME, Windows tray) redraw from
+    // `--format` and have a single per-model row — so expose the first scoped
+    // window through flat `{scoped_*}` placeholders they can read. Empty /
+    // neutral when the account has no scoped window.
+    let scoped0 = snap.scoped.first();
+    let scoped0_pacing = scoped0.map(|s| {
+        pacing::calc(
+            s.window.utilization_pct,
+            s.window.resets_at,
+            input.now,
+            s.window.window_duration,
+            input.pace_tolerance,
+        )
+    });
+    let scoped0_bar = if let Some(s) = scoped0 {
+        let c = pango::severity_color(severity_for(s.window.utilization_pct), theme);
+        pango::progress_bar(s.window.utilization_pct, c, theme, None)
+    } else {
+        String::new()
+    };
+
     let mut v = placeholders(vec![
         ("icon", "󰚩".to_string()),
         ("vendor_short", "cld".to_string()),
@@ -183,6 +206,31 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
                 .unwrap_or_else(|| "0".into()),
         ),
         ("sonnet_bar", sonnet_bar.clone()),
+        // Model-scoped weekly window (first entry of `snap.scoped`, e.g. Fable).
+        (
+            "scoped_model",
+            scoped0.map(|s| s.label.clone()).unwrap_or_default(),
+        ),
+        (
+            "scoped_pct",
+            scoped0
+                .map(|s| s.window.utilization_pct.to_string())
+                .unwrap_or_else(|| "0".into()),
+        ),
+        (
+            "scoped_reset",
+            scoped0
+                .map(|s| countdown::format(s.window.resets_at, input.now))
+                .unwrap_or_else(|| "—".into()),
+        ),
+        (
+            "scoped_elapsed",
+            scoped0_pacing
+                .as_ref()
+                .map(|p| p.elapsed_pct.to_string())
+                .unwrap_or_else(|| "0".into()),
+        ),
+        ("scoped_bar", scoped0_bar.clone()),
         (
             "extra_spent",
             snap.extra
@@ -618,6 +666,36 @@ mod tests {
         inp.tooltip_format = Some("S:{session_pct} W:{weekly_pct}");
         let out = render_anthropic(&inp);
         assert_eq!(out.tooltip, "S:62 W:27");
+    }
+
+    #[test]
+    fn scoped_placeholders_expose_model_scoped_window() {
+        // The desktop surfaces read these `{scoped_*}` fields to show the
+        // model-scoped weekly bar (e.g. Fable) that only lives in `limits[]`.
+        let mut oc = sample_outcome();
+        oc.snapshot.scoped = vec![crate::usage::ScopedWindow {
+            label: "Fable".into(),
+            window: UsageWindow {
+                utilization_pct: 84,
+                resets_at: Some(now() + chrono::Duration::days(5)),
+                window_duration: chrono::Duration::days(7),
+            },
+        }];
+        let theme = Theme::default();
+        let mut inp = input(&oc, &theme);
+        inp.tooltip_format = Some("M:{scoped_model} P:{scoped_pct}");
+        let out = render_anthropic(&inp);
+        assert_eq!(out.tooltip, "M:Fable P:84");
+    }
+
+    #[test]
+    fn scoped_placeholders_are_neutral_when_absent() {
+        let oc = sample_outcome(); // scoped: vec![]
+        let theme = Theme::default();
+        let mut inp = input(&oc, &theme);
+        inp.tooltip_format = Some("[{scoped_model}] {scoped_pct} {scoped_reset}");
+        let out = render_anthropic(&inp);
+        assert_eq!(out.tooltip, "[] 0 —");
     }
 
     #[test]

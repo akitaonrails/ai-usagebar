@@ -9,7 +9,26 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `{scoped_model}`, `{scoped_pct}`, `{scoped_reset}`, `{scoped_elapsed}` and
+  `{scoped_bar}` placeholders — the primary model-scoped weekly window (the
+  common case is one, e.g. **Fable**) exposed as flat fields. The tooltip
+  already rendered every `snap.scoped` entry, but the desktop surfaces redraw
+  from `--format` and had no way to read them.
+
+### Fixed
+
+- **macOS menu bar and GNOME extension showed a stale "Sonnet only 0%" bar
+  instead of the model-scoped weekly window (e.g. Fable).** Both redraw from
+  `--format` and read `{sonnet_pct}` (the flat `seven_day_sonnet` field, now
+  `null`); they now read the new `{scoped_*}` placeholders and label the row by
+  the model's display name, falling back to the flat window + "Sonnet only".
+- **macOS Preferences window clipped its top rows with no way to scroll to
+  them** on short displays. The pane is now a `ScrollView` of `GroupBox`
+  sections in a resizable window whose initial height is clamped to the visible
+  screen (hosting-controller sizing disabled), so the content always scrolls
+  and the top rows are reachable.
 
 ## [0.12.0] — 2026-07-08
 
