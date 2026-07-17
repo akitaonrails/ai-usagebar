@@ -151,16 +151,21 @@ func parse(_ text: String) -> Snapshot? {
         return unknownPlaceholder(v) ? "" : v
     }
     func n(_ i: Int) -> Int? { Int(t(i)) }
-    // Third bar = the per-model weekly window: prefer the model-scoped one
-    // (`scoped_*`, e.g. "Fable"); fall back to the legacy flat sonnet window.
+    // Third bar = the per-model weekly window: a non-empty scoped model is the
+    // presence signal. Its reset can legitimately be unavailable, so do not
+    // mistake a missing reset for an absent scoped window and show Sonnet.
     let scopedReset = t(12)
     let sonnetReset = t(6)
     var sonnet: Window? = nil
     var sonnetLabel = "Sonnet only"
-    if !scopedReset.isEmpty, scopedReset != "—", let p = n(11) {
-        sonnet = Window(pct: p, reset: scopedReset)
-        let model = t(10)
-        if !model.isEmpty { sonnetLabel = model }
+    let scopedModel = t(10)
+    if !scopedModel.isEmpty {
+        // A malformed scoped percentage is unavailable too, but must not make
+        // us fall back to the unrelated legacy Sonnet window.
+        if let p = n(11), (0...100).contains(p) {
+            sonnet = Window(pct: p, reset: scopedReset.isEmpty ? "—" : scopedReset)
+            sonnetLabel = scopedModel
+        }
     } else if !sonnetReset.isEmpty, sonnetReset != "—", let p = n(5) {
         sonnet = Window(pct: p, reset: sonnetReset)
     }
@@ -446,6 +451,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
     var prefsWindow: NSWindow?
+    // Keep the SwiftUI host alive while its view is installed directly in the
+    // window. This avoids NSHostingController's macOS-13-only sizing API.
+    var prefsHost: NSHostingController<SettingsView>?
     var lastSnapshot: Snapshot?
     var pendingRefresh: DispatchWorkItem?
     let headerItem = NSMenuItem()
@@ -495,23 +503,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openPrefs() {
         if prefsWindow == nil {
             let host = NSHostingController(rootView: SettingsView())
-            // Don't let the hosting controller drive the window size from the
-            // SwiftUI content — otherwise it re-expands the window to the full
-            // content height (past the screen) and clips the top again. We size
-            // the window ourselves below and let the ScrollView fill it.
-            if #available(macOS 13.0, *) { host.sizingOptions = [] }
-            let w = NSWindow(contentViewController: host)
+            // Install the host view directly so this window owns its size on
+            // macOS 12 as well. The SwiftUI ScrollView still fills the
+            // resizable content area without expanding it to its full height.
+            let avail = NSScreen.main?.visibleFrame.height ?? 700
+            let initialSize = NSSize(width: 460, height: min(560, avail - 40))
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: initialSize),
+                             styleMask: [.titled, .closable, .resizable],
+                             backing: .buffered,
+                             defer: false)
+            w.contentView = host.view
             w.title = "AI Usage Bar — Preferências"
             // Resizable so the content can always be reached; a min size keeps
             // it usable, and the initial height is clamped to the visible screen
             // so the top never lands under the menu bar on short displays.
-            w.styleMask = [.titled, .closable, .resizable]
             w.contentMinSize = NSSize(width: 460, height: 360)
             w.isReleasedWhenClosed = false
-            let avail = NSScreen.main?.visibleFrame.height ?? 700
-            w.setContentSize(NSSize(width: 460, height: min(560, avail - 40)))
             w.center()
             prefsWindow = w
+            prefsHost = host
         }
         NSApp.activate(ignoringOtherApps: true)
         prefsWindow?.makeKeyAndOrderFront(nil)
@@ -609,7 +619,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let item = rows[key] else { return }
             item.isHidden = false
             let a = NSMutableAttributedString()
-            a.append(run(name.padding(toLength: 12, withPad: " ", startingAt: 0), .labelColor))
+            let label = name.count < 12
+                ? name.padding(toLength: 12, withPad: " ", startingAt: 0)
+                : name
+            a.append(run(label, .labelColor))
             a.append(barAttr(pct: pct, width: MENU_BAR_W))
             a.append(run("  \(value)", colorForPct(pct)))
             if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }

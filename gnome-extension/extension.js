@@ -308,12 +308,19 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             plan: field(f[0]),
             session: {pct: num(f[1]) ?? 0, reset: field(f[2])},
             weekly: {pct: num(f[3]) ?? 0, reset: field(f[4])},
-            // Per-model weekly bar: prefer the model-scoped window (scoped_*,
-            // e.g. Fable); fall back to the legacy flat sonnet window.
+            // Per-model weekly bar: a non-empty scoped model is the presence
+            // signal. A reset may be unavailable, which must not make us show
+            // the unrelated legacy Sonnet window instead.
             sonnet: (() => {
-                const scopedReset = field(f[12]);
-                if (scopedReset && scopedReset !== '—')
-                    return {pct: num(f[11]), reset: scopedReset, label: field(f[10]) || 'Sonnet only'};
+                const scopedModel = field(f[10]);
+                if (scopedModel) {
+                    const scopedPct = num(f[11]);
+                    if (scopedPct != null && scopedPct >= 0 && scopedPct <= 100)
+                        return {pct: scopedPct, reset: field(f[12]) || '—', label: scopedModel};
+                    // A scoped model with malformed data is unavailable; do
+                    // not fall back to a potentially unrelated Sonnet window.
+                    return {pct: null, reset: '—', label: scopedModel};
+                }
                 return {pct: num(f[5]), reset: field(f[6]), label: 'Sonnet only'};
             })(),
             extra: {pct: num(f[7]), spent: field(f[8]), limit: field(f[9])},

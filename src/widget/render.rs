@@ -683,9 +683,20 @@ mod tests {
         }];
         let theme = Theme::default();
         let mut inp = input(&oc, &theme);
-        inp.tooltip_format = Some("M:{scoped_model} P:{scoped_pct}");
+        inp.tooltip_format = Some(
+            "M:{scoped_model} P:{scoped_pct} R:{scoped_reset} E:{scoped_elapsed} B:{scoped_bar}",
+        );
         let out = render_anthropic(&inp);
-        assert_eq!(out.tooltip, "M:Fable P:84");
+        assert!(out.tooltip.starts_with("M:Fable P:84 R:"));
+        for placeholder in [
+            "{scoped_model}",
+            "{scoped_pct}",
+            "{scoped_reset}",
+            "{scoped_elapsed}",
+            "{scoped_bar}",
+        ] {
+            assert!(!out.tooltip.contains(placeholder));
+        }
     }
 
     #[test]
