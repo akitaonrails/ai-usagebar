@@ -10,7 +10,7 @@ use clap::{Parser, ValueEnum};
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "ai-usagebar",
-    about = "Waybar widget for AI plan usage (Anthropic / OpenAI / Z.AI / OpenRouter)",
+    about = "Waybar widget for AI plan usage (Anthropic / OpenAI / Z.AI / OpenRouter / DeepSeek / Kimi)",
     long_about = "\
 Drop-in replacement for `claudebar` with multi-vendor support.
 
@@ -35,8 +35,9 @@ pub struct Cli {
     #[arg(long)]
     pub icon: Option<String>,
 
-    /// Bar-text format string with `{placeholder}` substitutions.
-    /// Defaults to `{session_pct}% · {session_reset}`.
+    /// Bar-text format string with `{placeholder}` substitutions. Defaults to
+    /// a vendor-specific format (e.g. `{session_pct}% · {session_reset}` for
+    /// Anthropic, `{kimi_weekly_pct}%` for Kimi).
     #[arg(long)]
     pub format: Option<String>,
 
@@ -129,6 +130,7 @@ pub enum Vendor {
     Zai,
     Openrouter,
     Deepseek,
+    Kimi,
 }
 
 impl Vendor {
@@ -139,6 +141,7 @@ impl Vendor {
             Vendor::Zai => crate::vendor::VendorId::Zai,
             Vendor::Openrouter => crate::vendor::VendorId::Openrouter,
             Vendor::Deepseek => crate::vendor::VendorId::Deepseek,
+            Vendor::Kimi => crate::vendor::VendorId::Kimi,
         }
     }
 }
@@ -199,6 +202,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Zai => Vendor::Zai,
         crate::vendor::VendorId::Openrouter => Vendor::Openrouter,
         crate::vendor::VendorId::Deepseek => Vendor::Deepseek,
+        crate::vendor::VendorId::Kimi => Vendor::Kimi,
     }
 }
 
@@ -290,6 +294,13 @@ mod tests {
         cfg.ui.primary = Some(crate::vendor::VendorId::Openrouter);
         let active = Some(crate::vendor::VendorId::Openai);
         assert_eq!(cli.resolve_vendor_with(&cfg, active), Vendor::Zai);
+    }
+
+    #[test]
+    fn vendor_kimi_parses_to_kimi_variant() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
+        assert_eq!(cli.vendor, Some(Vendor::Kimi));
+        assert_eq!(cli.vendor.unwrap().to_id(), crate::vendor::VendorId::Kimi);
     }
 
     #[test]

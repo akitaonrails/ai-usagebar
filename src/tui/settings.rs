@@ -1,6 +1,6 @@
 //! Settings overlay — opened from the TUI by pressing `s`. Lets the user
-//! pick the primary vendor and set Z.AI / OpenRouter API keys without
-//! editing config.toml by hand.
+//! pick the primary vendor and set Z.AI / OpenRouter / DeepSeek / Kimi API keys
+//! without editing config.toml by hand.
 //!
 //! Persistence uses `toml_edit` so the existing config keeps its comments,
 //! whitespace, and unrelated fields. Files with inline keys are atomically
@@ -29,6 +29,7 @@ pub enum Focus {
     ZaiKey,
     OpenrouterKey,
     DeepseekKey,
+    KimiKey,
     SaveButton,
 }
 
@@ -38,7 +39,8 @@ impl Focus {
             Focus::Primary => Focus::ZaiKey,
             Focus::ZaiKey => Focus::OpenrouterKey,
             Focus::OpenrouterKey => Focus::DeepseekKey,
-            Focus::DeepseekKey => Focus::SaveButton,
+            Focus::DeepseekKey => Focus::KimiKey,
+            Focus::KimiKey => Focus::SaveButton,
             Focus::SaveButton => Focus::Primary,
         }
     }
@@ -48,7 +50,8 @@ impl Focus {
             Focus::ZaiKey => Focus::Primary,
             Focus::OpenrouterKey => Focus::ZaiKey,
             Focus::DeepseekKey => Focus::OpenrouterKey,
-            Focus::SaveButton => Focus::DeepseekKey,
+            Focus::KimiKey => Focus::DeepseekKey,
+            Focus::SaveButton => Focus::KimiKey,
         }
     }
 }
@@ -155,6 +158,7 @@ pub struct SettingsState {
     pub zai: KeyInput,
     pub openrouter: KeyInput,
     pub deepseek: KeyInput,
+    pub kimi: KeyInput,
     /// One-line status displayed in the footer ("Saved", "Error: ...", "").
     pub status: String,
 }
@@ -167,6 +171,7 @@ impl SettingsState {
             zai: KeyInput::from_config(cfg.zai.api_key.as_deref()),
             openrouter: KeyInput::from_config(cfg.openrouter.api_key.as_deref()),
             deepseek: KeyInput::from_config(cfg.deepseek.api_key.as_deref()),
+            kimi: KeyInput::from_config(cfg.kimi.api_key.as_deref()),
             status: String::new(),
         }
     }
@@ -226,6 +231,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
             Focus::ZaiKey => state.zai.toggle_reveal(),
             Focus::OpenrouterKey => state.openrouter.toggle_reveal(),
             Focus::DeepseekKey => state.deepseek.toggle_reveal(),
+            Focus::KimiKey => state.kimi.toggle_reveal(),
             _ => {}
         }
         return Action::Continue;
@@ -258,6 +264,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
         Focus::ZaiKey => handle_input(&mut state.zai, code),
         Focus::OpenrouterKey => handle_input(&mut state.openrouter, code),
         Focus::DeepseekKey => handle_input(&mut state.deepseek, code),
+        Focus::KimiKey => handle_input(&mut state.kimi, code),
         Focus::SaveButton => {
             if matches!(code, KeyCode::Enter) {
                 return match save_to_config_default(state) {
@@ -343,6 +350,10 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
     if state.deepseek.dirty && !state.deepseek.buf.is_empty() {
         set_string(&mut doc, "deepseek", "api_key", &state.deepseek.buf)?;
     }
+    // [kimi].api_key — same
+    if state.kimi.dirty && !state.kimi.buf.is_empty() {
+        set_string(&mut doc, "kimi", "api_key", &state.kimi.buf)?;
+    }
 
     let bytes = doc.to_string();
     crate::cache::atomic_write(path, bytes.as_bytes())?;
@@ -413,10 +424,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             Constraint::Length(2), // [6] openrouter input
             Constraint::Length(1), // [7] deepseek label
             Constraint::Length(2), // [8] deepseek input
-            Constraint::Length(1), // [9] spacer
-            Constraint::Length(1), // [10] save button
-            Constraint::Length(1), // [11] status
-            Constraint::Min(0),    // [12] hint
+            Constraint::Length(1), // [9] kimi label
+            Constraint::Length(2), // [10] kimi input
+            Constraint::Length(1), // [11] spacer
+            Constraint::Length(1), // [12] save button
+            Constraint::Length(1), // [13] status
+            Constraint::Min(0),    // [14] hint
         ])
         .split(inner);
 
@@ -488,6 +501,24 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
         chunks[8],
     );
 
+    // Kimi key.
+    f.render_widget(
+        Paragraph::new(label(
+            "Kimi API key (KIMI_API_KEY env wins if set)",
+            state.focus == Focus::KimiKey,
+            &bubble,
+        )),
+        chunks[9],
+    );
+    f.render_widget(
+        Paragraph::new(render_input(
+            &state.kimi,
+            state.focus == Focus::KimiKey,
+            &bubble,
+        )),
+        chunks[10],
+    );
+
     // Save button.
     let save_style = if state.focus == Focus::SaveButton {
         bubble.selected.add_modifier(Modifier::REVERSED)
@@ -499,14 +530,14 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             "   [ Save (Ctrl-S) ]   ",
             save_style,
         ))),
-        chunks[10],
+        chunks[12],
     );
 
     // Status line.
     if !state.status.is_empty() {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(state.status.clone(), bubble.muted))),
-            chunks[11],
+            chunks[13],
         );
     }
 
@@ -518,7 +549,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
         ("ctrl+s", "save"),
         ("esc", "cancel"),
     ]);
-    f.render_widget(Paragraph::new(hint), chunks[12]);
+    f.render_widget(Paragraph::new(hint), chunks[14]);
 }
 
 fn label(text: &str, focused: bool, theme: &BubbleTheme) -> Line<'static> {
@@ -562,6 +593,7 @@ fn vendor_label(v: VendorId) -> &'static str {
         VendorId::Zai => "Z.AI",
         VendorId::Openrouter => "OpenRouter",
         VendorId::Deepseek => "DeepSeek",
+        VendorId::Kimi => "Kimi",
     }
 }
 
@@ -624,6 +656,7 @@ mod tests {
             zai: KeyInput::from_config(Some(zai)),
             openrouter: KeyInput::from_config(Some(opr)),
             deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
             status: String::new(),
         };
         // Mark dirty so save writes them.
@@ -639,6 +672,7 @@ mod tests {
             Focus::ZaiKey,
             Focus::OpenrouterKey,
             Focus::DeepseekKey,
+            Focus::KimiKey,
             Focus::SaveButton,
         ];
         let n = order.len();
@@ -769,6 +803,39 @@ api_key_env = "OPENROUTER_API_KEY"
     }
 
     #[test]
+    fn save_preserves_kimi_enabled_true_and_unrelated_comments() {
+        let (_dir, path) = temp_config(Some(
+            r##"[ui]
+primary = "anthropic"
+
+[kimi]
+# Kimi is opt-in
+enabled = true
+api_key_env = "KIMI_API_KEY"
+"##,
+        ));
+
+        // No keys dirty, primary unchanged — save should still rewrite
+        // primary in place but leave the [kimi] section untouched.
+        let s = SettingsState {
+            focus: Focus::Primary,
+            primary: VendorId::Anthropic,
+            zai: KeyInput::default(),
+            openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
+            status: String::new(),
+        };
+        save_to_path(&s, &path).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("# Kimi is opt-in"));
+        assert!(raw.contains("enabled = true"));
+        assert!(raw.contains("api_key_env = \"KIMI_API_KEY\""));
+        assert!(raw.contains("primary = \"anthropic\""));
+    }
+
+    #[test]
     fn handle_key_tab_cycles_focus() {
         let mut s = SettingsState {
             focus: Focus::Primary,
@@ -776,6 +843,7 @@ api_key_env = "OPENROUTER_API_KEY"
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
             deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
             status: String::new(),
         };
         assert_eq!(
@@ -798,6 +866,7 @@ api_key_env = "OPENROUTER_API_KEY"
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
             deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
             status: String::new(),
         };
         assert_eq!(
@@ -814,6 +883,7 @@ api_key_env = "OPENROUTER_API_KEY"
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
             deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
             status: String::new(),
         };
         handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
@@ -832,6 +902,7 @@ api_key_env = "OPENROUTER_API_KEY"
             zai: KeyInput::from_config(Some("secret")),
             openrouter: KeyInput::default(),
             deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
             status: String::new(),
         };
         assert!(!s.zai.revealed);
@@ -850,5 +921,24 @@ api_key_env = "OPENROUTER_API_KEY"
         save_to_path(&s, &path).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("api_key = \"zk\""));
+    }
+
+    #[test]
+    fn save_to_path_writes_kimi_key_when_dirty() {
+        let (_dir, path) = temp_config(None);
+        let mut s = SettingsState {
+            focus: Focus::Primary,
+            primary: VendorId::Anthropic,
+            zai: KeyInput::default(),
+            openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
+            kimi: KeyInput::from_config(Some("kk")),
+            status: String::new(),
+        };
+        s.kimi.dirty = true;
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("[kimi]"));
+        assert!(raw.contains("api_key = \"kk\""));
     }
 }

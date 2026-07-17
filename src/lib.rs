@@ -16,6 +16,7 @@ pub mod countdown;
 pub mod deepseek;
 pub mod error;
 pub mod format;
+pub mod kimi;
 pub mod openai;
 pub mod openrouter;
 pub mod pacing;

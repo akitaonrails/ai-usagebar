@@ -13,6 +13,7 @@ use crate::cache::{Cache, DEFAULT_TTL};
 use crate::config::Config;
 use crate::deepseek;
 use crate::error::{AppError, Result};
+use crate::kimi;
 use crate::openai;
 use crate::openrouter;
 use crate::theme::Theme;
@@ -108,6 +109,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Openai => openai_output(cli, &config).await,
         Vendor::Zai => zai_output(cli, &config).await,
         Vendor::Deepseek => deepseek_output(cli, &config).await,
+        Vendor::Kimi => kimi_output(cli, &config).await,
     }
 }
 
@@ -234,6 +236,35 @@ async fn deepseek_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let vendor_outcome: VendorOutcome = outcome.into();
     let opts = RenderOpts::from_cli(cli);
     Ok(deepseek::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn kimi_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "Kimi",
+        &config.kimi.api_key_env,
+        config.kimi.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "kimi")?;
+    let endpoints = kimi::fetch::Endpoints::default();
+    let outcome =
+        match kimi::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(kimi::vendor::render(
         &vendor_outcome,
         &snap,
         &theme,

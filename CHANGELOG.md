@@ -9,7 +9,14 @@ Each release is also published at
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Kimi vendor** (`--vendor kimi`): fetches weekly subscription quota and a
+  5-hour rolling rate-limit window from `api.kimi.com/coding/v1/usages`.
+  API key is read from `KIMI_API_KEY` env var or `[kimi] api_key` in config.
+  Disabled by default (requires explicit opt-in).
+- Kimi panel in the TUI and a Kimi API key field in the Settings overlay.
+- Live API smoke test `kimi_live` for the Kimi endpoint.
 
 ## [0.12.0] — 2026-07-08
 

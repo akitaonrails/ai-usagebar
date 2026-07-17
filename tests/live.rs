@@ -1,6 +1,6 @@
 //! Live API smoke test suite — DETECTS UNDOCUMENTED-ENDPOINT DRIFT.
 //!
-//! Hits the real Anthropic, OpenAI Codex, Z.AI, and OpenRouter endpoints
+//! Hits the real Anthropic, OpenAI Codex, Z.AI, OpenRouter, and Kimi endpoints
 //! using credentials from your shell. Asserts only the *fields we depend on*
 //! so when a vendor renames or removes one, the failure points at the exact
 //! field rather than dumping the whole response.
@@ -33,12 +33,15 @@
 //!   envelope and at least one `TOKENS_LIMIT` entry exists.
 //! - **OpenRouter**: `/credits` returns `{data:{total_credits,total_usage}}`
 //!   and `/key` returns `{data:{usage,is_free_tier}}`.
+//! - **Kimi**: `/coding/v1/usages` returns `usage.{limit,used,remaining}` plus
+//!   a `limits[]` entry with `duration: 300` / `timeUnit: TIME_UNIT_MINUTE`.
 
 use std::time::Duration;
 
 use ai_usagebar::anthropic;
 use ai_usagebar::cache::Cache;
 use ai_usagebar::error::AppError;
+use ai_usagebar::kimi;
 use ai_usagebar::openai;
 use ai_usagebar::openrouter;
 use ai_usagebar::zai;
@@ -233,5 +236,44 @@ async fn openrouter_live() {
         out.snapshot.total_usage,
         out.snapshot.usage_monthly,
         out.snapshot.is_free_tier,
+    );
+}
+
+#[tokio::test]
+#[ignore = "live API; run with --ignored"]
+async fn kimi_live() {
+    let api_key = std::env::var("KIMI_API_KEY")
+        .expect("KIMI_API_KEY must be set (source ~/.config/zsh/secrets)");
+    let cache = xdg_cache_for("kimi");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let endpoints = kimi::fetch::Endpoints::default();
+    let out = kimi::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &endpoints,
+        Duration::from_secs(0),
+    )
+    .await
+    .expect("kimi fetch should succeed against the real API");
+
+    assert!(
+        out.snapshot.window_limit > 0,
+        "kimi 5h rolling window is missing — shape changed?"
+    );
+    assert_pct("kimi.weekly", out.snapshot.weekly_pct());
+    assert_pct("kimi.window", out.snapshot.window_pct());
+    println!(
+        "✅ kimi — plan={:?}, weekly={}% ({} / {}), window={}% ({} / {})",
+        out.snapshot.plan,
+        out.snapshot.weekly_pct(),
+        out.snapshot.weekly_used,
+        out.snapshot.weekly_limit,
+        out.snapshot.window_pct(),
+        out.snapshot.window_used,
+        out.snapshot.window_limit,
     );
 }

@@ -290,6 +290,19 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                     .await?;
             Ok(outcome.into())
         }
+        VendorId::Kimi => {
+            let api_key = crate::config::resolve_api_key(
+                "Kimi",
+                &config.kimi.api_key_env,
+                config.kimi.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("kimi")?;
+            let endpoints = crate::kimi::fetch::Endpoints::default();
+            let outcome =
+                crate::kimi::fetch_snapshot(client, &api_key, &cache, &endpoints, DEFAULT_TTL)
+                    .await?;
+            Ok(outcome.into())
+        }
     }
 }
 

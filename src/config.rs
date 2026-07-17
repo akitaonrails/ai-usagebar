@@ -2,10 +2,12 @@
 //!
 //! Layout:
 //! ```toml
-//! [anthropic] enabled = true
-//! [openai]    enabled = true   # Codex OAuth from ~/.codex/auth.json
-//! [zai]       enabled = true
+//! [anthropic]  enabled = true
+//! [openai]     enabled = true   # Codex OAuth from ~/.codex/auth.json
+//! [zai]        enabled = true
 //! [openrouter] enabled = true
+//! [deepseek]   enabled = false
+//! [kimi]       enabled = false
 //! ```
 //!
 //! Every field is optional with sensible defaults — missing config file is
@@ -30,6 +32,7 @@ pub struct Config {
     pub zai: ZaiConfig,
     pub openrouter: OpenRouterConfig,
     pub deepseek: DeepseekConfig,
+    pub kimi: KimiConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -217,8 +220,27 @@ impl Default for DeepseekConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KimiConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+
+impl Default for KimiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "KIMI_API_KEY".to_string(),
+            api_key: None,
+        }
+    }
+}
+
 /// Resolve an API key for a vendor: env var wins, then inline config, then
-/// a clear error naming both fields. Used by Z.AI and OpenRouter vendors.
+/// a clear error naming both fields. Used by Z.AI, OpenRouter, DeepSeek, and
+/// Kimi vendors.
 pub fn resolve_api_key(
     vendor_label: &str,
     env_var_name: &str,
@@ -268,6 +290,7 @@ impl Config {
             VendorId::Zai => self.zai.enabled,
             VendorId::Openrouter => self.openrouter.enabled,
             VendorId::Deepseek => self.deepseek.enabled,
+            VendorId::Kimi => self.kimi.enabled,
         }
     }
 
@@ -309,14 +332,15 @@ mod tests {
     }
 
     #[test]
-    fn defaults_enable_all_vendors() {
+    fn defaults_enable_core_vendors_deepseek_and_kimi_default_off() {
         let c = Config::default();
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
         assert!(c.is_enabled(VendorId::Zai));
         assert!(c.is_enabled(VendorId::Openrouter));
-        // DeepSeek requires an explicit API key, so it defaults to disabled.
+        // DeepSeek and Kimi require explicit API keys, so they default to disabled.
         assert!(!c.is_enabled(VendorId::Deepseek));
+        assert!(!c.is_enabled(VendorId::Kimi));
         assert_eq!(c.enabled_vendors().len(), 4);
     }
 
@@ -464,8 +488,8 @@ enabled = false
 
     #[test]
     fn enabled_vendors_preserves_canonical_order() {
-        // DeepSeek is disabled by default (requires explicit API key config),
-        // so it is absent from the enabled list unless the user enables it.
+        // DeepSeek and Kimi are disabled by default (require explicit API key
+        // config), so they are absent from the enabled list unless enabled.
         let c = Config::default();
         assert_eq!(
             c.enabled_vendors(),
@@ -491,6 +515,48 @@ enabled = false
         assert!(c.is_enabled(VendorId::Deepseek));
         assert!(c.enabled_vendors().contains(&VendorId::Deepseek));
         assert_eq!(c.deepseek.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn kimi_appears_when_enabled() {
+        let f = write_toml(
+            r#"
+            [kimi]
+            enabled = true
+            api_key = "sk-test"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert!(c.is_enabled(VendorId::Kimi));
+        assert!(c.enabled_vendors().contains(&VendorId::Kimi));
+        assert_eq!(c.kimi.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn enabled_deepseek_and_kimi_appear_in_canonical_order_ending_with_them() {
+        let f = write_toml(
+            r#"
+            [deepseek]
+            enabled = true
+            api_key = "sk-ds"
+
+            [kimi]
+            enabled = true
+            api_key = "sk-kimi"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert_eq!(
+            c.enabled_vendors(),
+            vec![
+                VendorId::Anthropic,
+                VendorId::Openai,
+                VendorId::Zai,
+                VendorId::Openrouter,
+                VendorId::Deepseek,
+                VendorId::Kimi,
+            ]
+        );
     }
 
     #[test]

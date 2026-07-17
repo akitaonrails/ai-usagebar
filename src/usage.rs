@@ -4,8 +4,9 @@
 //! Anthropic exposes three windows + extra credits; OpenAI Codex exposes two
 //! windows + credit balance + message-count ranges; OpenRouter is a single
 //! credit-balance number with daily/weekly/monthly totals; Z.AI is a list of
-//! token + MCP buckets. Forcing them into a shared shape would either drop
-//! information or paper over genuine differences.
+//! token + MCP buckets; DeepSeek is a credit balance; Kimi is a weekly quota
+//! plus a 5h rolling rate-limit window. Forcing them into a shared shape would
+//! either drop information or paper over genuine differences.
 //!
 //! Renderers (widget tooltip, TUI tab) consume a `VendorSnapshot` directly,
 //! not a flattened shape — so each vendor controls its own presentation while
@@ -118,6 +119,42 @@ impl Default for DeepseekSnapshot {
     }
 }
 
+/// Kimi Code — weekly subscription quota plus a 5h rolling rate-limit window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KimiSnapshot {
+    pub plan: Option<String>,
+    pub weekly_limit: u64,
+    pub weekly_used: u64,
+    pub weekly_remaining: u64,
+    pub weekly_reset_at: Option<DateTime<Utc>>,
+    pub window_limit: u64,
+    pub window_used: u64,
+    pub window_remaining: u64,
+    pub window_reset_at: Option<DateTime<Utc>>,
+}
+
+impl KimiSnapshot {
+    fn pct(used: u64, limit: u64) -> i32 {
+        if limit == 0 {
+            0
+        } else {
+            ((used as f64 / limit as f64) * 100.0)
+                .round()
+                .clamp(0.0, 100.0) as i32
+        }
+    }
+
+    /// Percentage of the weekly subscription quota consumed (0..=100).
+    pub fn weekly_pct(&self) -> i32 {
+        Self::pct(self.weekly_used, self.weekly_limit)
+    }
+
+    /// Percentage of the rolling rate-limit window consumed (0..=100).
+    pub fn window_pct(&self) -> i32 {
+        Self::pct(self.window_used, self.window_limit)
+    }
+}
+
 /// Discriminated union of vendor-specific snapshots. The widget and TUI match
 /// on this to pick a renderer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +164,7 @@ pub enum VendorSnapshot {
     Zai(ZaiSnapshot),
     Openrouter(OpenRouterSnapshot),
     Deepseek(DeepseekSnapshot),
+    Kimi(KimiSnapshot),
 }
 
 /// OpenAI Codex OAuth — mirrors Anthropic's two-window + extras pattern.
