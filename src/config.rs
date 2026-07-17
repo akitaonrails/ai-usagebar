@@ -246,11 +246,22 @@ pub fn resolve_api_key(
     env_var_name: &str,
     inline: Option<&str>,
 ) -> crate::error::Result<String> {
-    if !env_var_name.is_empty()
-        && let Ok(v) = std::env::var(env_var_name)
-        && !v.is_empty()
-    {
-        return Ok(v);
+    if !env_var_name.is_empty() {
+        if !is_valid_env_var_name(env_var_name) {
+            return Err(crate::error::AppError::Credentials(format!(
+                "{vendor_label}: invalid api_key_env value. It should be an \
+                 environment variable name like {}_API_KEY, not the \
+                 API key itself. Set the key in that env var or use `api_key` \
+                 under [{vendor_label}] in {}.",
+                vendor_label.to_ascii_uppercase(),
+                config_path_hint()
+            )));
+        }
+        if let Ok(v) = std::env::var(env_var_name)
+            && !v.is_empty()
+        {
+            return Ok(v);
+        }
     }
     if let Some(v) = inline
         && !v.is_empty()
@@ -263,6 +274,15 @@ pub fn resolve_api_key(
         vendor_label.to_lowercase(),
         config_path_hint()
     )))
+}
+
+fn is_valid_env_var_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 impl Config {
@@ -461,6 +481,27 @@ enabled = false
         let got = resolve_api_key("OpenRouter", var, Some("inline")).unwrap();
         unsafe { std::env::remove_var(var) };
         assert_eq!(got, "inline");
+    }
+
+    #[test]
+    fn resolve_api_key_rejects_invalid_env_var_name_without_leaking_it() {
+        let _g = env_guard();
+        // Simulates a user accidentally pasting the key into api_key_env.
+        let bad = "sk-kimi-test-secret";
+        let err = resolve_api_key("Kimi", bad, None).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid api_key_env"),
+            "error should explain misconfiguration: {msg}"
+        );
+        assert!(
+            !msg.contains(bad),
+            "error must not echo the misconfigured value: {msg}"
+        );
+        assert!(
+            msg.contains("KIMI_API_KEY"),
+            "error should suggest a valid env var name: {msg}"
+        );
     }
 
     #[test]
