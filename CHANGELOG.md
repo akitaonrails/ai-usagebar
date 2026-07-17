@@ -28,6 +28,10 @@ Each release is also published at
 
 ### Fixed
 
+- **Desktop pace markers no longer appear on windows without a reset.** A
+  missing reset still displays the scoped model row with `—`, but suppresses
+  the marker even when a legacy formatter supplies neutral elapsed `0`.
+
 - **macOS menu bar and GNOME extension showed a stale "Sonnet only 0%" bar
   instead of the model-scoped weekly window (e.g. Fable).** Both redraw from
   `--format` and read `{sonnet_pct}` (the flat `seven_day_sonnet` field, now

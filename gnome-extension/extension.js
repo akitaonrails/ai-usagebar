@@ -17,6 +17,8 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import {barMarkup, colorForPct, field, FIELD, FORMAT, integer, markerElapsed,
+    splitFormatOutput} from './marker-logic.js';
 
 const ROLE = 'ai-usagebar';
 
@@ -24,78 +26,15 @@ const ROLE = 'ai-usagebar';
 const DIM = '#5c6370';
 const FG = '#abb2bf';
 const RED = '#e06c75';
-// The meta marker (pace/elapsed reference line) is a fixed blue, matching the
-// binary's default `marker` theme color and distinct from the over-pace warning
-// fill. Pace tolerance mirrors the binary's `--pace-tolerance` default of 5.
-const MARKER = '#61afef';
-const PACE_TOL = 5;
-
-// The fields we pull from the binary, joined by ';;'. `{scoped_*}` carry the
-// model-scoped weekly window (e.g. Fable) from `limits[]`; the trailing
-// `*_elapsed` carry the meta (pace) position — empty when the window has no
-// reset, which we treat as "no marker".
-const FORMAT = '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;' +
-    '{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;' +
-    '{scoped_model};;{scoped_pct};;{scoped_reset};;' +
-    '{session_elapsed};;{weekly_elapsed};;{scoped_elapsed}';
+// FORMAT's final ignored literal sentinel receives a stale suffix, keeping the
+// preceding elapsed fields numeric. It and its field indexes live in marker-logic.
 const REFRESH_TIMEOUT_SECS = 60;
-
-// severity_for(pct) from src/pango.rs: >=90 critical, >=75 high, >=50 mid, else low.
-function colorForPct(pct, colors) {
-    if (pct >= 90)
-        return colors.critical;
-    if (pct >= 75)
-        return colors.high;
-    if (pct >= 50)
-        return colors.mid;
-    return colors.low;
-}
-
-// pace_fill_severity(delta) from src/pacing.rs: <=0 green, <=tol amber, else red.
-function colorForDelta(delta, colors) {
-    if (delta <= 0)
-        return colors.low;
-    if (delta <= PACE_TOL)
-        return colors.high;
-    return colors.critical;
-}
 
 function esc(s) {
     return String(s)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
-}
-
-// Block bar as Pango markup, `width` cells wide. When `elapsed` (0..100) is a
-// number, the fill stays in the calm absolute-usage color up to a blue marker at
-// the elapsed position and only the part that overshoots the meta (how far ahead
-// of pace you are → risk of paid extra usage) is painted in the warning color;
-// otherwise it's a plain two-segment absolute-color bar with no marker.
-function barMarkup(pct, width, colors, elapsed) {
-    const p = Math.max(0, Math.min(100, Math.round(pct)));
-    const filled = Math.round((p * width) / 100);
-
-    if (!Number.isFinite(elapsed)) {
-        return `<span foreground="${colorForPct(p, colors)}">${'█'.repeat(filled)}</span>` +
-            `<span foreground="${colors.empty}">${'░'.repeat(width - filled)}</span>`;
-    }
-
-    const e = Math.max(0, Math.min(100, Math.round(elapsed)));
-    const base = colorForPct(p, colors);
-    const over = colorForDelta(p - e, colors);
-    let m = Math.floor((e * width) / 100);
-    if (m > width - 1)
-        m = width - 1;
-    const preF = Math.min(filled, m);
-    const postF = filled > m + 1 ? filled - m - 1 : 0;
-    const preE = m - preF;
-    const postE = width - m - 1 - postF;
-    return `<span foreground="${base}">${'█'.repeat(preF)}</span>` +
-        `<span foreground="${colors.empty}">${'░'.repeat(preE)}</span>` +
-        `<span foreground="${MARKER}">│</span>` +
-        `<span foreground="${over}">${'█'.repeat(postF)}</span>` +
-        `<span foreground="${colors.empty}">${'░'.repeat(postE)}</span>`;
 }
 
 function resolveBinary(settings) {
@@ -325,45 +264,38 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             return;
         }
         const raw = (data.text ?? '').toString().replace(/<[^>]*>/g, '');
-        const f = raw.split(';;');
-        if (f.length < 10) {
+        const f = splitFormatOutput(raw);
+        if (f.length <= FIELD.extraLimit) {
             // Loading… / ⚠ — show the binary's own text.
             this._data = null;
             this._label.clutter_text.set_markup(`<span foreground="${FG}">${esc(raw) || '…'}</span>`);
             return;
         }
-        const isPlaceholder = s => /^\{[^}]+\}$/.test(String(s).trim());
-        const field = s => {
-            const t = String(s ?? '').trim();
-            return t && !isPlaceholder(t) ? t : '';
-        };
-        const num = s => {
-            const t = field(s);
-            if (!t)
-                return null;
-            const n = parseInt(t, 10);
-            return Number.isFinite(n) ? n : null;
-        };
         this._data = {
-            plan: field(f[0]),
-            session: {pct: num(f[1]) ?? 0, reset: field(f[2]), elapsed: num(f[13])},
-            weekly: {pct: num(f[3]) ?? 0, reset: field(f[4]), elapsed: num(f[14])},
+            plan: field(f[FIELD.plan]),
+            session: {pct: integer(f[FIELD.sessionPct]) ?? 0, reset: field(f[FIELD.sessionReset]),
+                elapsed: markerElapsed(field(f[FIELD.sessionReset]), integer(f[FIELD.sessionElapsed]))},
+            weekly: {pct: integer(f[FIELD.weeklyPct]) ?? 0, reset: field(f[FIELD.weeklyReset]),
+                elapsed: markerElapsed(field(f[FIELD.weeklyReset]), integer(f[FIELD.weeklyElapsed]))},
             // Per-model weekly bar: a non-empty scoped model is the presence
             // signal. A reset may be unavailable, which must not make us show
             // the unrelated legacy Sonnet window instead.
             sonnet: (() => {
-                const scopedModel = field(f[10]);
+                const scopedModel = field(f[FIELD.scopedModel]);
                 if (scopedModel) {
-                    const scopedPct = num(f[11]);
+                    const scopedPct = integer(f[FIELD.scopedPct]);
                     if (scopedPct != null && scopedPct >= 0 && scopedPct <= 100)
-                        return {pct: scopedPct, reset: field(f[12]) || '—', label: scopedModel, elapsed: num(f[15])};
+                        return {pct: scopedPct, reset: field(f[FIELD.scopedReset]) || '—', label: scopedModel,
+                            elapsed: markerElapsed(field(f[FIELD.scopedReset]), integer(f[FIELD.scopedElapsed]))};
                     // A scoped model with malformed data is unavailable; do
                     // not fall back to a potentially unrelated Sonnet window.
                     return {pct: null, reset: '—', label: scopedModel, elapsed: null};
                 }
-                return {pct: num(f[5]), reset: field(f[6]), label: 'Sonnet only', elapsed: null};
+                return {pct: integer(f[FIELD.sonnetPct]), reset: field(f[FIELD.sonnetReset]),
+                    label: 'Sonnet only', elapsed: null};
             })(),
-            extra: {pct: num(f[7]), spent: field(f[8]), limit: field(f[9])},
+            extra: {pct: integer(f[FIELD.extraPct]), spent: field(f[FIELD.extraSpent]),
+                limit: field(f[FIELD.extraLimit])},
         };
         this._render();
     }

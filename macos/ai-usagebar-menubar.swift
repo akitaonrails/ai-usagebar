@@ -57,20 +57,22 @@ var COLOR_EMPTY: String { DEF.string(forKey: "colorEmpty") ?? "#3e4451" }
 // over-meta segment of the fill. Off = plain absolute-usage bars, no marker.
 var SHOW_META: Bool { DEF.bool(forKey: "showMeta") }
 // The meta marker is a fixed blue, matching the binary's default theme `marker`
-// color and distinct from the over-pace warning fill. Pace tolerance mirrors the
-// binary's `--pace-tolerance` default of 5.
+// color and distinct from the over-pace warning fill.
 let COLOR_MARKER = "#61afef"
-let PACE_TOL = 5
+let POINT_MID_MIN = -10
+let POINT_CRITICAL_MIN = 10
 
 // The `{scoped_*}` fields (10-12) carry the model-scoped weekly window (e.g.
 // "Fable") from the API's `limits[]`; empty on older binaries → the row falls
 // back to the flat `{sonnet_*}` window and the "Sonnet only" label. The trailing
-// `*_elapsed` fields (13-15) carry the meta (pace) position, or empty when the
-// window has no reset → no marker.
+// `*_elapsed` fields (13-15) carry the meta (pace) position. A final literal
+// sentinel absorbs the widget's stale suffix, preserving the elapsed fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
              "{scoped_model};;{scoped_pct};;{scoped_reset};;" +
              "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed}"
+
+let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
 // ─── Color / text helpers ────────────────────────────────────────────────
 func hexColor(_ hex: String) -> NSColor {
@@ -90,16 +92,19 @@ func colorForPct(_ pct: Int) -> NSColor {
     return hexColor(COLOR_LOW)
 }
 
-// pace_fill_severity(delta) from src/pacing.rs: <=0 green, <=tol amber, else red.
+// Matches pacing::pace_severity: < -10 low, -10...0 mid, 1...9 high, >= 10 critical.
 func colorForDelta(_ delta: Int) -> NSColor {
-    if delta <= 0 { return hexColor(COLOR_LOW) }
-    if delta <= PACE_TOL { return hexColor(COLOR_HIGH) }
-    return hexColor(COLOR_CRITICAL)
+    if delta >= POINT_CRITICAL_MIN { return hexColor(COLOR_CRITICAL) }
+    if delta > 0 { return hexColor(COLOR_HIGH) }
+    if delta >= POINT_MID_MIN { return hexColor(COLOR_MID) }
+    return hexColor(COLOR_LOW)
 }
 
-// When the meta reference is off, ignore `elapsed` everywhere → plain
-// absolute-usage bar, no marker.
-func metaElapsed(_ e: Int?) -> Int? { SHOW_META ? e : nil }
+// A missing reset keeps its row visible but never has a meaningful pace marker.
+func markerElapsed(reset: String, elapsed: Int?) -> Int? {
+    guard !reset.isEmpty, reset != "—" else { return nil }
+    return elapsed
+}
 
 let barFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
@@ -117,7 +122,7 @@ func barAttr(pct: Int, width: Int, elapsed: Int?) -> NSAttributedString {
     let filled = Int((Double(p) * Double(width) / 100.0).rounded())
     let out = NSMutableAttributedString()
 
-    guard let elapsedVal = metaElapsed(elapsed) else {
+    guard SHOW_META, let elapsedVal = elapsed else {
         out.append(run(String(repeating: "█", count: filled), colorForPct(p)))
         out.append(run(String(repeating: "░", count: max(0, width - filled)), hexColor(COLOR_EMPTY)))
         return out
@@ -198,7 +203,12 @@ func parse(_ text: String) -> Snapshot? {
         let v = f[i].trimmingCharacters(in: .whitespaces)
         return unknownPlaceholder(v) ? "" : v
     }
-    func n(_ i: Int) -> Int? { Int(t(i)) }
+    // Do not accept a numeric prefix: a stale suffix such as "27 ⏸" is not elapsed.
+    func n(_ i: Int) -> Int? {
+        let value = t(i)
+        guard value.range(of: "^-?[0-9]+$", options: .regularExpression) != nil else { return nil }
+        return Int(value)
+    }
     // Third bar = the per-model weekly window: a non-empty scoped model is the
     // presence signal. Its reset can legitimately be unavailable, so do not
     // mistake a missing reset for an absent scoped window and show Sonnet.
@@ -211,7 +221,8 @@ func parse(_ text: String) -> Snapshot? {
         // A malformed scoped percentage is unavailable too, but must not make
         // us fall back to the unrelated legacy Sonnet window.
         if let p = n(11), (0...100).contains(p) {
-            sonnet = Window(pct: p, reset: scopedReset.isEmpty ? "—" : scopedReset, elapsed: n(15))
+            let reset = scopedReset.isEmpty ? "—" : scopedReset
+            sonnet = Window(pct: p, reset: reset, elapsed: markerElapsed(reset: reset, elapsed: n(15)))
             sonnetLabel = scopedModel
         }
     } else if !sonnetReset.isEmpty, sonnetReset != "—", let p = n(5) {
@@ -222,8 +233,8 @@ func parse(_ text: String) -> Snapshot? {
     let extra: (pct: Int, spent: String, limit: String)? =
         (spent.isEmpty || limit.isEmpty) ? nil : n(7).map { (pct: $0, spent: spent, limit: limit) }
     return Snapshot(plan: t(0),
-                    session: Window(pct: n(1) ?? 0, reset: t(2), elapsed: n(13)),
-                    weekly: Window(pct: n(3) ?? 0, reset: t(4), elapsed: n(14)),
+                    session: Window(pct: n(1) ?? 0, reset: t(2), elapsed: markerElapsed(reset: t(2), elapsed: n(13))),
+                    weekly: Window(pct: n(3) ?? 0, reset: t(4), elapsed: markerElapsed(reset: t(4), elapsed: n(14))),
                     sonnet: sonnet,
                     sonnetLabel: sonnetLabel,
                     extra: extra)
@@ -611,7 +622,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
-            p.arguments = ["--vendor", VENDOR, "--format", FORMAT]
+            p.arguments = ["--vendor", VENDOR, "--format", FORMAT_WITH_SENTINEL]
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
