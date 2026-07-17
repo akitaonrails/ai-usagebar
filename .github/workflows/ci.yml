@@ -30,3 +30,6 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets --locked
+
+      - name: Test GNOME marker logic
+        run: node gnome-extension/marker-logic.test.mjs
