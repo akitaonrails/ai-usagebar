@@ -2,14 +2,20 @@
 
 A native GNOME top-panel indicator for [`ai-usagebar`](../README.md). It puts
 the **5-hour session** and **weekly** usage bars next to the clock/network,
-with optional Sonnet-only and extra-usage rows in a native click dropdown.
+with optional dynamic model-scoped (for example, Fable) and extra-usage rows
+in a native click dropdown.
 
 This is the GNOME counterpart to the project's Waybar widget: Waybar is
 Wayland-only (Sway/Hyprland) and can't dock into the GNOME top bar, so this
 extension bridges the gap by shelling out to the same `ai-usagebar` binary and
-drawing the bars with native `St` widgets.
+drawing the bars with native `St` widgets. The panel is rendered by GNOME; no
+GNOME screenshot is currently bundled.
 
-![panel: `5h 2% ███░░░░░  7d 77% ██████░░`](../screenshot.png)
+## v0.13 vendor scope
+
+The selector supports **Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek**.
+**Kimi is widget/TUI-only in this release**; desktop protocol and marker parity
+for Kimi is dedicated future work.
 
 ## Requirements
 
@@ -50,7 +56,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 | Show percentage | on | numeric `%` next to each bar |
 | Bar width | 8 | cells per bar (4–20) |
 | Refresh interval | 30 s | 5–3600 |
-| Vendor | `anthropic` | only Anthropic has the 5h + weekly windows |
+| Vendor | `anthropic` | selectors: Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek (not Kimi). Anthropic, OpenAI, and Z.AI expose generic session/weekly windows; pace markers require Anthropic elapsed placeholders. |
 | Binary path | auto | empty = `PATH` then `~/.cargo/bin` |
 | Panel area | `right` | `right` = next to network/clock; also `center`/`left` |
 | Panel index | 0 | order within the area (0 = leftmost) |
@@ -64,14 +70,18 @@ ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;
 ```
 
 parses the Waybar JSON (`{text, tooltip, class}`), extracts the formatted
-fields from `text`, and draws the plan, session, weekly, optional Sonnet-only,
-and optional extra-usage values with native `St` widgets. Colors mirror the
+fields from `text`, and draws the plan, session, weekly, optional dynamic
+model-scoped (for example, Fable), and optional extra-usage values with native `St`
+widgets. Colors mirror the
 binary's default One Dark theme and `severity_for()` thresholds (≥90 red · ≥75
 orange · ≥50 yellow · else green), so it matches the Waybar widget. The
 dropdown is a native aligned menu, not the tooltip markup rendered verbatim.
 
-For windows with a real reset, the bar also draws a fixed blue `│` marker at
-the elapsed-time position. The fill after that point uses Rust's point-delta
+Pace markers require both a real reset and elapsed-time output. Currently only
+Anthropic's elapsed placeholder family supplies that pair, so other vendors can
+render their generic windows without a pace marker. When available, the bar
+draws a fixed blue `│` marker at the elapsed-time position. The fill after that
+point uses Rust's point-delta
 severity bands: at least 10 points ahead is red, 1–9 ahead is orange, -10
 through on-pace is yellow, and more than 10 under is green. A missing reset
 (including `—`) keeps its row visible but suppresses the marker, even if an
@@ -88,5 +98,5 @@ When Anthropic reports a model-scoped weekly limit, `{scoped_model}` provides
 the dynamic row label (for example, `Fable`) and `{scoped_pct}` provides its
 usage. The model name is the presence signal: if `{scoped_reset}` is missing,
 the extension displays `—` instead of falling back to a potentially unrelated
-legacy Sonnet window. Older binaries or accounts without a scoped limit leave
-the model field empty and gracefully use the legacy “Sonnet only” row.
+legacy model-specific window. Older binaries or accounts without a scoped limit
+leave the model field empty and omit the dynamic row.

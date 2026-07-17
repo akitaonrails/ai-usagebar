@@ -10,6 +10,7 @@ This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar)
 
 - **Per-vendor Waybar modules** with the same JSON shape as claudebar.
 - **Tabbed TUI** (`ai-usagebar-tui`) with Tab/h/l switching, per-tab refresh, and 60-second auto-refresh. Native ratatui widgets fill the available terminal width and keep the vendor tabs visually consistent.
+- **Native desktop integrations** for GNOME Shell and the macOS menu bar, with selectors for Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek.
 - **Scroll-to-cycle on the bar**: wire `on-scroll-up` / `on-scroll-down`, and one bar item cycles through your enabled vendors.
 - **Config-driven primary vendor**: set `[ui] primary` once; the widget shows that vendor by default and the TUI opens on its tab.
 - **Local testing tools**: `--pretty` renders ANSI-colored terminal output (auto-detects TTY), and `--watch N` re-renders every N seconds.
@@ -176,6 +177,10 @@ It runs in any terminal emulator (Kitty, Alacritty, Foot, Ghostty, etc.), works 
 - A shell-only tool on remote machines (just install the binary; no Waybar/Hyprland dependencies)
 
 The Waybar widget is optional. The TUI is the best way to see every enabled vendor at once, even if you never set up the widget.
+
+## Native desktop integrations (v0.13)
+
+The [GNOME Shell extension](gnome-extension/README.md) and [macOS menu bar app](macos/README.md) support selectors for **Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek**. **Kimi is widget/TUI-only in v0.13**; do not select it in either native desktop integration yet. Desktop protocol and marker parity for Kimi is dedicated future work.
 
 ## Waybar config
 
@@ -363,14 +368,14 @@ Then `hyprctl reload` (no logout needed).
 
 ## Vendor support matrix
 
-| Vendor | Endpoint | What you see |
-|---|---|---|
-| **Anthropic** | `api.anthropic.com/api/oauth/usage` (undocumented) | Session (5h), Weekly (7d), Sonnet (7d), model-scoped weekly (e.g. Fable), Extra usage $ |
-| **OpenAI** | `chatgpt.com/backend-api/wham/usage` (undocumented; used by official `codex` CLI) | Codex 5h, Codex weekly, Code-review weekly, Credits |
-| **Z.AI** | `api.z.ai/api/monitor/usage/quota/limit` (undocumented) | Session 5h, Weekly 7d, MCP tools monthly |
-| **OpenRouter** | `openrouter.ai/api/v1/{credits,key}` (documented) | Balance, today/week/month spend, free vs paid tier |
-| **DeepSeek** | `api.deepseek.com/user/balance` (documented) | Balance, granted, topped-up credits |
-| **Kimi** | `api.kimi.com/coding/v1/usages` (undocumented; community-confirmed) | Weekly subscription quota + 5h rolling rate-limit window |
+| Vendor | Endpoint | What you see | Native desktop selector (v0.13) |
+|---|---|---|---|
+| **Anthropic** | `api.anthropic.com/api/oauth/usage` (undocumented) | Session (5h), Weekly (7d), model-scoped weekly (e.g. Fable), Extra usage $ | Yes |
+| **OpenAI** | `chatgpt.com/backend-api/wham/usage` (undocumented; used by official `codex` CLI) | Codex 5h, Codex weekly, Code-review weekly, Credits | Yes |
+| **Z.AI** | `api.z.ai/api/monitor/usage/quota/limit` (undocumented) | Session 5h, Weekly 7d, MCP tools monthly | Yes |
+| **OpenRouter** | `openrouter.ai/api/v1/{credits,key}` (documented) | Balance, today/week/month spend, free vs paid tier | Yes |
+| **DeepSeek** | `api.deepseek.com/user/balance` (documented) | Balance, granted, topped-up credits | Yes |
+| **Kimi** | `api.kimi.com/coding/v1/usages` (undocumented; community-confirmed) | Weekly subscription quota + 5h rolling rate-limit window | No — widget/TUI only; desktop protocol and marker parity are future work |
 
 ### Endpoint stability
 
