@@ -147,6 +147,11 @@ impl Vendor {
 }
 
 impl Cli {
+    /// Whether the selected vendor came from an explicit `--vendor` opt-in.
+    pub fn has_explicit_vendor(&self) -> bool {
+        self.vendor.is_some()
+    }
+
     /// Resolve the vendor with full precedence:
     ///   1. explicit `--vendor` (highest)
     ///   2. persisted scroll-cycle state (`~/.cache/ai-usagebar/active_vendor`)
@@ -163,7 +168,7 @@ impl Cli {
         // skip the disk read entirely in that case — preserving the original
         // short-circuit and keeping the documented `--vendor` widget config off
         // the `active_vendor` read path.
-        let active = if self.vendor.is_some() {
+        let active = if self.has_explicit_vendor() {
             None
         } else {
             crate::active::read()

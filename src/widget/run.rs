@@ -97,7 +97,7 @@ async fn run_once(cli: &Cli, out: &mut impl Write) {
 async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
     let config = Config::load().unwrap_or_default();
     let vendor = cli.resolved_vendor(&config);
-    if !config.is_enabled(vendor.to_id()) {
+    if !dispatch_is_eligible(cli, &config, vendor) {
         return Err(AppError::Other(format!(
             "vendor {:?} is disabled in {}",
             vendor,
@@ -112,6 +112,13 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Deepseek => deepseek_output(cli, &config).await,
         Vendor::Kimi => kimi_output(cli, &config).await,
     }
+}
+
+/// Config and persisted selections may only dispatch enabled vendors. An
+/// explicit `--vendor` is an intentional CLI opt-in, including for vendors
+/// that default to disabled (such as Kimi).
+fn dispatch_is_eligible(cli: &Cli, config: &Config, vendor: Vendor) -> bool {
+    cli.has_explicit_vendor() || config.is_enabled(vendor.to_id())
 }
 
 async fn openai_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
@@ -473,6 +480,25 @@ mod tests {
         );
         assert_eq!(out.tooltip, "bad &lt;markup&gt; &amp; value");
         assert!(serde_json::from_str::<serde_json::Value>(out.to_json_line().trim()).is_ok());
+    }
+
+    #[test]
+    fn explicit_kimi_is_eligible_when_disabled_in_config() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
+        let config = Config::default();
+        let vendor = cli.resolve_vendor_with(&config, None);
+        assert_eq!(vendor, Vendor::Kimi);
+        assert!(dispatch_is_eligible(&cli, &config, vendor));
+    }
+
+    #[test]
+    fn implicit_disabled_vendor_is_not_dispatch_eligible() {
+        let cli = cli_default();
+        let config = Config::default();
+        assert!(!dispatch_is_eligible(&cli, &config, Vendor::Kimi));
+        // Normal implicit resolution avoids that disabled vendor entirely.
+        assert_eq!(cli.resolve_vendor_with(&config, None), Vendor::Anthropic);
     }
 
     // --- issue #14: multi-account Anthropic target resolution ---------------

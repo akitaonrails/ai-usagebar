@@ -258,10 +258,9 @@ pub fn resolve_api_key(
         return Ok(v.to_string());
     }
     let advice = if valid_env_name {
-        format!("export {env_var_name} or set `api_key`")
+        "set an API key in a valid environment variable or set `api_key`"
     } else {
         "fix the invalid `api_key_env` with a valid environment variable name or set `api_key`"
-            .to_string()
     };
     Err(crate::error::AppError::Credentials(format!(
         "{vendor_label}: no API key. Either {advice} under [{}] in {}.",
@@ -450,7 +449,6 @@ enabled = false
         let err = resolve_api_key("Zai", var, None).unwrap_err();
         match err {
             crate::error::AppError::Credentials(msg) => {
-                assert!(msg.contains(var), "error should name env var: {msg}");
                 assert!(
                     msg.contains("api_key"),
                     "error should suggest config field: {msg}"
@@ -504,6 +502,20 @@ enabled = false
         let _g = env_guard();
         let got = resolve_api_key("Kimi", "sk-pasted-secret", Some("inline-key")).unwrap();
         assert_eq!(got, "inline-key");
+    }
+
+    #[test]
+    fn resolve_api_key_never_leaks_valid_looking_configured_env_name() {
+        let _g = env_guard();
+        // This is syntactically a valid environment variable name, but could
+        // be a pasted secret and must not be reflected in the error.
+        let pasted_secret = "sk_pasted_secret";
+        unsafe { std::env::remove_var(pasted_secret) };
+        let err = resolve_api_key("Kimi", pasted_secret, None).unwrap_err();
+        assert!(
+            !err.to_string().contains(pasted_secret),
+            "error must not echo configured api_key_env values"
+        );
     }
 
     #[test]
