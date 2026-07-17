@@ -95,18 +95,39 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                 *right = Some(updated);
             }
             // Error footer (when present) still lives in the body.
-            if let Some((code, msg)) = last_error
-                && *code != 0
-            {
+            if let Some((label, msg)) = warning_label(snapshot, last_error) {
                 sections.push(Section::Spacer);
-                sections.push(Section::Text {
-                    label: format!("HTTP {code}"),
-                    value: msg.clone(),
-                });
+                sections.push(Section::Text { label, value: msg });
             }
             sections
         }
     }
+}
+
+/// Translate cache diagnostics at the presentation boundary. Cache files keep
+/// their established `(u16, String)` form: only non-zero codes are HTTP, while
+/// Kimi's stable schema marker identifies its code-zero schema warning.
+fn warning_label(
+    snapshot: &VendorSnapshot,
+    last_error: &Option<(u16, String)>,
+) -> Option<(String, String)> {
+    let (code, message) = last_error.as_ref()?;
+    if *code != 0 {
+        return Some((format!("HTTP {code}"), message.clone()));
+    }
+    if message.is_empty() {
+        return None;
+    }
+    let label = if matches!(snapshot, VendorSnapshot::Kimi(_))
+        && matches!(
+            crate::kimi::vendor::warning_kind(*code, message),
+            crate::kimi::vendor::WarningKind::SchemaDrift
+        ) {
+        "Kimi API schema drift"
+    } else {
+        "Warning"
+    };
+    Some((label.into(), message.clone()))
 }
 
 fn anthropic_sections(
@@ -832,5 +853,45 @@ mod tests {
             .filter(|s| matches!(s, Section::Metric { .. }))
             .count();
         assert_eq!(metric_count, 1);
+    }
+
+    #[test]
+    fn schema_drift_and_generic_code_zero_diagnostics_are_visible_without_http_labels() {
+        let snap = KimiSnapshot {
+            plan: None,
+            weekly_limit: 100,
+            weekly_used: 10,
+            weekly_remaining: 90,
+            weekly_reset_at: None,
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        let mut schema = ready(VendorSnapshot::Kimi(snap.clone()));
+        let TabState::Ready(tab) = &mut schema else {
+            unreachable!()
+        };
+        tab.last_error = Some((0, crate::kimi::fetch::SCHEMA_DRIFT_MESSAGE.into()));
+        let schema_sections = sections_for(&schema, now(), 5);
+        assert!(schema_sections.iter().any(|section| matches!(
+            section,
+            Section::Text { label, .. } if label == "Kimi API schema drift"
+        )));
+
+        let mut generic = ready(VendorSnapshot::Kimi(snap));
+        let TabState::Ready(tab) = &mut generic else {
+            unreachable!()
+        };
+        tab.last_error = Some((0, "cache lock unavailable".into()));
+        let generic_sections = sections_for(&generic, now(), 5);
+        assert!(generic_sections.iter().any(|section| matches!(
+            section,
+            Section::Text { label, value } if label == "Warning" && value == "cache lock unavailable"
+        )));
+        assert!(!generic_sections.iter().any(|section| matches!(
+            section,
+            Section::Text { label, .. } if label.starts_with("HTTP")
+        )));
     }
 }

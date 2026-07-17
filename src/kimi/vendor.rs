@@ -16,6 +16,27 @@ use crate::waybar::{Class, WaybarOutput};
 
 use super::fetch::{FetchOutcome, SCHEMA_DRIFT_MESSAGE};
 
+/// Presentation classification for Kimi's legacy `(u16, String)` cached
+/// diagnostic. Code zero has never meant HTTP; the stable schema marker lets
+/// renderers distinguish an upstream response-shape change from other local
+/// failures without changing the on-disk cache format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarningKind {
+    Http(u16),
+    SchemaDrift,
+    Other,
+}
+
+pub fn warning_kind(code: u16, message: &str) -> WarningKind {
+    if code != 0 {
+        WarningKind::Http(code)
+    } else if message == SCHEMA_DRIFT_MESSAGE {
+        WarningKind::SchemaDrift
+    } else {
+        WarningKind::Other
+    }
+}
+
 pub const DEFAULT_FORMAT: &str = "{kimi_weekly_pct}%";
 
 pub fn build_placeholders(
@@ -176,14 +197,15 @@ fn render_tooltip(
     }
 
     if let Some((code, msg)) = outcome.last_error.as_ref() {
-        let (label, icon, ecolor) = if *code == 0 && msg == SCHEMA_DRIFT_MESSAGE {
-            ("Kimi API schema drift".to_string(), "󰅚", theme.red.as_str())
-        } else if *code == 0 {
-            ("Kimi error".to_string(), "󰅚", theme.red.as_str())
-        } else if *code >= 500 {
-            (format!("HTTP {code}"), "󰅚", theme.red.as_str())
-        } else {
-            (format!("HTTP {code}"), "󰀪", theme.orange.as_str())
+        let (label, icon, ecolor) = match warning_kind(*code, msg) {
+            WarningKind::SchemaDrift => {
+                ("Kimi API schema drift".to_string(), "󰅚", theme.red.as_str())
+            }
+            WarningKind::Other => ("Kimi error".to_string(), "󰅚", theme.red.as_str()),
+            WarningKind::Http(code) if code >= 500 => {
+                (format!("HTTP {code}"), "󰅚", theme.red.as_str())
+            }
+            WarningKind::Http(code) => (format!("HTTP {code}"), "󰀪", theme.orange.as_str()),
         };
         lines.push(TooltipLine::Body("".into()));
         lines.push(TooltipLine::Sep);
@@ -374,6 +396,19 @@ mod tests {
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
         assert!(out.tooltip.contains("Kimi error"));
         assert!(!out.tooltip.contains("Kimi API schema drift"));
+    }
+
+    #[test]
+    fn warning_kind_uses_schema_marker_without_treating_code_zero_as_http() {
+        assert_eq!(
+            warning_kind(0, SCHEMA_DRIFT_MESSAGE),
+            WarningKind::SchemaDrift
+        );
+        assert_eq!(
+            warning_kind(0, "cache lock unavailable"),
+            WarningKind::Other
+        );
+        assert_eq!(warning_kind(503, "unavailable"), WarningKind::Http(503));
     }
 
     #[test]
