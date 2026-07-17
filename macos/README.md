@@ -48,6 +48,7 @@ Settings persist in `UserDefaults` and apply **live, no rebuild**.
 | Show 5h / weekly / extra | on / on / off | which bars appear |
 | Show percentage/value | on | numeric value next to each bar |
 | Show bars | on | off = numbers only |
+| Show pace marker | on | persisted `showMeta`; draws the elapsed-time marker only when the window has a reset |
 | Bar width | 8 | cells per menu-bar bar (4–20) |
 | Colors (low/mid/high/critical/empty) | One Dark | bar color per severity (≥90 / ≥75 / ≥50 / else) |
 | Refresh interval | 30 s | 5–3600 |
@@ -57,6 +58,12 @@ Settings persist in `UserDefaults` and apply **live, no rebuild**.
 The Preferences window needs **macOS 12+** (the menu bar itself works on
 10.15+). Tags/labels use the system label colors, so they adapt to a light or
 dark menu bar; only the bar fill/empty colors are configurable.
+
+When enabled, the fixed blue `│` pace marker is placed at elapsed time. Fill
+past the marker follows the point-delta colors used by the Rust widget: at
+least 10 points ahead is critical/red, 1–9 ahead is high/orange, -10 through
+on-pace is mid/yellow, and more than 10 under is low/green. Windows without a
+reset (including a displayed `—`) retain their row but do not draw a marker.
 
 ## How it works
 

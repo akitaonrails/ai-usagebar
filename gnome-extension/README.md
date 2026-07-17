@@ -60,7 +60,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 It runs:
 
 ```
-ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;{scoped_model};;{scoped_pct};;{scoped_reset}'
+ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;{scoped_model};;{scoped_pct};;{scoped_reset};;{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;__aiub_end__'
 ```
 
 parses the Waybar JSON (`{text, tooltip, class}`), extracts the formatted
@@ -69,6 +69,14 @@ and optional extra-usage values with native `St` widgets. Colors mirror the
 binary's default One Dark theme and `severity_for()` thresholds (≥90 red · ≥75
 orange · ≥50 yellow · else green), so it matches the Waybar widget. The
 dropdown is a native aligned menu, not the tooltip markup rendered verbatim.
+
+For windows with a real reset, the bar also draws a fixed blue `│` marker at
+the elapsed-time position. The fill after that point uses Rust's point-delta
+severity bands: at least 10 points ahead is red, 1–9 ahead is orange, -10
+through on-pace is yellow, and more than 10 under is green. A missing reset
+(including `—`) keeps its row visible but suppresses the marker, even if an
+older binary reports elapsed `0`. The final `__aiub_end__` literal is ignored;
+it receives a stale `⏸` suffix so the last elapsed field remains numeric.
 
 The subprocess is spawned **asynchronously** (`Gio.Subprocess` +
 `communicate_utf8_async`) so it never blocks the shell, and all timers /
