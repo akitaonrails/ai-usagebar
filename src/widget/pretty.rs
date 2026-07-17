@@ -40,6 +40,12 @@ pub fn pango_to_ansi(s: &str) -> String {
                 tag.push(nc);
             }
             apply_tag(&tag, &mut out);
+        } else if c == '&' {
+            if let Some(decoded) = decode_entity(&mut chars) {
+                out.push(decoded);
+            } else {
+                out.push(c);
+            }
         } else {
             out.push(c);
         }
@@ -47,6 +53,33 @@ pub fn pango_to_ansi(s: &str) -> String {
     // Ensure we always reset at the end so the next prompt isn't tinted.
     out.push_str("\x1b[0m");
     out
+}
+
+/// Decode the XML entities emitted by Pango exactly once.
+fn decode_entity(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<char> {
+    let mut lookahead = chars.clone();
+    let mut entity = String::new();
+    while let Some(c) = lookahead.next() {
+        if c == ';' {
+            let decoded = match entity.as_str() {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                _ => None,
+            };
+            if decoded.is_some() {
+                *chars = lookahead;
+            }
+            return decoded;
+        }
+        if !c.is_ascii_alphanumeric() {
+            return None;
+        }
+        entity.push(c);
+    }
+    None
 }
 
 fn apply_tag(tag: &str, out: &mut String) {
@@ -138,5 +171,18 @@ mod tests {
     fn double_quoted_attributes_also_work() {
         let s = pango_to_ansi(r##"<span foreground="#0000ff">b</span>"##);
         assert!(s.contains("\x1b[38;2;0;0;255m"));
+    }
+
+    #[test]
+    fn escaped_punctuation_is_decoded() {
+        assert_eq!(
+            pango_to_ansi("error: &amp; &lt; &gt; &quot; &apos;"),
+            "error: & < > \" '\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn escaped_entities_are_not_double_decoded() {
+        assert_eq!(pango_to_ansi("&amp;lt;"), "&lt;\x1b[0m");
     }
 }
