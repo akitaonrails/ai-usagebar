@@ -12,14 +12,42 @@ Each release is also published at
 ### Added
 
 - **Kimi vendor** (`--vendor kimi`): fetches weekly subscription quota and a
-  5-hour rolling rate-limit window from `api.kimi.com/coding/v1/usages`.
-  API key is read from `KIMI_API_KEY` env var or `[kimi] api_key` in config.
-  Disabled by default (requires explicit opt-in).
+   5-hour rolling rate-limit window from `api.kimi.com/coding/v1/usages`.
+   API key is read from `KIMI_API_KEY` env var or `[kimi] api_key` in config.
+   Disabled by default (requires explicit opt-in).
 - Kimi panel in the TUI and a Kimi API key field in the Settings overlay.
 - Live API smoke test `kimi_live` for the Kimi endpoint.
+- `{scoped_model}`, `{scoped_pct}`, `{scoped_reset}`, `{scoped_elapsed}` and
+  `{scoped_bar}` placeholders — the primary model-scoped weekly window (the
+  common case is one, e.g. **Fable**) exposed as flat fields. The tooltip
+  already rendered every `snap.scoped` entry, but the desktop surfaces redraw
+  from `--format` and had no way to read them.
+- **The meta reference (pace marker) now renders on the macOS menu bar and GNOME
+  desktop bars**, matching the Waybar tooltip. Each time-windowed bar draws a
+  thin blue `│` at the elapsed-time position; the fill stays in the calm
+  absolute-usage color up to the marker, and only the part that overshoots it —
+  how far ahead of pace you are, i.e. the risk of spilling into **paid extra
+  usage** if you keep the pace — is painted in the warning color. So a bar at
+  41% used but only 20% into the week reads calm with a small red tail, not all
+  red. macOS adds a *"Mostrar referência da meta"* toggle to switch it off;
+  GNOME draws it whenever the window reports a reset.
 
 ### Fixed
 
+- **Desktop pace markers no longer appear on windows without a reset.** A
+  missing reset still displays the scoped model row with `—`, but suppresses
+  the marker even when a legacy formatter supplies neutral elapsed `0`.
+
+- **macOS menu bar and GNOME extension showed a stale "Sonnet only 0%" bar
+  instead of the model-scoped weekly window (e.g. Fable).** Both redraw from
+  `--format` and read `{sonnet_pct}` (the flat `seven_day_sonnet` field, now
+  `null`); they now read the new `{scoped_*}` placeholders and label the row by
+  the model's display name, falling back to the flat window + "Sonnet only".
+- **macOS Preferences window clipped its top rows with no way to scroll to
+  them** on short displays. The pane is now a `ScrollView` of `GroupBox`
+  sections in a resizable window whose initial height is clamped to the visible
+  screen (hosting-controller sizing disabled), so the content always scrolls
+  and the top rows are reachable.
 - **Credentials error no longer echoes a misconfigured `api_key_env` value.**
   Pasting an API key into `api_key_env` (which expects an env var *name* like
   `KIMI_API_KEY`) used to print that value verbatim in the widget's error

@@ -389,6 +389,7 @@ When an endpoint drifts, **run `make smoke`**. The live API tests check the exac
 | `{session_pace}`, `{session_pace_indicator}`, `{session_pace_pct}`, `{session_pace_pts}`, `{session_pace_delta}`, `{session_pace_abs_delta}` | `↑`, `↑`, `12% ahead`, `4pts ahead`, `4`, `4` |
 | `{weekly_*}` | same family for the 7d window |
 | `{sonnet_*}` | same family for the 7d Sonnet window (empty when absent) |
+| `{scoped_model}`, `{scoped_pct}`, `{scoped_reset}`, `{scoped_elapsed}`, `{scoped_bar}` | `Fable`, `84`, `5d 2h`, `27`, `█████████████████░░░` — first model-scoped weekly window (neutral empty/`0`/`—` when absent) |
 | `{extra_spent}`, `{extra_limit}`, `{extra_pct}`, `{extra_bar}` | `$2.50`, `$50.00`, `5`, `█░░░░░░░░░░░░░░░░░░░` |
 
 ### OpenAI (Codex OAuth)

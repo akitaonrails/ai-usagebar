@@ -30,6 +30,7 @@ let SETTINGS_DEFAULTS: [String: Any] = [
     "showExtra": false,
     "showPercent": true,
     "showBars": true,
+    "showMeta": true,
     "colorLow": "#98c379",
     "colorMid": "#e5c07b",
     "colorHigh": "#d19a66",
@@ -52,9 +53,26 @@ var COLOR_MID: String { DEF.string(forKey: "colorMid") ?? "#e5c07b" }
 var COLOR_HIGH: String { DEF.string(forKey: "colorHigh") ?? "#d19a66" }
 var COLOR_CRITICAL: String { DEF.string(forKey: "colorCritical") ?? "#e06c75" }
 var COLOR_EMPTY: String { DEF.string(forKey: "colorEmpty") ?? "#3e4451" }
+// Meta reference: draw a pace marker at the elapsed-time position and flag the
+// over-meta segment of the fill. Off = plain absolute-usage bars, no marker.
+var SHOW_META: Bool { DEF.bool(forKey: "showMeta") }
+// The meta marker is a fixed blue, matching the binary's default theme `marker`
+// color and distinct from the over-pace warning fill.
+let COLOR_MARKER = "#61afef"
+let POINT_MID_MIN = -10
+let POINT_CRITICAL_MIN = 10
 
+// The `{scoped_*}` fields (10-12) carry the model-scoped weekly window (e.g.
+// "Fable") from the API's `limits[]`; empty on older binaries → the row falls
+// back to the flat `{sonnet_*}` window and the "Sonnet only" label. The trailing
+// `*_elapsed` fields (13-15) carry the meta (pace) position. A final literal
+// sentinel absorbs the widget's stale suffix, preserving the elapsed fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
-             "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit}"
+             "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
+             "{scoped_model};;{scoped_pct};;{scoped_reset};;" +
+             "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed}"
+
+let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
 // ─── Color / text helpers ────────────────────────────────────────────────
 func hexColor(_ hex: String) -> NSColor {
@@ -74,18 +92,57 @@ func colorForPct(_ pct: Int) -> NSColor {
     return hexColor(COLOR_LOW)
 }
 
+// Matches pacing::pace_severity: < -10 low, -10...0 mid, 1...9 high, >= 10 critical.
+func colorForDelta(_ delta: Int) -> NSColor {
+    if delta >= POINT_CRITICAL_MIN { return hexColor(COLOR_CRITICAL) }
+    if delta > 0 { return hexColor(COLOR_HIGH) }
+    if delta >= POINT_MID_MIN { return hexColor(COLOR_MID) }
+    return hexColor(COLOR_LOW)
+}
+
+// A missing reset keeps its row visible but never has a meaningful pace marker.
+func markerElapsed(reset: String, elapsed: Int?) -> Int? {
+    guard !reset.isEmpty, reset != "—" else { return nil }
+    return elapsed
+}
+
 let barFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
 
 func run(_ s: String, _ color: NSColor, _ font: NSFont = barFont) -> NSAttributedString {
     NSAttributedString(string: s, attributes: [.foregroundColor: color, .font: font])
 }
 
-func barAttr(pct: Int, width: Int) -> NSAttributedString {
+// Block bar. When `elapsed` (0..100) is known and the meta is on, the fill stays
+// in the calm absolute-usage color up to a blue marker at the elapsed position,
+// and only the part that overshoots the meta (how far ahead of pace you are →
+// risk of paid extra usage) is painted in the warning color. Otherwise it's a
+// plain absolute-color bar with no marker.
+func barAttr(pct: Int, width: Int, elapsed: Int?) -> NSAttributedString {
     let p = max(0, min(100, pct))
     let filled = Int((Double(p) * Double(width) / 100.0).rounded())
     let out = NSMutableAttributedString()
-    out.append(run(String(repeating: "█", count: filled), colorForPct(p)))
-    out.append(run(String(repeating: "░", count: max(0, width - filled)), hexColor(COLOR_EMPTY)))
+
+    guard SHOW_META, let elapsedVal = elapsed else {
+        out.append(run(String(repeating: "█", count: filled), colorForPct(p)))
+        out.append(run(String(repeating: "░", count: max(0, width - filled)), hexColor(COLOR_EMPTY)))
+        return out
+    }
+
+    let e = max(0, min(100, elapsedVal))
+    let base = colorForPct(p)        // on-track portion → calm absolute color
+    let over = colorForDelta(p - e)  // excess beyond the meta → pace warning
+    var m = Int(Double(e) * Double(width) / 100.0) // floor
+    if m > width - 1 { m = width - 1 }
+    if m < 0 { m = 0 }
+    let preF = min(filled, m)
+    let postF = filled > m + 1 ? filled - m - 1 : 0
+    let preE = m - preF
+    let postE = width - m - 1 - postF
+    out.append(run(String(repeating: "█", count: max(0, preF)), base))
+    out.append(run(String(repeating: "░", count: max(0, preE)), hexColor(COLOR_EMPTY)))
+    out.append(run("│", hexColor(COLOR_MARKER)))
+    out.append(run(String(repeating: "█", count: max(0, postF)), over))
+    out.append(run(String(repeating: "░", count: max(0, postE)), hexColor(COLOR_EMPTY)))
     return out
 }
 
@@ -118,12 +175,16 @@ func resolveBinary(_ name: String) -> String? {
 }
 
 // ─── Data model ──────────────────────────────────────────────────────────
-struct Window { let pct: Int; let reset: String }
+struct Window { let pct: Int; let reset: String; let elapsed: Int? }
 struct Snapshot {
     let plan: String
     let session: Window
     let weekly: Window
+    /// The per-model weekly bar (model-scoped window, e.g. Fable, or the legacy
+    /// flat sonnet window).
     let sonnet: Window?
+    /// Label for that bar: the scoped model name ("Fable") or "Sonnet only".
+    let sonnetLabel: String
     let extra: (pct: Int, spent: String, limit: String)?
 }
 
@@ -138,20 +199,44 @@ func parse(_ text: String) -> Snapshot? {
         s.hasPrefix("{") && s.hasSuffix("}")
     }
     func t(_ i: Int) -> String {
+        guard i < f.count else { return "" }
         let v = f[i].trimmingCharacters(in: .whitespaces)
         return unknownPlaceholder(v) ? "" : v
     }
-    func n(_ i: Int) -> Int? { Int(t(i)) }
+    // Do not accept a numeric prefix: a stale suffix such as "27 ⏸" is not elapsed.
+    func n(_ i: Int) -> Int? {
+        let value = t(i)
+        guard value.range(of: "^-?[0-9]+$", options: .regularExpression) != nil else { return nil }
+        return Int(value)
+    }
+    // Third bar = the per-model weekly window: a non-empty scoped model is the
+    // presence signal. Its reset can legitimately be unavailable, so do not
+    // mistake a missing reset for an absent scoped window and show Sonnet.
     let sonnetReset = t(6)
-    let sonnet = sonnetReset.isEmpty || sonnetReset == "—" ? nil : n(5).map { Window(pct: $0, reset: sonnetReset) }
+    var sonnet: Window? = nil
+    var sonnetLabel = "Sonnet only"
+    let scopedReset = t(12)
+    let scopedModel = t(10)
+    if !scopedModel.isEmpty {
+        // A malformed scoped percentage is unavailable too, but must not make
+        // us fall back to the unrelated legacy Sonnet window.
+        if let p = n(11), (0...100).contains(p) {
+            let reset = scopedReset.isEmpty ? "—" : scopedReset
+            sonnet = Window(pct: p, reset: reset, elapsed: markerElapsed(reset: reset, elapsed: n(15)))
+            sonnetLabel = scopedModel
+        }
+    } else if !sonnetReset.isEmpty, sonnetReset != "—", let p = n(5) {
+        sonnet = Window(pct: p, reset: sonnetReset, elapsed: nil)
+    }
     let spent = t(8)
     let limit = t(9)
     let extra: (pct: Int, spent: String, limit: String)? =
         (spent.isEmpty || limit.isEmpty) ? nil : n(7).map { (pct: $0, spent: spent, limit: limit) }
     return Snapshot(plan: t(0),
-                    session: Window(pct: n(1) ?? 0, reset: t(2)),
-                    weekly: Window(pct: n(3) ?? 0, reset: t(4)),
+                    session: Window(pct: n(1) ?? 0, reset: t(2), elapsed: markerElapsed(reset: t(2), elapsed: n(13))),
+                    weekly: Window(pct: n(3) ?? 0, reset: t(4), elapsed: markerElapsed(reset: t(4), elapsed: n(14))),
                     sonnet: sonnet,
+                    sonnetLabel: sonnetLabel,
                     extra: extra)
 }
 
@@ -292,20 +377,23 @@ struct VendorsSection: View {
     @State private var checking = false
 
     var body: some View {
-        Section("Vendors") {
-            ForEach(VENDOR_AUTH, id: \.id) { v in
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(v.name)
-                        Text(statusText(v)).font(.caption).foregroundColor(.secondary)
+        GroupBox("Vendors") {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(VENDOR_AUTH, id: \.id) { v in
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(v.name)
+                            Text(statusText(v)).font(.caption).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(buttonLabel(v)) { action(v) }
                     }
-                    Spacer()
-                    Button(buttonLabel(v)) { action(v) }
+                }
+                if checking {
+                    Text("verificando…").font(.caption).foregroundColor(.secondary)
                 }
             }
-            if checking {
-                Text("verificando…").font(.caption).foregroundColor(.secondary)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear(perform: refresh)
     }
@@ -361,6 +449,7 @@ struct SettingsView: View {
     @AppStorage("showExtra") private var showExtra = false
     @AppStorage("showPercent") private var showPercent = true
     @AppStorage("showBars") private var showBars = true
+    @AppStorage("showMeta") private var showMeta = true
     @AppStorage("colorLow") private var colorLow = "#98c379"
     @AppStorage("colorMid") private var colorMid = "#e5c07b"
     @AppStorage("colorHigh") private var colorHigh = "#d19a66"
@@ -371,33 +460,50 @@ struct SettingsView: View {
     private let vendors = ["anthropic", "openai", "zai", "openrouter", "deepseek"]
 
     var body: some View {
-        Form {
-            Section("Exibição") {
-                Toggle("Mostrar barra de 5h (sessão)", isOn: $showSession)
-                Toggle("Mostrar barra semanal", isOn: $showWeekly)
-                Toggle("Mostrar barra de uso extra ($)", isOn: $showExtra)
-                Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
-                Toggle("Mostrar barras (off = só números)", isOn: $showBars)
-                Stepper("Largura da barra: \(barWidth)", value: $barWidth, in: 4...20)
-            }
-            Section("Cores") {
-                HexColorPicker(title: "Baixo (<50%)", hex: $colorLow)
-                HexColorPicker(title: "Médio (50–74%)", hex: $colorMid)
-                HexColorPicker(title: "Alto (75–89%)", hex: $colorHigh)
-                HexColorPicker(title: "Crítico (≥90%)", hex: $colorCritical)
-                HexColorPicker(title: "Vazio (fundo da barra)", hex: $colorEmpty)
-            }
-            Section("Dados") {
-                Picker("Vendor", selection: $vendor) {
-                    ForEach(vendors, id: \.self) { Text($0) }
+        // A ScrollView (not a Form) so the pane reliably scrolls on every macOS
+        // version: on short displays the window can't grow past the screen, and
+        // a plain Form clipped its top rows with no way to reach them.
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                GroupBox("Exibição") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Mostrar barra de 5h (sessão)", isOn: $showSession)
+                        Toggle("Mostrar barra semanal", isOn: $showWeekly)
+                        Toggle("Mostrar barra de uso extra ($)", isOn: $showExtra)
+                        Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
+                        Toggle("Mostrar barras (off = só números)", isOn: $showBars)
+                        Toggle("Mostrar referência da meta (linha de ritmo)", isOn: $showMeta)
+                        Stepper("Largura da barra: \(barWidth)", value: $barWidth, in: 4...20)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Stepper("Intervalo: \(Int(interval))s", value: $interval, in: 5...3600, step: 5)
-                TextField("Caminho do binário (vazio = auto)", text: $binaryPath)
+                GroupBox("Cores") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HexColorPicker(title: "Baixo (<50%)", hex: $colorLow)
+                        HexColorPicker(title: "Médio (50–74%)", hex: $colorMid)
+                        HexColorPicker(title: "Alto (75–89%)", hex: $colorHigh)
+                        HexColorPicker(title: "Crítico (≥90%)", hex: $colorCritical)
+                        HexColorPicker(title: "Vazio (fundo da barra)", hex: $colorEmpty)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                GroupBox("Dados") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Vendor", selection: $vendor) {
+                            ForEach(vendors, id: \.self) { Text($0) }
+                        }
+                        Stepper("Intervalo: \(Int(interval))s", value: $interval, in: 5...3600, step: 5)
+                        TextField("Caminho do binário (vazio = auto)", text: $binaryPath)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                VendorsSection()
             }
-            VendorsSection()
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(20)
-        .frame(width: 460, height: 560)
+        .frame(width: 460)
+        .frame(minHeight: 300, idealHeight: 560, maxHeight: .infinity)
     }
 }
 
@@ -406,6 +512,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
     var prefsWindow: NSWindow?
+    // Keep the SwiftUI host alive while its view is installed directly in the
+    // window. This avoids NSHostingController's macOS-13-only sizing API.
+    var prefsHost: NSHostingController<SettingsView>?
     var lastSnapshot: Snapshot?
     var pendingRefresh: DispatchWorkItem?
     let headerItem = NSMenuItem()
@@ -455,12 +564,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openPrefs() {
         if prefsWindow == nil {
             let host = NSHostingController(rootView: SettingsView())
-            let w = NSWindow(contentViewController: host)
+            // Install the host view directly so this window owns its size on
+            // macOS 12 as well. The SwiftUI ScrollView still fills the
+            // resizable content area without expanding it to its full height.
+            let avail = NSScreen.main?.visibleFrame.height ?? 700
+            let initialSize = NSSize(width: 460, height: min(560, avail - 40))
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: initialSize),
+                             styleMask: [.titled, .closable, .resizable],
+                             backing: .buffered,
+                             defer: false)
+            w.contentView = host.view
             w.title = "AI Usage Bar — Preferências"
-            w.styleMask = [.titled, .closable]
+            // Resizable so the content can always be reached; a min size keeps
+            // it usable, and the initial height is clamped to the visible screen
+            // so the top never lands under the menu bar on short displays.
+            w.contentMinSize = NSSize(width: 460, height: 360)
             w.isReleasedWhenClosed = false
             w.center()
             prefsWindow = w
+            prefsHost = host
         }
         NSApp.activate(ignoringOtherApps: true)
         prefsWindow?.makeKeyAndOrderFront(nil)
@@ -500,7 +622,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
-            p.arguments = ["--vendor", VENDOR, "--format", FORMAT]
+            p.arguments = ["--vendor", VENDOR, "--format", FORMAT_WITH_SENTINEL]
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
@@ -537,16 +659,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func renderPanel(_ s: Snapshot) {
         let title = NSMutableAttributedString()
-        func seg(_ tag: String, _ pct: Int, _ value: String) {
+        func seg(_ tag: String, _ pct: Int, _ value: String, _ elapsed: Int?) {
             if title.length > 0 { title.append(run("   ", .secondaryLabelColor)) }
             title.append(run("\(tag) ", .secondaryLabelColor))
             if SHOW_PERCENT { title.append(run(value + (SHOW_BARS ? " " : ""), colorForPct(pct))) }
-            if SHOW_BARS { title.append(barAttr(pct: pct, width: BAR_WIDTH)) }
+            if SHOW_BARS { title.append(barAttr(pct: pct, width: BAR_WIDTH, elapsed: elapsed)) }
             if !SHOW_PERCENT && !SHOW_BARS { title.append(run(value, colorForPct(pct))) }
         }
-        if SHOW_SESSION { seg("5h", s.session.pct, "\(s.session.pct)%") }
-        if SHOW_WEEKLY { seg("7d", s.weekly.pct, "\(s.weekly.pct)%") }
-        if SHOW_EXTRA, let e = s.extra { seg("ex", e.pct, e.spent) }
+        if SHOW_SESSION { seg("5h", s.session.pct, "\(s.session.pct)%", s.session.elapsed) }
+        if SHOW_WEEKLY { seg("7d", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.elapsed) }
+        if SHOW_EXTRA, let e = s.extra { seg("ex", e.pct, e.spent, nil) } // $ budget → no meta
         statusItem.button?.attributedTitle = title.length > 0 ? title : run("ai", .secondaryLabelColor)
     }
 
@@ -554,21 +676,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         headerItem.attributedTitle = run(s.plan.isEmpty ? "AI Usage" : s.plan,
                                          .labelColor, NSFont.boldSystemFont(ofSize: 13))
 
-        func row(_ key: String, _ name: String, _ pct: Int, _ value: String, _ reset: String?) {
+        func row(_ key: String, _ name: String, _ pct: Int, _ value: String, _ reset: String?, _ elapsed: Int?) {
             guard let item = rows[key] else { return }
             item.isHidden = false
             let a = NSMutableAttributedString()
-            a.append(run(name.padding(toLength: 12, withPad: " ", startingAt: 0), .labelColor))
-            a.append(barAttr(pct: pct, width: MENU_BAR_W))
+            let label = name.count < 12
+                ? name.padding(toLength: 12, withPad: " ", startingAt: 0)
+                : name
+            a.append(run(label, .labelColor))
+            a.append(barAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed))
             a.append(run("  \(value)", colorForPct(pct)))
             if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }
             item.attributedTitle = a
         }
-        row("session", "Session", s.session.pct, "\(s.session.pct)%", s.session.reset)
-        row("weekly", "Weekly", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.reset)
-        if let sn = s.sonnet { row("sonnet", "Sonnet only", sn.pct, "\(sn.pct)%", sn.reset) }
+        row("session", "Session", s.session.pct, "\(s.session.pct)%", s.session.reset, s.session.elapsed)
+        row("weekly", "Weekly", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.reset, s.weekly.elapsed)
+        if let sn = s.sonnet { row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset, sn.elapsed) }
         else { rows["sonnet"]?.isHidden = true }
-        if let e = s.extra { row("extra", "Extra usage", e.pct, "\(e.spent) / \(e.limit)", nil) }
+        if let e = s.extra { row("extra", "Extra usage", e.pct, "\(e.spent) / \(e.limit)", nil, nil) }
         else { rows["extra"]?.isHidden = true }
     }
 
