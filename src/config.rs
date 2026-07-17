@@ -14,6 +14,7 @@
 //! treated as "use defaults". API keys are read from env vars (the relevant
 //! `*_api_key_env` field lets the user override which env var name).
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -290,7 +291,11 @@ impl Config {
 
     pub fn load_from(path: &std::path::Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
-            Ok(s) => Ok(toml::from_str(&s)?),
+            Ok(s) => {
+                let config: Self = toml::from_str(&s)?;
+                config.validate()?;
+                Ok(config)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(AppError::io_at(path, e)),
         }
@@ -313,6 +318,23 @@ impl Config {
             .copied()
             .filter(|id| self.is_enabled(*id))
             .collect()
+    }
+
+    /// Validate cross-entry constraints that serde cannot express. Account
+    /// labels are both CLI selectors and TUI tab identities, so duplicates
+    /// would make either destination ambiguous.
+    pub fn validate(&self) -> Result<()> {
+        let mut labels = HashSet::new();
+        for account in &self.anthropic.accounts {
+            validate_account_label(&account.label)?;
+            if !labels.insert(&account.label) {
+                return Err(AppError::Credentials(format!(
+                    "duplicate anthropic account label {:?}",
+                    account.label
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -652,6 +674,26 @@ enabled = false
         // A typo names the offending label and lists the known ones.
         let err = format!("{:?}", c.anthropic.account("missing").unwrap_err());
         assert!(err.contains("missing") && err.contains("work"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_anthropic_account_labels_are_rejected_on_load() {
+        let f = write_toml(
+            r#"
+            [[anthropic.accounts]]
+            label = "work"
+            credentials_path = "/creds/work-one.json"
+
+            [[anthropic.accounts]]
+            label = "work"
+            credentials_path = "/creds/work-two.json"
+            "#,
+        );
+        let err = Config::load_from(f.path()).unwrap_err().to_string();
+        assert!(
+            err.contains("duplicate anthropic account label \"work\""),
+            "{err}"
+        );
     }
 
     #[test]

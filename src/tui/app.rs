@@ -446,6 +446,22 @@ mod tests {
     }
 
     #[test]
+    fn refresh_identity_lands_at_new_index_after_same_generation_reorder() {
+        let anthropic = TabId::vendor(VendorId::Anthropic);
+        let openai = TabId::vendor(VendorId::Openai);
+        let mut app = App::with_theme(vec![anthropic.clone(), openai.clone()], Theme::default());
+        let generation = app.tab_generation;
+
+        // A reorder is safe because delivery resolves the captured identity,
+        // not a stale positional index.
+        app.tabs_meta.swap(0, 1);
+        app.tabs.swap(0, 1);
+        assert!(app.apply_refresh(generation, &anthropic, TabState::Error("ready".into())));
+        assert!(matches!(app.tabs[0], TabState::Loading));
+        assert!(matches!(&app.tabs[1], TabState::Error(message) if message == "ready"));
+    }
+
+    #[test]
     fn select_primary_lands_on_default_account_tab() {
         // With account tabs present, `primary = anthropic` selects the default
         // Claude tab (index 0), not one of its account tabs.
