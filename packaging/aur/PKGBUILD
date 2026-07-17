@@ -3,7 +3,7 @@
 pkgname=ai-usagebar
 pkgver=0.12.0
 pkgrel=1
-pkgdesc="Waybar widget + TUI for AI plan usage across Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek"
+pkgdesc="Waybar widget + TUI for AI plan usage across Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Kimi"
 arch=('x86_64' 'aarch64')
 url="https://github.com/akitaonrails/ai-usagebar"
 license=('MIT')

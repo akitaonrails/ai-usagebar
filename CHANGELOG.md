@@ -18,6 +18,14 @@ Each release is also published at
 - Kimi panel in the TUI and a Kimi API key field in the Settings overlay.
 - Live API smoke test `kimi_live` for the Kimi endpoint.
 
+### Fixed
+
+- **Credentials error no longer echoes a misconfigured `api_key_env` value.**
+  Pasting an API key into `api_key_env` (which expects an env var *name* like
+  `KIMI_API_KEY`) used to print that value verbatim in the widget's error
+  tooltip. `resolve_api_key` now validates the field as an env var name and,
+  on failure, explains the correct usage without repeating the value.
+
 ## [0.12.0] — 2026-07-08
 
 ### Added

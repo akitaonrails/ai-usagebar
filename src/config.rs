@@ -252,8 +252,9 @@ pub fn resolve_api_key(
                 "{vendor_label}: invalid api_key_env value. It should be an \
                  environment variable name like {}_API_KEY, not the \
                  API key itself. Set the key in that env var or use `api_key` \
-                 under [{vendor_label}] in {}.",
+                 under [{}] in {}.",
                 vendor_label.to_ascii_uppercase(),
+                vendor_label.to_lowercase(),
                 config_path_hint()
             )));
         }
@@ -502,6 +503,25 @@ enabled = false
             msg.contains("KIMI_API_KEY"),
             "error should suggest a valid env var name: {msg}"
         );
+        assert!(
+            msg.contains("[kimi]"),
+            "error should point at the lowercase TOML section: {msg}"
+        );
+    }
+
+    #[test]
+    fn is_valid_env_var_name_rules() {
+        // Valid: alphabetic or underscore first, then alnum/underscore.
+        for valid in ["KIMI_API_KEY", "_PRIVATE", "a", "Z9", "MY_ZAI_2"] {
+            assert!(is_valid_env_var_name(valid), "{valid} should be valid");
+        }
+        // Invalid: empty, digit-first, or shell-illegal characters.
+        for invalid in ["", "9LIVES", "sk-kimi", "MY KEY", "A.B", "sk/k"] {
+            assert!(
+                !is_valid_env_var_name(invalid),
+                "{invalid} should be invalid"
+            );
+        }
     }
 
     #[test]
