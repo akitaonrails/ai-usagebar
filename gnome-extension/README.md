@@ -60,7 +60,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 It runs:
 
 ```
-ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit}'
+ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;{scoped_model};;{scoped_pct};;{scoped_reset}'
 ```
 
 parses the Waybar JSON (`{text, tooltip, class}`), extracts the formatted
@@ -73,3 +73,12 @@ dropdown is a native aligned menu, not the tooltip markup rendered verbatim.
 The subprocess is spawned **asynchronously** (`Gio.Subprocess` +
 `communicate_utf8_async`) so it never blocks the shell, and all timers /
 signal handlers are torn down in `disable()`.
+
+### Model-scoped weekly window
+
+When Anthropic reports a model-scoped weekly limit, `{scoped_model}` provides
+the dynamic row label (for example, `Fable`) and `{scoped_pct}` provides its
+usage. The model name is the presence signal: if `{scoped_reset}` is missing,
+the extension displays `—` instead of falling back to a potentially unrelated
+legacy Sonnet window. Older binaries or accounts without a scoped limit leave
+the model field empty and gracefully use the legacy “Sonnet only” row.
