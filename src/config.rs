@@ -238,40 +238,33 @@ impl Default for KimiConfig {
     }
 }
 
-/// Resolve an API key for a vendor: env var wins, then inline config, then
-/// a clear error naming both fields. Used by Z.AI, OpenRouter, DeepSeek, and
-/// Kimi vendors.
+/// Resolve an API key for a vendor: a valid env-var name wins, then inline
+/// config. Used by Z.AI, OpenRouter, DeepSeek, and Kimi vendors.
 pub fn resolve_api_key(
     vendor_label: &str,
     env_var_name: &str,
     inline: Option<&str>,
 ) -> crate::error::Result<String> {
-    if !env_var_name.is_empty() {
-        if !is_valid_env_var_name(env_var_name) {
-            return Err(crate::error::AppError::Credentials(format!(
-                "{vendor_label}: invalid api_key_env value. It should be an \
-                 environment variable name like {}_API_KEY, not the \
-                 API key itself. Set the key in that env var or use `api_key` \
-                 under [{}] in {}.",
-                vendor_label.to_ascii_uppercase(),
-                vendor_label.to_lowercase(),
-                config_path_hint()
-            )));
-        }
-        if let Ok(v) = std::env::var(env_var_name)
-            && !v.is_empty()
-        {
-            return Ok(v);
-        }
+    let valid_env_name = is_valid_env_var_name(env_var_name);
+    if valid_env_name
+        && let Ok(v) = std::env::var(env_var_name)
+        && !v.is_empty()
+    {
+        return Ok(v);
     }
     if let Some(v) = inline
         && !v.is_empty()
     {
         return Ok(v.to_string());
     }
+    let advice = if valid_env_name {
+        format!("export {env_var_name} or set `api_key`")
+    } else {
+        "fix the invalid `api_key_env` with a valid environment variable name or set `api_key`"
+            .to_string()
+    };
     Err(crate::error::AppError::Credentials(format!(
-        "{vendor_label}: no API key. Either export {env_var_name} or set \
-         `api_key` under [{}] in {}.",
+        "{vendor_label}: no API key. Either {advice} under [{}] in {}.",
         vendor_label.to_lowercase(),
         config_path_hint()
     )))
@@ -488,25 +481,29 @@ enabled = false
     fn resolve_api_key_rejects_invalid_env_var_name_without_leaking_it() {
         let _g = env_guard();
         // Simulates a user accidentally pasting the key into api_key_env.
-        let bad = "sk-kimi-test-secret";
+        let bad = "sk-kimi-very-real-looking-pasted-secret";
         let err = resolve_api_key("Kimi", bad, None).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("invalid api_key_env"),
+            msg.contains("invalid") && msg.contains("api_key_env"),
             "error should explain misconfiguration: {msg}"
         );
         assert!(
             !msg.contains(bad),
             "error must not echo the misconfigured value: {msg}"
         );
-        assert!(
-            msg.contains("KIMI_API_KEY"),
-            "error should suggest a valid env var name: {msg}"
-        );
+        assert!(msg.contains("valid environment variable name"));
         assert!(
             msg.contains("[kimi]"),
             "error should point at the lowercase TOML section: {msg}"
         );
+    }
+
+    #[test]
+    fn resolve_api_key_invalid_env_name_falls_back_to_inline() {
+        let _g = env_guard();
+        let got = resolve_api_key("Kimi", "sk-pasted-secret", Some("inline-key")).unwrap();
+        assert_eq!(got, "inline-key");
     }
 
     #[test]

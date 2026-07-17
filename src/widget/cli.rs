@@ -188,10 +188,22 @@ impl Cli {
         {
             return id_to_vendor(id);
         }
-        match config.ui.primary {
-            Some(id) => id_to_vendor(id),
-            None => Vendor::Anthropic,
+        if let Some(id) = config.ui.primary
+            && config.is_enabled(id)
+        {
+            return id_to_vendor(id);
         }
+        if config.is_enabled(crate::vendor::VendorId::Anthropic) {
+            return Vendor::Anthropic;
+        }
+        config
+            .enabled_vendors()
+            .into_iter()
+            .next()
+            .map(id_to_vendor)
+            // A completely disabled configuration has no enabled choice; keep
+            // the historic final fallback rather than rejecting widget startup.
+            .unwrap_or(Vendor::Anthropic)
     }
 }
 
@@ -301,6 +313,23 @@ mod tests {
         let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
         assert_eq!(cli.vendor, Some(Vendor::Kimi));
         assert_eq!(cli.vendor.unwrap().to_id(), crate::vendor::VendorId::Kimi);
+    }
+
+    #[test]
+    fn disabled_kimi_primary_falls_back_to_an_enabled_vendor() {
+        let cli = Cli::parse_from(["ai-usagebar"]);
+        let mut cfg = crate::config::Config::default();
+        cfg.ui.primary = Some(crate::vendor::VendorId::Kimi);
+        assert_eq!(cli.resolve_vendor_with(&cfg, None), Vendor::Anthropic);
+    }
+
+    #[test]
+    fn explicit_kimi_remains_an_opt_in_override_when_disabled() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
+        assert_eq!(
+            cli.resolve_vendor_with(&crate::config::Config::default(), None),
+            Vendor::Kimi
+        );
     }
 
     #[test]

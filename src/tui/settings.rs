@@ -338,22 +338,10 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
 
     // [ui].primary
     set_string(&mut doc, "ui", "primary", state.primary.slug())?;
-    // [zai].api_key — only write if dirty AND non-empty
-    if state.zai.dirty && !state.zai.buf.is_empty() {
-        set_string(&mut doc, "zai", "api_key", &state.zai.buf)?;
-    }
-    // [openrouter].api_key — same
-    if state.openrouter.dirty && !state.openrouter.buf.is_empty() {
-        set_string(&mut doc, "openrouter", "api_key", &state.openrouter.buf)?;
-    }
-    // [deepseek].api_key — same
-    if state.deepseek.dirty && !state.deepseek.buf.is_empty() {
-        set_string(&mut doc, "deepseek", "api_key", &state.deepseek.buf)?;
-    }
-    // [kimi].api_key — same
-    if state.kimi.dirty && !state.kimi.buf.is_empty() {
-        set_string(&mut doc, "kimi", "api_key", &state.kimi.buf)?;
-    }
+    update_key(&mut doc, "zai", &state.zai)?;
+    update_key(&mut doc, "openrouter", &state.openrouter)?;
+    update_key(&mut doc, "deepseek", &state.deepseek)?;
+    update_key(&mut doc, "kimi", &state.kimi)?;
 
     let bytes = doc.to_string();
     crate::cache::atomic_write(path, bytes.as_bytes())?;
@@ -395,6 +383,21 @@ fn set_string(doc: &mut DocumentMut, section: &str, key: &str, new_value: &str) 
     Ok(())
 }
 
+/// Persist an intentionally edited key. A dirty empty buffer means the user
+/// explicitly cleared the key; an untouched empty buffer leaves TOML intact.
+fn update_key(doc: &mut DocumentMut, section: &str, input: &KeyInput) -> Result<()> {
+    if !input.dirty {
+        return Ok(());
+    }
+    if input.buf.is_empty() {
+        if let Some(table) = doc.get_mut(section).and_then(toml_edit::Item::as_table_mut) {
+            table.remove("api_key");
+        }
+        return Ok(());
+    }
+    set_string(doc, section, "api_key", &input.buf)
+}
+
 fn default_config_path() -> Result<PathBuf> {
     crate::config::default_path()
         .ok_or_else(|| AppError::Other("could not resolve config dir".into()))
@@ -402,7 +405,7 @@ fn default_config_path() -> Result<PathBuf> {
 
 /// Render the modal overlay over `area`.
 pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
-    let modal = centered_rect(60, 60, area);
+    let modal = settings_modal_rect(area);
     // Clear underneath so the body is unreadable through us.
     f.render_widget(Clear, modal);
 
@@ -450,7 +453,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
     // Z.AI key.
     f.render_widget(
         Paragraph::new(label(
-            "Z.AI API key (ZAI_API_KEY env wins if set)",
+            "Z.AI API key (environment key takes precedence)",
             state.focus == Focus::ZaiKey,
             &bubble,
         )),
@@ -468,7 +471,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
     // OpenRouter key.
     f.render_widget(
         Paragraph::new(label(
-            "OpenRouter API key (OPENROUTER_API_KEY env wins if set)",
+            "OpenRouter API key (environment key takes precedence)",
             state.focus == Focus::OpenrouterKey,
             &bubble,
         )),
@@ -486,7 +489,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
     // DeepSeek key.
     f.render_widget(
         Paragraph::new(label(
-            "DeepSeek API key (DEEPSEEK_API_KEY env wins if set)",
+            "DeepSeek API key (environment key takes precedence)",
             state.focus == Focus::DeepseekKey,
             &bubble,
         )),
@@ -504,7 +507,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
     // Kimi key.
     f.render_widget(
         Paragraph::new(label(
-            "Kimi API key (KIMI_API_KEY env wins if set)",
+            "Kimi API key (environment key takes precedence)",
             state.focus == Focus::KimiKey,
             &bubble,
         )),
@@ -622,15 +625,19 @@ fn render_input(input: &KeyInput, focused: bool, theme: &BubbleTheme) -> Line<'s
     ])
 }
 
-/// Center a rectangle of `percent_x * percent_y` over `r`.
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_h = (r.height * percent_y) / 100;
-    let popup_w = (r.width * percent_x) / 100;
+const SETTINGS_CONTENT_HEIGHT: u16 = 18;
+
+/// Keep every editable field and Save visible in a common 24-row terminal.
+fn settings_modal_rect(area: Rect) -> Rect {
+    let height = ((area.height * 92) / 100)
+        .max(SETTINGS_CONTENT_HEIGHT + 2)
+        .min(area.height);
+    let width = (area.width * 80) / 100;
     Rect {
-        x: r.x + (r.width - popup_w) / 2,
-        y: r.y + (r.height - popup_h) / 2,
-        width: popup_w,
-        height: popup_h,
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
     }
 }
 
@@ -789,6 +796,45 @@ api_key_env = "OPENROUTER_API_KEY"
         let raw = std::fs::read_to_string(&path).unwrap();
         // No `api_key = ""` lines should be written.
         assert!(!raw.contains("api_key ="));
+    }
+
+    #[test]
+    fn save_dirty_empty_key_removes_existing_inline_key() {
+        let (_dir, path) = temp_config(Some(
+            r#"[zai]
+api_key = "old-secret"
+plan_tier = "pro"
+"#,
+        ));
+        let mut s = SettingsState::from_config(&Config::default());
+        s.zai.dirty = true;
+        save_to_path(&s, &path).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("api_key"));
+        assert!(raw.contains("plan_tier = \"pro\""));
+    }
+
+    #[test]
+    fn save_untouched_empty_key_preserves_existing_inline_key() {
+        let (_dir, path) = temp_config(Some(
+            r#"[zai]
+api_key = "old-secret"
+"#,
+        ));
+        let s = SettingsState::from_config(&Config::default());
+        save_to_path(&s, &path).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("api_key = \"old-secret\""));
+    }
+
+    #[test]
+    fn settings_modal_fits_all_fields_and_save_in_24_rows() {
+        let modal = settings_modal_rect(Rect::new(0, 0, 100, 24));
+        // Two border rows leave at least the 18 fixed rows through Save.
+        assert!(modal.height >= SETTINGS_CONTENT_HEIGHT + 2);
+        assert!(modal.height <= 24);
     }
 
     #[test]
