@@ -16,6 +16,7 @@ use crate::error::{AppError, Result};
 use crate::kimi;
 use crate::openai;
 use crate::openrouter;
+use crate::pango::escape;
 use crate::theme::Theme;
 use crate::vendor::{HTTP_CLIENT_TIMEOUT, RenderOpts, VendorOutcome};
 use crate::waybar::WaybarOutput;
@@ -395,7 +396,9 @@ fn fallback(err: &AppError, _cli: &Cli) -> WaybarOutput {
         AppError::Toml(e) => format!("TOML error: {e}"),
         AppError::IoBare(e) => format!("I/O error: {e}"),
     };
-    WaybarOutput::error(&tooltip)
+    // Tooltips are Pango markup. Escape error text before serializing it so an
+    // error cannot inject markup; serde still produces valid one-line JSON.
+    WaybarOutput::error(&escape(&tooltip))
 }
 
 #[cfg(test)]
@@ -460,6 +463,16 @@ mod tests {
         let out = fallback(&err, &cli_default());
         assert_eq!(out.text, "⚠");
         assert!(out.tooltip.contains("missing token"));
+    }
+
+    #[test]
+    fn fallback_escapes_pango_and_keeps_valid_json() {
+        let out = fallback(
+            &AppError::Other("bad <markup> & value".into()),
+            &cli_default(),
+        );
+        assert_eq!(out.tooltip, "bad &lt;markup&gt; &amp; value");
+        assert!(serde_json::from_str::<serde_json::Value>(out.to_json_line().trim()).is_ok());
     }
 
     // --- issue #14: multi-account Anthropic target resolution ---------------

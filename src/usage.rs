@@ -138,9 +138,11 @@ impl KimiSnapshot {
         if limit == 0 {
             0
         } else {
-            ((used as f64 / limit as f64) * 100.0)
-                .round()
-                .clamp(0.0, 100.0) as i32
+            // Keep all quota values exact: f64 loses integer precision above
+            // 2^53. This is the integer equivalent of round(used / limit *
+            // 100), with saturation for inconsistent upstream counters.
+            let pct = ((used as u128 * 100) + (limit as u128 / 2)) / limit as u128;
+            pct.min(100) as i32
         }
     }
 
@@ -396,5 +398,22 @@ mod tests {
         // usage above the window max is promoted — same rule as session/weekly.
         let s = with_scoped(snap(10, 50, None, Some((10000, 9900))), 100);
         assert_eq!(anthropic_severity(&s), PaceSeverity::Critical);
+    }
+
+    #[test]
+    fn kimi_percent_is_exact_above_f64_precision() {
+        let snap = KimiSnapshot {
+            plan: None,
+            weekly_limit: (1 << 53) + 1,
+            weekly_used: 1 << 52,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            window_limit: u64::MAX,
+            window_used: u64::MAX - 1,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        assert_eq!(snap.weekly_pct(), 50);
+        assert_eq!(snap.window_pct(), 100);
     }
 }

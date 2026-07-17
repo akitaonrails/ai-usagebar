@@ -101,7 +101,8 @@ fn fallback_with_error(cache: &Cache, original: AppError) -> Result<FetchOutcome
 fn error_to_pair(e: &AppError) -> Option<(u16, String)> {
     match e {
         AppError::Http { status, body } => Some((*status, body.clone())),
-        AppError::Schema(msg) => Some((422, msg.clone())),
+        // A 2xx response with an unknown shape is not an HTTP 422 response.
+        AppError::Schema(_) => Some((0, "Kimi API schema drift".into())),
         e => Some((0, e.to_string())),
     }
 }
@@ -175,16 +176,22 @@ async fn fetch_live(client: &reqwest::Client, url: &str, api_key: &str) -> Resul
     .map_err(|_| AppError::Transport(format!("kimi timeout: {url}")))??;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?;
 
     if !status.is_success() {
-        let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();
+        // Never surface upstream/proxy bodies: they can contain credentials or
+        // arbitrary markup. Keep the cached diagnostic useful but generic.
+        let body = if matches!(status.as_u16(), 401 | 403) {
+            "Kimi authentication failed".into()
+        } else {
+            format!("Kimi API returned HTTP {}", status.as_u16())
+        };
         return Err(AppError::Http {
             status: status.as_u16(),
             body,
         });
     }
 
+    let bytes = resp.bytes().await?;
     let r: UsagesResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("kimi usages response: {e}")))?;
     r.into_snapshot()
@@ -421,7 +428,7 @@ mod tests {
         assert!(out.stale);
         assert_eq!(out.snapshot.weekly_used, 30);
         assert_eq!(out.snapshot.window_used, 20);
-        assert!(out.last_error.as_ref().map(|(c, _)| *c) == Some(422));
+        assert_eq!(out.last_error, Some((0, "Kimi API schema drift".into())));
 
         // The payload file must still contain the original seeded snapshot.
         let payload = std::fs::read_to_string(cache.payload_path()).unwrap();
@@ -540,5 +547,89 @@ mod tests {
         .unwrap();
         assert!(out.stale);
         assert_eq!(out.snapshot.weekly_used, 30);
+    }
+
+    #[tokio::test]
+    async fn missing_counters_with_seeded_cache_preserves_snapshot() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/coding/v1/usages")
+            .with_status(200)
+            .with_body(r#"{"usage":{"limit":100}}"#)
+            .create_async()
+            .await;
+        let (_td, cache) = cache_fixture();
+        let seeded = sample_seed().to_string();
+        cache.write_payload(seeded.as_bytes()).unwrap();
+        let out = fetch_snapshot(
+            &reqwest::Client::new(),
+            "sk-test",
+            &cache,
+            &Endpoints {
+                usages: format!("{}/coding/v1/usages", server.url()),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert!(out.stale);
+        assert_eq!(out.snapshot.weekly_used, 30);
+        assert_eq!(
+            std::fs::read_to_string(cache.payload_path()).unwrap(),
+            seeded
+        );
+    }
+
+    #[tokio::test]
+    async fn unrecognized_window_with_seeded_cache_preserves_snapshot() {
+        let mut server = mockito::Server::new_async().await;
+        server.mock("GET", "/coding/v1/usages").with_status(200)
+            .with_body(r#"{"usage":{"limit":100,"used":10},"limits":[{"window":{"duration":4,"timeUnit":"TIME_UNIT_HOUR"},"detail":{"limit":100,"used":10}}]}"#).create_async().await;
+        let (_td, cache) = cache_fixture();
+        let seeded = sample_seed().to_string();
+        cache.write_payload(seeded.as_bytes()).unwrap();
+        let out = fetch_snapshot(
+            &reqwest::Client::new(),
+            "sk-test",
+            &cache,
+            &Endpoints {
+                usages: format!("{}/coding/v1/usages", server.url()),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert!(out.stale);
+        assert_eq!(out.snapshot.window_used, 20);
+        assert_eq!(
+            std::fs::read_to_string(cache.payload_path()).unwrap(),
+            seeded
+        );
+    }
+
+    #[tokio::test]
+    async fn http_error_body_is_redacted() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/coding/v1/usages")
+            .with_status(500)
+            .with_body("proxy secret: <token>")
+            .create_async()
+            .await;
+        let (_td, cache) = cache_fixture();
+        let err = fetch_snapshot(
+            &reqwest::Client::new(),
+            "sk-test",
+            &cache,
+            &Endpoints {
+                usages: format!("{}/coding/v1/usages", server.url()),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Http { status: 500, ref body } if body == "Kimi API returned HTTP 500")
+        );
     }
 }

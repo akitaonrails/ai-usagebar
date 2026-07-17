@@ -75,8 +75,17 @@ pub fn render(
         .clone()
         .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
     let values = build_placeholders(snap, now);
+    // User formats are Pango markup after Waybar renders them. Escape API
+    // strings there, while retaining raw values for the default tooltip (which
+    // escapes exactly once at its markup insertion point).
+    let mut pango_values = values.clone();
+    for key in ["plan", "kimi_plan"] {
+        if let Some(value) = pango_values.get_mut(key) {
+            *value = escape(value);
+        }
+    }
 
-    let mut text = substitute(&format, &values);
+    let mut text = substitute(&format, &pango_values);
     if outcome.stale {
         text.push_str(" ⏸");
     }
@@ -89,7 +98,7 @@ pub fn render(
     let bar_text = color_span(&wrapper_color, &format!("{icon_prefix}{text}"));
 
     let tooltip = if let Some(fmt) = opts.tooltip_format.as_deref() {
-        substitute(fmt, &values)
+        substitute(fmt, &pango_values)
     } else {
         render_tooltip(outcome, snap, theme, now)
     };
@@ -166,18 +175,18 @@ fn render_tooltip(
         )));
     }
 
-    if let Some((code, msg)) = outcome.last_error.as_ref()
-        && *code != 0
-    {
-        let (icon, ecolor) = if *code >= 500 {
-            ("󰅚", theme.red.as_str())
+    if let Some((code, msg)) = outcome.last_error.as_ref() {
+        let (label, icon, ecolor) = if *code == 0 {
+            ("Kimi API schema drift".to_string(), "󰅚", theme.red.as_str())
+        } else if *code >= 500 {
+            (format!("HTTP {code}"), "󰅚", theme.red.as_str())
         } else {
-            ("󰀪", theme.orange.as_str())
+            (format!("HTTP {code}"), "󰀪", theme.orange.as_str())
         };
         lines.push(TooltipLine::Body("".into()));
         lines.push(TooltipLine::Sep);
         lines.push(TooltipLine::Body(format!(
-            " <span foreground='{ecolor}'>  {icon}  HTTP {code}</span>"
+            " <span foreground='{ecolor}'>  {icon}  {label}</span>"
         )));
         lines.push(TooltipLine::Body(format!(
             "     <span foreground='{dim}'>{}</span>",
@@ -330,6 +339,28 @@ mod tests {
             "tooltip: {}",
             out.tooltip
         );
+    }
+
+    #[test]
+    fn custom_plan_placeholder_is_pango_escaped_once() {
+        let mut snap = sample_snap();
+        snap.plan = Some("A&B <beta>".into());
+        let outcome = sample_outcome(snap.clone());
+        let mut o = opts();
+        o.tooltip_format = Some("{kimi_plan}".into());
+        let out = render(&outcome, &snap, &Theme::default(), &o, now());
+        assert_eq!(out.tooltip, "A&amp;B &lt;beta&gt;");
+    }
+
+    #[test]
+    fn schema_error_has_schema_label_not_http_422() {
+        let snap = sample_snap();
+        let mut outcome = sample_outcome(snap.clone());
+        outcome.stale = true;
+        outcome.last_error = Some((0, "Kimi API schema drift".into()));
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        assert!(out.tooltip.contains("Kimi API schema drift"));
+        assert!(!out.tooltip.contains("HTTP 422"));
     }
 
     #[test]

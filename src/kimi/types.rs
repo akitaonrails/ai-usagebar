@@ -32,7 +32,7 @@ struct UsageBlock {
     limit: Option<NumericOrString>,
     used: Option<NumericOrString>,
     remaining: Option<NumericOrString>,
-    #[serde(rename = "resetTime")]
+    #[serde(rename = "resetTime", alias = "resetAt", alias = "reset_time")]
     reset_time: Option<String>,
 }
 
@@ -47,7 +47,7 @@ struct Limit {
 #[serde(default)]
 struct Window {
     duration: u64,
-    #[serde(rename = "timeUnit")]
+    #[serde(rename = "timeUnit", alias = "time_unit")]
     time_unit: String,
 }
 
@@ -76,23 +76,26 @@ impl UsagesResponse {
             .ok_or_else(|| AppError::Schema("kimi: missing top-level usage block".into()))?;
         let (weekly_limit, weekly_used, weekly_remaining, weekly_reset) = extract_block(usage)?;
 
-        let mut window_limit = 0u64;
-        let mut window_used = 0u64;
-        let mut window_remaining = 0u64;
-        let mut window_reset = None;
-
-        if let Some(detail) = self.limits.into_iter().find_map(|l| {
-            if l.window
-                .as_ref()
-                .is_some_and(|w| w.duration == 300 && w.time_unit == "TIME_UNIT_MINUTE")
-            {
-                l.detail
-            } else {
-                None
-            }
-        }) {
-            (window_limit, window_used, window_remaining, window_reset) = extract_block(detail)?;
-        }
+        // `limits` is absent for accounts where Kimi does not expose the
+        // rolling quota. Once it is present, a 5h window is required: silently
+        // treating an unfamiliar advertised window as zero usage masks drift.
+        let (window_limit, window_used, window_remaining, window_reset) = if self.limits.is_empty()
+        {
+            (0, 0, 0, None)
+        } else {
+            let detail = self
+                .limits
+                .into_iter()
+                .find_map(|l| {
+                    (l.window.as_ref().is_some_and(is_five_hour_window))
+                        .then_some(l.detail)
+                        .flatten()
+                })
+                .ok_or_else(|| {
+                    AppError::Schema("kimi: missing recognized 5h usage window".into())
+                })?;
+            extract_block(detail)?
+        };
 
         Ok(KimiSnapshot {
             plan,
@@ -119,10 +122,23 @@ fn extract_block(block: UsageBlock) -> Result<(u64, u64, u64, Option<DateTime<Ut
         (Some(u), Some(r)) => (u, r),
         (Some(u), None) => (u, limit.saturating_sub(u)),
         (None, Some(r)) => (limit.saturating_sub(r), r),
-        (None, None) => (0, limit),
+        (None, None) => {
+            return Err(AppError::Schema(
+                "kimi: usage block is missing both used and remaining".into(),
+            ));
+        }
     };
 
     Ok((limit, used, remaining, reset))
+}
+
+/// Kimi documents the rolling window as 300 minutes. Accept only equivalent
+/// spellings used by protobuf/JSON gateways, not arbitrary duration units.
+fn is_five_hour_window(window: &Window) -> bool {
+    matches!(
+        (window.duration, window.time_unit.as_str()),
+        (300, "TIME_UNIT_MINUTE" | "MINUTE" | "MINUTES") | (5, "TIME_UNIT_HOUR" | "HOUR" | "HOURS")
+    )
 }
 
 fn parse_count(field: &Option<NumericOrString>, name: &str) -> Result<Option<u64>> {
@@ -263,17 +279,15 @@ mod tests {
     }
 
     #[test]
-    fn both_counts_missing_yields_unused_quota() {
+    fn both_counts_missing_is_schema_drift() {
         let raw = r#"{
             "usage": { "limit": "100" }
         }"#;
-        let snap: KimiSnapshot = serde_json::from_str::<UsagesResponse>(raw)
+        let err = serde_json::from_str::<UsagesResponse>(raw)
             .unwrap()
             .into_snapshot()
-            .unwrap();
-        assert_eq!(snap.weekly_used, 0);
-        assert_eq!(snap.weekly_remaining, 100);
-        assert_eq!(snap.weekly_pct(), 0);
+            .unwrap_err();
+        assert!(err.to_string().contains("both used and remaining"));
     }
 
     #[test]
@@ -354,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn no_matching_window_yields_no_window() {
+    fn unrecognized_window_is_schema_drift() {
         let raw = r#"{
             "usage": { "limit": "100", "used": "26", "remaining": "74" },
             "limits": [
@@ -364,12 +378,11 @@ mod tests {
                 }
             ]
         }"#;
-        let snap: KimiSnapshot = serde_json::from_str::<UsagesResponse>(raw)
+        let err = serde_json::from_str::<UsagesResponse>(raw)
             .unwrap()
             .into_snapshot()
-            .unwrap();
-        assert_eq!(snap.window_limit, 0);
-        assert_eq!(snap.window_used, 0);
+            .unwrap_err();
+        assert!(err.to_string().contains("recognized 5h"));
     }
 
     #[test]
@@ -448,5 +461,24 @@ mod tests {
             .unwrap();
         assert_eq!(snap.weekly_limit, u64::MAX);
         assert_eq!(snap.weekly_remaining, u64::MAX);
+    }
+
+    #[test]
+    fn accepts_reset_and_duration_aliases() {
+        let raw = r#"{
+            "usage": { "limit": 100, "used": 20, "resetAt": "2026-02-11T17:32:50Z" },
+            "limits": [{
+                "window": { "duration": 5, "time_unit": "TIME_UNIT_HOUR" },
+                "detail": { "limit": 100, "remaining": 75, "reset_time": "2026-02-07T12:32:50Z" }
+            }]
+        }"#;
+        let snap = serde_json::from_str::<UsagesResponse>(raw)
+            .unwrap()
+            .into_snapshot()
+            .unwrap();
+        assert_eq!(snap.weekly_used, 20);
+        assert_eq!(snap.window_used, 25);
+        assert!(snap.weekly_reset_at.is_some());
+        assert!(snap.window_reset_at.is_some());
     }
 }
