@@ -48,11 +48,12 @@ Each release is also published at
   sections in a resizable window whose initial height is clamped to the visible
   screen (hosting-controller sizing disabled), so the content always scrolls
   and the top rows are reachable.
-- **Credentials error no longer echoes a misconfigured `api_key_env` value.**
+- **Configured `api_key_env` values are never echoed in credential errors.**
   Pasting an API key into `api_key_env` (which expects an env var *name* like
-  `KIMI_API_KEY`) used to print that value verbatim in the widget's error
-  tooltip. `resolve_api_key` now validates the field as an env var name and,
-  on failure, explains the correct usage without repeating the value.
+  `KIMI_API_KEY`) no longer prints that value in the widget's error tooltip.
+  Invalid names are ignored for lookup so the section's inline `api_key` can
+  still be used; when no inline key is present, the error explains the correct
+  `api_key_env` usage without repeating its configured value.
 
 ## [0.12.0] — 2026-07-08
 

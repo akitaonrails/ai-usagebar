@@ -71,7 +71,7 @@ variables or `config.toml`.
 
 ## Authentication
 
-Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth credentials that their official CLIs already wrote to disk, so **no env vars are needed.** Z.AI and OpenRouter use API keys. You can pass those through env vars or, if you don't source secrets in your shell, put them inline in `config.toml`.
+Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth credentials that their official CLIs already wrote to disk, so **no env vars are needed.** Z.AI, OpenRouter, DeepSeek, and Kimi use API keys. You can pass those through env vars or, if you don't source secrets in your shell, put them inline in `config.toml`.
 
 | Vendor | Method | Action required |
 |---|---|---|
@@ -376,7 +376,7 @@ Then `hyprctl reload` (no logout needed).
 
 Four of the six endpoints are undocumented. The Anthropic and OpenAI endpoints are used by their official CLIs (`claude` and `codex`), so removing them would break those tools too. That makes them less shaky than scraped web endpoints. Z.AI's monitor endpoint is reverse-engineered from a third-party plugin; treat it as the most fragile one. Kimi's `/coding/v1/usages` is community-confirmed and used by third-party quota tools; treat it as drift-prone.
 
-When an endpoint drifts, **run `make smoke`**. The live API tests check the exact fields this project depends on and produce a precise failure pointing at what changed. Paste the failure back into Claude Code and the affected `types.rs` can usually be updated mechanically.
+When an endpoint drifts, **run `make smoke`**. The live API tests check the exact fields this project depends on and produce a precise failure pointing at what changed. Kimi's smoke test is optional: it skips with a diagnostic when `KIMI_API_KEY` is unset, or run it alone with `cargo test --test live kimi_live -- --ignored --nocapture`. Paste a failure back into Claude Code and the affected `types.rs` can usually be updated mechanically.
 
 ## Format placeholders
 
@@ -419,8 +419,8 @@ ai-usagebar --watch 5                              # iterate on --format live
 ai-usagebar --vendor openrouter --format '{or_balance} · today {or_used_today}'
 
 make test                                          # unit + integration
-source ~/.config/zsh/secrets                       # only needed for live smoke
-make smoke                                         # live API drift detection
+source ~/.config/zsh/secrets                       # optional: only keys for vendors you want to smoke
+make smoke                                         # live API drift detection; Kimi skips without KIMI_API_KEY
 make clippy                                        # cargo clippy -D warnings
 ```
 
@@ -446,9 +446,9 @@ Auto-refresh runs every 60 seconds in the background. Vendors use the same layou
 Press `s` while the TUI is open. The overlay lets you:
 
 - Pick the **primary vendor** that the widget defaults to and that the TUI selects on startup. Use `←` / `→` to cycle.
-- Enter your **Z.AI API key**, **OpenRouter API key**, **DeepSeek API key**, and **Kimi API key** inline. Keys are masked as you type; press `Ctrl-V` to reveal or hide them. Env vars (`ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`) still win at runtime if they're set; the inline key is the fallback.
+- Enter your **Z.AI API key**, **OpenRouter API key**, **DeepSeek API key**, and **Kimi API key** inline. Keys are masked as you type; press `Ctrl-V` to reveal or hide them. Env vars (`ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`) still win at runtime if they're set; the inline key is the fallback. DeepSeek and Kimi remain disabled until their respective config sections set `enabled = true`.
 
-Saving an API key in the overlay does not enable the vendor — you still need `enabled = true` in `[kimi]`, `[deepseek]`, or any other default-off vendor's section for the widget and TUI to include it.
+Saving an API key in the overlay does not enable the vendor — you still need `enabled = true` in `[kimi]` or `[deepseek]` for the widget and TUI to include it.
 
 Key bindings inside the overlay:
 

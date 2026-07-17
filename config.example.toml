@@ -41,13 +41,16 @@ api_key_env = "OPENROUTER_API_KEY"
 
 [deepseek]
 # Disabled by default — enable once you've set a key (env var or inline).
+# The Settings overlay can save the inline fallback; it does not enable this vendor.
 enabled = false
 api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
 
 [kimi]
 # Disabled by default — enable once you've set a key (env var or inline).
-# Shows Kimi Code subscription quota (weekly + 5h rolling window) from api.kimi.com.
+# The Settings overlay can save the inline fallback; it does not enable this vendor.
+# Shows Kimi Code subscription quota (weekly + 5h rolling window) from the
+# undocumented, community-confirmed api.kimi.com/coding/v1/usages endpoint.
 enabled = false
 api_key_env = "KIMI_API_KEY"      # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
