@@ -376,7 +376,7 @@ Then `hyprctl reload` (no logout needed).
 
 Four of the six endpoints are undocumented. The Anthropic and OpenAI endpoints are used by their official CLIs (`claude` and `codex`), so removing them would break those tools too. That makes them less shaky than scraped web endpoints. Z.AI's monitor endpoint is reverse-engineered from a third-party plugin; treat it as the most fragile one. Kimi's `/coding/v1/usages` is community-confirmed and used by third-party quota tools; treat it as drift-prone.
 
-When an endpoint drifts, **run `make smoke`**. The live API tests check the exact fields this project depends on and produce a precise failure pointing at what changed. Kimi's smoke test is optional: it skips with a diagnostic when `KIMI_API_KEY` is unset, or run it alone with `cargo test --test live kimi_live -- --ignored --nocapture`. Paste a failure back into Claude Code and the affected `types.rs` can usually be updated mechanically.
+When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests, so the existing Anthropic, OpenAI, Z.AI, and OpenRouter smoke tests still require their respective OAuth credentials or API keys. Kimi alone is optional: its test skips with a diagnostic when `KIMI_API_KEY` is unset, or run it alone with `cargo test --test live kimi_live -- --ignored --nocapture`. The live API tests check the exact fields this project depends on and produce a precise failure pointing at what changed. Paste a failure back into Claude Code and the affected `types.rs` can usually be updated mechanically.
 
 ## Format placeholders
 
@@ -419,8 +419,8 @@ ai-usagebar --watch 5                              # iterate on --format live
 ai-usagebar --vendor openrouter --format '{or_balance} · today {or_used_today}'
 
 make test                                          # unit + integration
-source ~/.config/zsh/secrets                       # optional: only keys for vendors you want to smoke
-make smoke                                         # live API drift detection; Kimi skips without KIMI_API_KEY
+source ~/.config/zsh/secrets                       # required for existing vendor smoke tests
+make smoke                                         # runs all ignored tests; only Kimi skips without its key
 make clippy                                        # cargo clippy -D warnings
 ```
 
@@ -441,7 +441,7 @@ Auto-refresh runs every 60 seconds in the background. Vendors use the same layou
 
 ### Settings overlay
 
-![Settings overlay floating over the TUI — Primary vendor radio (Anthropic selected), masked Z.AI API key (•••), masked OpenRouter API key (•••), Save button, key hints at bottom](screenshots/tui-settings.png)
+![Settings overlay floating over the TUI — Primary vendor radio (Anthropic selected), masked Z.AI API key (•••), masked OpenRouter API key (•••), Save button, key hints at bottom. This older screenshot predates the DeepSeek and Kimi key fields described below.](screenshots/tui-settings.png)
 
 Press `s` while the TUI is open. The overlay lets you:
 
