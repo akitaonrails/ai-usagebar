@@ -154,6 +154,9 @@ impl KeyInput {
 #[derive(Debug, Clone)]
 pub struct SettingsState {
     pub focus: Focus,
+    /// Enabled vendors only. The primary selector must not offer a value that
+    /// cannot actually be used by the widget or TUI.
+    pub primary_choices: Vec<VendorId>,
     pub primary: VendorId,
     pub zai: KeyInput,
     pub openrouter: KeyInput,
@@ -165,9 +168,20 @@ pub struct SettingsState {
 
 impl SettingsState {
     pub fn from_config(cfg: &Config) -> Self {
+        let primary_choices = cfg.enabled_vendors();
+        // A configured but disabled primary is ineffective. Display the first
+        // enabled vendor instead; when none are enabled retain the historical
+        // Anthropic fallback in memory without inventing a persisted primary.
+        let primary = cfg
+            .ui
+            .primary
+            .filter(|vendor| primary_choices.contains(vendor))
+            .or_else(|| primary_choices.first().copied())
+            .unwrap_or_else(|| cfg.ui.primary.unwrap_or(VendorId::Anthropic));
         Self {
             focus: Focus::Primary,
-            primary: cfg.ui.primary.unwrap_or(VendorId::Anthropic),
+            primary_choices,
+            primary,
             zai: KeyInput::from_config(cfg.zai.api_key.as_deref()),
             openrouter: KeyInput::from_config(cfg.openrouter.api_key.as_deref()),
             deepseek: KeyInput::from_config(cfg.deepseek.api_key.as_deref()),
@@ -285,15 +299,16 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
 
 fn handle_primary(state: &mut SettingsState, code: KeyCode) {
     // Left/Right cycles the primary-vendor radio.
-    let all = VendorId::all();
-    let idx = all.iter().position(|v| *v == state.primary).unwrap_or(0) as i32;
-    let len = all.len() as i32;
+    let choices = &state.primary_choices;
+    let Some(idx) = choices.iter().position(|v| *v == state.primary) else {
+        return;
+    };
     let step = match code {
         KeyCode::Left => -1,
         KeyCode::Right | KeyCode::Char(' ') => 1,
         _ => return,
     };
-    state.primary = all[((idx + step).rem_euclid(len)) as usize];
+    state.primary = choices[((idx as i32 + step).rem_euclid(choices.len() as i32)) as usize];
 }
 
 fn handle_input(input: &mut KeyInput, code: KeyCode) {
@@ -336,8 +351,12 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
         })?
     };
 
-    // [ui].primary
-    set_string(&mut doc, "ui", "primary", state.primary.slug())?;
+    // Do not write a disabled primary as a side effect of saving an API key.
+    // With no enabled vendors, leave any existing value alone so the legacy
+    // resolver's Anthropic fallback remains intact.
+    if state.primary_choices.contains(&state.primary) {
+        set_string(&mut doc, "ui", "primary", state.primary.slug())?;
+    }
     update_key(&mut doc, "zai", &state.zai)?;
     update_key(&mut doc, "openrouter", &state.openrouter)?;
     update_key(&mut doc, "deepseek", &state.deepseek)?;
@@ -446,7 +465,11 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
         chunks[0],
     );
     f.render_widget(
-        Paragraph::new(render_radio(&state.primary, &bubble)),
+        Paragraph::new(render_radio(
+            &state.primary_choices,
+            &state.primary,
+            &bubble,
+        )),
         chunks[1],
     );
 
@@ -571,9 +594,9 @@ fn label(text: &str, focused: bool, theme: &BubbleTheme) -> Line<'static> {
     ])
 }
 
-fn render_radio(selected: &VendorId, theme: &BubbleTheme) -> Line<'static> {
+fn render_radio(choices: &[VendorId], selected: &VendorId, theme: &BubbleTheme) -> Line<'static> {
     let mut spans = vec![theme.muted("    ")];
-    for v in VendorId::all() {
+    for v in choices {
         let is_sel = v == selected;
         let glyph = if is_sel {
             theme.symbols.selected
@@ -659,6 +682,7 @@ mod tests {
     fn state_with(zai: &str, opr: &str, primary: VendorId) -> SettingsState {
         let mut s = SettingsState {
             focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
             primary,
             zai: KeyInput::from_config(Some(zai)),
             openrouter: KeyInput::from_config(Some(opr)),
@@ -865,6 +889,7 @@ api_key_env = "KIMI_API_KEY"
         // primary in place but leave the [kimi] section untouched.
         let s = SettingsState {
             focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
@@ -885,6 +910,7 @@ api_key_env = "KIMI_API_KEY"
     fn handle_key_tab_cycles_focus() {
         let mut s = SettingsState {
             focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
@@ -908,6 +934,7 @@ api_key_env = "KIMI_API_KEY"
     fn handle_key_esc_closes_without_saving() {
         let mut s = SettingsState {
             focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
@@ -925,6 +952,7 @@ api_key_env = "KIMI_API_KEY"
     fn handle_key_left_right_cycles_primary_vendor() {
         let mut s = SettingsState {
             focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
@@ -941,9 +969,73 @@ api_key_env = "KIMI_API_KEY"
     }
 
     #[test]
+    fn primary_uses_enabled_vendors_for_display_and_cycling() {
+        let mut cfg = Config::default();
+        cfg.openai.enabled = false;
+        cfg.zai.enabled = false;
+        cfg.openrouter.enabled = false;
+        cfg.kimi.enabled = true;
+        cfg.ui.primary = Some(VendorId::Openai); // disabled and ineffective
+
+        let mut state = SettingsState::from_config(&cfg);
+        assert_eq!(
+            state.primary_choices,
+            vec![VendorId::Anthropic, VendorId::Kimi]
+        );
+        assert_eq!(state.primary, VendorId::Anthropic);
+        handle_key(&mut state, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(state.primary, VendorId::Kimi);
+    }
+
+    #[test]
+    fn save_replaces_disabled_primary_with_effective_enabled_choice() {
+        let (_dir, path) = temp_config(Some(
+            r#"[ui]
+primary = "deepseek"
+"#,
+        ));
+        let mut cfg = Config::default();
+        cfg.ui.primary = Some(VendorId::Deepseek);
+        let mut state = SettingsState::from_config(&cfg);
+        state.zai = KeyInput::from_config(Some("new-key"));
+        state.zai.dirty = true;
+
+        save_to_path(&state, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("primary = \"anthropic\""));
+        assert!(!raw.contains("primary = \"deepseek\""));
+    }
+
+    #[test]
+    fn no_enabled_vendors_does_not_write_an_ineffective_primary() {
+        let (_dir, path) = temp_config(Some(
+            r#"[ui]
+primary = "deepseek"
+"#,
+        ));
+        let mut cfg = Config::default();
+        cfg.anthropic.enabled = false;
+        cfg.openai.enabled = false;
+        cfg.zai.enabled = false;
+        cfg.openrouter.enabled = false;
+        cfg.deepseek.enabled = false;
+        cfg.kimi.enabled = false;
+        cfg.ui.primary = Some(VendorId::Deepseek);
+        let mut state = SettingsState::from_config(&cfg);
+        state.zai = KeyInput::from_config(Some("new-key"));
+        state.zai.dirty = true;
+
+        assert!(state.primary_choices.is_empty());
+        save_to_path(&state, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("primary = \"deepseek\""));
+    }
+
+    #[test]
     fn handle_key_ctrl_v_toggles_reveal_on_focused_key_field() {
         let mut s = SettingsState {
             focus: Focus::ZaiKey,
+            primary_choices: VendorId::all().to_vec(),
             primary: VendorId::Anthropic,
             zai: KeyInput::from_config(Some("secret")),
             openrouter: KeyInput::default(),
@@ -974,6 +1066,7 @@ api_key_env = "KIMI_API_KEY"
         let (_dir, path) = temp_config(None);
         let mut s = SettingsState {
             focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
             primary: VendorId::Anthropic,
             zai: KeyInput::default(),
             openrouter: KeyInput::default(),
