@@ -212,10 +212,12 @@ fn render_tooltip(
         lines.push(TooltipLine::Body(format!(
             " <span foreground='{ecolor}'>  {icon}  {label}</span>"
         )));
-        lines.push(TooltipLine::Body(format!(
-            "     <span foreground='{dim}'>{}</span>",
-            escape(msg)
-        )));
+        if msg != &label {
+            lines.push(TooltipLine::Body(format!(
+                "     <span foreground='{dim}'>{}</span>",
+                escape(msg)
+            )));
+        }
     }
 
     let updated = updated_at_hm(now, outcome.cache_age);
@@ -385,6 +387,7 @@ mod tests {
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
         assert!(out.tooltip.contains("Kimi API schema drift"));
         assert!(!out.tooltip.contains("HTTP 422"));
+        assert_eq!(out.tooltip.matches("Kimi API schema drift").count(), 1);
     }
 
     #[test]
@@ -395,6 +398,7 @@ mod tests {
         outcome.last_error = Some((0, "cache lock unavailable".into()));
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
         assert!(out.tooltip.contains("Kimi error"));
+        assert!(out.tooltip.contains("cache lock unavailable"));
         assert!(!out.tooltip.contains("Kimi API schema drift"));
     }
 

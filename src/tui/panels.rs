@@ -127,7 +127,14 @@ fn warning_label(
     } else {
         "Warning"
     };
-    Some((label.into(), message.clone()))
+    // The stable marker is already the schema-warning label. Keep the label
+    // visible but do not repeat that sentinel as a redundant body value.
+    let value = if label == message {
+        String::new()
+    } else {
+        message.clone()
+    };
+    Some((label.into(), value))
 }
 
 fn anthropic_sections(
@@ -876,7 +883,7 @@ mod tests {
         let schema_sections = sections_for(&schema, now(), 5);
         assert!(schema_sections.iter().any(|section| matches!(
             section,
-            Section::Text { label, .. } if label == "Kimi API schema drift"
+            Section::Text { label, value } if label == "Kimi API schema drift" && value.is_empty()
         )));
 
         let mut generic = ready(VendorSnapshot::Kimi(snap));
@@ -893,5 +900,24 @@ mod tests {
             section,
             Section::Text { label, .. } if label.starts_with("HTTP")
         )));
+
+        let http = warning_label(
+            &VendorSnapshot::Kimi(KimiSnapshot {
+                plan: None,
+                weekly_limit: 0,
+                weekly_used: 0,
+                weekly_remaining: 0,
+                weekly_reset_at: None,
+                window_limit: 0,
+                window_used: 0,
+                window_remaining: 0,
+                window_reset_at: None,
+            }),
+            &Some((503, "service unavailable".into())),
+        );
+        assert_eq!(
+            http,
+            Some(("HTTP 503".into(), "service unavailable".into()))
+        );
     }
 }
