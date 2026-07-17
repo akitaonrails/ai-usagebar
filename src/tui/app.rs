@@ -85,6 +85,10 @@ pub struct App {
     pub tabs_meta: Vec<TabId>,
     pub active: usize,
     pub tabs: Vec<TabState>,
+    /// Monotonically increasing identity for a complete tab-set replacement.
+    /// Background fetches carry this with their tab identity so results from a
+    /// previous Settings reload cannot land in a new tab at the old index.
+    pub tab_generation: u64,
     pub theme: Theme,
     pub last_refresh: chrono::DateTime<chrono::Utc>,
     pub quit: bool,
@@ -110,6 +114,7 @@ impl App {
             tabs_meta,
             active: 0,
             tabs: vec![TabState::Loading; n],
+            tab_generation: 0,
             theme,
             last_refresh: Utc::now(),
             quit: false,
@@ -140,9 +145,26 @@ impl App {
     /// tab resets to `Loading` (the caller re-spawns fetches) and the
     /// selection is clamped in case the list shrank.
     pub fn set_tabs(&mut self, tabs_meta: Vec<TabId>) {
+        self.tab_generation = self.tab_generation.wrapping_add(1);
         self.active = self.active.min(tabs_meta.len().saturating_sub(1));
         self.tabs = vec![TabState::Loading; tabs_meta.len()];
         self.tabs_meta = tabs_meta;
+    }
+
+    /// Apply an asynchronous refresh only when it still belongs to this tab
+    /// generation and the captured tab identity still exists. Lookup by
+    /// identity, rather than the old positional index, also makes a reordered
+    /// tab list safe.
+    pub fn apply_refresh(&mut self, generation: u64, tab: &TabId, state: TabState) -> bool {
+        if generation != self.tab_generation {
+            return false;
+        }
+        let Some(index) = self.tabs_meta.iter().position(|current| current == tab) else {
+            return false;
+        };
+        self.tabs[index] = state;
+        self.last_refresh = Utc::now();
+        true
     }
 
     /// Move to the first tab of `primary`'s vendor (the default account tab,
@@ -393,6 +415,33 @@ mod tests {
         app.set_tabs(tabs_from_config(&config_with_accounts(&[])));
         assert_eq!(app.tabs_meta, vec![TabId::vendor(VendorId::Anthropic)]);
         assert_eq!(app.active, 0, "selection clamped after shrink");
+        assert!(matches!(app.tabs[0], TabState::Loading));
+    }
+
+    #[test]
+    fn refresh_from_old_generation_is_discarded() {
+        let mut app = App::with_theme(vec![TabId::vendor(VendorId::Anthropic)], Theme::default());
+        let old_generation = app.tab_generation;
+        app.set_tabs(vec![TabId::vendor(VendorId::Openai)]);
+
+        assert!(!app.apply_refresh(
+            old_generation,
+            &TabId::vendor(VendorId::Anthropic),
+            TabState::Error("old result".into()),
+        ));
+        assert!(matches!(app.tabs[0], TabState::Loading));
+    }
+
+    #[test]
+    fn refresh_identity_mismatch_is_discarded() {
+        let mut app = App::with_theme(vec![TabId::vendor(VendorId::Anthropic)], Theme::default());
+        let generation = app.tab_generation;
+
+        assert!(!app.apply_refresh(
+            generation,
+            &TabId::vendor(VendorId::Openai),
+            TabState::Error("wrong tab".into()),
+        ));
         assert!(matches!(app.tabs[0], TabState::Loading));
     }
 

@@ -17,7 +17,6 @@ use ai_usagebar::tui::app::{
 };
 use ai_usagebar::tui::view::draw;
 use ai_usagebar::vendor::HTTP_CLIENT_TIMEOUT;
-use chrono::Utc;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
@@ -84,7 +83,7 @@ where
     io::Error: From<B::Error>,
 {
     // Kick off initial fetches for every vendor in parallel.
-    let (tx, mut rx) = mpsc::unbounded_channel::<(usize, TabState)>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<(u64, TabId, TabState)>();
     spawn_all(app, client, config, &tx);
 
     let mut tick = tokio::time::interval(REFRESH_INTERVAL);
@@ -96,11 +95,8 @@ where
         tokio::select! {
             biased;
             // Snapshot results from background tasks.
-            Some((idx, state)) = rx.recv() => {
-                if let Some(slot) = app.tabs.get_mut(idx) {
-                    *slot = state;
-                    app.last_refresh = Utc::now();
-                }
+            Some((generation, tab, state)) = rx.recv() => {
+                app.apply_refresh(generation, &tab, state);
             }
             // Periodic auto-refresh of all tabs.
             _ = tick.tick() => {
@@ -160,8 +156,7 @@ where
                     if matches!(k.code, KeyCode::Char('r'))
                         && let Some(tab) = app.active_tab_id().cloned()
                     {
-                        let idx = app.active;
-                        spawn_one(app, idx, tab, client, config, &tx);
+                        spawn_one(app, tab, client, config, &tx);
                     }
                     if matches!(k.code, KeyCode::Char('R')) {
                         spawn_all(app, client, config, &tx);
@@ -180,28 +175,30 @@ fn spawn_all(
     app: &mut App,
     client: &Client,
     config: &Config,
-    tx: &mpsc::UnboundedSender<(usize, TabState)>,
+    tx: &mpsc::UnboundedSender<(u64, TabId, TabState)>,
 ) {
-    for (i, tab) in app.tabs_meta.clone().into_iter().enumerate() {
-        spawn_one(app, i, tab, client, config, tx);
+    for tab in app.tabs_meta.clone() {
+        spawn_one(app, tab, client, config, tx);
     }
 }
 
 fn spawn_one(
     app: &mut App,
-    idx: usize,
     tab: TabId,
     client: &Client,
     config: &Config,
-    tx: &mpsc::UnboundedSender<(usize, TabState)>,
+    tx: &mpsc::UnboundedSender<(u64, TabId, TabState)>,
 ) {
     let tx = tx.clone();
     let client = client.clone();
     let cfg = config.clone();
-    app.tabs[idx] = TabState::Loading;
+    let generation = app.tab_generation;
+    if let Some(index) = app.tabs_meta.iter().position(|current| current == &tab) {
+        app.tabs[index] = TabState::Loading;
+    }
     tokio::spawn(async move {
         let state = refresh_one(&client, &cfg, &tab).await;
-        let _ = tx.send((idx, state));
+        let _ = tx.send((generation, tab, state));
     });
 }
 
