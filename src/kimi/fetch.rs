@@ -13,6 +13,9 @@ use super::types::UsagesResponse;
 pub const BASE_URL: &str = "https://api.kimi.com";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(15);
+/// Stable marker stored alongside code 0 for a successful HTTP response whose
+/// payload no longer matches Kimi's undocumented usage schema.
+pub const SCHEMA_DRIFT_MESSAGE: &str = "Kimi API schema drift";
 
 #[derive(Debug, Clone)]
 pub struct Endpoints {
@@ -102,7 +105,7 @@ fn error_to_pair(e: &AppError) -> Option<(u16, String)> {
     match e {
         AppError::Http { status, body } => Some((*status, body.clone())),
         // A 2xx response with an unknown shape is not an HTTP 422 response.
-        AppError::Schema(_) => Some((0, "Kimi API schema drift".into())),
+        AppError::Schema(_) => Some((0, SCHEMA_DRIFT_MESSAGE.into())),
         e => Some((0, e.to_string())),
     }
 }
@@ -428,7 +431,7 @@ mod tests {
         assert!(out.stale);
         assert_eq!(out.snapshot.weekly_used, 30);
         assert_eq!(out.snapshot.window_used, 20);
-        assert_eq!(out.last_error, Some((0, "Kimi API schema drift".into())));
+        assert_eq!(out.last_error, Some((0, SCHEMA_DRIFT_MESSAGE.into())));
 
         // The payload file must still contain the original seeded snapshot.
         let payload = std::fs::read_to_string(cache.payload_path()).unwrap();

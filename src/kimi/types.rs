@@ -11,7 +11,9 @@ use crate::usage::KimiSnapshot;
 pub struct UsagesResponse {
     user: Option<User>,
     usage: Option<UsageBlock>,
-    limits: Vec<Limit>,
+    // Kimi omits this for accounts without a rolling quota and has also
+    // returned `null`; both mean no rolling window is available.
+    limits: Option<Vec<Limit>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -32,7 +34,12 @@ struct UsageBlock {
     limit: Option<NumericOrString>,
     used: Option<NumericOrString>,
     remaining: Option<NumericOrString>,
-    #[serde(rename = "resetTime", alias = "resetAt", alias = "reset_time")]
+    #[serde(
+        rename = "resetTime",
+        alias = "resetAt",
+        alias = "reset_at",
+        alias = "reset_time"
+    )]
     reset_time: Option<String>,
 }
 
@@ -79,12 +86,11 @@ impl UsagesResponse {
         // `limits` is absent for accounts where Kimi does not expose the
         // rolling quota. Once it is present, a 5h window is required: silently
         // treating an unfamiliar advertised window as zero usage masks drift.
-        let (window_limit, window_used, window_remaining, window_reset) = if self.limits.is_empty()
-        {
+        let limits = self.limits.unwrap_or_default();
+        let (window_limit, window_used, window_remaining, window_reset) = if limits.is_empty() {
             (0, 0, 0, None)
         } else {
-            let detail = self
-                .limits
+            let detail = limits
                 .into_iter()
                 .find_map(|l| {
                     (l.window.as_ref().is_some_and(is_five_hour_window))
@@ -368,6 +374,20 @@ mod tests {
     }
 
     #[test]
+    fn null_limits_yield_no_window() {
+        let raw = r#"{
+            "usage": { "limit": "100", "used": "26", "remaining": "74" },
+            "limits": null
+        }"#;
+        let snap = serde_json::from_str::<UsagesResponse>(raw)
+            .unwrap()
+            .into_snapshot()
+            .unwrap();
+        assert_eq!(snap.window_limit, 0);
+        assert_eq!(snap.window_used, 0);
+    }
+
+    #[test]
     fn unrecognized_window_is_schema_drift() {
         let raw = r#"{
             "usage": { "limit": "100", "used": "26", "remaining": "74" },
@@ -469,7 +489,7 @@ mod tests {
             "usage": { "limit": 100, "used": 20, "resetAt": "2026-02-11T17:32:50Z" },
             "limits": [{
                 "window": { "duration": 5, "time_unit": "TIME_UNIT_HOUR" },
-                "detail": { "limit": 100, "remaining": 75, "reset_time": "2026-02-07T12:32:50Z" }
+                "detail": { "limit": 100, "remaining": 75, "reset_at": "2026-02-07T12:32:50Z" }
             }]
         }"#;
         let snap = serde_json::from_str::<UsagesResponse>(raw)

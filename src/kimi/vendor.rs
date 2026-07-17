@@ -14,7 +14,7 @@ use crate::usage::KimiSnapshot;
 use crate::vendor::{RenderOpts, VendorOutcome};
 use crate::waybar::{Class, WaybarOutput};
 
-use super::fetch::FetchOutcome;
+use super::fetch::{FetchOutcome, SCHEMA_DRIFT_MESSAGE};
 
 pub const DEFAULT_FORMAT: &str = "{kimi_weekly_pct}%";
 
@@ -176,8 +176,10 @@ fn render_tooltip(
     }
 
     if let Some((code, msg)) = outcome.last_error.as_ref() {
-        let (label, icon, ecolor) = if *code == 0 {
+        let (label, icon, ecolor) = if *code == 0 && msg == SCHEMA_DRIFT_MESSAGE {
             ("Kimi API schema drift".to_string(), "󰅚", theme.red.as_str())
+        } else if *code == 0 {
+            ("Kimi error".to_string(), "󰅚", theme.red.as_str())
         } else if *code >= 500 {
             (format!("HTTP {code}"), "󰅚", theme.red.as_str())
         } else {
@@ -357,10 +359,21 @@ mod tests {
         let snap = sample_snap();
         let mut outcome = sample_outcome(snap.clone());
         outcome.stale = true;
-        outcome.last_error = Some((0, "Kimi API schema drift".into()));
+        outcome.last_error = Some((0, SCHEMA_DRIFT_MESSAGE.into()));
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
         assert!(out.tooltip.contains("Kimi API schema drift"));
         assert!(!out.tooltip.contains("HTTP 422"));
+    }
+
+    #[test]
+    fn generic_code_zero_error_is_not_labeled_schema_drift() {
+        let snap = sample_snap();
+        let mut outcome = sample_outcome(snap.clone());
+        outcome.stale = true;
+        outcome.last_error = Some((0, "cache lock unavailable".into()));
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        assert!(out.tooltip.contains("Kimi error"));
+        assert!(!out.tooltip.contains("Kimi API schema drift"));
     }
 
     #[test]
