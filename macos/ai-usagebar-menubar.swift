@@ -53,8 +53,12 @@ var COLOR_HIGH: String { DEF.string(forKey: "colorHigh") ?? "#d19a66" }
 var COLOR_CRITICAL: String { DEF.string(forKey: "colorCritical") ?? "#e06c75" }
 var COLOR_EMPTY: String { DEF.string(forKey: "colorEmpty") ?? "#3e4451" }
 
+// The `{scoped_*}` fields (10-12) carry the model-scoped weekly window (e.g.
+// "Fable") from the API's `limits[]`; empty on older binaries → the row falls
+// back to the flat `{sonnet_*}` window and the "Sonnet only" label.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
-             "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit}"
+             "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
+             "{scoped_model};;{scoped_pct};;{scoped_reset}"
 
 // ─── Color / text helpers ────────────────────────────────────────────────
 func hexColor(_ hex: String) -> NSColor {
@@ -123,7 +127,11 @@ struct Snapshot {
     let plan: String
     let session: Window
     let weekly: Window
+    /// The per-model weekly bar (model-scoped window, e.g. Fable, or the legacy
+    /// flat sonnet window).
     let sonnet: Window?
+    /// Label for that bar: the scoped model name ("Fable") or "Sonnet only".
+    let sonnetLabel: String
     let extra: (pct: Int, spent: String, limit: String)?
 }
 
@@ -138,12 +146,29 @@ func parse(_ text: String) -> Snapshot? {
         s.hasPrefix("{") && s.hasSuffix("}")
     }
     func t(_ i: Int) -> String {
+        guard i < f.count else { return "" }
         let v = f[i].trimmingCharacters(in: .whitespaces)
         return unknownPlaceholder(v) ? "" : v
     }
     func n(_ i: Int) -> Int? { Int(t(i)) }
+    // Third bar = the per-model weekly window: a non-empty scoped model is the
+    // presence signal. Its reset can legitimately be unavailable, so do not
+    // mistake a missing reset for an absent scoped window and show Sonnet.
+    let scopedReset = t(12)
     let sonnetReset = t(6)
-    let sonnet = sonnetReset.isEmpty || sonnetReset == "—" ? nil : n(5).map { Window(pct: $0, reset: sonnetReset) }
+    var sonnet: Window? = nil
+    var sonnetLabel = "Sonnet only"
+    let scopedModel = t(10)
+    if !scopedModel.isEmpty {
+        // A malformed scoped percentage is unavailable too, but must not make
+        // us fall back to the unrelated legacy Sonnet window.
+        if let p = n(11), (0...100).contains(p) {
+            sonnet = Window(pct: p, reset: scopedReset.isEmpty ? "—" : scopedReset)
+            sonnetLabel = scopedModel
+        }
+    } else if !sonnetReset.isEmpty, sonnetReset != "—", let p = n(5) {
+        sonnet = Window(pct: p, reset: sonnetReset)
+    }
     let spent = t(8)
     let limit = t(9)
     let extra: (pct: Int, spent: String, limit: String)? =
@@ -152,6 +177,7 @@ func parse(_ text: String) -> Snapshot? {
                     session: Window(pct: n(1) ?? 0, reset: t(2)),
                     weekly: Window(pct: n(3) ?? 0, reset: t(4)),
                     sonnet: sonnet,
+                    sonnetLabel: sonnetLabel,
                     extra: extra)
 }
 
@@ -292,20 +318,23 @@ struct VendorsSection: View {
     @State private var checking = false
 
     var body: some View {
-        Section("Vendors") {
-            ForEach(VENDOR_AUTH, id: \.id) { v in
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(v.name)
-                        Text(statusText(v)).font(.caption).foregroundColor(.secondary)
+        GroupBox("Vendors") {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(VENDOR_AUTH, id: \.id) { v in
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(v.name)
+                            Text(statusText(v)).font(.caption).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button(buttonLabel(v)) { action(v) }
                     }
-                    Spacer()
-                    Button(buttonLabel(v)) { action(v) }
+                }
+                if checking {
+                    Text("verificando…").font(.caption).foregroundColor(.secondary)
                 }
             }
-            if checking {
-                Text("verificando…").font(.caption).foregroundColor(.secondary)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear(perform: refresh)
     }
@@ -371,33 +400,49 @@ struct SettingsView: View {
     private let vendors = ["anthropic", "openai", "zai", "openrouter", "deepseek"]
 
     var body: some View {
-        Form {
-            Section("Exibição") {
-                Toggle("Mostrar barra de 5h (sessão)", isOn: $showSession)
-                Toggle("Mostrar barra semanal", isOn: $showWeekly)
-                Toggle("Mostrar barra de uso extra ($)", isOn: $showExtra)
-                Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
-                Toggle("Mostrar barras (off = só números)", isOn: $showBars)
-                Stepper("Largura da barra: \(barWidth)", value: $barWidth, in: 4...20)
-            }
-            Section("Cores") {
-                HexColorPicker(title: "Baixo (<50%)", hex: $colorLow)
-                HexColorPicker(title: "Médio (50–74%)", hex: $colorMid)
-                HexColorPicker(title: "Alto (75–89%)", hex: $colorHigh)
-                HexColorPicker(title: "Crítico (≥90%)", hex: $colorCritical)
-                HexColorPicker(title: "Vazio (fundo da barra)", hex: $colorEmpty)
-            }
-            Section("Dados") {
-                Picker("Vendor", selection: $vendor) {
-                    ForEach(vendors, id: \.self) { Text($0) }
+        // A ScrollView (not a Form) so the pane reliably scrolls on every macOS
+        // version: on short displays the window can't grow past the screen, and
+        // a plain Form clipped its top rows with no way to reach them.
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 18) {
+                GroupBox("Exibição") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Mostrar barra de 5h (sessão)", isOn: $showSession)
+                        Toggle("Mostrar barra semanal", isOn: $showWeekly)
+                        Toggle("Mostrar barra de uso extra ($)", isOn: $showExtra)
+                        Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
+                        Toggle("Mostrar barras (off = só números)", isOn: $showBars)
+                        Stepper("Largura da barra: \(barWidth)", value: $barWidth, in: 4...20)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Stepper("Intervalo: \(Int(interval))s", value: $interval, in: 5...3600, step: 5)
-                TextField("Caminho do binário (vazio = auto)", text: $binaryPath)
+                GroupBox("Cores") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HexColorPicker(title: "Baixo (<50%)", hex: $colorLow)
+                        HexColorPicker(title: "Médio (50–74%)", hex: $colorMid)
+                        HexColorPicker(title: "Alto (75–89%)", hex: $colorHigh)
+                        HexColorPicker(title: "Crítico (≥90%)", hex: $colorCritical)
+                        HexColorPicker(title: "Vazio (fundo da barra)", hex: $colorEmpty)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                GroupBox("Dados") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Vendor", selection: $vendor) {
+                            ForEach(vendors, id: \.self) { Text($0) }
+                        }
+                        Stepper("Intervalo: \(Int(interval))s", value: $interval, in: 5...3600, step: 5)
+                        TextField("Caminho do binário (vazio = auto)", text: $binaryPath)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                VendorsSection()
             }
-            VendorsSection()
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(20)
-        .frame(width: 460, height: 560)
+        .frame(width: 460)
+        .frame(minHeight: 300, idealHeight: 560, maxHeight: .infinity)
     }
 }
 
@@ -406,6 +451,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
     var prefsWindow: NSWindow?
+    // Keep the SwiftUI host alive while its view is installed directly in the
+    // window. This avoids NSHostingController's macOS-13-only sizing API.
+    var prefsHost: NSHostingController<SettingsView>?
     var lastSnapshot: Snapshot?
     var pendingRefresh: DispatchWorkItem?
     let headerItem = NSMenuItem()
@@ -455,12 +503,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openPrefs() {
         if prefsWindow == nil {
             let host = NSHostingController(rootView: SettingsView())
-            let w = NSWindow(contentViewController: host)
+            // Install the host view directly so this window owns its size on
+            // macOS 12 as well. The SwiftUI ScrollView still fills the
+            // resizable content area without expanding it to its full height.
+            let avail = NSScreen.main?.visibleFrame.height ?? 700
+            let initialSize = NSSize(width: 460, height: min(560, avail - 40))
+            let w = NSWindow(contentRect: NSRect(origin: .zero, size: initialSize),
+                             styleMask: [.titled, .closable, .resizable],
+                             backing: .buffered,
+                             defer: false)
+            w.contentView = host.view
             w.title = "AI Usage Bar — Preferências"
-            w.styleMask = [.titled, .closable]
+            // Resizable so the content can always be reached; a min size keeps
+            // it usable, and the initial height is clamped to the visible screen
+            // so the top never lands under the menu bar on short displays.
+            w.contentMinSize = NSSize(width: 460, height: 360)
             w.isReleasedWhenClosed = false
             w.center()
             prefsWindow = w
+            prefsHost = host
         }
         NSApp.activate(ignoringOtherApps: true)
         prefsWindow?.makeKeyAndOrderFront(nil)
@@ -558,7 +619,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let item = rows[key] else { return }
             item.isHidden = false
             let a = NSMutableAttributedString()
-            a.append(run(name.padding(toLength: 12, withPad: " ", startingAt: 0), .labelColor))
+            let label = name.count < 12
+                ? name.padding(toLength: 12, withPad: " ", startingAt: 0)
+                : name
+            a.append(run(label, .labelColor))
             a.append(barAttr(pct: pct, width: MENU_BAR_W))
             a.append(run("  \(value)", colorForPct(pct)))
             if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }
@@ -566,7 +630,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         row("session", "Session", s.session.pct, "\(s.session.pct)%", s.session.reset)
         row("weekly", "Weekly", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.reset)
-        if let sn = s.sonnet { row("sonnet", "Sonnet only", sn.pct, "\(sn.pct)%", sn.reset) }
+        if let sn = s.sonnet { row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset) }
         else { rows["sonnet"]?.isHidden = true }
         if let e = s.extra { row("extra", "Extra usage", e.pct, "\(e.spent) / \(e.limit)", nil) }
         else { rows["extra"]?.isHidden = true }

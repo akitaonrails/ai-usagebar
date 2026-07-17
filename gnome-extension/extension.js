@@ -25,9 +25,11 @@ const DIM = '#5c6370';
 const FG = '#abb2bf';
 const RED = '#e06c75';
 
-// All ten fields we pull from the binary, joined by ';;'.
+// The fields we pull from the binary, joined by ';;'. The trailing `{scoped_*}`
+// carry the model-scoped weekly window (e.g. Fable) from the API's `limits[]`.
 const FORMAT = '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;' +
-    '{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit}';
+    '{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;' +
+    '{scoped_model};;{scoped_pct};;{scoped_reset}';
 const REFRESH_TIMEOUT_SECS = 60;
 
 // severity_for(pct) from src/pango.rs: >=90 critical, >=75 high, >=50 mid, else low.
@@ -171,7 +173,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         item.add_child(vbox);
         this.menu.addMenuItem(item);
 
-        this._rows[key] = {item, valL, barL, resetL};
+        this._rows[key] = {item, nameL, valL, barL, resetL};
     }
 
     _colors() {
@@ -306,7 +308,21 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             plan: field(f[0]),
             session: {pct: num(f[1]) ?? 0, reset: field(f[2])},
             weekly: {pct: num(f[3]) ?? 0, reset: field(f[4])},
-            sonnet: {pct: num(f[5]), reset: field(f[6])},
+            // Per-model weekly bar: a non-empty scoped model is the presence
+            // signal. A reset may be unavailable, which must not make us show
+            // the unrelated legacy Sonnet window instead.
+            sonnet: (() => {
+                const scopedModel = field(f[10]);
+                if (scopedModel) {
+                    const scopedPct = num(f[11]);
+                    if (scopedPct != null && scopedPct >= 0 && scopedPct <= 100)
+                        return {pct: scopedPct, reset: field(f[12]) || '—', label: scopedModel};
+                    // A scoped model with malformed data is unavailable; do
+                    // not fall back to a potentially unrelated Sonnet window.
+                    return {pct: null, reset: '—', label: scopedModel};
+                }
+                return {pct: num(f[5]), reset: field(f[6]), label: 'Sonnet only'};
+            })(),
             extra: {pct: num(f[7]), spent: field(f[8]), limit: field(f[9])},
         };
         this._render();
@@ -371,6 +387,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
         upd('session', d.session.pct, `${d.session.pct}%`, d.session.reset, true);
         upd('weekly', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.reset, true);
+        // Label the per-model weekly row by the scoped model (e.g. "Fable").
+        this._rows.sonnet.nameL.text = d.sonnet.label || 'Sonnet only';
         upd('sonnet', d.sonnet.pct, `${d.sonnet.pct ?? 0}%`, d.sonnet.reset, d.sonnet.pct != null);
         upd('extra', d.extra.pct, `${d.extra.spent} / ${d.extra.limit}`, null,
             d.extra.pct != null && !!d.extra.spent && !!d.extra.limit);

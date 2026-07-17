@@ -23,3 +23,6 @@ packaging/aur/*.tar.gz
 
 # GNOME extension - compiled schema (build artifact)
 gnome-extension/schemas/gschemas.compiled
+
+# Compiled macOS menu bar app (built by macos/build.sh)
+macos/ai-usagebar-menubar
