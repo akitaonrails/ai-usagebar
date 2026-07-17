@@ -1,6 +1,6 @@
 //! Shared vendor IDs and renderer/fetcher structs used by the widget and TUI.
 //!
-//! Snapshots remain a discriminated `VendorSnapshot` enum because the four
+//! Snapshots remain a discriminated `VendorSnapshot` enum because the six
 //! vendors have genuinely different shapes — see `usage.rs`.
 
 use std::time::Duration;
@@ -25,6 +25,7 @@ pub enum VendorId {
     Zai,
     Openrouter,
     Deepseek,
+    Kimi,
 }
 
 impl VendorId {
@@ -35,6 +36,7 @@ impl VendorId {
             VendorId::Zai => "zai",
             VendorId::Openrouter => "openrouter",
             VendorId::Deepseek => "deepseek",
+            VendorId::Kimi => "kimi",
         }
     }
 
@@ -45,6 +47,7 @@ impl VendorId {
             VendorId::Zai,
             VendorId::Openrouter,
             VendorId::Deepseek,
+            VendorId::Kimi,
         ]
     }
 }

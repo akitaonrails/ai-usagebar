@@ -10,7 +10,7 @@ use clap::{Parser, ValueEnum};
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "ai-usagebar",
-    about = "Waybar widget for AI plan usage (Anthropic / OpenAI / Z.AI / OpenRouter)",
+    about = "Waybar widget for AI plan usage (Anthropic / OpenAI / Z.AI / OpenRouter / DeepSeek / Kimi)",
     long_about = "\
 Drop-in replacement for `claudebar` with multi-vendor support.
 
@@ -35,8 +35,9 @@ pub struct Cli {
     #[arg(long)]
     pub icon: Option<String>,
 
-    /// Bar-text format string with `{placeholder}` substitutions.
-    /// Defaults to `{session_pct}% · {session_reset}`.
+    /// Bar-text format string with `{placeholder}` substitutions. Defaults to
+    /// a vendor-specific format (e.g. `{session_pct}% · {session_reset}` for
+    /// Anthropic, `{kimi_weekly_pct}%` for Kimi).
     #[arg(long)]
     pub format: Option<String>,
 
@@ -129,6 +130,7 @@ pub enum Vendor {
     Zai,
     Openrouter,
     Deepseek,
+    Kimi,
 }
 
 impl Vendor {
@@ -139,11 +141,17 @@ impl Vendor {
             Vendor::Zai => crate::vendor::VendorId::Zai,
             Vendor::Openrouter => crate::vendor::VendorId::Openrouter,
             Vendor::Deepseek => crate::vendor::VendorId::Deepseek,
+            Vendor::Kimi => crate::vendor::VendorId::Kimi,
         }
     }
 }
 
 impl Cli {
+    /// Whether the selected vendor came from an explicit `--vendor` opt-in.
+    pub fn has_explicit_vendor(&self) -> bool {
+        self.vendor.is_some()
+    }
+
     /// Resolve the vendor with full precedence:
     ///   1. explicit `--vendor` (highest)
     ///   2. persisted scroll-cycle state (`~/.cache/ai-usagebar/active_vendor`)
@@ -160,7 +168,7 @@ impl Cli {
         // skip the disk read entirely in that case — preserving the original
         // short-circuit and keeping the documented `--vendor` widget config off
         // the `active_vendor` read path.
-        let active = if self.vendor.is_some() {
+        let active = if self.has_explicit_vendor() {
             None
         } else {
             crate::active::read()
@@ -185,10 +193,22 @@ impl Cli {
         {
             return id_to_vendor(id);
         }
-        match config.ui.primary {
-            Some(id) => id_to_vendor(id),
-            None => Vendor::Anthropic,
+        if let Some(id) = config.ui.primary
+            && config.is_enabled(id)
+        {
+            return id_to_vendor(id);
         }
+        if config.is_enabled(crate::vendor::VendorId::Anthropic) {
+            return Vendor::Anthropic;
+        }
+        config
+            .enabled_vendors()
+            .into_iter()
+            .next()
+            .map(id_to_vendor)
+            // A completely disabled configuration has no enabled choice; keep
+            // the historic final fallback rather than rejecting widget startup.
+            .unwrap_or(Vendor::Anthropic)
     }
 }
 
@@ -199,6 +219,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Zai => Vendor::Zai,
         crate::vendor::VendorId::Openrouter => Vendor::Openrouter,
         crate::vendor::VendorId::Deepseek => Vendor::Deepseek,
+        crate::vendor::VendorId::Kimi => Vendor::Kimi,
     }
 }
 
@@ -290,6 +311,30 @@ mod tests {
         cfg.ui.primary = Some(crate::vendor::VendorId::Openrouter);
         let active = Some(crate::vendor::VendorId::Openai);
         assert_eq!(cli.resolve_vendor_with(&cfg, active), Vendor::Zai);
+    }
+
+    #[test]
+    fn vendor_kimi_parses_to_kimi_variant() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
+        assert_eq!(cli.vendor, Some(Vendor::Kimi));
+        assert_eq!(cli.vendor.unwrap().to_id(), crate::vendor::VendorId::Kimi);
+    }
+
+    #[test]
+    fn disabled_kimi_primary_falls_back_to_an_enabled_vendor() {
+        let cli = Cli::parse_from(["ai-usagebar"]);
+        let mut cfg = crate::config::Config::default();
+        cfg.ui.primary = Some(crate::vendor::VendorId::Kimi);
+        assert_eq!(cli.resolve_vendor_with(&cfg, None), Vendor::Anthropic);
+    }
+
+    #[test]
+    fn explicit_kimi_remains_an_opt_in_override_when_disabled() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
+        assert_eq!(
+            cli.resolve_vendor_with(&crate::config::Config::default(), None),
+            Vendor::Kimi
+        );
     }
 
     #[test]

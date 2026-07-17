@@ -13,8 +13,10 @@ use crate::cache::{Cache, DEFAULT_TTL};
 use crate::config::Config;
 use crate::deepseek;
 use crate::error::{AppError, Result};
+use crate::kimi;
 use crate::openai;
 use crate::openrouter;
+use crate::pango::escape;
 use crate::theme::Theme;
 use crate::vendor::{HTTP_CLIENT_TIMEOUT, RenderOpts, VendorOutcome};
 use crate::waybar::WaybarOutput;
@@ -95,7 +97,7 @@ async fn run_once(cli: &Cli, out: &mut impl Write) {
 async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
     let config = Config::load().unwrap_or_default();
     let vendor = cli.resolved_vendor(&config);
-    if !config.is_enabled(vendor.to_id()) {
+    if !dispatch_is_eligible(cli, &config, vendor) {
         return Err(AppError::Other(format!(
             "vendor {:?} is disabled in {}",
             vendor,
@@ -108,7 +110,15 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Openai => openai_output(cli, &config).await,
         Vendor::Zai => zai_output(cli, &config).await,
         Vendor::Deepseek => deepseek_output(cli, &config).await,
+        Vendor::Kimi => kimi_output(cli, &config).await,
     }
+}
+
+/// Config and persisted selections may only dispatch enabled vendors. An
+/// explicit `--vendor` is an intentional CLI opt-in, including for vendors
+/// that default to disabled (such as Kimi).
+fn dispatch_is_eligible(cli: &Cli, config: &Config, vendor: Vendor) -> bool {
+    cli.has_explicit_vendor() || config.is_enabled(vendor.to_id())
 }
 
 async fn openai_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
@@ -242,6 +252,35 @@ async fn deepseek_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     ))
 }
 
+async fn kimi_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "Kimi",
+        &config.kimi.api_key_env,
+        config.kimi.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "kimi")?;
+    let endpoints = kimi::fetch::Endpoints::default();
+    let outcome =
+        match kimi::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(kimi::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
 async fn anthropic_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
     let (creds_target, cache) = anthropic_target(cli, config)?;
@@ -364,7 +403,9 @@ fn fallback(err: &AppError, _cli: &Cli) -> WaybarOutput {
         AppError::Toml(e) => format!("TOML error: {e}"),
         AppError::IoBare(e) => format!("I/O error: {e}"),
     };
-    WaybarOutput::error(&tooltip)
+    // Tooltips are Pango markup. Escape error text before serializing it so an
+    // error cannot inject markup; serde still produces valid one-line JSON.
+    WaybarOutput::error(&escape(&tooltip))
 }
 
 #[cfg(test)]
@@ -429,6 +470,35 @@ mod tests {
         let out = fallback(&err, &cli_default());
         assert_eq!(out.text, "⚠");
         assert!(out.tooltip.contains("missing token"));
+    }
+
+    #[test]
+    fn fallback_escapes_pango_and_keeps_valid_json() {
+        let out = fallback(
+            &AppError::Other("bad <markup> & value".into()),
+            &cli_default(),
+        );
+        assert_eq!(out.tooltip, "bad &lt;markup&gt; &amp; value");
+        assert!(serde_json::from_str::<serde_json::Value>(out.to_json_line().trim()).is_ok());
+    }
+
+    #[test]
+    fn explicit_kimi_is_eligible_when_disabled_in_config() {
+        use clap::Parser;
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
+        let config = Config::default();
+        let vendor = cli.resolve_vendor_with(&config, None);
+        assert_eq!(vendor, Vendor::Kimi);
+        assert!(dispatch_is_eligible(&cli, &config, vendor));
+    }
+
+    #[test]
+    fn implicit_disabled_vendor_is_not_dispatch_eligible() {
+        let cli = cli_default();
+        let config = Config::default();
+        assert!(!dispatch_is_eligible(&cli, &config, Vendor::Kimi));
+        // Normal implicit resolution avoids that disabled vendor entirely.
+        assert_eq!(cli.resolve_vendor_with(&config, None), Vendor::Anthropic);
     }
 
     // --- issue #14: multi-account Anthropic target resolution ---------------

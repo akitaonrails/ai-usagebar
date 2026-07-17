@@ -82,6 +82,7 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                 VendorSnapshot::Zai(s) => zai_sections(s, now),
                 VendorSnapshot::Openrouter(s) => openrouter_sections(s),
                 VendorSnapshot::Deepseek(s) => deepseek_sections(s),
+                VendorSnapshot::Kimi(s) => kimi_sections(s, now, pace_tolerance),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -281,6 +282,46 @@ fn deepseek_sections(s: &crate::usage::DeepseekSnapshot) -> Vec<Section> {
         label: "API".into(),
         body: vec![avail.into()],
     });
+    v
+}
+
+fn kimi_sections(s: &crate::usage::KimiSnapshot, now: DateTime<Utc>, _tol: u32) -> Vec<Section> {
+    let plan = s.plan.as_deref().unwrap_or("Kimi");
+    let mut v = vec![Section::Title {
+        left: plan.into(),
+        right: None,
+    }];
+
+    let weekly_pct = s.weekly_pct().clamp(0, 100) as u16;
+    v.push(Section::Spacer);
+    v.push(Section::Metric {
+        label: "Weekly quota".into(),
+        pct: weekly_pct,
+        severity: severity_for(s.weekly_pct()),
+        value_label: format!("{} / {}", s.weekly_used, s.weekly_limit),
+        footnote: format!(
+            "{} remaining · reset {}",
+            s.weekly_remaining,
+            countdown::format(s.weekly_reset_at, now)
+        ),
+    });
+
+    if s.window_limit > 0 {
+        let window_pct = s.window_pct().clamp(0, 100) as u16;
+        v.push(Section::Spacer);
+        v.push(Section::Metric {
+            label: "Rolling window (5h)".into(),
+            pct: window_pct,
+            severity: severity_for(s.window_pct()),
+            value_label: format!("{} / {}", s.window_used, s.window_limit),
+            footnote: format!(
+                "{} remaining · reset {}",
+                s.window_remaining,
+                countdown::format(s.window_reset_at, now)
+            ),
+        });
+    }
+
     v
 }
 
@@ -526,8 +567,8 @@ fn render_block(f: &mut Frame, area: Rect, bubble: &BubbleTheme, label: &str, bo
 mod tests {
     use super::*;
     use crate::usage::{
-        AnthropicSnapshot, Cents, ExtraUsage, OpenAiCredits, OpenAiSnapshot, OpenAiSource,
-        OpenRouterSnapshot, UsageWindow, ZaiSnapshot,
+        AnthropicSnapshot, Cents, ExtraUsage, KimiSnapshot, OpenAiCredits, OpenAiSnapshot,
+        OpenAiSource, OpenRouterSnapshot, UsageWindow, ZaiSnapshot,
     };
     use chrono::TimeZone;
 
@@ -707,5 +748,89 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s, Section::Block { label, .. } if label == "Credits"))
         );
+    }
+
+    #[test]
+    fn kimi_sections_include_weekly_and_window_with_used_over_limit() {
+        let now = now();
+        let snap = KimiSnapshot {
+            plan: Some("LEVEL_INTERMEDIATE".into()),
+            weekly_limit: 100,
+            weekly_used: 26,
+            weekly_remaining: 74,
+            weekly_reset_at: Some(now + chrono::Duration::days(4)),
+            window_limit: 100,
+            window_used: 15,
+            window_remaining: 85,
+            window_reset_at: Some(now + chrono::Duration::hours(2)),
+        };
+        let sections = sections_for(&ready(VendorSnapshot::Kimi(snap)), now, 5);
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter(|s| matches!(s, Section::Metric { .. }))
+            .collect();
+        assert_eq!(metrics.len(), 2);
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Metric { label, .. } if label == "Weekly quota"
+        )));
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Metric { label, .. } if label == "Rolling window (5h)"
+        )));
+
+        let find_footnote = |label: &str| -> (String, String) {
+            sections
+                .iter()
+                .find_map(|s| match s {
+                    Section::Metric {
+                        label: l,
+                        value_label,
+                        footnote,
+                        ..
+                    } if l == label => Some((value_label.clone(), footnote.clone())),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("missing metric {label}"))
+        };
+
+        let (weekly_value, weekly_footnote) = find_footnote("Weekly quota");
+        assert_eq!(weekly_value, "26 / 100");
+        assert!(weekly_footnote.contains("74 remaining"));
+        assert!(
+            weekly_footnote.contains("4d 0h"),
+            "weekly reset countdown: {weekly_footnote}"
+        );
+        assert!(!weekly_footnote.contains("2026-05-27T")); // not a raw RFC3339
+
+        let (window_value, window_footnote) = find_footnote("Rolling window (5h)");
+        assert_eq!(window_value, "15 / 100");
+        assert!(window_footnote.contains("85 remaining"));
+        assert!(
+            window_footnote.contains("2h 00m"),
+            "window reset countdown: {window_footnote}"
+        );
+        assert!(!window_footnote.contains("2026-05-23T14")); // not a raw RFC3339
+    }
+
+    #[test]
+    fn kimi_sections_omit_window_when_limit_zero() {
+        let snap = KimiSnapshot {
+            plan: None,
+            weekly_limit: 100,
+            weekly_used: 10,
+            weekly_remaining: 90,
+            weekly_reset_at: None,
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        let sections = sections_for(&ready(VendorSnapshot::Kimi(snap)), now(), 5);
+        let metric_count = sections
+            .iter()
+            .filter(|s| matches!(s, Section::Metric { .. }))
+            .count();
+        assert_eq!(metric_count, 1);
     }
 }

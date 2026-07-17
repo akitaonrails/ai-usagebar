@@ -1,6 +1,6 @@
 //! Live API smoke test suite — DETECTS UNDOCUMENTED-ENDPOINT DRIFT.
 //!
-//! Hits the real Anthropic, OpenAI Codex, Z.AI, and OpenRouter endpoints
+//! Hits the real Anthropic, OpenAI Codex, Z.AI, OpenRouter, and Kimi endpoints
 //! using credentials from your shell. Asserts only the *fields we depend on*
 //! so when a vendor renames or removes one, the failure points at the exact
 //! field rather than dumping the whole response.
@@ -12,7 +12,8 @@
 //! source ~/.config/zsh/secrets
 //! cargo test --test live -- --ignored --nocapture
 //! # or:
-//! make smoke
+//! make smoke                         # runs every configured live smoke test
+//! cargo test --test live kimi_live -- --ignored --nocapture
 //! ```
 //!
 //! ## When a smoke test fails
@@ -33,12 +34,18 @@
 //!   envelope and at least one `TOKENS_LIMIT` entry exists.
 //! - **OpenRouter**: `/credits` returns `{data:{total_credits,total_usage}}`
 //!   and `/key` returns `{data:{usage,is_free_tier}}`.
+//! - **Kimi**: the public snapshot exposes parsed weekly limit/used/remaining
+//!   counters and a bounded percentage. Its reset and selected 5-hour rolling
+//!   window are optional, so the smoke test validates their public fields only
+//!   when present; the snapshot does not expose raw wire duration/unit.
+//!   `kimi_live` skips when optional `KIMI_API_KEY` is unset.
 
 use std::time::Duration;
 
 use ai_usagebar::anthropic;
 use ai_usagebar::cache::Cache;
 use ai_usagebar::error::AppError;
+use ai_usagebar::kimi;
 use ai_usagebar::openai;
 use ai_usagebar::openrouter;
 use ai_usagebar::zai;
@@ -233,5 +240,56 @@ async fn openrouter_live() {
         out.snapshot.total_usage,
         out.snapshot.usage_monthly,
         out.snapshot.is_free_tier,
+    );
+}
+
+#[tokio::test]
+#[ignore = "live API; run with --ignored"]
+async fn kimi_live() {
+    let Ok(api_key) = std::env::var("KIMI_API_KEY") else {
+        eprintln!("kimi_live: KIMI_API_KEY is unset — skipping optional Kimi smoke test");
+        return;
+    };
+    if api_key.trim().is_empty() {
+        eprintln!("kimi_live: KIMI_API_KEY is empty — skipping optional Kimi smoke test");
+        return;
+    }
+    let cache = xdg_cache_for("kimi");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let endpoints = kimi::fetch::Endpoints::default();
+    let out = kimi::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &endpoints,
+        Duration::from_secs(0),
+    )
+    .await
+    .expect("kimi fetch should succeed against the real API");
+
+    // Kimi permits missing or inconsistent counters, and the production
+    // snapshot deliberately preserves them. Exercise all weekly fields while
+    // checking the production-facing normalized percentage only.
+    assert_pct("kimi.weekly", out.snapshot.weekly_pct());
+    // A nonzero public limit means the parser selected its optional rolling
+    // window. The public snapshot does not retain the wire duration/unit, so
+    // it can only validate that window's normalized percentage and counters.
+    if out.snapshot.window_limit > 0 {
+        assert_pct("kimi.window", out.snapshot.window_pct());
+    }
+    println!(
+        "✅ kimi — plan={:?}, weekly={} / {} ({} remaining; reset {:?}), window={} / {} ({} remaining; reset {:?})",
+        out.snapshot.plan,
+        out.snapshot.weekly_used,
+        out.snapshot.weekly_limit,
+        out.snapshot.weekly_remaining,
+        out.snapshot.weekly_reset_at,
+        out.snapshot.window_used,
+        out.snapshot.window_limit,
+        out.snapshot.window_remaining,
+        out.snapshot.window_reset_at,
     );
 }

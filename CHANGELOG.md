@@ -11,6 +11,12 @@ Each release is also published at
 
 ### Added
 
+- **Kimi vendor** (`--vendor kimi`): fetches weekly subscription quota and a
+   5-hour rolling rate-limit window from `api.kimi.com/coding/v1/usages`.
+   API key is read from `KIMI_API_KEY` env var or `[kimi] api_key` in config.
+   Disabled by default (requires explicit opt-in).
+- Kimi panel in the TUI and a Kimi API key field in the Settings overlay.
+- Live API smoke test `kimi_live` for the Kimi endpoint.
 - `{scoped_model}`, `{scoped_pct}`, `{scoped_reset}`, `{scoped_elapsed}` and
   `{scoped_bar}` placeholders — the primary model-scoped weekly window (the
   common case is one, e.g. **Fable**) exposed as flat fields. The tooltip
@@ -42,6 +48,12 @@ Each release is also published at
   sections in a resizable window whose initial height is clamped to the visible
   screen (hosting-controller sizing disabled), so the content always scrolls
   and the top rows are reachable.
+- **Configured `api_key_env` values are never echoed in credential errors.**
+  Pasting an API key into `api_key_env` (which expects an env var *name* like
+  `KIMI_API_KEY`) no longer prints that value in the widget's error tooltip.
+  Invalid names are ignored for lookup so the section's inline `api_key` can
+  still be used; when no inline key is present, the error explains the correct
+  `api_key_env` usage without repeating its configured value.
 
 ## [0.12.0] — 2026-07-08
 

@@ -8,7 +8,7 @@
 [ui]
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.
-# Valid: anthropic | openai | zai | openrouter | deepseek
+# Valid: anthropic | openai | zai | openrouter | deepseek | kimi
 # primary = "anthropic"
 
 [anthropic]
@@ -41,6 +41,16 @@ api_key_env = "OPENROUTER_API_KEY"
 
 [deepseek]
 # Disabled by default — enable once you've set a key (env var or inline).
+# The Settings overlay can save the inline fallback; it does not enable this vendor.
 enabled = false
 api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
+# api_key = "sk-..."              # fallback; chmod 600 the file if you use it
+
+[kimi]
+# Disabled by default — enable once you've set a key (env var or inline).
+# The Settings overlay can save the inline fallback; it does not enable this vendor.
+# Shows Kimi Code subscription quota (weekly + 5h rolling window) from the
+# undocumented, community-confirmed api.kimi.com/coding/v1/usages endpoint.
+enabled = false
+api_key_env = "KIMI_API_KEY"      # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it

@@ -1,8 +1,8 @@
 # ai-usagebar
 
-Waybar widget and tabbed TUI for AI plan usage across **Anthropic Claude**, **OpenAI Codex/ChatGPT**, **Z.AI (GLM)**, **OpenRouter**, and **DeepSeek**.
+Waybar widget and tabbed TUI for AI plan usage across **Anthropic Claude**, **OpenAI Codex/ChatGPT**, **Z.AI (GLM)**, **OpenRouter**, **DeepSeek**, and **Kimi**.
 
-This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar) and stays drop-in compatible with it. It keeps the minimalist Pango-bordered tooltip, Omarchy theme auto-detection, and flock-protected OAuth refresh, then adds three more vendors and a proper testable codebase instead of one long shell script.
+This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar) and stays drop-in compatible with it. It keeps the minimalist Pango-bordered tooltip, Omarchy theme auto-detection, and flock-protected OAuth refresh, then adds five more vendors and a proper testable codebase instead of one long shell script.
 
 ![Waybar widget showing `cld 29% · 1h 12m` in the top-right, with the hover tooltip showing Claude Max 20x session/weekly/sonnet/extra-usage progress bars](screenshot.png)
 
@@ -66,12 +66,12 @@ Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
 `%USERPROFILE%\.codex\auth.json` (OpenAI Codex). Run the official `claude` /
 `codex` CLI once on Windows to populate them, exactly as on Linux/macOS.
-API-key vendors (Z.AI, OpenRouter, DeepSeek) work unchanged via environment
+API-key vendors (Z.AI, OpenRouter, DeepSeek, Kimi) work unchanged via environment
 variables or `config.toml`.
 
 ## Authentication
 
-Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth credentials that their official CLIs already wrote to disk, so **no env vars are needed.** Z.AI and OpenRouter use API keys. You can pass those through env vars or, if you don't source secrets in your shell, put them inline in `config.toml`.
+Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth credentials that their official CLIs already wrote to disk, so **no env vars are needed.** Z.AI, OpenRouter, DeepSeek, and Kimi use API keys. You can pass those through env vars or, if you don't source secrets in your shell, put them inline in `config.toml`.
 
 | Vendor | Method | Action required |
 |---|---|---|
@@ -80,12 +80,13 @@ Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth c
 | Z.AI | API key (`ZAI_API_KEY` env or `[zai] api_key` in config) | Set either. |
 | OpenRouter | API key (`OPENROUTER_API_KEY` env or `[openrouter] api_key` in config) | Set either. |
 | DeepSeek | API key (`DEEPSEEK_API_KEY` env or `[deepseek] api_key` in config) | Set either. Disabled by default — add `[deepseek] enabled = true` to config. |
+| Kimi | API key (`KIMI_API_KEY` env or `[kimi] api_key` in config) | Set either. Disabled by default — add `[kimi] enabled = true` to config. |
 
 ### Credential resolution order (for API-key vendors)
 
 For each API-key vendor, ai-usagebar checks in this order:
 
-1. **Env var named by `api_key_env`** in config (defaults: `ZAI_API_KEY`, `OPENROUTER_API_KEY`). If set + non-empty, used.
+1. **Env var named by `api_key_env`** in config (defaults: `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`). If set + non-empty, used.
 2. **Inline `api_key`** in the same config section.
 3. Otherwise, **error** with a message naming both options.
 
@@ -101,13 +102,13 @@ On macOS, recent Claude Code builds don't write `~/.claude/.credentials.json` �
 
 ## Configuration
 
-`~/.config/ai-usagebar/config.toml` (optional — defaults enable Anthropic, OpenAI, Z.AI, and OpenRouter; DeepSeek is opt-in). Full example:
+`~/.config/ai-usagebar/config.toml` (optional — defaults enable Anthropic, OpenAI, Z.AI, and OpenRouter; DeepSeek and Kimi are opt-in). Full example:
 
 ```toml
 [ui]
 # Which vendor the widget shows when --vendor is omitted, AND which tab
 # is selected when the TUI opens. Defaults to anthropic when not set.
-# primary = "anthropic"   # anthropic | openai | zai | openrouter | deepseek
+# primary = "anthropic"   # anthropic | openai | zai | openrouter | deepseek | kimi
 
 [anthropic]
 enabled = true
@@ -132,6 +133,11 @@ api_key_env = "OPENROUTER_API_KEY"
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "DEEPSEEK_API_KEY"
 # api_key = "sk-..."       # used if DEEPSEEK_API_KEY is unset; chmod 600 the file!
+
+[kimi]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "KIMI_API_KEY"
+# api_key = "sk-..."       # used if KIMI_API_KEY is unset; chmod 600 the file!
 ```
 
 ## Quick start
@@ -143,6 +149,7 @@ ai-usagebar --vendor openai
 ai-usagebar --vendor zai
 ai-usagebar --vendor openrouter
 ai-usagebar --vendor deepseek
+ai-usagebar --vendor kimi
 
 # Force Waybar JSON (e.g. piping into jq).
 ai-usagebar --json
@@ -191,7 +198,7 @@ Use one bar item and scroll through your vendors. The TUI on-click still shows t
 }
 ```
 
-The `{vendor_short}` placeholder always expands to a 3-letter vendor ID (`cld` / `gpt` / `zai` / `opr` / `dsk`), so the bar text tells you which vendor is active. The other usage placeholders (`{session_pct}` for Anthropic, `{oai_session_pct}` for OpenAI, etc.) are vendor-specific. If you want one format string for every cycled vendor, prefer the generic placeholders where available. For now, `{session_pct}` works for Anthropic only; the other vendors expose their own `{oai_*}` / `{zai_*}` / `{or_*}` / `{ds_*}` families, which expand to empty strings for vendors that don't define them.
+The `{vendor_short}` placeholder always expands to a 3-letter vendor ID (`cld` / `gpt` / `zai` / `opr` / `dsk` / `kmi`), so the bar text tells you which vendor is active. The other usage placeholders (`{session_pct}` for Anthropic, `{oai_session_pct}` for OpenAI, etc.) are vendor-specific. If you want one format string for every cycled vendor, prefer the generic aliases: `{session_pct}`, `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}` are implemented by all six vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Kimi; OpenRouter and DeepSeek use `0` / `—` for the windows they don't expose). Anthropic and OpenAI add `*_elapsed`, `*_pace`, and `*_bar` families; each vendor also exposes its own `{oai_*}` / `{zai_*}` / `{or_*}` / `{ds_*}` / `{kimi_*}` families, which expand to empty strings for vendors that don't define them.
 
 `signal: 13` lets the scroll-cycle commands refresh the bar instantly (via `SIGRTMIN+13`) instead of waiting for the next 300s interval.
 
@@ -208,7 +215,7 @@ If your Waybar theme puts a tray expander immediately after `custom/aibar`, such
 If you'd rather see them all at once:
 
 ```jsonc
-"modules-right": ["custom/claude", "custom/openai", "custom/openrouter", "custom/zai", "custom/deepseek"],
+"modules-right": ["custom/claude", "custom/openai", "custom/openrouter", "custom/zai", "custom/deepseek", "custom/kimi"],
 
 "custom/claude": {
     "exec": "ai-usagebar --vendor anthropic --icon '󰚩'",
@@ -237,6 +244,12 @@ If you'd rather see them all at once:
 },
 "custom/deepseek": {
     "exec": "ai-usagebar --vendor deepseek --icon '󰧑'",
+    "return-type": "json",
+    "interval": 600,
+    "tooltip": true
+},
+"custom/kimi": {
+    "exec": "ai-usagebar --vendor kimi --icon '󰚩'",
     "return-type": "json",
     "interval": 600,
     "tooltip": true
@@ -278,7 +291,7 @@ credentials file and its own cache directory:
   overwrite each other's 60-second cache window. Any directory works; the
   per-vendor default is `~/.cache/ai-usagebar/<vendor>`.
 - `--creds-path` currently applies to the **Anthropic vendor only**. For
-  API-key vendors (Z.AI, OpenRouter, DeepSeek) point each module at a
+  API-key vendors (Z.AI, OpenRouter, DeepSeek, Kimi) point each module at a
   different key via a wrapper script that sets the env var, plus its own
   `--cache-dir`.
 - The TUI shows the default Claude tab plus one tab per configured
@@ -356,12 +369,14 @@ Then `hyprctl reload` (no logout needed).
 | **OpenAI** | `chatgpt.com/backend-api/wham/usage` (undocumented; used by official `codex` CLI) | Codex 5h, Codex weekly, Code-review weekly, Credits |
 | **Z.AI** | `api.z.ai/api/monitor/usage/quota/limit` (undocumented) | Session 5h, Weekly 7d, MCP tools monthly |
 | **OpenRouter** | `openrouter.ai/api/v1/{credits,key}` (documented) | Balance, today/week/month spend, free vs paid tier |
+| **DeepSeek** | `api.deepseek.com/user/balance` (documented) | Balance, granted, topped-up credits |
+| **Kimi** | `api.kimi.com/coding/v1/usages` (undocumented; community-confirmed) | Weekly subscription quota + 5h rolling rate-limit window |
 
 ### Endpoint stability
 
-Three of the four endpoints are undocumented. The Anthropic and OpenAI endpoints are used by their official CLIs (`claude` and `codex`), so removing them would break those tools too. That makes them less shaky than scraped web endpoints. Z.AI's monitor endpoint is reverse-engineered from a third-party plugin; treat it as the most fragile one.
+Four of the six endpoints are undocumented. The Anthropic and OpenAI endpoints are used by their official CLIs (`claude` and `codex`), so removing them would break those tools too. That makes them less shaky than scraped web endpoints. Z.AI's monitor endpoint is reverse-engineered from a third-party plugin; treat it as the most fragile one. Kimi's `/coding/v1/usages` is community-confirmed and used by third-party quota tools; treat it as drift-prone.
 
-When an endpoint drifts, **run `make smoke`**. The live API tests check the exact fields this project depends on and produce a precise failure pointing at what changed. Paste the failure back into Claude Code and the affected `types.rs` can usually be updated mechanically.
+When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests, so the existing Anthropic, OpenAI, Z.AI, and OpenRouter smoke tests still require their respective OAuth credentials or API keys. Kimi alone is optional: its test skips with a diagnostic when `KIMI_API_KEY` is unset, or run it alone with `cargo test --test live kimi_live -- --ignored --nocapture`. The live API tests check the exact fields this project depends on and produce a precise failure pointing at what changed. Paste a failure back into Claude Code and the affected `types.rs` can usually be updated mechanically.
 
 ## Format placeholders
 
@@ -393,6 +408,10 @@ When an endpoint drifts, **run `make smoke`**. The live API tests check the exac
 
 `{ds_balance}`, `{ds_granted}`, `{ds_topped_up}`, `{ds_available}` — credit balance from `/user/balance`. USD is preferred when both currencies are present; falls back to CNY otherwise.
 
+### Kimi
+
+`{kimi_plan}`, `{kimi_weekly_pct}`, `{kimi_weekly_used}`, `{kimi_weekly_limit}`, `{kimi_weekly_remaining}`, `{kimi_weekly_reset}`, `{kimi_window_pct}`, `{kimi_window_used}`, `{kimi_window_limit}`, `{kimi_window_remaining}`, `{kimi_window_reset}` — subscription quota + rolling rate-limit window from `api.kimi.com/coding/v1/usages`. Generic aliases `{plan}` (plan), `{weekly_pct}` (weekly usage), and `{session_pct}` (5h window usage) are also available.
+
 ## Local development
 
 ```bash
@@ -400,8 +419,8 @@ ai-usagebar --watch 5                              # iterate on --format live
 ai-usagebar --vendor openrouter --format '{or_balance} · today {or_used_today}'
 
 make test                                          # unit + integration
-source ~/.config/zsh/secrets                       # only needed for live smoke
-make smoke                                         # live API drift detection
+source ~/.config/zsh/secrets                       # required for existing vendor smoke tests
+make smoke                                         # runs all ignored tests; only Kimi skips without its key
 make clippy                                        # cargo clippy -D warnings
 ```
 
@@ -422,12 +441,14 @@ Auto-refresh runs every 60 seconds in the background. Vendors use the same layou
 
 ### Settings overlay
 
-![Settings overlay floating over the TUI — Primary vendor radio (Anthropic selected), masked Z.AI API key (•••), masked OpenRouter API key (•••), Save button, key hints at bottom](screenshots/tui-settings.png)
+![Settings overlay floating over the TUI — Primary vendor radio (Anthropic selected), masked Z.AI API key (•••), masked OpenRouter API key (•••), Save button, key hints at bottom. This older screenshot predates the DeepSeek and Kimi key fields described below.](screenshots/tui-settings.png)
 
 Press `s` while the TUI is open. The overlay lets you:
 
 - Pick the **primary vendor** that the widget defaults to and that the TUI selects on startup. Use `←` / `→` to cycle.
-- Enter your **Z.AI API key** and **OpenRouter API key** inline. Keys are masked as you type; press `Ctrl-V` to reveal or hide them. Env vars (`ZAI_API_KEY`, `OPENROUTER_API_KEY`) still win at runtime if they're set; the inline key is the fallback.
+- Enter your **Z.AI API key**, **OpenRouter API key**, **DeepSeek API key**, and **Kimi API key** inline. Keys are masked as you type; press `Ctrl-V` to reveal or hide them. Env vars (`ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`) still win at runtime if they're set; the inline key is the fallback. DeepSeek and Kimi remain disabled until their respective config sections set `enabled = true`.
+
+Saving an API key in the overlay does not enable the vendor — you still need `enabled = true` in `[kimi]` or `[deepseek]` for the widget and TUI to include it.
 
 Key bindings inside the overlay:
 
@@ -456,6 +477,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the release history. Each release also has 
 ## Acknowledgements
 
 The OpenAI and Anthropic OAuth endpoint references came from [`claudebar`](https://github.com/mryll/claudebar) and [`codexbar`](https://github.com/mryll/codexbar), both by mryll. The visual design, including the bordered Pango tooltip, severity colors, and pacing math, is theirs. This project is a Rust port with multi-vendor support.
+
+The Kimi `/coding/v1/usages` endpoint reference came from community quota tools: [`CodexBar`](https://github.com/steipete/CodexBar) (steipete), [`OpenUsage`](https://github.com/robinebers/openusage), and [`OmniRoute`](https://github.com/diegosouzapw/OmniRoute).
 
 ## License
 

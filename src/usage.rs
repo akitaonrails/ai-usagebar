@@ -4,8 +4,9 @@
 //! Anthropic exposes three windows + extra credits; OpenAI Codex exposes two
 //! windows + credit balance + message-count ranges; OpenRouter is a single
 //! credit-balance number with daily/weekly/monthly totals; Z.AI is a list of
-//! token + MCP buckets. Forcing them into a shared shape would either drop
-//! information or paper over genuine differences.
+//! token + MCP buckets; DeepSeek is a credit balance; Kimi is a weekly quota
+//! plus a 5h rolling rate-limit window. Forcing them into a shared shape would
+//! either drop information or paper over genuine differences.
 //!
 //! Renderers (widget tooltip, TUI tab) consume a `VendorSnapshot` directly,
 //! not a flattened shape — so each vendor controls its own presentation while
@@ -118,6 +119,44 @@ impl Default for DeepseekSnapshot {
     }
 }
 
+/// Kimi Code — weekly subscription quota plus a 5h rolling rate-limit window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KimiSnapshot {
+    pub plan: Option<String>,
+    pub weekly_limit: u64,
+    pub weekly_used: u64,
+    pub weekly_remaining: u64,
+    pub weekly_reset_at: Option<DateTime<Utc>>,
+    pub window_limit: u64,
+    pub window_used: u64,
+    pub window_remaining: u64,
+    pub window_reset_at: Option<DateTime<Utc>>,
+}
+
+impl KimiSnapshot {
+    fn pct(used: u64, limit: u64) -> i32 {
+        if limit == 0 {
+            0
+        } else {
+            // Keep all quota values exact: f64 loses integer precision above
+            // 2^53. This is the integer equivalent of round(used / limit *
+            // 100), with saturation for inconsistent upstream counters.
+            let pct = ((used as u128 * 100) + (limit as u128 / 2)) / limit as u128;
+            pct.min(100) as i32
+        }
+    }
+
+    /// Percentage of the weekly subscription quota consumed (0..=100).
+    pub fn weekly_pct(&self) -> i32 {
+        Self::pct(self.weekly_used, self.weekly_limit)
+    }
+
+    /// Percentage of the rolling rate-limit window consumed (0..=100).
+    pub fn window_pct(&self) -> i32 {
+        Self::pct(self.window_used, self.window_limit)
+    }
+}
+
 /// Discriminated union of vendor-specific snapshots. The widget and TUI match
 /// on this to pick a renderer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +166,7 @@ pub enum VendorSnapshot {
     Zai(ZaiSnapshot),
     Openrouter(OpenRouterSnapshot),
     Deepseek(DeepseekSnapshot),
+    Kimi(KimiSnapshot),
 }
 
 /// OpenAI Codex OAuth — mirrors Anthropic's two-window + extras pattern.
@@ -358,5 +398,22 @@ mod tests {
         // usage above the window max is promoted — same rule as session/weekly.
         let s = with_scoped(snap(10, 50, None, Some((10000, 9900))), 100);
         assert_eq!(anthropic_severity(&s), PaceSeverity::Critical);
+    }
+
+    #[test]
+    fn kimi_percent_is_exact_above_f64_precision() {
+        let snap = KimiSnapshot {
+            plan: None,
+            weekly_limit: (1 << 53) + 1,
+            weekly_used: 1 << 52,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            window_limit: u64::MAX,
+            window_used: u64::MAX - 1,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        assert_eq!(snap.weekly_pct(), 50);
+        assert_eq!(snap.window_pct(), 100);
     }
 }
