@@ -9,6 +9,8 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-17
+
 ### Added
 
 - **Kimi vendor** (`--vendor kimi`): fetches weekly subscription quota and a
@@ -541,7 +543,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.12.0
 [0.11.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.11.0
 [0.10.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.10.0
