@@ -63,6 +63,10 @@ pub enum VendorId {
     Openrouter,
     Deepseek,
     Kimi,
+    Kilo,
+    Novita,
+    Moonshot,
+    Grok,
 }
 
 impl VendorId {
@@ -74,6 +78,10 @@ impl VendorId {
             VendorId::Openrouter => "openrouter",
             VendorId::Deepseek => "deepseek",
             VendorId::Kimi => "kimi",
+            VendorId::Kilo => "kilo",
+            VendorId::Novita => "novita",
+            VendorId::Moonshot => "moonshot",
+            VendorId::Grok => "grok",
         }
     }
 
@@ -85,6 +93,10 @@ impl VendorId {
             VendorId::Openrouter,
             VendorId::Deepseek,
             VendorId::Kimi,
+            VendorId::Kilo,
+            VendorId::Novita,
+            VendorId::Moonshot,
+            VendorId::Grok,
         ]
     }
 }

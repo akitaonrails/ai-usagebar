@@ -167,7 +167,64 @@ pub enum VendorSnapshot {
     Openrouter(OpenRouterSnapshot),
     Deepseek(DeepseekSnapshot),
     Kimi(KimiSnapshot),
+    Kilo(KiloSnapshot),
+    Novita(NovitaSnapshot),
+    Moonshot(MoonshotSnapshot),
+    Grok(GrokSnapshot),
 }
+
+/// Kilo Code — remaining credit balance from `/api/profile/balance` (USD).
+/// No purchased-total is exposed on that endpoint, so there's no consumed-%.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KiloSnapshot {
+    pub label: String,
+    pub balance: f64,
+}
+
+impl Eq for KiloSnapshot {}
+
+/// Novita AI — account balance from `/openapi/v1/billing/balance/detail`, with
+/// all amounts already converted from the API's 1/10000-USD integers to USD.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NovitaSnapshot {
+    /// Spendable credit balance (`availableBalance`).
+    pub available: f64,
+    /// Remaining top-up (`cashBalance`).
+    pub cash: f64,
+    /// Credit limit — max you can owe (`creditLimit`).
+    pub credit_limit: f64,
+    /// Amount currently owed (`outstandingInvoices`).
+    pub outstanding: f64,
+}
+
+impl Eq for NovitaSnapshot {}
+
+/// Moonshot / Kimi — account balance from `/v1/users/me/balance`. Currency is
+/// USD (`api.moonshot.ai`) or CNY (`api.moonshot.cn`); there's no currency
+/// field in the response, so it's carried here from the region config.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoonshotSnapshot {
+    /// Spendable balance (`available_balance` = cash + voucher). `<= 0` blocks
+    /// the inference API.
+    pub available: f64,
+    /// Voucher credit (`voucher_balance`).
+    pub voucher: f64,
+    /// Cash balance (`cash_balance`); can be negative (debt).
+    pub cash: f64,
+    /// "USD" or "CNY", implied by the host.
+    pub currency: String,
+}
+
+impl Eq for MoonshotSnapshot {}
+
+/// xAI (Grok) — prepaid credit balance in USD, derived from the Management
+/// API's `total.val` (USD cents, inverted-ledger; see `grok::types`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GrokSnapshot {
+    pub balance: f64,
+}
+
+impl Eq for GrokSnapshot {}
 
 /// OpenAI Codex OAuth — mirrors Anthropic's two-window + extras pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]

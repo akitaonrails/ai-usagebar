@@ -13,7 +13,11 @@ use crate::cache::{Cache, DEFAULT_TTL};
 use crate::config::Config;
 use crate::deepseek;
 use crate::error::{AppError, Result};
+use crate::grok;
+use crate::kilo;
 use crate::kimi;
+use crate::moonshot;
+use crate::novita;
 use crate::openai;
 use crate::openrouter;
 use crate::pango::escape;
@@ -137,6 +141,10 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Zai => zai_output(cli, &config).await,
         Vendor::Deepseek => deepseek_output(cli, &config).await,
         Vendor::Kimi => kimi_output(cli, &config).await,
+        Vendor::Kilo => kilo_output(cli, &config).await,
+        Vendor::Novita => novita_output(cli, &config).await,
+        Vendor::Moonshot => moonshot_output(cli, &config).await,
+        Vendor::Grok => grok_output(cli, &config).await,
     }
 }
 
@@ -145,6 +153,146 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
 /// that default to disabled (such as Kimi).
 fn dispatch_is_eligible(cli: &Cli, config: &Config, vendor: Vendor) -> bool {
     cli.has_explicit_vendor() || config.is_enabled(vendor.to_id())
+}
+
+async fn grok_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let key = crate::config::resolve_api_key(
+        "Grok",
+        &config.grok.api_key_env,
+        config.grok.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "grok")?;
+    let endpoints = grok::fetch::Endpoints::default();
+    let outcome = match grok::fetch_snapshot(
+        &client,
+        &key,
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+        config.grok.team_id.as_deref(),
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+        Err(e) => return Err(e),
+    };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(grok::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn moonshot_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "Moonshot",
+        &config.moonshot.api_key_env,
+        config.moonshot.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "moonshot")?;
+    let (endpoints, currency) = moonshot::fetch::Endpoints::for_region(&config.moonshot.region);
+    let outcome = match moonshot::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+        currency,
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+        Err(e) => return Err(e),
+    };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(moonshot::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn novita_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "Novita",
+        &config.novita.api_key_env,
+        config.novita.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "novita")?;
+    let endpoints = novita::fetch::Endpoints::default();
+    let outcome =
+        match novita::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(novita::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn kilo_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "Kilo",
+        &config.kilo.api_key_env,
+        config.kilo.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "kilo")?;
+    let endpoints = kilo::fetch::Endpoints::default();
+    let outcome = match kilo::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+        config.kilo.organization_id.as_deref(),
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+        Err(e) => return Err(e),
+    };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(kilo::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
 }
 
 async fn openai_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {

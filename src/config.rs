@@ -40,6 +40,10 @@ pub struct Config {
     pub openrouter: OpenRouterConfig,
     pub deepseek: DeepseekConfig,
     pub kimi: KimiConfig,
+    pub kilo: KiloConfig,
+    pub novita: NovitaConfig,
+    pub moonshot: MoonshotConfig,
+    pub grok: GrokConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -251,8 +255,97 @@ impl Default for KimiConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct KiloConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// Optional Kilo organization id — scopes the balance to a team via the
+    /// `x-kilocode-organizationid` header. Omit for the personal balance.
+    pub organization_id: Option<String>,
+}
+
+impl Default for KiloConfig {
+    fn default() -> Self {
+        // Opt-in like DeepSeek: requires an explicit API key, so it defaults to
+        // disabled and never affects existing installs.
+        Self {
+            enabled: false,
+            api_key_env: "KILO_API_KEY".to_string(),
+            api_key: None,
+            organization_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct NovitaConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+
+impl Default for NovitaConfig {
+    fn default() -> Self {
+        // Opt-in like DeepSeek/Kilo: needs an explicit API key.
+        Self {
+            enabled: false,
+            api_key_env: "NOVITA_API_KEY".to_string(),
+            api_key: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MoonshotConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// `"global"` → api.moonshot.ai (USD); `"cn"` → api.moonshot.cn (CNY).
+    pub region: String,
+}
+
+impl Default for MoonshotConfig {
+    fn default() -> Self {
+        // Opt-in like DeepSeek/Kilo/Novita: needs an explicit API key.
+        Self {
+            enabled: false,
+            api_key_env: "MOONSHOT_API_KEY".to_string(),
+            api_key: None,
+            region: "global".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GrokConfig {
+    pub enabled: bool,
+    /// Env var for the xAI **Management** key (distinct from the inference key).
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// Optional team id. When absent, it's auto-resolved from the management
+    /// key via `/auth/management-keys/validation`.
+    pub team_id: Option<String>,
+}
+
+impl Default for GrokConfig {
+    fn default() -> Self {
+        // Opt-in: needs a management key (and, for prepaid, a team).
+        Self {
+            enabled: false,
+            api_key_env: "XAI_MANAGEMENT_KEY".to_string(),
+            api_key: None,
+            team_id: None,
+        }
+    }
+}
+
 /// Resolve an API key for a vendor: a valid env-var name wins, then inline
-/// config. Used by Z.AI, OpenRouter, DeepSeek, and Kimi vendors.
+/// config, then a clear error naming both fields. Used by every API-key vendor.
 pub fn resolve_api_key(
     vendor_label: &str,
     env_var_name: &str,
@@ -333,6 +426,10 @@ impl Config {
             VendorId::Openrouter => self.openrouter.enabled,
             VendorId::Deepseek => self.deepseek.enabled,
             VendorId::Kimi => self.kimi.enabled,
+            VendorId::Kilo => self.kilo.enabled,
+            VendorId::Novita => self.novita.enabled,
+            VendorId::Moonshot => self.moonshot.enabled,
+            VendorId::Grok => self.grok.enabled,
         }
     }
 

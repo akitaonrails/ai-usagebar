@@ -376,6 +376,10 @@ Then `hyprctl reload` (no logout needed).
 | **OpenRouter** | `openrouter.ai/api/v1/{credits,key}` (documented) | Balance, today/week/month spend, free vs paid tier | Yes |
 | **DeepSeek** | `api.deepseek.com/user/balance` (documented) | Balance, granted, topped-up credits | Yes |
 | **Kimi** | `api.kimi.com/coding/v1/usages` (undocumented; community-confirmed) | Weekly subscription quota + 5h rolling rate-limit window | No — widget/TUI only; desktop protocol and marker parity are future work |
+| **Kilo** | `api.kilo.ai/api/profile/balance` (undocumented; extension-internal) | Remaining credit balance ($) | No — widget/TUI only |
+| **Novita** | `api.novita.ai/openapi/v1/billing/balance/detail` (documented) | Remaining credit balance ($) | No — widget/TUI only |
+| **Moonshot** | `api.moonshot.ai\|.cn/v1/users/me/balance` (documented) | Account balance ($ on `.ai`, ¥ on `.cn`) | No — widget/TUI only |
+| **Grok (xAI)** | `management-api.x.ai/v1/billing/teams/{team}/prepaid/balance` (Management API; documented) | Prepaid credit balance ($) | No — widget/TUI only |
 
 ### Endpoint stability
 
@@ -416,6 +420,22 @@ When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests,
 ### Kimi
 
 `{kimi_plan}`, `{kimi_weekly_pct}`, `{kimi_weekly_used}`, `{kimi_weekly_limit}`, `{kimi_weekly_remaining}`, `{kimi_weekly_reset}`, `{kimi_window_pct}`, `{kimi_window_used}`, `{kimi_window_limit}`, `{kimi_window_remaining}`, `{kimi_window_reset}` — subscription quota + rolling rate-limit window from `api.kimi.com/coding/v1/usages`. Generic aliases `{plan}` (plan), `{weekly_pct}` (weekly usage), and `{session_pct}` (5h window usage) are also available.
+
+### Kilo
+
+`{kilo_balance}` — remaining credit balance (USD) from `api.kilo.ai/api/profile/balance`.
+
+### Novita
+
+`{nv_balance}`, `{nv_cash}`, `{nv_credit_limit}`, `{nv_owed}` — account balance and breakdown (USD) from `api.novita.ai/openapi/v1/billing/balance/detail`.
+
+### Moonshot
+
+`{km_balance}`, `{km_voucher}`, `{km_cash}`, `{currency}` — account balance from `api.moonshot.ai|.cn/v1/users/me/balance` (USD on `.ai`, CNY on `.cn`).
+
+### Grok
+
+`{grok_balance}` — prepaid credit balance (USD) from the xAI Management API (`management-api.x.ai`).
 
 ## Local development
 
