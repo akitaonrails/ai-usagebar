@@ -40,6 +40,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 fn vendor_label(id: VendorId) -> &'static str {
     match id {
         VendorId::Anthropic => "Claude",
+        VendorId::AnthropicApi => "Anthropic API",
         VendorId::Openai => "OpenAI",
         VendorId::Zai => "GLM (Z.AI)",
         VendorId::Openrouter => "OpenRouter",
@@ -55,6 +56,7 @@ fn vendor_label(id: VendorId) -> &'static str {
 fn compact_vendor_label(id: VendorId) -> &'static str {
     match id {
         VendorId::Anthropic => "Claude",
+        VendorId::AnthropicApi => "Anthropic API",
         VendorId::Openai => "OpenAI",
         VendorId::Zai => "Z.AI",
         VendorId::Openrouter => "OpenRouter",

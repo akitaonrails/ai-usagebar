@@ -39,6 +39,17 @@ Each release is also published at
   **team-scoped**. An organization-scoped key reports an actionable error asking
   for `[grok] team_id` rather than querying a URL built from an organization id.
 
+- **Anthropic (API) vendor** — month-to-date **spend** for the API/Console
+  account, separate from the Claude Code OAuth account the existing `anthropic`
+  vendor covers. Sums the current calendar month's daily buckets from
+  `GET api.anthropic.com/v1/organizations/cost_report` (Admin API, paginated via
+  `has_more`/`next_page`), converting the `amount` field from cents to dollars.
+  Renders `$1.34 / $1000 · 0%` when `monthly_limit` is configured, `$1.34/mo`
+  otherwise — the limit is a config value, since the API exposes neither it nor
+  the remaining prepaid balance (Console dashboard only). Opt-in; requires a
+  Console **Admin key** (`sk-ant-admin01-…`), which is only available to
+  **organization** accounts.
+
 ### CI
 
 - **PRs are now gated on Linux — the platform the widget actually ships on.**

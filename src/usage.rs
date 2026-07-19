@@ -200,6 +200,28 @@ pub enum VendorSnapshot {
     Novita(NovitaSnapshot),
     Moonshot(MoonshotSnapshot),
     Grok(GrokSnapshot),
+    AnthropicApi(AnthropicApiSnapshot),
+}
+
+/// Anthropic Admin API — month-to-date spend (USD) from the cost report. The
+/// monthly `limit` is supplied from config (the API exposes neither the limit
+/// nor the remaining prepaid credit balance).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnthropicApiSnapshot {
+    pub spent: f64,
+    pub limit: Option<f64>,
+}
+
+impl Eq for AnthropicApiSnapshot {}
+
+impl AnthropicApiSnapshot {
+    /// Spend as an integer percentage of the configured limit; `None` when no
+    /// positive limit is set.
+    pub fn pct(&self) -> Option<i32> {
+        self.limit
+            .filter(|l| *l > 0.0)
+            .map(|l| ((self.spent / l) * 100.0).round().clamp(0.0, 9999.0) as i32)
+    }
 }
 
 /// Kilo Code — remaining credit balance from `/api/profile/balance` (USD).

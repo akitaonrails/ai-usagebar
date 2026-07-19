@@ -78,6 +78,7 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
             let last_error = &r.last_error;
             let mut sections = match snapshot {
                 VendorSnapshot::Anthropic(s) => anthropic_sections(s, now, pace_tolerance),
+                VendorSnapshot::AnthropicApi(s) => anthropic_api_sections(s),
                 VendorSnapshot::Openai(s) => openai_sections(s, now, pace_tolerance),
                 VendorSnapshot::Zai(s) => zai_sections(s, now),
                 VendorSnapshot::Openrouter(s) => openrouter_sections(s),
@@ -139,6 +140,41 @@ fn warning_label(
         message.clone()
     };
     Some((label.into(), value))
+}
+
+fn anthropic_api_sections(s: &crate::usage::AnthropicApiSnapshot) -> Vec<Section> {
+    let mut v = vec![Section::Title {
+        left: "Anthropic API".into(),
+        right: None,
+    }];
+    match (s.limit.filter(|l| *l > 0.0), s.pct()) {
+        (Some(limit), Some(pct)) => {
+            let p = pct.clamp(0, 100) as u16;
+            v.push(Section::Metric {
+                label: "Spend (mo)".into(),
+                pct: p,
+                severity: severity_for(pct),
+                value_label: format!("${:.2} of ${:.0}", s.spent, limit),
+                footnote: format!("{pct}% of monthly limit"),
+            });
+        }
+        _ => {
+            v.push(Section::Text {
+                label: "Spend (mo)".into(),
+                value: format!("${:.2}", s.spent),
+            });
+        }
+    }
+    v.push(Section::Spacer);
+    v.push(Section::Text {
+        label: "".into(),
+        value: "Month-to-date cost via the Admin usage API.".into(),
+    });
+    v.push(Section::Text {
+        label: "".into(),
+        value: "Prepaid credit balance is Console-only (no API).".into(),
+    });
+    v
 }
 
 fn anthropic_sections(

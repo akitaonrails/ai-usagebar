@@ -40,6 +40,13 @@ pub struct KeyVendor {
 
 pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
+        id: VendorId::AnthropicApi,
+        label: "Anthropic API",
+        env: "ANTHROPIC_ADMIN_KEY",
+        section: "anthropic_api",
+        note: "admin key — monthly spend",
+    },
+    KeyVendor {
         id: VendorId::Zai,
         label: "Z.AI",
         env: "ZAI_API_KEY",
@@ -101,6 +108,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
 /// field opens pre-filled (masked) when one is already set.
 fn config_inline_key<'a>(cfg: &'a Config, section: &str) -> Option<&'a str> {
     match section {
+        "anthropic_api" => cfg.anthropic_api.api_key.as_deref(),
         "zai" => cfg.zai.api_key.as_deref(),
         "openrouter" => cfg.openrouter.api_key.as_deref(),
         "deepseek" => cfg.deepseek.api_key.as_deref(),
@@ -725,6 +733,7 @@ fn save_line(focused: bool, theme: &BubbleTheme) -> Line<'static> {
 fn vendor_label(v: VendorId) -> &'static str {
     match v {
         VendorId::Anthropic => "Anthropic",
+        VendorId::AnthropicApi => "Anthropic API",
         VendorId::Openai => "OpenAI",
         VendorId::Zai => "Z.AI",
         VendorId::Openrouter => "OpenRouter",
@@ -1036,13 +1045,14 @@ api_key_env = "OPENROUTER_API_KEY"
 
     #[test]
     fn left_right_cycles_primary_vendor() {
+        // Canonical order (VendorId::all): Anthropic, AnthropicApi, Openai, …
         let mut s = blank_state(VendorId::Anthropic);
         handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
-        assert_eq!(s.primary, VendorId::Openai);
+        assert_eq!(s.primary, VendorId::AnthropicApi);
         handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
-        assert_eq!(s.primary, VendorId::Zai);
-        handle_key(&mut s, KeyCode::Left, KeyModifiers::NONE);
         assert_eq!(s.primary, VendorId::Openai);
+        handle_key(&mut s, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::AnthropicApi);
     }
 
     #[test]

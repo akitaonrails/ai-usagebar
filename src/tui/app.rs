@@ -246,6 +246,25 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                 cache_age: outcome.cache_age,
             })
         }
+        VendorId::AnthropicApi => {
+            let key = crate::config::resolve_api_key(
+                "Anthropic_API",
+                &config.anthropic_api.api_key_env,
+                config.anthropic_api.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("anthropic_api")?;
+            let endpoints = crate::anthropic_api::fetch::Endpoints::default();
+            let outcome = crate::anthropic_api::fetch_snapshot(
+                client,
+                &key,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+                config.anthropic_api.monthly_limit,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
         VendorId::Openrouter => {
             let api_key = crate::config::resolve_api_key(
                 "OpenRouter",

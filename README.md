@@ -443,6 +443,7 @@ Then `hyprctl reload` (no logout needed).
 | **Novita** | `api.novita.ai/openapi/v1/billing/balance/detail` (documented) | Remaining credit balance ($) | No — widget/TUI only |
 | **Moonshot** | `api.moonshot.ai\|.cn/v1/users/me/balance` (documented) | Account balance ($ on `.ai`, ¥ on `.cn`) | No — widget/TUI only |
 | **Grok (xAI)** | `management-api.x.ai/v1/billing/teams/{team}/prepaid/balance` (Management API; documented) | Prepaid credit balance ($) | No — widget/TUI only |
+| **Anthropic (API)** | `api.anthropic.com/v1/organizations/cost_report` (Admin API; documented) | Month-to-date spend ($), optional spend-vs-limit % | No — widget/TUI only |
 
 ### Endpoint stability
 
@@ -499,6 +500,10 @@ When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests,
 ### Grok
 
 `{grok_balance}` — prepaid credit balance (USD) from the xAI Management API (`management-api.x.ai`).
+
+### Anthropic (API)
+
+`{aapi_headline}`, `{aapi_spent}`, `{aapi_limit}`, `{aapi_pct}` — month-to-date spend for the API/Console account from the Admin API `cost_report`. The headline is `$1.34 / $1000 · 0%` when `monthly_limit` is set in config, `$1.34/mo` otherwise. Generic aliases `{plan}`, `{session_pct}`, and `{weekly_pct}` are also available (the last two both map to the spend-vs-limit %).
 
 ## Local development
 

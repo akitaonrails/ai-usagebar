@@ -58,6 +58,8 @@ pub async fn read_body_capped(
 #[serde(rename_all = "lowercase")]
 pub enum VendorId {
     Anthropic,
+    #[serde(rename = "anthropic_api")]
+    AnthropicApi,
     Openai,
     Zai,
     Openrouter,
@@ -73,6 +75,7 @@ impl VendorId {
     pub fn slug(self) -> &'static str {
         match self {
             VendorId::Anthropic => "anthropic",
+            VendorId::AnthropicApi => "anthropic_api",
             VendorId::Openai => "openai",
             VendorId::Zai => "zai",
             VendorId::Openrouter => "openrouter",
@@ -88,6 +91,7 @@ impl VendorId {
     pub fn all() -> &'static [VendorId] {
         &[
             VendorId::Anthropic,
+            VendorId::AnthropicApi,
             VendorId::Openai,
             VendorId::Zai,
             VendorId::Openrouter,

@@ -35,6 +35,7 @@ use crate::vendor::VendorId;
 pub struct Config {
     pub ui: UiConfig,
     pub anthropic: AnthropicConfig,
+    pub anthropic_api: AnthropicApiConfig,
     pub openai: OpenAiConfig,
     pub zai: ZaiConfig,
     pub openrouter: OpenRouterConfig,
@@ -344,6 +345,31 @@ impl Default for GrokConfig {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AnthropicApiConfig {
+    pub enabled: bool,
+    /// Env var for the Console **Admin key** (`sk-ant-admin01-…`), distinct from
+    /// an inference key and from the Claude Code OAuth login.
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// Monthly USD spend limit, used only for the spend-vs-limit % display. The
+    /// API exposes neither this limit nor the remaining prepaid balance.
+    pub monthly_limit: Option<f64>,
+}
+
+impl Default for AnthropicApiConfig {
+    fn default() -> Self {
+        // Opt-in: needs an explicit Admin key.
+        Self {
+            enabled: false,
+            api_key_env: "ANTHROPIC_ADMIN_KEY".to_string(),
+            api_key: None,
+            monthly_limit: None,
+        }
+    }
+}
+
 /// Resolve an API key for a vendor: a valid env-var name wins, then inline
 /// config, then a clear error naming both fields. Used by every API-key vendor.
 pub fn resolve_api_key(
@@ -421,6 +447,7 @@ impl Config {
     pub fn is_enabled(&self, id: VendorId) -> bool {
         match id {
             VendorId::Anthropic => self.anthropic.enabled,
+            VendorId::AnthropicApi => self.anthropic_api.enabled,
             VendorId::Openai => self.openai.enabled,
             VendorId::Zai => self.zai.enabled,
             VendorId::Openrouter => self.openrouter.enabled,
