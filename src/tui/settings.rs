@@ -1229,7 +1229,7 @@ api_key_env = "OPENROUTER_API_KEY"
     fn handle_key_plain_space_still_cycles_primary_vendor() {
         let mut s = blank_state(VendorId::Anthropic);
         handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::NONE);
-        assert_eq!(s.primary, VendorId::Openai);
+        assert_eq!(s.primary, VendorId::AnthropicApi);
     }
 
     #[test]

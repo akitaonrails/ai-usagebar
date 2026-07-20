@@ -37,8 +37,9 @@ enabled = true
 enabled = false
 api_key_env = "ANTHROPIC_ADMIN_KEY"  # checked first; if set + non-empty, used
 # api_key = "sk-ant-admin01-..."      # fallback; chmod 600 the file if you use it
-# Monthly USD limit for the spend-vs-limit % display (the API doesn't expose a
-# limit). With it: "$1.34 / $1000 · 0%". Without it: "$1.34/mo".
+# Positive, finite monthly USD limit for the spend-vs-limit % display (the API
+# doesn't expose a limit). With it: "$1.34 / $1000 · 0%". Without it:
+# "$1.34/mo".
 # monthly_limit = 1000
 
 [openai]

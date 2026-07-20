@@ -64,6 +64,12 @@ Each release is also published at
   nothing usable cached, the original error is surfaced so the Admin-key
   guidance reaches the user.
 
+  The cache also fingerprints the Admin key, preventing a key switch to another
+  organization from reusing the previous organization's spend. Cost records
+  must carry the documented `USD` currency before they are summed, configured
+  limits must be positive and finite, response bodies are bounded, and fallback
+  data older than seven days is refused.
+
 ### CI
 
 - **PRs are now gated on Linux — the platform the widget actually ships on.**

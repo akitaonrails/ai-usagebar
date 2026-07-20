@@ -219,7 +219,7 @@ impl AnthropicApiSnapshot {
     /// positive limit is set.
     pub fn pct(&self) -> Option<i32> {
         self.limit
-            .filter(|l| *l > 0.0)
+            .filter(|l| l.is_finite() && *l > 0.0)
             .map(|l| ((self.spent / l) * 100.0).round().clamp(0.0, 9999.0) as i32)
     }
 }

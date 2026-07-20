@@ -10,9 +10,10 @@ use std::time::Duration;
 
 use chrono::{DateTime, Datelike, Utc};
 
-use crate::cache::{Cache, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock_async};
 use crate::error::{AppError, Result};
-use crate::usage::AnthropicApiSnapshot;
+use crate::usage::{AnthropicApiSnapshot, finite_amount};
+use crate::vendor::{MAX_BODY_BYTES, read_body_capped};
 
 use super::types::{CostReport, page_dollars};
 
@@ -50,6 +51,31 @@ fn month_start_rfc3339(now: DateTime<Utc>) -> String {
     format!("{:04}-{:02}-01T00:00:00Z", now.year(), now.month())
 }
 
+/// Identity of the organization whose spend is cached. The Admin API does not
+/// return an organization id in the cost report, so the key itself is the only
+/// zero-round-trip identity available. Store only a fingerprint: it is a cache
+/// change detector, not an authentication secret. If Rust ever changes the
+/// hasher algorithm, the harmless result is one extra refetch after upgrade.
+fn target_key(admin_key: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    admin_key.hash(&mut hasher);
+    format!("key:{:016x}", hasher.finish())
+}
+
+fn validate_limit(limit: Option<f64>) -> Result<Option<f64>> {
+    if let Some(value) = limit
+        && (!value.is_finite() || value <= 0.0)
+    {
+        return Err(AppError::Schema(
+            "anthropic-api monthly_limit must be finite and greater than zero; \
+             remove it to show spend without a limit"
+                .into(),
+        ));
+    }
+    Ok(limit)
+}
+
 /// `limit` is the user-configured monthly USD limit (from config, not the API);
 /// it's threaded through so the cached snapshot reflects the current config.
 pub async fn fetch_snapshot(
@@ -83,15 +109,17 @@ pub async fn fetch_snapshot_at(
     limit: Option<f64>,
     now: DateTime<Utc>,
 ) -> Result<FetchOutcome> {
+    let limit = validate_limit(limit)?;
     cache.ensure_dir()?;
-    let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
+    let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
     // The query always starts at the current month, so a payload written last
     // month is a *different* figure — not a stale version of this one.
     let month = month_start_rfc3339(now);
+    let target = target_key(admin_key);
 
     if let Some(bytes) = cache.fresh_payload(cache_ttl)?
-        && let Ok(outcome) = reuse_cache(&bytes, cache, false, limit, &month)
+        && let Ok(outcome) = reuse_cache(&bytes, cache, false, limit, &month, &target)
     {
         return Ok(outcome);
     }
@@ -101,9 +129,9 @@ pub async fn fetch_snapshot_at(
             let snap = AnthropicApiSnapshot { spent, limit };
             let bytes = serde_json::to_vec(&serde_json::json!({
                 "month": month,
+                "target": target,
                 "snapshot": { "spent": snap.spent, "limit": snap.limit },
-            }))
-            .unwrap_or_default();
+            }))?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -112,7 +140,7 @@ pub async fn fetch_snapshot_at(
                 cache_age: Some(Duration::ZERO),
             })
         }
-        Err(e) if e.is_transient() => fallback_silent(cache, limit, &month, e),
+        Err(e) if e.is_transient() => fallback_silent(cache, limit, &month, &target, e),
         Err(AppError::Http { status, body }) => {
             cache.mark_stale();
             cache.write_last_error(status, &body);
@@ -122,6 +150,7 @@ pub async fn fetch_snapshot_at(
                 Some(diag),
                 limit,
                 &month,
+                &target,
                 AppError::Http { status, body },
             )
         }
@@ -129,7 +158,7 @@ pub async fn fetch_snapshot_at(
             cache.mark_stale();
             cache.write_last_error(0, &e.to_string());
             let diag = (0, e.to_string());
-            fallback_with_error(cache, Some(diag), limit, &month, e)
+            fallback_with_error(cache, Some(diag), limit, &month, &target, e)
         }
     }
 }
@@ -138,12 +167,13 @@ fn fallback_silent(
     cache: &Cache,
     limit: Option<f64>,
     month: &str,
+    target: &str,
     original: AppError,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
-    reuse_cache(&bytes, cache, true, limit, month)
+    reuse_cache(&bytes, cache, true, limit, month, target)
 }
 
 /// On failure we show the last good figure with the error alongside it. With
@@ -155,14 +185,15 @@ fn fallback_with_error(
     last_error: Option<(u16, String)>,
     limit: Option<f64>,
     month: &str,
+    target: &str,
     original: AppError,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
     // Last month's spend is not this month's, so during an outage it is better
     // to report the error than to display the wrong month as current.
-    let Ok(mut outcome) = reuse_cache(&bytes, cache, true, limit, month) else {
+    let Ok(mut outcome) = reuse_cache(&bytes, cache, true, limit, month, target) else {
         return Err(original);
     };
     outcome.last_error = last_error;
@@ -175,10 +206,11 @@ fn reuse_cache(
     stale: bool,
     limit: Option<f64>,
     month: &str,
+    target: &str,
 ) -> Result<FetchOutcome> {
     // The cached spend is authoritative; the limit always comes from the
     // current config so editing it takes effect without a refetch.
-    let spent = parse_cached_spent(bytes, month)?;
+    let spent = parse_cached_spent(bytes, month, target)?;
     Ok(FetchOutcome {
         snapshot: AnthropicApiSnapshot { spent, limit },
         stale,
@@ -187,7 +219,7 @@ fn reuse_cache(
     })
 }
 
-fn parse_cached_spent(bytes: &[u8], month: &str) -> Result<f64> {
+fn parse_cached_spent(bytes: &[u8], month: &str, target: &str) -> Result<f64> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
     // Payloads written before the month was recorded cannot be attributed to
     // one, so they are refetched rather than shown as the current month.
@@ -197,6 +229,12 @@ fn parse_cached_spent(bytes: &[u8], month: &str) -> Result<f64> {
             "anthropic-api cache is for a different month ({}); refetching",
             cached_month.unwrap_or("unknown")
         )));
+    }
+    let cached_target = v.get("target").and_then(serde_json::Value::as_str);
+    if cached_target != Some(target) {
+        return Err(AppError::Schema(
+            "anthropic-api cache belongs to a different Admin key; refetching".into(),
+        ));
     }
     let s = v
         .get("snapshot")
@@ -238,7 +276,7 @@ async fn fetch_live(
             })??;
 
         let status = resp.status();
-        let bytes = resp.bytes().await?;
+        let bytes = read_body_capped(resp, MAX_BODY_BYTES).await?;
         if !status.is_success() {
             let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();
             return Err(AppError::Http {
@@ -249,7 +287,11 @@ async fn fetch_live(
 
         let report: CostReport = serde_json::from_slice(&bytes)
             .map_err(|e| AppError::Schema(format!("anthropic-api cost_report: {e}")))?;
-        total += page_dollars(&report)?;
+        total = finite_amount(
+            "anthropic-api",
+            "cost_report running total",
+            total + page_dollars(&report)?,
+        )?;
 
         // A partial total is indistinguishable from a genuinely smaller spend
         // once cached, so every way pagination can go wrong is an error rather
@@ -259,6 +301,13 @@ async fn fetch_live(
             (true, None) => {
                 return Err(AppError::Schema(
                     "anthropic-api cost_report: has_more is true but next_page is missing; \
+                     refusing to report a partial month"
+                        .into(),
+                ));
+            }
+            (true, Some(p)) if p.trim().is_empty() => {
+                return Err(AppError::Schema(
+                    "anthropic-api cost_report: has_more is true but next_page is empty; \
                      refusing to report a partial month"
                         .into(),
                 ));
@@ -309,7 +358,8 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_body(
-                r#"{"data":[{"results":[{"amount":"100.0"},{"amount":"34.0"}]}],
+                r#"{"data":[{"results":[{"amount":"100.0","currency":"USD"},
+                    {"amount":"34.0","currency":"USD"}]}],
                     "has_more":false,"next_page":null}"#,
             )
             .create_async()
@@ -353,6 +403,7 @@ mod tests {
             .write_payload(
                 serde_json::json!({
                     "month": month_start_rfc3339(now),
+                    "target": target_key("k"),
                     "snapshot": { "spent": 2.5, "limit": null },
                 })
                 .to_string()
@@ -392,7 +443,9 @@ mod tests {
     }
 
     fn ok_body(cents: &str) -> String {
-        format!(r#"{{"data":[{{"results":[{{"amount":"{cents}"}}]}}],"has_more":false}}"#)
+        format!(
+            r#"{{"data":[{{"results":[{{"amount":"{cents}","currency":"USD"}}]}}],"has_more":false}}"#
+        )
     }
 
     #[tokio::test]
@@ -413,6 +466,7 @@ mod tests {
             .write_payload(
                 serde_json::json!({
                     "month": month_start_rfc3339(at(2026, 6, 30)),
+                    "target": target_key("k"),
                     "snapshot": { "spent": 987.0, "limit": null },
                 })
                 .to_string()
@@ -458,6 +512,7 @@ mod tests {
             .write_payload(
                 serde_json::json!({
                     "month": month_start_rfc3339(at(2026, 6, 30)),
+                    "target": target_key("k"),
                     "snapshot": { "spent": 987.0, "limit": null },
                 })
                 .to_string()
@@ -525,7 +580,10 @@ mod tests {
             .mock("GET", "/v1/organizations/cost_report")
             .match_query(mockito::Matcher::Any)
             .with_status(200)
-            .with_body(r#"{"data":[{"results":[{"amount":"100.0"}]}],"has_more":true}"#)
+            .with_body(
+                r#"{"data":[{"results":[{"amount":"100.0","currency":"USD"}]}],
+                    "has_more":true}"#,
+            )
             .create_async()
             .await;
 
@@ -557,7 +615,8 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_body(
-                r#"{"data":[{"results":[{"amount":"100.0"}]}],"has_more":true,"next_page":"same"}"#,
+                r#"{"data":[{"results":[{"amount":"100.0","currency":"USD"}]}],
+                    "has_more":true,"next_page":"same"}"#,
             )
             .expect_at_least(1)
             .create_async()
@@ -643,5 +702,84 @@ mod tests {
         assert_eq!(out.snapshot.spent, 0.0);
         assert!(!out.stale);
         assert!(cache.maybe_payload().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn switching_admin_key_refetches_instead_of_reusing_another_organization() {
+        let mut server = mockito::Server::new_async().await;
+        let first = server
+            .mock("GET", "/v1/organizations/cost_report")
+            .match_header("x-api-key", "org-a-key")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(ok_body("100.0"))
+            .expect(1)
+            .create_async()
+            .await;
+        let second = server
+            .mock("GET", "/v1/organizations/cost_report")
+            .match_header("x-api-key", "org-b-key")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(ok_body("250.0"))
+            .expect(1)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            cost_report: format!("{}/v1/organizations/cost_report", server.url()),
+        };
+        let now = at(2026, 7, 19);
+        let a = fetch_snapshot_at(
+            &client,
+            "org-a-key",
+            &cache,
+            &endpoints,
+            Duration::ZERO,
+            None,
+            now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(a.snapshot.spent, 1.0);
+
+        // The first payload is fresh, but belongs to a different Admin key.
+        let b = fetch_snapshot_at(
+            &client,
+            "org-b-key",
+            &cache,
+            &endpoints,
+            Duration::from_secs(3600),
+            None,
+            now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(b.snapshot.spent, 2.5);
+        first.assert_async().await;
+        second.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn invalid_monthly_limits_fail_before_network_or_cache_access() {
+        let client = reqwest::Client::new();
+        let cache = Cache::at(std::path::PathBuf::from("unused-invalid-limit-cache"));
+        for limit in [0.0, -1.0, f64::INFINITY, f64::NAN] {
+            let err = fetch_snapshot_at(
+                &client,
+                "key",
+                &cache,
+                &Endpoints::default(),
+                Duration::ZERO,
+                Some(limit),
+                at(2026, 7, 19),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains("monthly_limit"), "{err:?}");
+        }
+        assert!(!cache.dir().exists());
     }
 }

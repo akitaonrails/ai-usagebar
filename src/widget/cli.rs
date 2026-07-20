@@ -337,6 +337,16 @@ mod tests {
     }
 
     #[test]
+    fn vendor_anthropic_api_uses_the_documented_slug() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "anthropic_api"]);
+        assert_eq!(cli.vendor, Some(Vendor::AnthropicApi));
+        assert_eq!(
+            cli.vendor.unwrap().to_id(),
+            crate::vendor::VendorId::AnthropicApi
+        );
+    }
+
+    #[test]
     fn disabled_kimi_primary_falls_back_to_an_enabled_vendor() {
         let cli = Cli::parse_from(["ai-usagebar"]);
         let mut cfg = crate::config::Config::default();

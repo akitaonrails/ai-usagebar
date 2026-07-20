@@ -472,6 +472,15 @@ impl Config {
     /// labels are both CLI selectors and TUI tab identities, so duplicates
     /// would make either destination ambiguous.
     pub fn validate(&self) -> Result<()> {
+        if let Some(limit) = self.anthropic_api.monthly_limit
+            && (!limit.is_finite() || limit <= 0.0)
+        {
+            return Err(AppError::Other(
+                "[anthropic_api] monthly_limit must be finite and greater than zero; \
+                 remove it to show spend without a limit"
+                    .into(),
+            ));
+        }
         let mut labels = HashSet::new();
         for account in &self.anthropic.accounts {
             validate_account_label(&account.label)?;
@@ -573,15 +582,23 @@ mod tests {
     }
 
     #[test]
-    fn defaults_enable_core_vendors_deepseek_and_kimi_default_off() {
+    fn defaults_enable_only_the_four_core_vendors() {
         let c = Config::default();
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
         assert!(c.is_enabled(VendorId::Zai));
         assert!(c.is_enabled(VendorId::Openrouter));
-        // DeepSeek and Kimi require explicit API keys, so they default to disabled.
-        assert!(!c.is_enabled(VendorId::Deepseek));
-        assert!(!c.is_enabled(VendorId::Kimi));
+        for opt_in in [
+            VendorId::AnthropicApi,
+            VendorId::Deepseek,
+            VendorId::Kimi,
+            VendorId::Kilo,
+            VendorId::Novita,
+            VendorId::Moonshot,
+            VendorId::Grok,
+        ] {
+            assert!(!c.is_enabled(opt_in), "{opt_in:?}");
+        }
         assert_eq!(c.enabled_vendors().len(), 4);
     }
 
@@ -640,6 +657,24 @@ enabled = false
     fn malformed_toml_returns_error() {
         let f = write_toml("this is not = = valid");
         assert!(Config::load_from(f.path()).is_err());
+    }
+
+    #[test]
+    fn anthropic_api_monthly_limit_must_be_positive_and_finite() {
+        for value in ["0", "-1", "inf", "nan"] {
+            let file = write_toml(&format!("[anthropic_api]\nmonthly_limit = {value}\n"));
+            let error = Config::load_from(file.path()).unwrap_err().to_string();
+            assert!(error.contains("monthly_limit"), "value {value}: {error}");
+        }
+
+        let file = write_toml("[anthropic_api]\nmonthly_limit = 1000\n");
+        assert_eq!(
+            Config::load_from(file.path())
+                .unwrap()
+                .anthropic_api
+                .monthly_limit,
+            Some(1000.0)
+        );
     }
 
     // serial guard for env-var manipulation tests so they don't race
@@ -1041,6 +1076,7 @@ enabled = false
         let c = Config::load_from(&config_example()).unwrap();
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
+        assert!(!c.is_enabled(VendorId::AnthropicApi));
         assert!(!c.is_enabled(VendorId::Deepseek));
         assert!(!c.is_enabled(VendorId::Kimi));
         assert!(!c.is_enabled(VendorId::Kilo));
@@ -1109,6 +1145,7 @@ enabled = false
 
         // The example must not ship anything enabled-by-key-only, and must not
         // carry a real secret.
+        assert!(!cfg.anthropic_api.enabled && cfg.anthropic_api.api_key.is_none());
         assert!(!cfg.kilo.enabled && cfg.kilo.api_key.is_none());
         assert!(!cfg.novita.enabled && cfg.novita.api_key.is_none());
         assert!(!cfg.moonshot.enabled && cfg.moonshot.api_key.is_none());

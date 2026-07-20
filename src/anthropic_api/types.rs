@@ -16,7 +16,7 @@
 
 use serde::Deserialize;
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::usage::parse_amount;
 
 /// The documented envelope. `data` and `has_more` are **required**: a 200 error
@@ -45,6 +45,10 @@ pub struct Bucket {
 pub struct CostResult {
     /// Cost in the currency's lowest unit (cents), as a decimal string.
     pub amount: String,
+    /// The API currently documents every cost result as USD. Keep this required
+    /// and validate it before summing so a future currency change cannot be
+    /// silently rendered with a dollar sign.
+    pub currency: String,
 }
 
 /// Sum every result's cents on one page and return dollars. A missing,
@@ -54,6 +58,12 @@ pub struct CostResult {
 pub fn page_dollars(report: &CostReport) -> Result<f64> {
     let mut cents = 0.0_f64;
     for r in report.data.iter().flat_map(|b| b.results.iter()) {
+        if r.currency != "USD" {
+            return Err(AppError::Schema(format!(
+                "anthropic-api: unsupported cost_report currency {:?}; expected USD",
+                r.currency
+            )));
+        }
         cents += parse_amount("anthropic-api", "cost_report.amount", &r.amount)?;
     }
     // Guard the running total too: enough large values can overflow to inf.
@@ -124,8 +134,9 @@ mod tests {
     #[test]
     fn non_numeric_amount_is_a_schema_error() {
         for bad in [r#""""#, r#""n/a""#, r#""  ""#] {
-            let body =
-                format!(r#"{{"data":[{{"results":[{{"amount":{bad}}}]}}],"has_more":false}}"#);
+            let body = format!(
+                r#"{{"data":[{{"results":[{{"amount":{bad},"currency":"USD"}}]}}],"has_more":false}}"#
+            );
             let report: CostReport = serde_json::from_str(&body).unwrap();
             assert!(
                 page_dollars(&report).is_err(),
@@ -137,8 +148,19 @@ mod tests {
     #[test]
     fn non_finite_amount_is_rejected() {
         // "inf" parses as f64::INFINITY — it must not become a displayed spend.
-        let body = r#"{"data":[{"results":[{"amount":"inf"}]}],"has_more":false}"#;
+        let body = r#"{"data":[{"results":[{"amount":"inf","currency":"USD"}]}],"has_more":false}"#;
         let report: CostReport = serde_json::from_str(body).unwrap();
         assert!(page_dollars(&report).is_err());
+    }
+
+    #[test]
+    fn non_usd_or_missing_currency_is_rejected() {
+        let non_usd =
+            r#"{"data":[{"results":[{"amount":"100","currency":"EUR"}]}],"has_more":false}"#;
+        let report: CostReport = serde_json::from_str(non_usd).unwrap();
+        assert!(page_dollars(&report).is_err());
+
+        let missing = r#"{"data":[{"results":[{"amount":"100"}]}],"has_more":false}"#;
+        assert!(serde_json::from_str::<CostReport>(missing).is_err());
     }
 }
