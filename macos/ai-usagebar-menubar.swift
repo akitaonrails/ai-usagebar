@@ -276,8 +276,19 @@ let VENDOR_AUTH: [VendorAuth] = [
     VendorAuth(id: "deepseek", name: "DeepSeek", kind: "apikey", cli: "", login: "", pkg: "", env: "DEEPSEEK_API_KEY"),
 ]
 
+// The config file the Rust binary would actually read. On macOS
+// `directories::ProjectDirs` resolves to ~/Library/Application Support, so
+// checking only ~/.config reported "no key configured" for a key the binary
+// was happily using. Prefer the canonical location, fall back to the legacy
+// Unix path the docs have always shown (the binary accepts both).
+func configPathTOML() -> String {
+    let appSupport = "\(NSHomeDirectory())/Library/Application Support/ai-usagebar/config.toml"
+    if FileManager.default.fileExists(atPath: appSupport) { return appSupport }
+    return "\(NSHomeDirectory())/.config/ai-usagebar/config.toml"
+}
+
 func configHasApiKeyTOML(_ section: String) -> Bool {
-    let path = "\(NSHomeDirectory())/.config/ai-usagebar/config.toml"
+    let path = configPathTOML()
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
     var inSection = false
     for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {

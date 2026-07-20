@@ -17,9 +17,21 @@ const VENDOR_AUTH = [
     {id: 'deepseek', name: 'DeepSeek', kind: 'apikey', env: 'DEEPSEEK_API_KEY'},
 ];
 
-// Does ~/.config/ai-usagebar/config.toml have an uncommented api_key in [section]?
+// The config file the Rust binary would actually read. It resolves the
+// platform config dir, which honors $XDG_CONFIG_HOME — hard-coding
+// ~/.config meant a user with XDG_CONFIG_HOME set saw "no key configured"
+// for keys that were configured. Falls back to the legacy path so a config
+// written before this is still found.
+function configPath() {
+    const xdg = `${GLib.get_user_config_dir()}/ai-usagebar/config.toml`;
+    if (GLib.file_test(xdg, GLib.FileTest.EXISTS))
+        return xdg;
+    return `${GLib.get_home_dir()}/.config/ai-usagebar/config.toml`;
+}
+
+// Does the config have an uncommented api_key in [section]?
 function configHasApiKey(section) {
-    const path = `${GLib.get_home_dir()}/.config/ai-usagebar/config.toml`;
+    const path = configPath();
     if (!GLib.file_test(path, GLib.FileTest.EXISTS))
         return false;
     try {

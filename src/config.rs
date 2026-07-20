@@ -289,7 +289,7 @@ impl Config {
     /// Load from `~/.config/ai-usagebar/config.toml`. Returns defaults if the
     /// file doesn't exist; errors only on actual parse failures.
     pub fn load() -> Result<Self> {
-        let Some(path) = default_path() else {
+        let Some(path) = resolved_path() else {
             return Ok(Self::default());
         };
         Self::load_from(&path)
@@ -298,12 +298,24 @@ impl Config {
     pub fn load_from(path: &std::path::Path) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(s) => {
-                let config: Self = toml::from_str(&s)?;
+                let mut config: Self = toml::from_str(&s)?;
+                // `~` is shell syntax, not path syntax: `PathBuf` keeps it
+                // literally, so a documented `credentials_path = "~/..."`
+                // silently pointed at a directory named `~`.
+                config.expand_paths();
                 config.validate()?;
                 Ok(config)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(e) => Err(AppError::io_at(path, e)),
+        }
+    }
+
+    fn expand_paths(&mut self) {
+        expand_tilde_opt(&mut self.anthropic.credentials_path);
+        expand_tilde_opt(&mut self.openai.codex_auth_path);
+        for account in &mut self.anthropic.accounts {
+            account.credentials_path = expand_tilde(&account.credentials_path);
         }
     }
 
@@ -349,12 +361,70 @@ pub fn default_path() -> Option<PathBuf> {
     Some(proj.config_dir().join("config.toml"))
 }
 
+/// The Unix-conventional location, which is what every doc, the config
+/// example, and both desktop integrations have always pointed at. On Linux it
+/// *is* [`default_path`]; on macOS `ProjectDirs` resolves to
+/// `~/Library/Application Support/…` instead, so the two diverge.
+fn legacy_xdg_path() -> Option<PathBuf> {
+    let home = crate::cache::home_dir().ok()?;
+    Some(home.join(".config").join("ai-usagebar").join("config.toml"))
+}
+
+/// The config file actually in effect.
+///
+/// [`default_path`] stays canonical, but on macOS a file at the documented
+/// `~/.config/ai-usagebar/config.toml` is honored when the canonical one does
+/// not exist — otherwise everyone who followed the README (and both desktop
+/// integrations, which read that path) silently got defaults. The legacy file
+/// is never moved or rewritten: it may hold API keys, and relocating a secret
+/// behind the user's back is not this tool's business.
+pub fn resolved_path() -> Option<PathBuf> {
+    let canonical = default_path();
+    if let Some(p) = &canonical
+        && p.exists()
+    {
+        return canonical;
+    }
+    if let Some(legacy) = legacy_xdg_path()
+        && legacy.exists()
+    {
+        return Some(legacy);
+    }
+    canonical
+}
+
+/// Expand a leading `~` (or `~/`) against the user's home directory. Anything
+/// else — including `~user` — is left untouched.
+fn expand_tilde(p: &std::path::Path) -> PathBuf {
+    let Some(s) = p.to_str() else {
+        return p.to_path_buf();
+    };
+    let rest = if s == "~" {
+        ""
+    } else if let Some(r) = s.strip_prefix("~/") {
+        r
+    } else {
+        return p.to_path_buf();
+    };
+    match crate::cache::home_dir() {
+        Ok(home) if rest.is_empty() => home,
+        Ok(home) => home.join(rest),
+        Err(_) => p.to_path_buf(),
+    }
+}
+
+fn expand_tilde_opt(p: &mut Option<PathBuf>) {
+    if let Some(inner) = p.as_ref() {
+        *p = Some(expand_tilde(inner));
+    }
+}
+
 /// Resolved `config.toml` path as a string for user-facing messages. Uses the
 /// platform's config dir (`directories::ProjectDirs`), so it reads correctly on
 /// Linux, macOS, and Windows instead of hard-coding the Unix `~/.config` path.
 /// Falls back to the bare filename if the path can't be resolved.
 pub fn config_path_hint() -> String {
-    default_path()
+    resolved_path()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "config.toml".to_string())
 }
@@ -613,6 +683,76 @@ enabled = false
         assert!(c.is_enabled(VendorId::Deepseek));
         assert!(c.enabled_vendors().contains(&VendorId::Deepseek));
         assert_eq!(c.deepseek.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn tilde_paths_are_expanded_on_load() {
+        // `PathBuf` keeps `~` literally, so the documented
+        // `credentials_path = "~/..."` used to resolve to a directory named
+        // `~` relative to the process's cwd.
+        let f = write_toml(
+            r#"
+            [anthropic]
+            credentials_path = "~/.claude/.credentials.json"
+
+            [[anthropic.accounts]]
+            label = "work"
+            credentials_path = "~/work.json"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        let home = crate::cache::home_dir().unwrap();
+
+        let got = c.anthropic.credentials_path.unwrap();
+        assert_eq!(got, home.join(".claude/.credentials.json"));
+        assert!(!got.to_string_lossy().contains('~'));
+        assert_eq!(
+            c.anthropic.accounts[0].credentials_path,
+            home.join("work.json")
+        );
+    }
+
+    #[test]
+    fn absolute_and_relative_paths_are_left_alone() {
+        let f = write_toml(
+            r#"
+            [anthropic]
+            credentials_path = "/etc/creds.json"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert_eq!(
+            c.anthropic.credentials_path.unwrap(),
+            std::path::Path::new("/etc/creds.json")
+        );
+
+        // `~user` is not ours to interpret.
+        let f2 = write_toml(
+            r#"
+            [anthropic]
+            credentials_path = "~someone/creds.json"
+            "#,
+        );
+        let c2 = Config::load_from(f2.path()).unwrap();
+        assert_eq!(
+            c2.anthropic.credentials_path.unwrap(),
+            std::path::Path::new("~someone/creds.json")
+        );
+    }
+
+    #[test]
+    fn resolved_path_is_the_canonical_one_and_names_the_config_file() {
+        // Hermetic: only asserts the shape, never which file happens to exist
+        // on the machine running the tests.
+        let p = resolved_path().expect("a config path must resolve");
+        assert!(p.ends_with("config.toml"));
+        let canonical = default_path().unwrap();
+        let legacy = legacy_xdg_path().unwrap();
+        assert!(
+            p == canonical || p == legacy,
+            "resolved to an unexpected location: {}",
+            p.display()
+        );
     }
 
     #[test]

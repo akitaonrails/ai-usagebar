@@ -20,6 +20,25 @@ Each release is also published at
 
 ### Fixed
 
+- **The config file is found at one agreed location on every platform.** The
+  binary resolved it through `directories::ProjectDirs` (macOS:
+  `~/Library/Application Support/ai-usagebar/`), while the README, the shipped
+  example, `--help`, the GNOME preferences and the macOS menu bar all used
+  `~/.config/ai-usagebar/`. The two never had to be the same file, so the
+  desktop integrations could report "no key configured" for a key the binary
+  was using. The platform path stays canonical; the legacy Unix path is honored
+  when the canonical file does not exist, and both desktop surfaces now check
+  the same pair. Nothing is moved or rewritten — the file can hold API keys,
+  and relocating a secret behind the user's back is not this tool's business.
+  GNOME additionally honors `$XDG_CONFIG_HOME` instead of hard-coding
+  `~/.config`.
+
+- **`~` in configured paths is expanded.** `credentials_path = "~/..."` — the
+  form the README documents — was kept literally by `PathBuf` and resolved to a
+  directory named `~` relative to the working directory. Applies to
+  `[anthropic] credentials_path`, `[openai] codex_auth_path` and every
+  `[[anthropic.accounts]]` entry. `~user` is left untouched.
+
 - **macOS: a locked Keychain is no longer reported as "not logged in".**
   `keychain::read_raw` mapped *every* `security(1)` failure to "no item",
   so a locked login Keychain, a denied ACL, or an operational error all
