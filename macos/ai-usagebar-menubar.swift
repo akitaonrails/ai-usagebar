@@ -70,12 +70,13 @@ let POINT_CRITICAL_MIN = 10
 // The `{scoped_*}` fields (10-12) carry the model-scoped weekly window (e.g.
 // "Fable") from the API's `limits[]`; empty on older binaries → the row falls
 // back to the flat `{sonnet_*}` window and the "Sonnet only" label. The trailing
-// `*_elapsed` fields (13-15) carry the meta (pace) position. A final literal
-// sentinel absorbs the widget's stale suffix, preserving the elapsed fields.
+// `*_elapsed` fields (13-15) carry the meta (pace) position; `vendor_short`
+// (16) lets balance-only vendors suppress meaningless quota rows. A final
+// literal sentinel absorbs the widget's stale suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
              "{scoped_model};;{scoped_pct};;{scoped_reset};;" +
-             "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed}"
+             "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -183,6 +184,7 @@ func resolveBinary(_ name: String) -> String? {
 struct Window { let pct: Int; let reset: String; let elapsed: Int? }
 struct Snapshot {
     let plan: String
+    let hasUsageWindows: Bool
     let session: Window
     let weekly: Window
     /// The per-model weekly bar (model-scoped window, e.g. Fable, or the legacy
@@ -194,7 +196,15 @@ struct Snapshot {
 }
 
 func stripMarkup(_ s: String) -> String {
+    // Decode exactly one layer after removing tags. Rust escapes API-controlled
+    // labels for Pango; the native surface consumes plain text and must not
+    // display those entities literally or reactivate decoded markup.
     s.replacingOccurrences(of: "<[^>]*>", with: "", options: .regularExpression)
+        .replacingOccurrences(of: "&lt;", with: "<")
+        .replacingOccurrences(of: "&gt;", with: ">")
+        .replacingOccurrences(of: "&quot;", with: "\"")
+        .replacingOccurrences(of: "&apos;", with: "'")
+        .replacingOccurrences(of: "&amp;", with: "&")
 }
 
 func parse(_ text: String) -> Snapshot? {
@@ -238,6 +248,7 @@ func parse(_ text: String) -> Snapshot? {
     let extra: (pct: Int, spent: String, limit: String)? =
         (spent.isEmpty || limit.isEmpty) ? nil : n(7).map { (pct: $0, spent: spent, limit: limit) }
     return Snapshot(plan: t(0),
+                    hasUsageWindows: t(16) != "dsk",
                     session: Window(pct: n(1) ?? 0, reset: t(2), elapsed: markerElapsed(reset: t(2), elapsed: n(13))),
                     weekly: Window(pct: n(3) ?? 0, reset: t(4), elapsed: markerElapsed(reset: t(4), elapsed: n(14))),
                     sonnet: sonnet,
@@ -743,8 +754,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if SHOW_BARS { title.append(barAttr(pct: pct, width: BAR_WIDTH, elapsed: elapsed)) }
             if !SHOW_PERCENT && !SHOW_BARS { title.append(run(value, colorForPct(pct))) }
         }
-        if SHOW_SESSION { seg("5h", s.session.pct, "\(s.session.pct)%", s.session.elapsed) }
-        if SHOW_WEEKLY { seg("7d", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.elapsed) }
+        if s.hasUsageWindows && SHOW_SESSION {
+            seg("5h", s.session.pct, "\(s.session.pct)%", s.session.elapsed)
+        }
+        if s.hasUsageWindows && SHOW_WEEKLY {
+            seg("7d", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.elapsed)
+        }
         if SHOW_EXTRA, let e = s.extra { seg("ex", e.pct, e.spent, nil) } // $ budget → no meta
         statusItem.button?.attributedTitle = title.length > 0 ? title : run("ai", .secondaryLabelColor)
     }
@@ -766,8 +781,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }
             item.attributedTitle = a
         }
-        row("session", "Session", s.session.pct, "\(s.session.pct)%", s.session.reset, s.session.elapsed)
-        row("weekly", "Weekly", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.reset, s.weekly.elapsed)
+        if s.hasUsageWindows {
+            row("session", "Session", s.session.pct, "\(s.session.pct)%", s.session.reset, s.session.elapsed)
+            row("weekly", "Weekly", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.reset, s.weekly.elapsed)
+        } else {
+            rows["session"]?.isHidden = true
+            rows["weekly"]?.isHidden = true
+        }
         if let sn = s.sonnet { row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset, sn.elapsed) }
         else { rows["sonnet"]?.isHidden = true }
         if let e = s.extra { row("extra", "Extra usage", e.pct, "\(e.spent) / \(e.limit)", nil, nil) }

@@ -101,7 +101,7 @@ pub struct DeepseekSnapshot {
     pub granted: f64,
     /// Topped-up (purchased) credits component.
     pub topped_up: f64,
-    /// The currency of the above amounts ("USD", "CNY", etc.).
+    /// The currency of the above amounts (currently "USD" or "CNY").
     pub currency: String,
 }
 

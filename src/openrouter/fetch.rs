@@ -63,7 +63,7 @@ pub async fn fetch_snapshot(
             let cache_repr = serde_json::json!({
                 "snapshot": serde_repr(&snap),
             });
-            let bytes = serde_json::to_vec(&cache_repr).unwrap_or_default();
+            let bytes = serde_json::to_vec(&cache_repr)?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -123,19 +123,41 @@ fn parse_cache(bytes: &[u8]) -> Result<OpenRouterSnapshot> {
         .get("snapshot")
         .ok_or_else(|| AppError::Schema("openrouter cache missing 'snapshot' field".into()))?;
     let money = |name: &str| -> Result<f64> {
-        let n = s[name]
-            .as_f64()
+        let n = s
+            .get(name)
+            .and_then(serde_json::Value::as_f64)
             .ok_or_else(|| AppError::Schema(format!("openrouter cache missing '{name}'")))?;
-        if n.is_finite() {
+        if n.is_finite() && n >= 0.0 {
             Ok(n)
         } else {
             Err(AppError::Schema(format!(
-                "openrouter cache '{name}' is not finite"
+                "openrouter cache '{name}' is not finite and non-negative"
             )))
         }
     };
+    let optional_money = |name: &str, nonnegative: bool| -> Result<Option<f64>> {
+        match s.get(name) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => {
+                let number = value.as_f64().ok_or_else(|| {
+                    AppError::Schema(format!("openrouter cache '{name}' is not numeric or null"))
+                })?;
+                if number.is_finite() && (!nonnegative || number >= 0.0) {
+                    Ok(Some(number))
+                } else {
+                    Err(AppError::Schema(format!(
+                        "openrouter cache '{name}' is outside its valid range"
+                    )))
+                }
+            }
+        }
+    };
     Ok(OpenRouterSnapshot {
-        label: s["label"].as_str().unwrap_or("OpenRouter").to_string(),
+        label: s
+            .get("label")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| AppError::Schema("openrouter cache missing 'label'".into()))?
+            .to_string(),
         total_credits: money("total_credits")?,
         total_usage: money("total_usage")?,
         usage_daily: money("usage_daily")?,
@@ -144,8 +166,8 @@ fn parse_cache(bytes: &[u8]) -> Result<OpenRouterSnapshot> {
         is_free_tier: s["is_free_tier"]
             .as_bool()
             .ok_or_else(|| AppError::Schema("openrouter cache missing 'is_free_tier'".into()))?,
-        limit: s["limit"].as_f64(),
-        limit_remaining: s["limit_remaining"].as_f64(),
+        limit: optional_money("limit", true)?,
+        limit_remaining: optional_money("limit_remaining", false)?,
     })
 }
 

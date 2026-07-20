@@ -76,10 +76,18 @@ impl Envelope {
         // A body whose token buckets we cannot name is drift, not usage: let it
         // through and the widget would render one window's figure under the
         // other's label, and cache it as if it were vouched for.
-        if let Err(why) = classify_token_buckets(&data.limits) {
-            return Err(crate::error::AppError::Schema(format!(
-                "zai: unrecognised limits layout: {why}"
-            )));
+        let (session, weekly) = classify_token_buckets(&data.limits).map_err(|why| {
+            crate::error::AppError::Schema(format!("zai: unrecognised limits layout: {why}"))
+        })?;
+        let mcp = classify_time_bucket(&data.limits).map_err(|why| {
+            crate::error::AppError::Schema(format!("zai: unrecognised limits layout: {why}"))
+        })?;
+        for (label, bucket) in [("session", session), ("weekly", weekly), ("MCP", mcp)] {
+            if bucket.is_some_and(|entry| entry.percentage.is_none()) {
+                return Err(crate::error::AppError::Schema(format!(
+                    "zai: {label} limit carried no percentage"
+                )));
+            }
         }
         Ok(())
     }
@@ -97,19 +105,17 @@ type TokenBuckets<'a> = (Option<&'a LimitEntry>, Option<&'a LimitEntry>);
 /// Match the TOKENS_LIMIT entries to the (session, weekly) windows by `unit`.
 ///
 /// Buckets carrying an unknown `unit` are dropped rather than shown under a
-/// label we can't justify, so Z.AI adding a third window is inert here. `Err`
-/// is reserved for layouts where guessing would be the only alternative:
-/// duplicate codes, or unit-bearing buckets none of which we recognise.
+/// label we can't justify, so Z.AI adding a third window is inert here. A
+/// non-empty set with no discriminator is drift, not a backwards-compatibility
+/// case: caches retain the raw `unit` field, so position would still be a guess.
 fn classify_token_buckets(limits: &[LimitEntry]) -> Result<TokenBuckets<'_>, String> {
     let tokens: Vec<&LimitEntry> = limits.iter().filter(|l| l.kind == "TOKENS_LIMIT").collect();
 
-    // Bodies predating the `unit` field (and caches written from them) have no
-    // discriminator at all; position is all there ever was for those.
+    if tokens.is_empty() {
+        return Ok((None, None));
+    }
     if tokens.iter().all(|l| l.unit.is_none()) {
-        let mut it = tokens.into_iter();
-        let session = it.next();
-        let weekly = it.next();
-        return Ok((session, weekly));
+        return Err("TOKENS_LIMIT buckets carry no unit discriminator".into());
     }
 
     let session = unique_by_unit(&tokens, UNIT_SESSION)?;
@@ -126,6 +132,15 @@ fn classify_token_buckets(limits: &[LimitEntry]) -> Result<TokenBuckets<'_>, Str
         ));
     }
     Ok((session, weekly))
+}
+
+fn classify_time_bucket(limits: &[LimitEntry]) -> Result<Option<&LimitEntry>, String> {
+    let mut matching = limits.iter().filter(|l| l.kind == "TIME_LIMIT");
+    let first = matching.next();
+    if matching.next().is_some() {
+        return Err("two TIME_LIMIT buckets are present".into());
+    }
+    Ok(first)
 }
 
 fn unique_by_unit<'a>(
@@ -152,7 +167,8 @@ pub struct MonitorData {
 pub struct LimitEntry {
     #[serde(rename = "type")]
     pub kind: String,
-    pub percentage: f64,
+    #[serde(default, deserialize_with = "de_percent_opt")]
+    pub percentage: Option<f64>,
     /// Unix milliseconds — `null` / `0` / missing → None.
     #[serde(rename = "nextResetTime", default, deserialize_with = "de_opt_ms")]
     pub next_reset_time: Option<i64>,
@@ -165,11 +181,50 @@ where
     D: serde::Deserializer<'de>,
 {
     let v = serde_json::Value::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::Null => None,
-        serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
-        _ => None,
-    })
+    match v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(n) => {
+            let millis = if let Some(i) = n.as_i64() {
+                i
+            } else if let Some(f) = n.as_f64()
+                && f.is_finite()
+                && f.fract() == 0.0
+                && f.abs() <= (1_u64 << 53) as f64
+            {
+                f as i64
+            } else {
+                return Err(serde::de::Error::custom(
+                    "nextResetTime must be an integer in range",
+                ));
+            };
+            match millis {
+                0 => Ok(None),
+                1.. => Ok(Some(millis)),
+                _ => Err(serde::de::Error::custom("nextResetTime cannot be negative")),
+            }
+        }
+        other => Err(serde::de::Error::custom(format!(
+            "nextResetTime must be an integer or null, got {other:?}"
+        ))),
+    }
+}
+
+fn de_percent_opt<'de, D>(d: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<f64>::deserialize(d)?;
+    value
+        .map(|pct| {
+            if pct.is_finite() && (0.0..=101.0).contains(&pct) {
+                Ok(pct)
+            } else {
+                Err(serde::de::Error::custom(format!(
+                    "percentage {pct} outside 0..=100"
+                )))
+            }
+        })
+        .transpose()
 }
 
 impl Envelope {
@@ -180,13 +235,12 @@ impl Envelope {
         // On the fetch path `check_ok` has already turned an unnameable layout
         // into an error; direct callers get empty windows for the same reason.
         let (session, weekly) = classify_token_buckets(&data.limits).unwrap_or((None, None));
-        let session = session.map(|l| to_window(l, chrono::Duration::hours(5)));
-        let weekly = weekly.map(|l| to_window(l, chrono::Duration::days(7)));
-        let mcp = data
-            .limits
-            .iter()
-            .find(|l| l.kind == "TIME_LIMIT")
-            .map(|l| to_window(l, chrono::Duration::days(30)));
+        let session = session.and_then(|l| to_window(l, chrono::Duration::hours(5)));
+        let weekly = weekly.and_then(|l| to_window(l, chrono::Duration::days(7)));
+        let mcp = classify_time_bucket(&data.limits)
+            .ok()
+            .flatten()
+            .and_then(|l| to_window(l, chrono::Duration::days(30)));
 
         // Prefer the response's `level` field, then any config-provided tier.
         let level = if !data.level.is_empty() {
@@ -205,16 +259,16 @@ impl Envelope {
     }
 }
 
-fn to_window(l: &LimitEntry, dur: chrono::Duration) -> UsageWindow {
-    let utilization_pct = l.percentage.round().clamp(0.0, 100.0) as i32;
+fn to_window(l: &LimitEntry, dur: chrono::Duration) -> Option<UsageWindow> {
+    let utilization_pct = l.percentage?.round().clamp(0.0, 100.0) as i32;
     let resets_at = l
         .next_reset_time
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);
-    UsageWindow {
+    Some(UsageWindow {
         utilization_pct,
         resets_at,
         window_duration: dur,
-    }
+    })
 }
 
 fn capitalize(s: &str) -> String {
@@ -269,7 +323,7 @@ mod tests {
     #[test]
     fn percentage_with_float_rounds() {
         let body = r#"{"data":{"limits":[
-            {"type":"TOKENS_LIMIT","percentage":42.7}
+            {"type":"TOKENS_LIMIT","unit":3,"percentage":42.7}
         ],"level":"max"},"success":true}"#;
         let env: Envelope = serde_json::from_str(body).unwrap();
         let snap = env.into_snapshot(None);
@@ -277,9 +331,9 @@ mod tests {
     }
 
     #[test]
-    fn percentage_clamps_to_hundred() {
+    fn benign_percentage_overshoot_clamps_to_hundred() {
         let body = r#"{"data":{"limits":[
-            {"type":"TOKENS_LIMIT","percentage":150}
+            {"type":"TOKENS_LIMIT","unit":3,"percentage":100.6}
         ]},"success":true}"#;
         let env: Envelope = serde_json::from_str(body).unwrap();
         let snap = env.into_snapshot(None);
@@ -380,19 +434,57 @@ mod tests {
         assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 15);
     }
 
-    /// Carve-out: bodies (and caches) predating `unit` carry no discriminator,
-    /// so position is all there ever was for them.
     #[test]
-    fn bodies_without_any_unit_still_fall_back_to_position() {
+    fn bodies_without_any_unit_are_rejected_not_guessed_by_position() {
         let body = r#"{"data":{"limits":[
             {"type":"TOKENS_LIMIT","percentage":10},
             {"type":"TOKENS_LIMIT","percentage":20}
         ],"level":"lite"},"success":true}"#;
         let env: Envelope = serde_json::from_str(body).unwrap();
-        env.check_ok().unwrap();
+        let err = env.check_ok().unwrap_err().to_string();
+        assert!(err.contains("no unit discriminator"), "{err}");
         let snap = env.into_snapshot(None);
-        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 10);
-        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 20);
+        assert!(snap.session.is_none());
+        assert!(snap.weekly.is_none());
+    }
+
+    #[test]
+    fn a_named_bucket_without_percentage_is_rejected_not_zeroed() {
+        let body = r#"{"data":{"limits":[
+            {"type":"TOKENS_LIMIT","unit":3,"number":5}
+        ]},"success":true}"#;
+        let env: Envelope = serde_json::from_str(body).unwrap();
+        let err = env.check_ok().unwrap_err().to_string();
+        assert!(err.contains("session limit carried no percentage"), "{err}");
+        assert!(env.into_snapshot(None).session.is_none());
+    }
+
+    #[test]
+    fn duplicate_time_limit_is_rejected_not_selected_by_position() {
+        let body = r#"{"data":{"limits":[
+            {"type":"TIME_LIMIT","unit":5,"percentage":10},
+            {"type":"TIME_LIMIT","unit":5,"percentage":20}
+        ]},"success":true}"#;
+        let env: Envelope = serde_json::from_str(body).unwrap();
+        let err = env.check_ok().unwrap_err().to_string();
+        assert!(err.contains("two TIME_LIMIT"), "{err}");
+        assert!(env.into_snapshot(None).mcp.is_none());
+    }
+
+    #[test]
+    fn invalid_percentage_and_reset_values_are_schema_drift() {
+        for percentage in ["-1", "101.5", "150"] {
+            let body = format!(
+                r#"{{"data":{{"limits":[{{"type":"TOKENS_LIMIT","unit":3,"percentage":{percentage}}}]}},"success":true}}"#
+            );
+            assert!(serde_json::from_str::<Envelope>(&body).is_err(), "{body}");
+        }
+        for reset in ["-1", "1.5", "true", r#""later""#] {
+            let body = format!(
+                r#"{{"data":{{"limits":[{{"type":"TOKENS_LIMIT","unit":3,"percentage":0,"nextResetTime":{reset}}}]}},"success":true}}"#
+            );
+            assert!(serde_json::from_str::<Envelope>(&body).is_err(), "{body}");
+        }
     }
 
     #[test]
@@ -404,7 +496,7 @@ mod tests {
     #[test]
     fn reset_time_zero_or_null_becomes_none() {
         let body = r#"{"data":{"limits":[
-            {"type":"TOKENS_LIMIT","percentage":0,"nextResetTime":null}
+            {"type":"TOKENS_LIMIT","unit":3,"percentage":0,"nextResetTime":null}
         ]},"success":true}"#;
         let env: Envelope = serde_json::from_str(body).unwrap();
         let snap = env.into_snapshot(None);

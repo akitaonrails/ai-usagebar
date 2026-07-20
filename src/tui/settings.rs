@@ -200,6 +200,9 @@ pub enum Action {
     Close,
     /// Save just succeeded — caller should refresh affected vendors.
     SavedAndClose,
+    /// Quit the host TUI. Ctrl-C remains global even while the overlay owns
+    /// keyboard focus.
+    Quit,
 }
 
 /// Permission note appended to the "saved" status line. The overlay `chmod
@@ -225,6 +228,9 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
     // Esc always closes without saving.
     if matches!(code, KeyCode::Esc) {
         return Action::Close;
+    }
+    if matches!(code, KeyCode::Char('c')) && mods.contains(KeyModifiers::CONTROL) {
+        return Action::Quit;
     }
     // Ctrl-S triggers save from any field.
     if matches!(code, KeyCode::Char('s')) && mods.contains(KeyModifiers::CONTROL) {
@@ -273,12 +279,17 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
     }
 
     // A modifier chord is not text. The overlay swallows every key while open,
-    // so without this Ctrl-C types "c" into the focused API key instead of
-    // reaching the app's quit binding, and every other chord corrupts the
+    // so every unhandled chord must be ignored rather than corrupting the
     // secret silently. SHIFT is deliberately not rejected — it is how
-    // uppercase arrives.
+    // uppercase arrives. Ctrl-C was handled above because it is a global quit.
     if matches!(code, KeyCode::Char(_))
-        && mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && mods.intersects(
+            KeyModifiers::CONTROL
+                | KeyModifiers::ALT
+                | KeyModifiers::SUPER
+                | KeyModifiers::HYPER
+                | KeyModifiers::META,
+        )
     {
         return Action::Continue;
     }
@@ -353,7 +364,11 @@ fn save_to_config_default(state: &SettingsState) -> Result<()> {
 /// Same as `save_to_config_default` but with an explicit path — exposed
 /// for tests.
 pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
-    let original = std::fs::read_to_string(path).unwrap_or_default();
+    let original = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(AppError::io_at(path, error)),
+    };
     let mut doc: DocumentMut = if original.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -824,6 +839,17 @@ api_key_env = "OPENROUTER_API_KEY"
     }
 
     #[test]
+    fn save_refuses_to_replace_an_unreadable_existing_config() {
+        let (_dir, path) = temp_config(None);
+        let original = [0xff, 0xfe, 0xfd];
+        std::fs::write(&path, original).unwrap();
+        let state = state_with("new-secret", "", VendorId::Zai);
+
+        assert!(save_to_path(&state, &path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
     fn save_does_not_write_empty_key_when_dirty_but_blank() {
         let (_dir, path) = temp_config(None);
         let mut s = state_with("", "", VendorId::Anthropic);
@@ -1079,11 +1105,11 @@ primary = "deepseek"
     }
 
     #[test]
-    fn handle_key_ctrl_c_does_not_type_into_key_field() {
+    fn handle_key_ctrl_c_quits_without_typing_into_key_field() {
         let mut s = state_focused_on_zai();
         assert_eq!(
             handle_key(&mut s, KeyCode::Char('c'), KeyModifiers::CONTROL),
-            Action::Continue
+            Action::Quit
         );
         assert!(s.zai.buf.is_empty());
         // Untouched means save still leaves an existing key on disk alone.
@@ -1096,6 +1122,16 @@ primary = "deepseek"
         handle_key(&mut s, KeyCode::Char('x'), KeyModifiers::ALT);
         assert!(s.zai.buf.is_empty());
         assert!(!s.zai.dirty);
+    }
+
+    #[test]
+    fn handle_key_platform_modifier_chords_do_not_type_into_key_field() {
+        for modifier in [KeyModifiers::SUPER, KeyModifiers::HYPER, KeyModifiers::META] {
+            let mut s = state_focused_on_zai();
+            handle_key(&mut s, KeyCode::Char('x'), modifier);
+            assert!(s.zai.buf.is_empty(), "modifier {modifier:?}");
+            assert!(!s.zai.dirty, "modifier {modifier:?}");
+        }
     }
 
     #[test]

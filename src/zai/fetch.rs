@@ -317,7 +317,7 @@ mod tests {
 
         let (_td, cache) = cache_fixture();
         let seed = r#"{"code":200,"data":{"limits":[
-            {"type":"TOKENS_LIMIT","percentage":10}
+            {"type":"TOKENS_LIMIT","unit":3,"percentage":10}
         ],"level":"lite"},"success":true}"#;
         cache.write_payload(seed.as_bytes()).unwrap();
 

@@ -43,8 +43,8 @@ pub async fn read_body_capped(
     }
     let mut buf: Vec<u8> = Vec::new();
     while let Some(chunk) = resp.chunk().await? {
-        if buf.len() + chunk.len() > max {
-            return Err(too_big((buf.len() + chunk.len()) as u64));
+        if chunk.len() > max.saturating_sub(buf.len()) {
+            return Err(too_big(buf.len().saturating_add(chunk.len()) as u64));
         }
         buf.extend_from_slice(&chunk);
     }
@@ -164,6 +164,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(read_body_capped(resp, 1024).await.unwrap(), b"hello");
+    }
+
+    #[tokio::test]
+    async fn chunked_body_without_content_length_still_hits_the_cap() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/chunked")
+            .with_status(200)
+            .with_chunked_body(|writer| writer.write_all(&[b'x'; 4096]))
+            .create_async()
+            .await;
+
+        let response = reqwest::Client::new()
+            .get(format!("{}/chunked", server.url()))
+            .send()
+            .await
+            .unwrap();
+        assert!(response.content_length().is_none());
+        let error = read_body_capped(response, 1024).await.unwrap_err();
+        assert!(error.to_string().contains("exceeds"), "{error}");
     }
 
     #[test]

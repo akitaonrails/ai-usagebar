@@ -58,7 +58,7 @@ pub async fn fetch_snapshot(
 
     match fetch_live(client, &endpoints.usages, api_key).await {
         Ok(snap) => {
-            let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap_or_default();
+            let bytes = serde_json::to_vec(&snap_to_json(&snap))?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,

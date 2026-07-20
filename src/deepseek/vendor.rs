@@ -27,15 +27,10 @@ pub fn build_placeholders(snap: &DeepseekSnapshot) -> HashMap<&'static str, Stri
         // spend denominator (`/user/balance` reports only money *remaining*),
         // so these percentages are structurally meaningless for this vendor.
         //
-        // They stay "0" rather than a "—" marker on purpose: both native
-        // surfaces coerce a non-numeric percentage straight back to zero
-        // (`n(1) ?? 0` in macos/ai-usagebar-menubar.swift, `integer(…) ?? 0` in
-        // gnome-extension/extension.js), so emitting "—" would change nothing
-        // they render while implying a fix that is not there. Suppressing the
-        // two bars for a balance vendor has to happen on the surface side —
-        // both already do exactly that for the scoped window, which they only
-        // draw when its percentage parses — and that is a rendering change for
-        // every vendor, so it is left as its own piece of work.
+        // These remain numeric for compatibility with generic third-party
+        // formats. The bundled native surfaces key off `vendor_short` and hide
+        // both quota rows for DeepSeek, so the aliases never become fake 0%
+        // bars there.
         ("session_pct", "0".to_string()),
         ("session_reset", "—".to_string()),
         ("weekly_pct", "0".to_string()),

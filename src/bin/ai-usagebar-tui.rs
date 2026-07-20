@@ -194,6 +194,7 @@ where
                                 app.select_primary(config.ui.primary);
                                 spawn_all(app, client, config, &tx);
                             }
+                            SAction::Quit => return Ok(()),
                         }
                         continue;
                     }

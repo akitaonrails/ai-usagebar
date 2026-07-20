@@ -26,13 +26,41 @@ struct RefreshRequest<'a> {
 
 #[derive(Debug, Deserialize)]
 pub struct RefreshResponse {
+    #[serde(deserialize_with = "de_nonempty_string")]
     pub access_token: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_nonempty_string")]
     pub refresh_token: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_nonempty_string")]
     pub id_token: Option<String>,
     #[serde(default, deserialize_with = "de_expires_in")]
     pub expires_in: Option<u64>,
+}
+
+fn de_nonempty_string<'de, D>(d: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(d)?;
+    if value.trim().is_empty() {
+        Err(serde::de::Error::custom("token cannot be empty"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn de_opt_nonempty_string<'de, D>(d: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(d)?
+        .map(|value| {
+            if value.trim().is_empty() {
+                Err(serde::de::Error::custom("token cannot be empty"))
+            } else {
+                Ok(value)
+            }
+        })
+        .transpose()
 }
 
 fn de_expires_in<'de, D>(d: D) -> std::result::Result<Option<u64>, D::Error>
@@ -40,11 +68,28 @@ where
     D: serde::Deserializer<'de>,
 {
     let v = serde_json::Value::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::Null => None,
-        serde_json::Value::Number(n) => n.as_u64().or_else(|| n.as_f64().map(|f| f as u64)),
-        _ => None,
-    })
+    match v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(n) => {
+            const MAX_SAFE_EXPIRES_IN: u64 = (i64::MAX as u64) / 2;
+            if let Some(value) = n.as_u64().filter(|value| *value <= MAX_SAFE_EXPIRES_IN) {
+                Ok(Some(value))
+            } else if let Some(value) = n.as_f64()
+                && value.is_finite()
+                && value.fract() == 0.0
+                && (0.0..=MAX_SAFE_EXPIRES_IN as f64).contains(&value)
+            {
+                Ok(Some(value as u64))
+            } else {
+                Err(serde::de::Error::custom(
+                    "expires_in must be a non-negative integer in range",
+                ))
+            }
+        }
+        other => Err(serde::de::Error::custom(format!(
+            "expires_in must be a number or null, got {other:?}"
+        ))),
+    }
 }
 
 pub async fn refresh(
@@ -67,10 +112,8 @@ pub async fn refresh(
         .await?;
 
     let status = resp.status();
-    let body = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES)
-        .await
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
-        .unwrap_or_default();
+    let body = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
+    let body = String::from_utf8_lossy(&body).into_owned();
     if !status.is_success() {
         let msg = crate::anthropic::oauth::parse_error_body(&body)
             .unwrap_or_else(|| "Refresh failed".into());
@@ -96,6 +139,41 @@ mod tests {
         let now = 1_000_000;
         assert!(needs_refresh(now + 100, now));
         assert!(!needs_refresh(now + 1000, now));
+    }
+
+    #[test]
+    fn malformed_optional_expires_in_is_not_treated_as_absent() {
+        for value in [
+            "3600.5",
+            "-1",
+            "1e300",
+            "18446744073709551615",
+            "true",
+            r#""3600""#,
+        ] {
+            let body = format!(r#"{{"access_token":"new","expires_in":{value}}}"#);
+            assert!(
+                serde_json::from_str::<RefreshResponse>(&body).is_err(),
+                "{body}"
+            );
+        }
+        let response: RefreshResponse =
+            serde_json::from_str(r#"{"access_token":"new","expires_in":null}"#).unwrap();
+        assert_eq!(response.expires_in, None);
+    }
+
+    #[test]
+    fn empty_refresh_tokens_are_schema_drift_not_credentials_to_persist() {
+        for body in [
+            r#"{"access_token":""}"#,
+            r#"{"access_token":"new","refresh_token":"   "}"#,
+            r#"{"access_token":"new","id_token":""}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<RefreshResponse>(body).is_err(),
+                "{body}"
+            );
+        }
     }
 
     #[tokio::test]

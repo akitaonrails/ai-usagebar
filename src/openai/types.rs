@@ -37,12 +37,11 @@ pub struct RateLimit {
     pub secondary_window: Option<Window>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Window {
-    #[serde(deserialize_with = "de_int_or_float_lenient")]
-    pub used_percent: i64,
-    #[serde(deserialize_with = "de_int_or_float_lenient")]
+    #[serde(deserialize_with = "de_percent_number_or_string")]
+    pub used_percent: f64,
+    #[serde(deserialize_with = "de_i64_number_or_string")]
     pub limit_window_seconds: i64,
     /// Unix seconds. May be absent on older Codex CLIs.
     #[serde(default, deserialize_with = "de_opt_int_or_float")]
@@ -52,11 +51,10 @@ pub struct Window {
     pub reset_after_seconds: Option<i64>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreditsBlock {
-    #[serde(deserialize_with = "de_money_string")]
-    pub balance: String,
+    #[serde(default, deserialize_with = "de_opt_money_string")]
+    pub balance: Option<String>,
     pub has_credits: bool,
     pub unlimited: bool,
     #[serde(default)]
@@ -65,44 +63,78 @@ pub struct CreditsBlock {
     pub approx_cloud_messages: Option<Vec<i64>>,
 }
 
-/// Accept a JSON int or float (the API returns these counters as either),
-/// plus a numeric string — the same value in a third coat of paint. Anything
-/// else (null, bool, array, object, unparseable string) is schema drift and
-/// must fail the parse: `fetch_usage` validates before writing the cache, so a
-/// fabricated `0` here would be persisted and rendered as a real 0% bar.
-fn de_int_or_float_lenient<'de, D>(d: D) -> Result<i64, D::Error>
+/// Accept a JSON number or numeric string without turning malformed, non-finite
+/// or out-of-range values into plausible counters. `fetch_usage` validates
+/// before writing the cache, so a fabricated value here would be persisted and
+/// rendered as genuine usage.
+fn numeric_value<E: serde::de::Error>(v: serde_json::Value) -> Result<f64, E> {
+    let value = match v {
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .ok_or_else(|| E::custom("number is not representable as f64"))?,
+        serde_json::Value::String(s) => s
+            .parse::<f64>()
+            .map_err(|_| E::custom(format!("expected numeric string, got {s:?}")))?,
+        other => {
+            return Err(E::custom(format!(
+                "expected number or numeric string, got {other:?}"
+            )));
+        }
+    };
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(E::custom("number is not finite"))
+    }
+}
+
+fn de_percent_number_or_string<'de, D>(d: D) -> Result<f64, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let v = serde_json::Value::deserialize(d)?;
-    match v {
+    let value = numeric_value::<D::Error>(v)?;
+    if (0.0..=101.0).contains(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "percentage {value} outside 0..=100"
+        )))
+    }
+}
+
+fn de_i64_number_or_string<'de, D>(d: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    i64_value(serde_json::Value::deserialize(d)?)
+}
+
+fn i64_value<E: serde::de::Error>(v: serde_json::Value) -> Result<i64, E> {
+    match &v {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i)
-            } else if let Some(i) = n.as_f64().and_then(exact_i64) {
-                Ok(i)
-            } else {
-                Err(serde::de::Error::custom("number out of i64 range"))
+                return Ok(i);
             }
         }
-        serde_json::Value::String(s) => s
-            .parse::<i64>()
-            .ok()
-            .or_else(|| s.parse::<f64>().ok().and_then(exact_i64))
-            .ok_or_else(|| serde::de::Error::custom(format!("expected numeric string, got {s:?}"))),
-        other => Err(serde::de::Error::custom(format!(
-            "expected number or numeric string, got {other:?}"
-        ))),
+        serde_json::Value::String(s) => {
+            if let Ok(i) = s.parse::<i64>() {
+                return Ok(i);
+            }
+        }
+        _ => {}
     }
+    exact_i64(numeric_value::<E>(v)?).ok_or_else(|| E::custom("expected an integer in i64 range"))
 }
 
 /// `f as i64` saturates instead of failing, so `NaN` would coin a `0` and
 /// `1e300` an `i64::MAX` — both indistinguishable from a counter the API
-/// really sent. Only a magnitude the cast reproduces exactly survives.
+/// really sent. Only an integral magnitude that an `f64` represents exactly
+/// survives; timestamps and window lengths cannot silently lose a fraction or
+/// low bit. Plain JSON/string integers take the exact `i64` path above.
 fn exact_i64(f: f64) -> Option<i64> {
-    // `i64::MAX as f64` rounds up to 2^63, hence the strict upper bound;
-    // `i64::MIN as f64` is exact, so its bound is inclusive.
-    if f.is_finite() && f >= i64::MIN as f64 && f < i64::MAX as f64 {
+    const MAX_EXACT_F64_INT: f64 = (1_u64 << 53) as f64;
+    if f.is_finite() && f.trunc() == f && f.abs() <= MAX_EXACT_F64_INT {
         Some(f as i64)
     } else {
         None
@@ -114,24 +146,33 @@ where
     D: serde::Deserializer<'de>,
 {
     let v = serde_json::Value::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::Null => None,
-        serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
-        _ => None,
-    })
+    if v.is_null() {
+        Ok(None)
+    } else {
+        i64_value::<D::Error>(v).map(Some)
+    }
 }
 
-/// Accept either a string ("$0.00") or a number (0.0) — codexbar treats both.
-fn de_money_string<'de, D>(d: D) -> Result<String, D::Error>
+/// Accept either a string ("$0.00") or a finite number (0.0) — codexbar
+/// treats both. Null and an omitted field mean that no balance was supplied.
+fn de_opt_money_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let v = serde_json::Value::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Number(n) => format!("${:.2}", n.as_f64().unwrap_or(0.0)),
-        _ => "$0.00".to_string(),
-    })
+    match v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(s) => Ok(Some(s)),
+        serde_json::Value::Number(n) => match n.as_f64() {
+            Some(value) if value.is_finite() => Ok(Some(format!("${value:.2}"))),
+            _ => Err(serde::de::Error::custom(
+                "credit balance is not a finite number",
+            )),
+        },
+        other => Err(serde::de::Error::custom(format!(
+            "expected credit balance string, number, or null; got {other:?}"
+        ))),
+    }
 }
 
 impl UsageResponse {
@@ -148,7 +189,7 @@ impl UsageResponse {
             .map(|w| to_window(&w, chrono::Duration::days(7)));
 
         let credits = self.credits.map(|c| OpenAiCredits {
-            balance: c.balance,
+            balance: c.balance.unwrap_or_default(),
             has_credits: c.has_credits,
             unlimited: c.unlimited,
             approx_local_messages: range_from_vec(c.approx_local_messages),
@@ -192,7 +233,7 @@ fn to_window(w: &Window, default_dur: chrono::Duration) -> UsageWindow {
             .and_then(|d| chrono::Utc::now().checked_add_signed(d)),
     };
     UsageWindow {
-        utilization_pct: (w.used_percent as i32).clamp(0, 100),
+        utilization_pct: (w.used_percent.round() as i32).clamp(0, 100),
         resets_at,
         window_duration: dur,
     }
@@ -286,12 +327,25 @@ mod tests {
     }
 
     #[test]
-    fn used_percent_clamps_to_hundred() {
+    fn benign_percent_overshoot_clamps_to_hundred() {
         let body =
-            r#"{"rate_limit":{"primary_window":{"used_percent":250,"limit_window_seconds":1}}}"#;
+            r#"{"rate_limit":{"primary_window":{"used_percent":100.6,"limit_window_seconds":1}}}"#;
         let r: UsageResponse = serde_json::from_str(body).unwrap();
         let s = r.into_snapshot(None);
         assert_eq!(s.session.utilization_pct, 100);
+    }
+
+    #[test]
+    fn out_of_range_percent_is_schema_drift() {
+        for used_percent in ["-1", "101.5", "250"] {
+            let body = format!(
+                r#"{{"rate_limit":{{"primary_window":{{"used_percent":{used_percent},"limit_window_seconds":1}}}}}}"#
+            );
+            assert!(
+                serde_json::from_str::<UsageResponse>(&body).is_err(),
+                "{used_percent} must not become a clamped usage value"
+            );
+        }
     }
 
     #[test]
@@ -302,17 +356,31 @@ mod tests {
     }
 
     #[test]
-    fn window_counters_accept_int_float_and_numeric_string() {
+    fn window_counters_accept_fractional_percent_and_integral_number_forms() {
         let w: Window =
-            serde_json::from_str(r#"{"used_percent":7,"limit_window_seconds":18000.9}"#).unwrap();
-        assert_eq!(w.used_percent, 7);
+            serde_json::from_str(r#"{"used_percent":7.4,"limit_window_seconds":18000.0}"#).unwrap();
+        assert_eq!(w.used_percent, 7.4);
         assert_eq!(w.limit_window_seconds, 18000);
 
         let w: Window =
-            serde_json::from_str(r#"{"used_percent":"42","limit_window_seconds":"604800.5"}"#)
+            serde_json::from_str(r#"{"used_percent":"42.7","limit_window_seconds":"604800.0"}"#)
                 .unwrap();
-        assert_eq!(w.used_percent, 42);
+        assert_eq!(w.used_percent, 42.7);
         assert_eq!(w.limit_window_seconds, 604800);
+
+        let r: UsageResponse = serde_json::from_str(
+            r#"{"rate_limit":{"primary_window":{"used_percent":42.7,"limit_window_seconds":18000}}}"#,
+        )
+        .unwrap();
+        assert_eq!(r.into_snapshot(None).session.utilization_pct, 43);
+    }
+
+    #[test]
+    fn fractional_integer_counters_are_schema_drift() {
+        for value in ["18000.9", r#""604800.5""#] {
+            let body = format!(r#"{{"used_percent":7,"limit_window_seconds":{value}}}"#);
+            assert!(serde_json::from_str::<Window>(&body).is_err(), "{value}");
+        }
     }
 
     #[test]
@@ -359,13 +427,45 @@ mod tests {
     }
 
     #[test]
-    fn omitted_counters_still_default_to_zero() {
-        // Deliberate boundary: an *absent* counter keeps the struct-level
-        // `#[serde(default)]`, matching the optional `code_review_rate_limit`
-        // blocks. Only a present-but-wrong value counts as drift.
-        let w: Window = serde_json::from_str("{}").unwrap();
-        assert_eq!(w.used_percent, 0);
-        assert_eq!(w.limit_window_seconds, 0);
+    fn a_present_window_requires_both_counters() {
+        for body in [
+            r#"{"used_percent":1}"#,
+            r#"{"limit_window_seconds":18000}"#,
+            "{}",
+        ] {
+            assert!(serde_json::from_str::<Window>(body).is_err(), "{body}");
+        }
+    }
+
+    #[test]
+    fn malformed_optional_counters_are_not_treated_as_absent() {
+        for field in ["reset_at", "reset_after_seconds"] {
+            for bad in ["true", r#""tomorrow""#, "1.5", "{}"] {
+                let body =
+                    format!(r#"{{"used_percent":1,"limit_window_seconds":18000,"{field}":{bad}}}"#);
+                assert!(serde_json::from_str::<Window>(&body).is_err(), "{body}");
+            }
+        }
+    }
+
+    #[test]
+    fn credits_reject_invalid_present_values_without_inventing_zero() {
+        for balance in ["true", "{}", "[]"] {
+            let body = format!(
+                r#"{{"credits":{{"balance":{balance},"has_credits":true,"unlimited":false}}}}"#
+            );
+            assert!(serde_json::from_str::<UsageResponse>(&body).is_err());
+        }
+        assert!(
+            serde_json::from_str::<UsageResponse>(r#"{"credits":{"balance":"$1.00"}}"#).is_err(),
+            "a present credits block must not default its status flags"
+        );
+
+        let response: UsageResponse = serde_json::from_str(
+            r#"{"credits":{"balance":null,"has_credits":false,"unlimited":true}}"#,
+        )
+        .unwrap();
+        assert_eq!(response.into_snapshot(None).credits.unwrap().balance, "");
     }
 
     #[test]

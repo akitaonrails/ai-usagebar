@@ -63,32 +63,42 @@ pub struct Window {
     pub resets_at: Option<String>,
 }
 
-/// Pay-as-you-go extra usage. Both money values are integer cents, but the
-/// API sometimes returns them as floats (e.g. `0.0`) so we accept either.
+/// Pay-as-you-go extra usage. Both money values are non-negative integer cents,
+/// but the API sometimes returns integral floats (e.g. `0.0`). Missing values
+/// remain absent so an enabled but incomplete block cannot manufacture $0.00.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ExtraUsageBlock {
     #[serde(default)]
     pub is_enabled: bool,
-    #[serde(default, deserialize_with = "de_int_or_float")]
-    pub monthly_limit: i64,
-    #[serde(default, deserialize_with = "de_int_or_float")]
-    pub used_credits: i64,
+    #[serde(default, deserialize_with = "de_opt_cents")]
+    pub monthly_limit: Option<i64>,
+    #[serde(default, deserialize_with = "de_opt_cents")]
+    pub used_credits: Option<i64>,
 }
 
-/// Accept JSON int or float, truncating floats. Mirrors claudebar's
-/// `(.field // 0) | floor` jq pattern.
-fn de_int_or_float<'de, D>(d: D) -> std::result::Result<i64, D::Error>
+fn de_opt_cents<'de, D>(d: D) -> std::result::Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let v = serde_json::Value::deserialize(d)?;
     match v {
-        serde_json::Value::Null => Ok(0),
+        serde_json::Value::Null => Ok(None),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i)
+                if i >= 0 {
+                    Ok(Some(i))
+                } else {
+                    Err(serde::de::Error::custom("cents cannot be negative"))
+                }
             } else if let Some(f) = n.as_f64() {
-                Ok(f as i64)
+                const MAX_EXACT_F64_INT: f64 = (1_u64 << 53) as f64;
+                if f.is_finite() && f.fract() == 0.0 && (0.0..=MAX_EXACT_F64_INT).contains(&f) {
+                    Ok(Some(f as i64))
+                } else {
+                    Err(serde::de::Error::custom(
+                        "cents must be a non-negative integer in range",
+                    ))
+                }
             } else {
                 Err(serde::de::Error::custom("number out of i64 range"))
             }
@@ -175,13 +185,12 @@ impl UsageResponse {
         let session = to_window(self.five_hour, SESSION);
         let weekly = to_window(self.seven_day, WEEKLY);
         let sonnet = self.seven_day_sonnet.map(|w| to_window(Some(w), WEEKLY));
-        let extra = self
-            .extra_usage
-            .filter(|e| e.is_enabled)
-            .map(|e| ExtraUsage {
-                limit: Cents(e.monthly_limit),
-                spent: Cents(e.used_credits),
-            });
+        let extra = self.extra_usage.filter(|e| e.is_enabled).and_then(|e| {
+            Some(ExtraUsage {
+                limit: Cents(e.monthly_limit?),
+                spent: Cents(e.used_credits?),
+            })
+        });
         let scoped = self
             .limits
             .into_iter()
@@ -300,6 +309,39 @@ mod tests {
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Pro".into());
         assert!(snap.extra.is_none());
+    }
+
+    #[test]
+    fn enabled_incomplete_extra_usage_does_not_invent_zero_money() {
+        for raw in [
+            r#"{"extra_usage":{"is_enabled":true,"monthly_limit":5000}}"#,
+            r#"{"extra_usage":{"is_enabled":true,"used_credits":250}}"#,
+            r#"{"extra_usage":{"is_enabled":true,"monthly_limit":null,"used_credits":250}}"#,
+        ] {
+            let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+            assert!(resp.into_snapshot("Pro".into()).extra.is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn malformed_cent_values_are_schema_drift() {
+        for value in ["-1", "1.5", "1e300", "true", r#""lots""#] {
+            let raw = format!(
+                r#"{{"extra_usage":{{"is_enabled":true,"monthly_limit":{value},"used_credits":0}}}}"#
+            );
+            assert!(
+                serde_json::from_str::<UsageResponse>(&raw).is_err(),
+                "{raw}"
+            );
+        }
+
+        let resp: UsageResponse = serde_json::from_str(
+            r#"{"extra_usage":{"is_enabled":true,"monthly_limit":5000.0,"used_credits":250.0}}"#,
+        )
+        .unwrap();
+        let extra = resp.into_snapshot("Pro".into()).extra.unwrap();
+        assert_eq!(extra.limit.0, 5000);
+        assert_eq!(extra.spent.0, 250);
     }
 
     #[test]

@@ -26,15 +26,34 @@ impl BalanceResponse {
     /// deserialize into a confident $0.00 that then overwrote a good cache.
     /// Drift must surface as a schema error instead.
     pub fn into_snapshot(self) -> Result<DeepseekSnapshot> {
-        // Prefer USD, fall back to CNY, then whatever's first.
-        let info = self
-            .balance_infos
-            .iter()
-            .find(|b| b.currency == "USD")
-            .or_else(|| self.balance_infos.iter().find(|b| b.currency == "CNY"))
-            .or_else(|| self.balance_infos.first())
+        // The documented endpoint reports USD and/or CNY. Rendering an unknown
+        // currency through the USD-scale balance UI would attach meaning and
+        // severity thresholds we cannot justify, so do not select one merely
+        // because it happened to be first.
+        fn unique<'a>(infos: &'a [BalanceInfo], currency: &str) -> Result<Option<&'a BalanceInfo>> {
+            let mut matching = infos.iter().filter(|info| info.currency == currency);
+            let first = matching.next();
+            if matching.next().is_some() {
+                return Err(AppError::Schema(format!(
+                    "deepseek: response carried duplicate {currency} balances"
+                )));
+            }
+            Ok(first)
+        }
+        let info = unique(&self.balance_infos, "USD")?
+            .or(unique(&self.balance_infos, "CNY")?)
             .ok_or_else(|| {
-                AppError::Schema("deepseek: response carried no balance records".into())
+                let currencies = self
+                    .balance_infos
+                    .iter()
+                    .map(|info| info.currency.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                AppError::Schema(if currencies.is_empty() {
+                    "deepseek: response carried no balance records".into()
+                } else {
+                    format!("deepseek: response carried no USD or CNY balance (saw {currencies})")
+                })
             })?;
 
         Ok(DeepseekSnapshot {
@@ -118,6 +137,34 @@ mod tests {
         let raw = r#"{"is_available": false, "balance_infos": []}"#;
         let r: BalanceResponse = serde_json::from_str(raw).unwrap();
         assert!(matches!(r.into_snapshot(), Err(AppError::Schema(_))));
+    }
+
+    #[test]
+    fn unsupported_currency_is_schema_error_not_usd_scaled() {
+        let raw = r#"{
+            "is_available": true,
+            "balance_infos": [
+                {"currency": "EUR", "total_balance": "20.00", "granted_balance": "20.00", "topped_up_balance": "0.00"}
+            ]
+        }"#;
+        let r: BalanceResponse = serde_json::from_str(raw).unwrap();
+        let err = r.into_snapshot().unwrap_err().to_string();
+        assert!(err.contains("no USD or CNY"), "{err}");
+        assert!(err.contains("EUR"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_supported_currency_is_schema_error_not_first_wins() {
+        let raw = r#"{
+            "is_available": true,
+            "balance_infos": [
+                {"currency": "USD", "total_balance": "1.00", "granted_balance": "1.00", "topped_up_balance": "0.00"},
+                {"currency": "USD", "total_balance": "2.00", "granted_balance": "2.00", "topped_up_balance": "0.00"}
+            ]
+        }"#;
+        let r: BalanceResponse = serde_json::from_str(raw).unwrap();
+        let err = r.into_snapshot().unwrap_err().to_string();
+        assert!(err.contains("duplicate USD"), "{err}");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import {barMarkup, colorForDelta, field, FIELD, FORMAT, integer, markerElapsed,
-    splitFormatOutput} from './marker-logic.js';
+import {barMarkup, colorForDelta, field, FIELD, FORMAT, hasUsageWindows, integer, markerElapsed,
+    plainTextFromPango, splitFormatOutput} from './marker-logic.js';
 
 const colors = {low: 'low', mid: 'mid', high: 'high', critical: 'critical', empty: 'empty'};
 const visibleCells = markup => markup.replace(/<[^>]+>/g, '');
@@ -15,18 +15,24 @@ assert.equal(integer('27'), 27);
 assert.equal(integer('27 ⏸'), null);
 assert.equal(integer('{scoped_elapsed}'), null);
 assert.equal(field('{scoped_model}'), '');
+assert.equal(plainTextFromPango('<span>A &amp; B &lt;b&gt;</span>'), 'A & B <b>');
+assert.equal(plainTextFromPango('&amp;lt;literal&amp;gt;'), '&lt;literal&gt;');
+assert.equal(hasUsageWindows('dsk'), false);
+assert.equal(hasUsageWindows('gpt'), true);
+assert.equal(hasUsageWindows('{vendor_short}'), true); // older binary compatibility
 const formatFields = FORMAT.split(';;');
 assert.deepEqual(formatFields, [
     '{plan}', '{session_pct}', '{session_reset}', '{weekly_pct}', '{weekly_reset}',
     '{sonnet_pct}', '{sonnet_reset}', '{extra_pct}', '{extra_spent}', '{extra_limit}',
     '{scoped_model}', '{scoped_pct}', '{scoped_reset}', '{session_elapsed}',
-    '{weekly_elapsed}', '{scoped_elapsed}', '__aiub_end__',
+    '{weekly_elapsed}', '{scoped_elapsed}', '{vendor_short}', '__aiub_end__',
 ]);
 assert.deepEqual(FIELD, {
     plan: 0, sessionPct: 1, sessionReset: 2, weeklyPct: 3, weeklyReset: 4,
     sonnetPct: 5, sonnetReset: 6, extraPct: 7, extraSpent: 8, extraLimit: 9,
     scopedModel: 10, scopedPct: 11, scopedReset: 12,
-    sessionElapsed: 13, weeklyElapsed: 14, scopedElapsed: 15, sentinel: 16,
+    sessionElapsed: 13, weeklyElapsed: 14, scopedElapsed: 15, vendorShort: 16,
+    sentinel: 17,
 });
 const values = {'{scoped_elapsed}': '27'};
 const framed = splitFormatOutput(formatFields.map(value => values[value] ?? value).join(';;') + ' ⏸');

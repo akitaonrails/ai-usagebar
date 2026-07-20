@@ -6,16 +6,30 @@ export const POINT_CRITICAL_MIN = 10;
 export const FORMAT = '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;' +
     '{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;' +
     '{scoped_model};;{scoped_pct};;{scoped_reset};;' +
-    '{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;__aiub_end__';
+    '{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short};;__aiub_end__';
 export const FIELD = Object.freeze({
     plan: 0, sessionPct: 1, sessionReset: 2, weeklyPct: 3, weeklyReset: 4,
     sonnetPct: 5, sonnetReset: 6, extraPct: 7, extraSpent: 8, extraLimit: 9,
     scopedModel: 10, scopedPct: 11, scopedReset: 12,
-    sessionElapsed: 13, weeklyElapsed: 14, scopedElapsed: 15, sentinel: 16,
+    sessionElapsed: 13, weeklyElapsed: 14, scopedElapsed: 15, vendorShort: 16,
+    sentinel: 17,
 });
 
 export function splitFormatOutput(text) {
     return String(text).split(';;');
+}
+
+// The CLI output is Pango markup. Strip only tags first, then decode one layer
+// of XML entities so API labels escaped by Rust display as literal text rather
+// than "&amp;". Decoding after tag removal cannot reintroduce active markup.
+export function plainTextFromPango(value) {
+    return String(value ?? '')
+        .replace(/<[^>]*>/g, '')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'")
+        .replace(/&amp;/g, '&');
 }
 
 export function field(value) {
@@ -31,6 +45,13 @@ export function integer(value) {
 
 export function markerElapsed(reset, elapsed) {
     return reset && reset !== '—' && Number.isFinite(elapsed) ? elapsed : null;
+}
+
+// Balance-only vendors do not expose generic rolling quota windows. Keep this
+// vendor-aware at the native surface so their compatibility aliases cannot
+// turn into confident 0% bars.
+export function hasUsageWindows(vendorShort) {
+    return field(vendorShort) !== 'dsk';
 }
 
 // Matches pacing::pace_severity: < -10 low, -10..=0 mid, 1..=9 high, >= 10 critical.
