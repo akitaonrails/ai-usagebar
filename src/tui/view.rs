@@ -28,14 +28,43 @@ pub fn draw(f: &mut Frame, app: &App) {
         .split(f.area());
 
     draw_header(f, app, chunks[0]);
-    draw_main(f, app, chunks[1]);
+    draw_body(f, app, chunks[1]);
     draw_footer(f, app, chunks[2]);
 
-    // Settings overlay sits on top — rendered last so it covers everything.
+    // Settings still floats on top of everything.
     if let Some(s) = &app.settings {
         crate::tui::settings::render(f, f.area(), s, &app.theme);
-    } else if let Some(context) = &app.context {
-        crate::tui::context::render(f, f.area(), context, &app.theme);
+    }
+}
+
+/// The dashboard body, plus the context view docked into it when open: `full`
+/// takes it over, `split` sits beside it, `bottom` sits below it.
+fn draw_body(f: &mut Frame, app: &App, area: Rect) {
+    use crate::config::ContextLayout;
+    use crate::tui::context;
+
+    let Some(state) = &app.context else {
+        draw_main(f, app, area);
+        return;
+    };
+    match state.layout {
+        ContextLayout::Full => context::render(f, area, state, &app.theme),
+        ContextLayout::Split => {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            draw_main(f, app, cols[0]);
+            context::render(f, cols[1], state, &app.theme);
+        }
+        ContextLayout::Bottom => {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(area);
+            draw_main(f, app, rows[0]);
+            context::render(f, rows[1], state, &app.theme);
+        }
     }
 }
 
@@ -331,6 +360,53 @@ mod tests {
         // passing off "now" as a response time.
         let app = app_with(vec![ready_at(None), TabState::Loading]);
         assert_eq!(header_refresh_text(&app), "last refresh —");
+    }
+
+    fn app_with_context(layout: crate::config::ContextLayout) -> App {
+        let mut app = app_with(vec![TabState::Loading, TabState::Loading]);
+        app.context_enabled = true;
+        app.context = Some({
+            let mut state = crate::tui::context::ContextState::new(layout);
+            state.apply_scan(0, Err("scan error".into()));
+            state
+        });
+        app
+    }
+
+    fn body_text(app: &App) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    #[test]
+    fn full_layout_takes_the_body_and_hides_the_vendor_sidebar() {
+        use crate::config::ContextLayout;
+        let out = body_text(&app_with_context(ContextLayout::Full));
+        assert!(out.contains("Claude context"), "{out}");
+        assert!(
+            !out.contains("vendors"),
+            "full layout must not leave the dashboard around it"
+        );
+    }
+
+    #[test]
+    fn split_and_bottom_layouts_keep_the_dashboard_visible() {
+        use crate::config::ContextLayout;
+        for layout in [ContextLayout::Split, ContextLayout::Bottom] {
+            let out = body_text(&app_with_context(layout));
+            assert!(out.contains("Claude context"), "{layout:?}: {out}");
+            assert!(out.contains("vendors"), "{layout:?}: {out}");
+        }
     }
 
     #[test]

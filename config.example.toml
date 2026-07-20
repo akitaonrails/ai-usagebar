@@ -17,6 +17,9 @@
 # discovered symlinks. Nothing is read while this remains disabled.
 [context]
 enabled = false
+# Where the view docks when opened: full (own screen) | split (beside the
+# dashboard) | bottom. `v` cycles it while open; this is the starting value.
+layout = "full"
 # projects_path = "~/.claude/projects"  # default
 # Set a fallback only when it matches the sessions you use. Without a known
 # denominator the overlay shows raw input tokens rather than inventing a %.

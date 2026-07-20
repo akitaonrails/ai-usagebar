@@ -9,6 +9,12 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- The local Claude context monitor docks into the dashboard body instead of
+  floating: `v` cycles `full` (its own screen) → `split` (beside the vendor
+  panel) → `bottom`. `[context] layout` sets the one it opens with.
+
 ## [0.14.0] — 2026-07-20
 
 ### Added

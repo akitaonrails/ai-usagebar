@@ -545,7 +545,7 @@ make clippy                                        # cargo clippy -D warnings
 - `r` — refresh active tab
 - `R` — refresh all tabs
 - `s` — open Settings overlay (primary vendor + API keys)
-- `c` — open local Claude context sessions (only when `[context] enabled = true`)
+- `c` — open local Claude context sessions (only when `[context] enabled = true`); `v` cycles its layout
 - `q` / `Esc` / `Ctrl-C` — quit
 
 Auto-refresh runs every 60 seconds in the background. Vendors use the same layout. Here's OpenRouter showing the credit balance gauge (red because 98% is consumed), usage-by-period totals, and tier:
@@ -561,6 +561,7 @@ Enable it by hand, restart the TUI, and press `c`:
 ```toml
 [context]
 enabled = true
+layout = "full"                          # full | split | bottom  (`v` cycles)
 # projects_path = "~/.claude/projects"  # this is the default
 # context_window_tokens = 200000         # optional fallback
 
@@ -568,6 +569,10 @@ enabled = true
 [context.model_context_window_tokens]
 "claude-opus-4-6" = 1000000
 ```
+
+By default the overlay takes the whole dashboard body — its own screen, not a
+popup with the vendor panel bleeding around it. `v` cycles where it sits:
+`full` → `split` (beside the vendor panel) → `bottom`.
 
 Use `↑`/`↓` or `j`/`k` to select a session, `Enter` for its detail gauge,
 `Esc` to return, and `r` to rescan. The percentage follows

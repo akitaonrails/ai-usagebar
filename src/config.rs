@@ -58,6 +58,38 @@ pub struct UiConfig {
     pub primary: Option<VendorId>,
 }
 
+/// Where the context view docks in the dashboard body. `v` cycles it while the
+/// overlay is open; the config value is what it opens with.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextLayout {
+    /// Takes the whole body, the way a vendor panel does.
+    #[default]
+    Full,
+    /// Beside the dashboard.
+    Split,
+    /// Below the dashboard.
+    Bottom,
+}
+
+impl ContextLayout {
+    pub fn next(self) -> Self {
+        match self {
+            ContextLayout::Full => ContextLayout::Split,
+            ContextLayout::Split => ContextLayout::Bottom,
+            ContextLayout::Bottom => ContextLayout::Full,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ContextLayout::Full => "full",
+            ContextLayout::Split => "split",
+            ContextLayout::Bottom => "bottom",
+        }
+    }
+}
+
 /// Optional local Claude Code context-window monitor. This is deliberately
 /// separate from vendors: sessions are discovered from local transcripts and
 /// change while the TUI is running, whereas vendor tabs are config-declared
@@ -76,6 +108,8 @@ pub struct ContextConfig {
     /// Exact Claude model id -> context-window size. This takes precedence
     /// over `context_window_tokens`, which keeps mixed 200K/1M histories safe.
     pub model_context_window_tokens: BTreeMap<String, u64>,
+    /// Where the view opens: full | split | bottom.
+    pub layout: ContextLayout,
 }
 
 impl ContextConfig {
@@ -758,6 +792,24 @@ enabled = false
         assert_eq!(
             config.context.window_tokens_for(Some("another-model")),
             Some(200_000)
+        );
+    }
+
+    #[test]
+    fn context_layout_defaults_to_full_and_parses_each_variant() {
+        assert_eq!(Config::default().context.layout, ContextLayout::Full);
+        for (text, want) in [
+            ("full", ContextLayout::Full),
+            ("split", ContextLayout::Split),
+            ("bottom", ContextLayout::Bottom),
+        ] {
+            let file = write_toml(&format!("[context]\nlayout = \"{text}\"\n"));
+            assert_eq!(Config::load_from(file.path()).unwrap().context.layout, want);
+        }
+        let file = write_toml("[context]\nlayout = \"floating\"\n");
+        assert!(
+            Config::load_from(file.path()).is_err(),
+            "an unknown layout must be rejected, not silently defaulted"
         );
     }
 
