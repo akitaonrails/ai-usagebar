@@ -9,6 +9,26 @@ Each release is also published at
 
 ## [Unreleased]
 
+### CI
+
+- **PRs are now gated on Linux — the platform the widget actually ships on.**
+  Only Windows ran on pull requests; Linux was first exercised *after* a tag
+  was pushed, by which point the tag is immutable and any failure costs a new
+  patch release. The Linux job also runs `cargo fmt --check`, `cargo clippy
+  --all-targets -- -D warnings` and `cargo machete`, none of which ran in CI at
+  all. A macOS job runs the test suite and compiles the menu bar app, whose
+  700+ lines of Swift nothing verified.
+
+- **A release can no longer publish artifacts that disagree with its tag.** A
+  new `verify-version` job — which every downstream job depends on — requires
+  the tag to be an existing `vX.Y.Z`, and `Cargo.toml`, both PKGBUILDs, both
+  `.SRCINFO`s and a `CHANGELOG.md` section to match it. This is not
+  hypothetical: at the v0.13.0 tag both `.SRCINFO` files still declared
+  `0.8.0`, and the release shipped anyway. `workflow_dispatch` also stops
+  accepting an arbitrary commit — it must name a tag that exists — and
+  `contents: write` is now scoped to the single job that publishes rather than
+  granted to the whole workflow.
+
 ### Changed
 
 - **A misspelled config *section* is now an error instead of being ignored.**
