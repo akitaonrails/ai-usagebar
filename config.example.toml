@@ -43,16 +43,77 @@ api_key_env = "OPENROUTER_API_KEY"
 
 [deepseek]
 # Disabled by default — enable once you've set a key (env var or inline).
-# The Settings overlay can save the inline fallback; it does not enable this vendor.
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
 enabled = false
 api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
 
 [kimi]
 # Disabled by default — enable once you've set a key (env var or inline).
-# The Settings overlay can save the inline fallback; it does not enable this vendor.
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
 # Shows Kimi Code subscription quota (weekly + 5h rolling window) from the
 # undocumented, community-confirmed api.kimi.com/coding/v1/usages endpoint.
 enabled = false
 api_key_env = "KIMI_API_KEY"      # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
+
+# --- Account-balance vendors -------------------------------------------------
+# These report your REMAINING credit as money, rather than plan usage as a %.
+# All are opt-in and never fetch until enabled with a key present.
+
+[kilo]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
+# Remaining credit from the undocumented api.kilo.ai/api/profile/balance
+# endpoint (used internally by the Kilo Code extension).
+enabled = false
+api_key_env = "KILO_API_KEY"       # checked first; if set + non-empty, used
+# api_key = "..."                  # fallback; chmod 600 the file if you use it
+# Scopes the balance to a team via the x-kilocode-organizationid header.
+# Omit for the personal balance. Switching this refetches rather than reusing
+# the previous account's cached figure.
+# organization_id = "org_..."
+
+[novita]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
+# Remaining credit from the documented
+# api.novita.ai/openapi/v1/billing/balance/detail endpoint.
+enabled = false
+api_key_env = "NOVITA_API_KEY"     # checked first; if set + non-empty, used
+# api_key = "..."                  # fallback; chmod 600 the file if you use it
+
+[moonshot]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
+# Account balance from the documented /v1/users/me/balance endpoint.
+enabled = false
+api_key_env = "MOONSHOT_API_KEY"   # checked first; if set + non-empty, used
+# api_key = "sk-..."               # fallback; chmod 600 the file if you use it
+# Region picks BOTH the host and the currency, so switching it refetches
+# rather than showing the other region's figure:
+#   global -> api.moonshot.ai (USD)   |   cn -> api.moonshot.cn (CNY)
+# region = "global"
+
+[grok]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
+# Prepaid credit from the documented xAI Management API
+# management-api.x.ai/v1/billing/teams/{team}/prepaid/balance.
+#
+# This is the *Management* key (xAI Console > Management keys), NOT the
+# inference key you use for chat completions.
+enabled = false
+api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
+# api_key = "..."                  # fallback; chmod 600 the file if you use it
+# The balance is per-team. A TEAM-scoped management key identifies its team on
+# its own; an ORGANIZATION-scoped key cannot (its scopeId is an organization,
+# not a team), so set the team explicitly here. Without it, an org-scoped key
+# reports an error saying so instead of querying the wrong team.
+# team_id = "..."

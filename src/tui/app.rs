@@ -322,6 +322,77 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                     .await?;
             Ok(outcome.into())
         }
+        VendorId::Kilo => {
+            let api_key = crate::config::resolve_api_key(
+                "Kilo",
+                &config.kilo.api_key_env,
+                config.kilo.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("kilo")?;
+            let endpoints = crate::kilo::fetch::Endpoints::default();
+            let outcome = crate::kilo::fetch_snapshot(
+                client,
+                &api_key,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+                config.kilo.organization_id.as_deref(),
+            )
+            .await?;
+            Ok(outcome.into())
+        }
+        VendorId::Novita => {
+            let api_key = crate::config::resolve_api_key(
+                "Novita",
+                &config.novita.api_key_env,
+                config.novita.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("novita")?;
+            let endpoints = crate::novita::fetch::Endpoints::default();
+            let outcome =
+                crate::novita::fetch_snapshot(client, &api_key, &cache, &endpoints, DEFAULT_TTL)
+                    .await?;
+            Ok(outcome.into())
+        }
+        VendorId::Moonshot => {
+            let api_key = crate::config::resolve_api_key(
+                "Moonshot",
+                &config.moonshot.api_key_env,
+                config.moonshot.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("moonshot")?;
+            let (endpoints, currency) =
+                crate::moonshot::fetch::Endpoints::for_region(&config.moonshot.region);
+            let outcome = crate::moonshot::fetch_snapshot(
+                client,
+                &api_key,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+                currency,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
+        VendorId::Grok => {
+            let key = crate::config::resolve_api_key(
+                "Grok",
+                &config.grok.api_key_env,
+                config.grok.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("grok")?;
+            let endpoints = crate::grok::fetch::Endpoints::default();
+            let outcome = crate::grok::fetch_snapshot(
+                client,
+                &key,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+                config.grok.team_id.as_deref(),
+            )
+            .await?;
+            Ok(outcome.into())
+        }
     }
 }
 

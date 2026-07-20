@@ -1,10 +1,14 @@
-//! Settings overlay — opened from the TUI by pressing `s`. Lets the user
-//! pick the primary vendor and set Z.AI / OpenRouter / DeepSeek / Kimi API keys
-//! without editing config.toml by hand.
+//! Settings overlay — opened from the TUI by pressing `s`. Lets the user pick
+//! the primary vendor and paste an API key for any key-authenticated vendor
+//! (Z.AI, OpenRouter, DeepSeek, Kilo, Novita, Kimi, Grok) without hand-editing
+//! config.toml. Anthropic and OpenAI authenticate via their CLI's OAuth login,
+//! so they have no key field here.
 //!
 //! Persistence uses `toml_edit` so the existing config keeps its comments,
-//! whitespace, and unrelated fields. Files with inline keys are atomically
-//! written and `chmod 600`ed.
+//! whitespace, and unrelated fields. Writing a key also flips that vendor's
+//! `enabled = true` (the opt-in vendors are disabled by default), so "paste the
+//! key and save" is all it takes. Files with inline keys are atomically written
+//! and `chmod 600`ed.
 
 use std::path::{Path, PathBuf};
 
@@ -22,36 +26,116 @@ use crate::theme::Theme;
 use crate::tui::style::bubble_theme;
 use crate::vendor::VendorId;
 
-/// Which input field has keyboard focus.
+/// A vendor that authenticates with an inline API key (vs. OAuth). The order of
+/// this table is the tab order of the key fields and the layout of the state's
+/// `keys` vec.
+pub struct KeyVendor {
+    pub id: VendorId,
+    pub label: &'static str,
+    pub env: &'static str,
+    pub section: &'static str,
+    /// Extra hint after the env var (e.g. "management key"). Empty for none.
+    pub note: &'static str,
+}
+
+pub const KEY_VENDORS: &[KeyVendor] = &[
+    KeyVendor {
+        id: VendorId::Zai,
+        label: "Z.AI",
+        env: "ZAI_API_KEY",
+        section: "zai",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Openrouter,
+        label: "OpenRouter",
+        env: "OPENROUTER_API_KEY",
+        section: "openrouter",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Deepseek,
+        label: "DeepSeek",
+        env: "DEEPSEEK_API_KEY",
+        section: "deepseek",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Kimi,
+        label: "Kimi",
+        env: "KIMI_API_KEY",
+        section: "kimi",
+        note: "coding-plan usage",
+    },
+    KeyVendor {
+        id: VendorId::Kilo,
+        label: "Kilo",
+        env: "KILO_API_KEY",
+        section: "kilo",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Novita,
+        label: "Novita",
+        env: "NOVITA_API_KEY",
+        section: "novita",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Moonshot,
+        label: "Moonshot",
+        env: "MOONSHOT_API_KEY",
+        section: "moonshot",
+        note: "account balance",
+    },
+    KeyVendor {
+        id: VendorId::Grok,
+        label: "Grok",
+        env: "XAI_MANAGEMENT_KEY",
+        section: "grok",
+        note: "management key, not the inference key",
+    },
+];
+
+/// Read the inline `api_key` currently in config for a given section, so the
+/// field opens pre-filled (masked) when one is already set.
+fn config_inline_key<'a>(cfg: &'a Config, section: &str) -> Option<&'a str> {
+    match section {
+        "zai" => cfg.zai.api_key.as_deref(),
+        "openrouter" => cfg.openrouter.api_key.as_deref(),
+        "deepseek" => cfg.deepseek.api_key.as_deref(),
+        "kimi" => cfg.kimi.api_key.as_deref(),
+        "kilo" => cfg.kilo.api_key.as_deref(),
+        "novita" => cfg.novita.api_key.as_deref(),
+        "moonshot" => cfg.moonshot.api_key.as_deref(),
+        "grok" => cfg.grok.api_key.as_deref(),
+        _ => None,
+    }
+}
+
+/// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Primary,
-    ZaiKey,
-    OpenrouterKey,
-    DeepseekKey,
-    KimiKey,
-    SaveButton,
+    Key(usize),
+    Save,
 }
 
 impl Focus {
     pub fn next(self) -> Self {
         match self {
-            Focus::Primary => Focus::ZaiKey,
-            Focus::ZaiKey => Focus::OpenrouterKey,
-            Focus::OpenrouterKey => Focus::DeepseekKey,
-            Focus::DeepseekKey => Focus::KimiKey,
-            Focus::KimiKey => Focus::SaveButton,
-            Focus::SaveButton => Focus::Primary,
+            Focus::Primary => Focus::Key(0),
+            Focus::Key(i) if i + 1 < KEY_VENDORS.len() => Focus::Key(i + 1),
+            Focus::Key(_) => Focus::Save,
+            Focus::Save => Focus::Primary,
         }
     }
     pub fn prev(self) -> Self {
         match self {
-            Focus::Primary => Focus::SaveButton,
-            Focus::ZaiKey => Focus::Primary,
-            Focus::OpenrouterKey => Focus::ZaiKey,
-            Focus::DeepseekKey => Focus::OpenrouterKey,
-            Focus::KimiKey => Focus::DeepseekKey,
-            Focus::SaveButton => Focus::KimiKey,
+            Focus::Primary => Focus::Save,
+            Focus::Key(0) => Focus::Primary,
+            Focus::Key(i) => Focus::Key(i - 1),
+            Focus::Save => Focus::Key(KEY_VENDORS.len() - 1),
         }
     }
 }
@@ -64,8 +148,8 @@ pub struct KeyInput {
     pub cursor: usize,
     /// When true, the field renders the actual characters; otherwise `•`.
     pub revealed: bool,
-    /// True after the user has typed/edited; only then does save write
-    /// the value back (avoids clobbering an existing key with the empty
+    /// True after the user has typed/edited; only then does save write the
+    /// value back (avoids clobbering an existing key with the empty
     /// placeholder the user opened the dialog with).
     pub dirty: bool,
 }
@@ -158,16 +242,18 @@ pub struct SettingsState {
     /// cannot actually be used by the widget or TUI.
     pub primary_choices: Vec<VendorId>,
     pub primary: VendorId,
-    pub zai: KeyInput,
-    pub openrouter: KeyInput,
-    pub deepseek: KeyInput,
-    pub kimi: KeyInput,
-    /// One-line status displayed in the footer ("Saved", "Error: ...", "").
+    /// One input per [`KEY_VENDORS`] entry, same order.
+    pub keys: Vec<KeyInput>,
+    /// One-line status displayed in the footer ("saved …", "save failed …").
     pub status: String,
 }
 
 impl SettingsState {
     pub fn from_config(cfg: &Config) -> Self {
+        let keys = KEY_VENDORS
+            .iter()
+            .map(|kv| KeyInput::from_config(config_inline_key(cfg, kv.section)))
+            .collect();
         let primary_choices = cfg.enabled_vendors();
         // A configured but disabled primary is ineffective. Display the first
         // enabled vendor instead; when none are enabled retain the historical
@@ -182,11 +268,16 @@ impl SettingsState {
             focus: Focus::Primary,
             primary_choices,
             primary,
-            zai: KeyInput::from_config(cfg.zai.api_key.as_deref()),
-            openrouter: KeyInput::from_config(cfg.openrouter.api_key.as_deref()),
-            deepseek: KeyInput::from_config(cfg.deepseek.api_key.as_deref()),
-            kimi: KeyInput::from_config(cfg.kimi.api_key.as_deref()),
+            keys,
             status: String::new(),
+        }
+    }
+
+    /// The focused key input, if a key row is focused.
+    fn focused_key_mut(&mut self) -> Option<&mut KeyInput> {
+        match self.focus {
+            Focus::Key(i) => self.keys.get_mut(i),
+            _ => None,
         }
     }
 }
@@ -206,15 +297,12 @@ pub enum Action {
 }
 
 /// Permission note appended to the "saved" status line. The overlay `chmod
-/// 600`s the file on Unix; Windows has no such step, so the note is empty there
-/// (keeps the message platform-honest).
+/// 600`s the file on Unix; Windows has no such step, so the note is empty there.
 #[cfg(unix)]
 const PERMS_NOTE: &str = " (chmod 600)";
 #[cfg(not(unix))]
 const PERMS_NOTE: &str = "";
 
-/// Status line after a successful save: the platform-resolved config path plus
-/// the platform-appropriate permission note.
 fn saved_status() -> String {
     format!(
         "saved to {}{}",
@@ -225,7 +313,6 @@ fn saved_status() -> String {
 
 /// Key map. Returns the action to perform after the keypress.
 pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) -> Action {
-    // Esc always closes without saving.
     if matches!(code, KeyCode::Esc) {
         return Action::Close;
     }
@@ -234,44 +321,20 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
     }
     // Ctrl-S triggers save from any field.
     if matches!(code, KeyCode::Char('s')) && mods.contains(KeyModifiers::CONTROL) {
-        return match save_to_config_default(state) {
-            Ok(()) => {
-                state.status = saved_status();
-                Action::SavedAndClose
-            }
-            Err(e) => {
-                state.status = format!("save failed: {e}");
-                Action::Continue
-            }
-        };
+        return try_save(state);
     }
-    // Ctrl-V toggles reveal on the focused key field.
     if matches!(code, KeyCode::Char('v')) && mods.contains(KeyModifiers::CONTROL) {
-        match state.focus {
-            Focus::ZaiKey => state.zai.toggle_reveal(),
-            Focus::OpenrouterKey => state.openrouter.toggle_reveal(),
-            Focus::DeepseekKey => state.deepseek.toggle_reveal(),
-            Focus::KimiKey => state.kimi.toggle_reveal(),
-            _ => {}
+        if let Some(input) = state.focused_key_mut() {
+            input.toggle_reveal();
         }
         return Action::Continue;
     }
-
-    // Field navigation: Tab/Shift-Tab and Up/Down.
     match code {
-        KeyCode::Tab => {
+        KeyCode::Tab | KeyCode::Down => {
             state.focus = state.focus.next();
             return Action::Continue;
         }
-        KeyCode::BackTab => {
-            state.focus = state.focus.prev();
-            return Action::Continue;
-        }
-        KeyCode::Down => {
-            state.focus = state.focus.next();
-            return Action::Continue;
-        }
-        KeyCode::Up => {
+        KeyCode::BackTab | KeyCode::Up => {
             state.focus = state.focus.prev();
             return Action::Continue;
         }
@@ -297,30 +360,35 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
     // Field-specific handling.
     match state.focus {
         Focus::Primary => handle_primary(state, code),
-        Focus::ZaiKey => handle_input(&mut state.zai, code),
-        Focus::OpenrouterKey => handle_input(&mut state.openrouter, code),
-        Focus::DeepseekKey => handle_input(&mut state.deepseek, code),
-        Focus::KimiKey => handle_input(&mut state.kimi, code),
-        Focus::SaveButton => {
+        Focus::Key(i) => {
+            if let Some(input) = state.keys.get_mut(i) {
+                handle_input(input, code);
+            }
+        }
+        Focus::Save => {
             if matches!(code, KeyCode::Enter) {
-                return match save_to_config_default(state) {
-                    Ok(()) => {
-                        state.status = saved_status();
-                        Action::SavedAndClose
-                    }
-                    Err(e) => {
-                        state.status = format!("save failed: {e}");
-                        Action::Continue
-                    }
-                };
+                return try_save(state);
             }
         }
     }
     Action::Continue
 }
 
+fn try_save(state: &mut SettingsState) -> Action {
+    match save_to_config_default(state) {
+        Ok(()) => {
+            state.status = saved_status();
+            Action::SavedAndClose
+        }
+        Err(e) => {
+            state.status = format!("save failed: {e}");
+            Action::Continue
+        }
+    }
+}
+
 fn handle_primary(state: &mut SettingsState, code: KeyCode) {
-    // Left/Right cycles the primary-vendor radio.
+    // Left/Right cycles the primary-vendor radio over enabled vendors only.
     let choices = &state.primary_choices;
     let Some(idx) = choices.iter().position(|v| *v == state.primary) else {
         return;
@@ -346,11 +414,8 @@ fn handle_input(input: &mut KeyInput, code: KeyCode) {
     }
 }
 
-/// Save to `~/.config/ai-usagebar/config.toml` (or create it). On success,
-/// signal a running Waybar process (SIGRTMIN+13) so any module configured
-/// with `signal: 13` refreshes its exec output immediately — otherwise the
-/// bar text wouldn't reflect a new primary vendor until the next interval
-/// tick (up to 300s).
+/// Save to the platform config path (creating it). On success, signal a running
+/// Waybar (`SIGRTMIN+13`) so a `signal: 13` module refreshes immediately.
 fn save_to_config_default(state: &SettingsState) -> Result<()> {
     let path = default_config_path()?;
     if let Some(parent) = path.parent() {
@@ -361,8 +426,8 @@ fn save_to_config_default(state: &SettingsState) -> Result<()> {
     Ok(())
 }
 
-/// Same as `save_to_config_default` but with an explicit path — exposed
-/// for tests.
+/// Same as `save_to_config_default` but with an explicit path — exposed for
+/// tests. Writing a non-empty key also sets that vendor's `enabled = true`.
 pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
     let original = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
@@ -383,15 +448,17 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
     if state.primary_choices.contains(&state.primary) {
         set_string(&mut doc, "ui", "primary", state.primary.slug())?;
     }
-    update_key(&mut doc, "zai", &state.zai)?;
-    update_key(&mut doc, "openrouter", &state.openrouter)?;
-    update_key(&mut doc, "deepseek", &state.deepseek)?;
-    update_key(&mut doc, "kimi", &state.kimi)?;
+
+    for (i, kv) in KEY_VENDORS.iter().enumerate() {
+        let Some(input) = state.keys.get(i) else {
+            continue;
+        };
+        update_key(&mut doc, kv.section, input)?;
+    }
 
     let bytes = doc.to_string();
     crate::cache::atomic_write(path, bytes.as_bytes())?;
 
-    // chmod 600 — only required when we wrote a secret, but always safe.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -404,10 +471,26 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Apply one key field to the document. Untouched fields are left alone; a
+/// field the user cleared is *removed*, so an inline secret can be deleted
+/// from the overlay rather than lingering in the file. Writing a non-empty key
+/// also opts the vendor in — the opt-in vendors would otherwise never fetch.
+fn update_key(doc: &mut DocumentMut, section: &str, input: &KeyInput) -> Result<()> {
+    if !input.dirty {
+        return Ok(());
+    }
+    if input.buf.is_empty() {
+        if let Some(table) = doc.get_mut(section).and_then(toml_edit::Item::as_table_mut) {
+            table.remove("api_key");
+        }
+        return Ok(());
+    }
+    set_string(doc, section, "api_key", &input.buf)?;
+    set_bool(doc, section, "enabled", true)
+}
+
 /// Set or update a string field in a TOML section, preserving comments and
-/// formatting of unaffected nodes. When the key already exists, we mutate its
-/// value in place (this keeps the leading comment attached to the key);
-/// otherwise we insert a new entry.
+/// formatting of unaffected nodes.
 fn set_string(doc: &mut DocumentMut, section: &str, key: &str, new_value: &str) -> Result<()> {
     let table = doc
         .entry(section)
@@ -419,8 +502,6 @@ fn set_string(doc: &mut DocumentMut, section: &str, key: &str, new_value: &str) 
         && let Some(v) = item.as_value_mut()
     {
         *v = toml_edit::Value::from(new_value);
-        // Restore the surrounding decor (a space before `=` and after the
-        // value, matching toml_edit's default output).
         v.decor_mut().set_prefix(" ");
         return Ok(());
     }
@@ -428,19 +509,23 @@ fn set_string(doc: &mut DocumentMut, section: &str, key: &str, new_value: &str) 
     Ok(())
 }
 
-/// Persist an intentionally edited key. A dirty empty buffer means the user
-/// explicitly cleared the key; an untouched empty buffer leaves TOML intact.
-fn update_key(doc: &mut DocumentMut, section: &str, input: &KeyInput) -> Result<()> {
-    if !input.dirty {
+/// Same as [`set_string`] for a boolean field.
+fn set_bool(doc: &mut DocumentMut, section: &str, key: &str, new_value: bool) -> Result<()> {
+    let table = doc
+        .entry(section)
+        .or_insert_with(toml_edit::table)
+        .as_table_mut()
+        .ok_or_else(|| AppError::Other(format!("config.toml: [{section}] is not a table")))?;
+
+    if let Some(item) = table.get_mut(key)
+        && let Some(v) = item.as_value_mut()
+    {
+        *v = toml_edit::Value::from(new_value);
+        v.decor_mut().set_prefix(" ");
         return Ok(());
     }
-    if input.buf.is_empty() {
-        if let Some(table) = doc.get_mut(section).and_then(toml_edit::Item::as_table_mut) {
-            table.remove("api_key");
-        }
-        return Ok(());
-    }
-    set_string(doc, section, "api_key", &input.buf)
+    table.insert(key, value(new_value));
+    Ok(())
 }
 
 fn default_config_path() -> Result<PathBuf> {
@@ -452,194 +537,189 @@ fn default_config_path() -> Result<PathBuf> {
         .ok_or_else(|| AppError::Other("could not resolve config dir".into()))
 }
 
+// ─── Render ────────────────────────────────────────────────────────────────
+
 /// Render the modal overlay over `area`.
 pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
-    let modal = settings_modal_rect(area);
-    // Clear underneath so the body is unreadable through us.
+    let modal = centered_rect(74, 88, area);
     f.render_widget(Clear, modal);
 
     let bubble = bubble_theme(theme);
-
     let block = bubble.titled_modal_block(" Settings ");
     let inner = block.inner(modal);
     f.render_widget(block, modal);
 
+    // Body (everything but the pinned hint) + a 1-line hint footer.
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // [0] primary label
-            Constraint::Length(2), // [1] primary radio row
-            Constraint::Length(1), // [2] spacer
-            Constraint::Length(1), // [3] zai label
-            Constraint::Length(2), // [4] zai input
-            Constraint::Length(1), // [5] openrouter label
-            Constraint::Length(2), // [6] openrouter input
-            Constraint::Length(1), // [7] deepseek label
-            Constraint::Length(2), // [8] deepseek input
-            Constraint::Length(1), // [9] kimi label
-            Constraint::Length(2), // [10] kimi input
-            Constraint::Length(1), // [11] spacer
-            Constraint::Length(1), // [12] save button
-            Constraint::Length(1), // [13] status
-            Constraint::Min(0),    // [14] hint
-        ])
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(inner);
 
-    // Primary vendor.
-    f.render_widget(
-        Paragraph::new(label(
-            "Primary vendor",
-            state.focus == Focus::Primary,
+    // — Primary vendor + API keys header —
+    let mut lines: Vec<Line> = vec![
+        section_header("Primary vendor", "shown first on the bar / TUI", &bubble),
+        primary_line(state, &bubble),
+        Line::from(""),
+        section_header(
+            "API keys",
+            "pick a row, type the key, then Ctrl-S — Claude & OpenAI use CLI login",
             &bubble,
-        )),
-        chunks[0],
-    );
-    f.render_widget(
-        Paragraph::new(render_radio(
-            &state.primary_choices,
-            &state.primary,
-            &bubble,
-        )),
-        chunks[1],
-    );
+        ),
+    ];
+    for (i, kv) in KEY_VENDORS.iter().enumerate() {
+        let focused = state.focus == Focus::Key(i);
+        lines.push(key_row(kv, &state.keys[i], focused, &bubble));
+    }
+    lines.push(Line::from(""));
 
-    // Z.AI key.
-    f.render_widget(
-        Paragraph::new(label(
-            "Z.AI API key (environment key takes precedence)",
-            state.focus == Focus::ZaiKey,
-            &bubble,
-        )),
-        chunks[3],
-    );
-    f.render_widget(
-        Paragraph::new(render_input(
-            &state.zai,
-            state.focus == Focus::ZaiKey,
-            &bubble,
-        )),
-        chunks[4],
-    );
-
-    // OpenRouter key.
-    f.render_widget(
-        Paragraph::new(label(
-            "OpenRouter API key (environment key takes precedence)",
-            state.focus == Focus::OpenrouterKey,
-            &bubble,
-        )),
-        chunks[5],
-    );
-    f.render_widget(
-        Paragraph::new(render_input(
-            &state.openrouter,
-            state.focus == Focus::OpenrouterKey,
-            &bubble,
-        )),
-        chunks[6],
-    );
-
-    // DeepSeek key.
-    f.render_widget(
-        Paragraph::new(label(
-            "DeepSeek API key (environment key takes precedence)",
-            state.focus == Focus::DeepseekKey,
-            &bubble,
-        )),
-        chunks[7],
-    );
-    f.render_widget(
-        Paragraph::new(render_input(
-            &state.deepseek,
-            state.focus == Focus::DeepseekKey,
-            &bubble,
-        )),
-        chunks[8],
-    );
-
-    // Kimi key.
-    f.render_widget(
-        Paragraph::new(label(
-            "Kimi API key (environment key takes precedence)",
-            state.focus == Focus::KimiKey,
-            &bubble,
-        )),
-        chunks[9],
-    );
-    f.render_widget(
-        Paragraph::new(render_input(
-            &state.kimi,
-            state.focus == Focus::KimiKey,
-            &bubble,
-        )),
-        chunks[10],
-    );
-
-    // Save button.
-    let save_style = if state.focus == Focus::SaveButton {
-        bubble.selected.add_modifier(Modifier::REVERSED)
-    } else {
-        bubble.accent.add_modifier(Modifier::BOLD)
-    };
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            "   [ Save (Ctrl-S) ]   ",
-            save_style,
-        ))),
-        chunks[12],
-    );
-
-    // Status line.
+    // — Save + status —
+    lines.push(save_line(state.focus == Focus::Save, &bubble));
     if !state.status.is_empty() {
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(state.status.clone(), bubble.muted))),
-            chunks[13],
-        );
+        let ok = state.status.starts_with("saved");
+        let mark = if ok { "  ✓ " } else { "  ✗ " };
+        let style = if ok { bubble.accent } else { bubble.selected };
+        lines.push(Line::from(vec![
+            Span::styled(mark, style.add_modifier(Modifier::BOLD)),
+            Span::styled(state.status.clone(), bubble.muted),
+        ]));
     }
 
-    // Hint footer.
-    let hint = bubble.help_line([
-        ("tab/up/down", "move"),
-        ("left/right", "pick"),
-        ("ctrl+v", "reveal"),
-        ("ctrl+s", "save"),
-        ("esc", "cancel"),
-    ]);
-    f.render_widget(Paragraph::new(hint), chunks[14]);
+    f.render_widget(Paragraph::new(lines), chunks[0]);
+
+    // Context-aware hint footer.
+    let hint = match state.focus {
+        Focus::Primary => bubble.help_line([
+            ("↑↓/tab", "move"),
+            ("←→", "change vendor"),
+            ("^S", "save"),
+            ("esc", "close"),
+        ]),
+        Focus::Key(_) => bubble.help_line([
+            ("↑↓/tab", "move"),
+            ("type", "edit key"),
+            ("^V", "reveal"),
+            ("^S", "save"),
+            ("esc", "close"),
+        ]),
+        Focus::Save => {
+            bubble.help_line([("↑↓/tab", "move"), ("enter/^S", "save"), ("esc", "close")])
+        }
+    };
+    f.render_widget(Paragraph::new(hint), chunks[1]);
 }
 
-fn label(text: &str, focused: bool, theme: &BubbleTheme) -> Line<'static> {
-    let marker = if focused {
-        theme.symbols.selected
-    } else {
-        theme.symbols.bullet
-    };
-    let marker_style = if focused { theme.accent } else { theme.muted };
-    let text_style = if focused { theme.title } else { theme.text };
+fn section_header(title: &str, sub: &str, theme: &BubbleTheme) -> Line<'static> {
     Line::from(vec![
-        theme.muted("  "),
-        Span::styled(marker, marker_style),
         theme.span(" "),
-        Span::styled(text.to_string(), text_style),
+        Span::styled(title.to_string(), theme.title.add_modifier(Modifier::BOLD)),
+        theme.muted(format!("   — {sub}")),
     ])
 }
 
-fn render_radio(choices: &[VendorId], selected: &VendorId, theme: &BubbleTheme) -> Line<'static> {
-    let mut spans = vec![theme.muted("    ")];
-    for v in choices {
-        let is_sel = v == selected;
-        let glyph = if is_sel {
-            theme.symbols.selected
-        } else {
-            theme.symbols.bullet
-        };
-        let style = if is_sel { theme.selected } else { theme.muted };
-        spans.push(Span::styled(
-            format!("{glyph} {}  ", vendor_label(*v)),
-            style,
-        ));
+fn primary_line(state: &SettingsState, theme: &BubbleTheme) -> Line<'static> {
+    let focused = state.focus == Focus::Primary;
+    let name = vendor_label(state.primary).to_string();
+    if focused {
+        Line::from(vec![
+            theme.span("   "),
+            Span::styled("▸ ", theme.accent.add_modifier(Modifier::BOLD)),
+            Span::styled("◀ ", theme.accent),
+            Span::styled(
+                format!(" {name} "),
+                theme
+                    .selected
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            ),
+            Span::styled(" ▶", theme.accent),
+            theme.muted("    ← → to change"),
+        ])
+    } else {
+        Line::from(vec![theme.span("     "), Span::styled(name, theme.text)])
     }
-    Line::from(spans)
+}
+
+fn key_row(kv: &KeyVendor, input: &KeyInput, focused: bool, theme: &BubbleTheme) -> Line<'static> {
+    let label = format!("{:<11}", kv.label);
+    let value = value_text(input, focused);
+
+    // Env / status suffix: env-var name, whether an env override is set, note.
+    let env_set = std::env::var(kv.env)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let mut suffix = format!("   {}", kv.env);
+    if env_set {
+        suffix.push_str(" · env set (overrides)");
+    }
+    if !kv.note.is_empty() {
+        suffix.push_str(&format!(" · {}", kv.note));
+    }
+
+    if focused {
+        let val_style = if input.buf.is_empty() {
+            theme.accent.add_modifier(Modifier::BOLD)
+        } else {
+            theme.selected.add_modifier(Modifier::REVERSED)
+        };
+        let mut spans = vec![
+            theme.span("  "),
+            Span::styled("▸ ", theme.accent.add_modifier(Modifier::BOLD)),
+            Span::styled(label, theme.title.add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" {value} "), val_style),
+        ];
+        if input.revealed {
+            spans.push(theme.muted("  [revealed]"));
+        }
+        spans.push(theme.muted(suffix));
+        Line::from(spans)
+    } else {
+        let val_style = if input.buf.is_empty() {
+            theme.muted
+        } else {
+            theme.text
+        };
+        Line::from(vec![
+            theme.span("    "),
+            Span::styled(label, theme.text),
+            Span::styled(format!(" {value}"), val_style),
+            theme.muted(suffix),
+        ])
+    }
+}
+
+/// The value column: `(empty)` / a cursor when focused-empty / masked or
+/// revealed buffer with a cursor mark inserted when focused.
+fn value_text(input: &KeyInput, focused: bool) -> String {
+    if input.buf.is_empty() {
+        return if focused {
+            "‸".to_string()
+        } else {
+            "(empty)".to_string()
+        };
+    }
+    let base = input.display();
+    if !focused {
+        return base;
+    }
+    let mut chars: Vec<char> = base.chars().collect();
+    let pos = input.cursor.min(chars.len());
+    chars.insert(pos, '‸');
+    chars.into_iter().collect()
+}
+
+fn save_line(focused: bool, theme: &BubbleTheme) -> Line<'static> {
+    let style = if focused {
+        theme
+            .selected
+            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else {
+        theme.accent.add_modifier(Modifier::BOLD)
+    };
+    let marker = if focused { "▸ " } else { "  " };
+    Line::from(vec![
+        theme.span("   "),
+        Span::styled(marker, theme.accent.add_modifier(Modifier::BOLD)),
+        Span::styled("  Save  (Ctrl-S)  ", style),
+    ])
 }
 
 fn vendor_label(v: VendorId) -> &'static str {
@@ -650,47 +730,22 @@ fn vendor_label(v: VendorId) -> &'static str {
         VendorId::Openrouter => "OpenRouter",
         VendorId::Deepseek => "DeepSeek",
         VendorId::Kimi => "Kimi",
+        VendorId::Kilo => "Kilo",
+        VendorId::Novita => "Novita",
+        VendorId::Moonshot => "Moonshot",
+        VendorId::Grok => "Grok",
     }
 }
 
-fn render_input(input: &KeyInput, focused: bool, theme: &BubbleTheme) -> Line<'static> {
-    let body = if input.buf.is_empty() {
-        "(empty)".to_string()
-    } else {
-        input.display()
-    };
-    let box_style = if focused {
-        theme.accent.add_modifier(Modifier::BOLD)
-    } else {
-        theme.text
-    };
-    let suffix_style = theme.muted;
-    let suffix = if input.revealed { "  [revealed]" } else { "" };
-    let cursor_hint = if focused {
-        format!("  ▏cur:{}", input.cursor)
-    } else {
-        String::new()
-    };
-    Line::from(vec![
-        theme.muted("    "),
-        Span::styled(body, box_style),
-        Span::styled(format!("{suffix}{cursor_hint}"), suffix_style),
-    ])
-}
-
-const SETTINGS_CONTENT_HEIGHT: u16 = 18;
-
-/// Keep every editable field and Save visible in a common 24-row terminal.
-fn settings_modal_rect(area: Rect) -> Rect {
-    let height = ((area.height * 92) / 100)
-        .max(SETTINGS_CONTENT_HEIGHT + 2)
-        .min(area.height);
-    let width = (area.width * 80) / 100;
+/// Center a rectangle of `percent_x * percent_y` over `r`.
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_h = (r.height * percent_y) / 100;
+    let popup_w = (r.width * percent_x) / 100;
     Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
+        x: r.x + (r.width - popup_w) / 2,
+        y: r.y + (r.height - popup_h) / 2,
+        width: popup_w,
+        height: popup_h,
     }
 }
 
@@ -702,45 +757,105 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// A config path with no open handle on the file, so `save_to_path`'s
-    /// atomic rename-over-destination succeeds on Windows.
-    /// See [`crate::cache::closed_temp_file`].
     fn temp_config(initial: Option<&str>) -> (TempDir, std::path::PathBuf) {
         crate::cache::closed_temp_file("config.toml", initial)
     }
 
-    fn state_with(zai: &str, opr: &str, primary: VendorId) -> SettingsState {
-        let mut s = SettingsState {
+    fn key_index(id: VendorId) -> usize {
+        KEY_VENDORS.iter().position(|kv| kv.id == id).unwrap()
+    }
+
+    fn blank_state(primary: VendorId) -> SettingsState {
+        SettingsState {
             focus: Focus::Primary,
             primary_choices: VendorId::all().to_vec(),
             primary,
-            zai: KeyInput::from_config(Some(zai)),
-            openrouter: KeyInput::from_config(Some(opr)),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
+            keys: KEY_VENDORS.iter().map(|_| KeyInput::default()).collect(),
             status: String::new(),
-        };
-        // Mark dirty so save writes them.
-        s.zai.dirty = true;
-        s.openrouter.dirty = true;
+        }
+    }
+
+    /// State with a Z.AI key and an OpenRouter key, both marked dirty.
+    fn state_with(zai: &str, opr: &str, primary: VendorId) -> SettingsState {
+        let mut s = blank_state(primary);
+        s.keys[key_index(VendorId::Zai)] = KeyInput::from_config(Some(zai));
+        s.keys[key_index(VendorId::Zai)].dirty = true;
+        s.keys[key_index(VendorId::Openrouter)] = KeyInput::from_config(Some(opr));
+        s.keys[key_index(VendorId::Openrouter)].dirty = true;
         s
     }
 
     #[test]
-    fn focus_cycles_forward_and_backward() {
-        let order = [
-            Focus::Primary,
-            Focus::ZaiKey,
-            Focus::OpenrouterKey,
-            Focus::DeepseekKey,
-            Focus::KimiKey,
-            Focus::SaveButton,
-        ];
-        let n = order.len();
-        for (i, f) in order.iter().enumerate() {
-            assert_eq!(f.next(), order[(i + 1) % n]);
-            assert_eq!(f.prev(), order[(i + n - 1) % n]);
+    fn focus_cycles_through_primary_all_keys_and_save() {
+        let mut f = Focus::Primary;
+        let mut seen = vec![f];
+        // Full cycle = Primary + N key rows + Save.
+        for _ in 0..(KEY_VENDORS.len() + 2) {
+            f = f.next();
+            seen.push(f);
         }
+        // Primary, Key(0..n), Save, back to Primary.
+        assert_eq!(seen.first(), Some(&Focus::Primary));
+        assert_eq!(seen.last(), Some(&Focus::Primary));
+        assert!(seen.contains(&Focus::Key(0)));
+        assert!(seen.contains(&Focus::Key(KEY_VENDORS.len() - 1)));
+        assert!(seen.contains(&Focus::Save));
+        // prev() is the inverse of next().
+        assert_eq!(Focus::Primary.next().prev(), Focus::Primary);
+        assert_eq!(Focus::Save.prev().next(), Focus::Save);
+        assert_eq!(Focus::Primary.prev(), Focus::Save);
+    }
+
+    #[test]
+    fn every_key_vendor_has_a_field() {
+        // Every enabled-by-key vendor must be reachable in the form.
+        for id in [
+            VendorId::Zai,
+            VendorId::Openrouter,
+            VendorId::Deepseek,
+            VendorId::Kilo,
+            VendorId::Novita,
+            VendorId::Moonshot,
+            VendorId::Grok,
+        ] {
+            assert!(
+                KEY_VENDORS.iter().any(|kv| kv.id == id),
+                "{id:?} has no key field"
+            );
+        }
+        // OAuth vendors are intentionally absent.
+        assert!(!KEY_VENDORS.iter().any(|kv| kv.id == VendorId::Anthropic));
+        assert!(!KEY_VENDORS.iter().any(|kv| kv.id == VendorId::Openai));
+    }
+
+    #[test]
+    fn from_config_prefills_existing_keys() {
+        let mut cfg = Config::default();
+        cfg.kilo.api_key = Some("sk-kilo".into());
+        let s = SettingsState::from_config(&cfg);
+        assert_eq!(s.keys[key_index(VendorId::Kilo)].buf, "sk-kilo");
+        assert!(!s.keys[key_index(VendorId::Kilo)].dirty);
+    }
+
+    #[test]
+    fn from_config_offers_enabled_vendors_only() {
+        let cfg = Config::default();
+        let s = SettingsState::from_config(&cfg);
+        assert_eq!(s.primary_choices, cfg.enabled_vendors());
+        // Opt-in vendors are disabled by default and must not be offered.
+        assert!(!s.primary_choices.contains(&VendorId::Grok));
+        assert!(s.primary_choices.contains(&s.primary));
+    }
+
+    #[test]
+    fn from_config_falls_back_when_configured_primary_is_disabled() {
+        // Grok is opt-in; a config naming it as primary without enabling it
+        // must display the first enabled vendor instead.
+        let mut cfg = Config::default();
+        cfg.ui.primary = Some(VendorId::Grok);
+        let s = SettingsState::from_config(&cfg);
+        assert_ne!(s.primary, VendorId::Grok);
+        assert_eq!(Some(s.primary), cfg.enabled_vendors().first().copied());
     }
 
     #[test]
@@ -755,7 +870,7 @@ mod tests {
         k.move_left();
         k.move_left();
         assert_eq!(k.cursor, 1);
-        k.insert_char('x'); // "axbc"
+        k.insert_char('x');
         assert_eq!(k.buf, "axbc");
         assert_eq!(k.cursor, 2);
         k.backspace();
@@ -783,12 +898,38 @@ mod tests {
         assert_eq!(k.buf, "a→b");
         assert_eq!(k.cursor, 3);
         k.move_left();
-        k.backspace(); // delete '→'
+        k.backspace();
         assert_eq!(k.buf, "ab");
     }
 
     #[test]
-    fn save_to_path_writes_minimal_toml_when_starting_empty() {
+    fn value_text_shows_cursor_and_empty_states() {
+        let mut k = KeyInput::default();
+        assert_eq!(value_text(&k, false), "(empty)");
+        assert_eq!(value_text(&k, true), "‸");
+        k.insert_char('a');
+        k.insert_char('b');
+        // masked + cursor at end
+        assert_eq!(value_text(&k, true), "••‸");
+        assert_eq!(value_text(&k, false), "••");
+    }
+
+    #[test]
+    fn save_writes_key_and_enables_vendor() {
+        let (_dir, path) = temp_config(None);
+        let mut s = blank_state(VendorId::Kilo);
+        s.keys[key_index(VendorId::Kilo)] = KeyInput::from_config(Some("sk-kilo"));
+        s.keys[key_index(VendorId::Kilo)].dirty = true;
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("primary = \"kilo\""));
+        assert!(raw.contains("[kilo]"));
+        assert!(raw.contains("api_key = \"sk-kilo\""));
+        assert!(raw.contains("enabled = true"));
+    }
+
+    #[test]
+    fn save_writes_minimal_toml_when_starting_empty() {
         let (_dir, path) = temp_config(None);
         let s = state_with("zk", "ok", VendorId::Zai);
         save_to_path(&s, &path).unwrap();
@@ -801,7 +942,7 @@ mod tests {
     }
 
     #[test]
-    fn save_to_path_preserves_existing_comments_and_unrelated_fields() {
+    fn save_preserves_existing_comments_and_unrelated_fields() {
         let (_dir, path) = temp_config(Some(
             r##"# my comment
 [ui]
@@ -824,16 +965,12 @@ api_key_env = "OPENROUTER_API_KEY"
         save_to_path(&s, &path).unwrap();
 
         let raw = std::fs::read_to_string(&path).unwrap();
-        // Comments survive.
         assert!(raw.contains("# my comment"));
         assert!(raw.contains("# pre-existing comment"));
         assert!(raw.contains("# tier comment"));
-        // Unrelated fields survive.
         assert!(raw.contains("api_key_env = \"ZAI_API_KEY\""));
         assert!(raw.contains("plan_tier = \"pro\""));
-        // Primary updated.
         assert!(raw.contains("primary = \"openrouter\""));
-        // Keys written.
         assert!(raw.contains("api_key = \"zk2\""));
         assert!(raw.contains("api_key = \"ok2\""));
     }
@@ -852,54 +989,14 @@ api_key_env = "OPENROUTER_API_KEY"
     #[test]
     fn save_does_not_write_empty_key_when_dirty_but_blank() {
         let (_dir, path) = temp_config(None);
-        let mut s = state_with("", "", VendorId::Anthropic);
-        // Mark dirty but leave buf empty (user opened dialog with empty
-        // field, focused it, did nothing).
-        s.zai.dirty = true;
-        s.openrouter.dirty = true;
+        let mut s = blank_state(VendorId::Anthropic);
+        // Focus each key, do nothing but mark dirty (blank).
+        for k in &mut s.keys {
+            k.dirty = true;
+        }
         save_to_path(&s, &path).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
-        // No `api_key = ""` lines should be written.
         assert!(!raw.contains("api_key ="));
-    }
-
-    #[test]
-    fn save_dirty_empty_key_removes_existing_inline_key() {
-        let (_dir, path) = temp_config(Some(
-            r#"[zai]
-api_key = "old-secret"
-plan_tier = "pro"
-"#,
-        ));
-        let mut s = SettingsState::from_config(&Config::default());
-        s.zai.dirty = true;
-        save_to_path(&s, &path).unwrap();
-
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(!raw.contains("api_key"));
-        assert!(raw.contains("plan_tier = \"pro\""));
-    }
-
-    #[test]
-    fn save_untouched_empty_key_preserves_existing_inline_key() {
-        let (_dir, path) = temp_config(Some(
-            r#"[zai]
-api_key = "old-secret"
-"#,
-        ));
-        let s = SettingsState::from_config(&Config::default());
-        save_to_path(&s, &path).unwrap();
-
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(raw.contains("api_key = \"old-secret\""));
-    }
-
-    #[test]
-    fn settings_modal_fits_all_fields_and_save_in_24_rows() {
-        let modal = settings_modal_rect(Rect::new(0, 0, 100, 24));
-        // Two border rows leave at least the 18 fixed rows through Save.
-        assert!(modal.height >= SETTINGS_CONTENT_HEIGHT + 2);
-        assert!(modal.height <= 24);
     }
 
     #[test]
@@ -914,56 +1011,13 @@ api_key = "old-secret"
     }
 
     #[test]
-    fn save_preserves_kimi_enabled_true_and_unrelated_comments() {
-        let (_dir, path) = temp_config(Some(
-            r##"[ui]
-primary = "anthropic"
-
-[kimi]
-# Kimi is opt-in
-enabled = true
-api_key_env = "KIMI_API_KEY"
-"##,
-        ));
-
-        // No keys dirty, primary unchanged — save should still rewrite
-        // primary in place but leave the [kimi] section untouched.
-        let s = SettingsState {
-            focus: Focus::Primary,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::default(),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
-            status: String::new(),
-        };
-        save_to_path(&s, &path).unwrap();
-
-        let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(raw.contains("# Kimi is opt-in"));
-        assert!(raw.contains("enabled = true"));
-        assert!(raw.contains("api_key_env = \"KIMI_API_KEY\""));
-        assert!(raw.contains("primary = \"anthropic\""));
-    }
-
-    #[test]
-    fn handle_key_tab_cycles_focus() {
-        let mut s = SettingsState {
-            focus: Focus::Primary,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::default(),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
-            status: String::new(),
-        };
+    fn tab_cycles_focus_from_primary_to_first_key() {
+        let mut s = blank_state(VendorId::Anthropic);
         assert_eq!(
             handle_key(&mut s, KeyCode::Tab, KeyModifiers::NONE),
             Action::Continue
         );
-        assert_eq!(s.focus, Focus::ZaiKey);
+        assert_eq!(s.focus, Focus::Key(0));
         assert_eq!(
             handle_key(&mut s, KeyCode::BackTab, KeyModifiers::NONE),
             Action::Continue
@@ -972,17 +1026,8 @@ api_key_env = "KIMI_API_KEY"
     }
 
     #[test]
-    fn handle_key_esc_closes_without_saving() {
-        let mut s = SettingsState {
-            focus: Focus::Primary,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::default(),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
-            status: String::new(),
-        };
+    fn esc_closes_without_saving() {
+        let mut s = blank_state(VendorId::Anthropic);
         assert_eq!(
             handle_key(&mut s, KeyCode::Esc, KeyModifiers::NONE),
             Action::Close
@@ -990,17 +1035,8 @@ api_key_env = "KIMI_API_KEY"
     }
 
     #[test]
-    fn handle_key_left_right_cycles_primary_vendor() {
-        let mut s = SettingsState {
-            focus: Focus::Primary,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::default(),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
-            status: String::new(),
-        };
+    fn left_right_cycles_primary_vendor() {
+        let mut s = blank_state(VendorId::Anthropic);
         handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
         assert_eq!(s.primary, VendorId::Openai);
         handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
@@ -1010,150 +1046,178 @@ api_key_env = "KIMI_API_KEY"
     }
 
     #[test]
-    fn primary_uses_enabled_vendors_for_display_and_cycling() {
-        let mut cfg = Config::default();
-        cfg.openai.enabled = false;
-        cfg.zai.enabled = false;
-        cfg.openrouter.enabled = false;
-        cfg.kimi.enabled = true;
-        cfg.ui.primary = Some(VendorId::Openai); // disabled and ineffective
-
-        let mut state = SettingsState::from_config(&cfg);
-        assert_eq!(
-            state.primary_choices,
-            vec![VendorId::Anthropic, VendorId::Kimi]
-        );
-        assert_eq!(state.primary, VendorId::Anthropic);
-        handle_key(&mut state, KeyCode::Right, KeyModifiers::NONE);
-        assert_eq!(state.primary, VendorId::Kimi);
+    fn left_right_offers_enabled_vendors_only() {
+        // The selector must never land on a vendor the widget cannot use.
+        let mut s = blank_state(VendorId::Anthropic);
+        s.primary_choices = vec![VendorId::Anthropic, VendorId::Grok];
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Grok);
+        // Wraps within the enabled set rather than walking into disabled ones.
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Anthropic);
+        handle_key(&mut s, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Grok);
     }
 
     #[test]
-    fn save_replaces_disabled_primary_with_effective_enabled_choice() {
-        let (_dir, path) = temp_config(Some(
-            r#"[ui]
-primary = "deepseek"
-"#,
-        ));
-        let mut cfg = Config::default();
-        cfg.ui.primary = Some(VendorId::Deepseek);
-        let mut state = SettingsState::from_config(&cfg);
-        state.zai = KeyInput::from_config(Some("new-key"));
-        state.zai.dirty = true;
+    fn no_enabled_vendors_leaves_primary_selector_inert() {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.primary_choices = vec![];
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Anthropic);
+    }
 
-        save_to_path(&state, &path).unwrap();
+    #[test]
+    fn save_does_not_write_a_disabled_primary() {
+        // Saving an API key must not persist a primary the resolver would
+        // ignore; an existing value in the file stays untouched.
+        let (_dir, path) = temp_config(Some("[ui]\nprimary = \"anthropic\"\n"));
+        let mut s = state_with("zk", "ok", VendorId::Grok);
+        s.primary_choices = vec![VendorId::Anthropic];
+        save_to_path(&s, &path).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("primary = \"anthropic\""));
-        assert!(!raw.contains("primary = \"deepseek\""));
+        assert!(!raw.contains("primary = \"grok\""));
+        // The keys still saved.
+        assert!(raw.contains("zk"));
     }
 
     #[test]
-    fn no_enabled_vendors_does_not_write_an_ineffective_primary() {
+    fn save_removes_an_inline_key_the_user_cleared() {
+        // Clearing the field in the overlay must delete the secret from the
+        // file — otherwise there is no way to remove it short of hand-editing.
         let (_dir, path) = temp_config(Some(
-            r#"[ui]
-primary = "deepseek"
-"#,
+            "[zai]\nenabled = true\napi_key = \"old-secret\"\nplan_tier = \"pro\"\n",
         ));
-        let mut cfg = Config::default();
-        cfg.anthropic.enabled = false;
-        cfg.openai.enabled = false;
-        cfg.zai.enabled = false;
-        cfg.openrouter.enabled = false;
-        cfg.deepseek.enabled = false;
-        cfg.kimi.enabled = false;
-        cfg.ui.primary = Some(VendorId::Deepseek);
-        let mut state = SettingsState::from_config(&cfg);
-        state.zai = KeyInput::from_config(Some("new-key"));
-        state.zai.dirty = true;
-
-        assert!(state.primary_choices.is_empty());
-        save_to_path(&state, &path).unwrap();
+        let mut s = blank_state(VendorId::Zai);
+        s.primary_choices = vec![VendorId::Zai];
+        s.keys[key_index(VendorId::Zai)] = KeyInput::default();
+        s.keys[key_index(VendorId::Zai)].dirty = true;
+        save_to_path(&s, &path).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(raw.contains("primary = \"deepseek\""));
+        assert!(!raw.contains("old-secret"));
+        assert!(!raw.contains("api_key"));
+        // Unrelated fields in the same section survive.
+        assert!(raw.contains("plan_tier = \"pro\""));
     }
 
     #[test]
-    fn handle_key_ctrl_v_toggles_reveal_on_focused_key_field() {
-        let mut s = SettingsState {
-            focus: Focus::ZaiKey,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::from_config(Some("secret")),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
-            status: String::new(),
-        };
-        assert!(!s.zai.revealed);
+    fn untouched_key_field_is_left_alone() {
+        // Not dirty => the file's existing secret must survive a save.
+        let (_dir, path) = temp_config(Some("[zai]\napi_key = \"keep-me\"\n"));
+        let mut s = blank_state(VendorId::Zai);
+        s.primary_choices = vec![VendorId::Zai];
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("keep-me"));
+    }
+
+    #[test]
+    fn typing_edits_the_focused_key_only() {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.focus = Focus::Key(key_index(VendorId::Grok));
+        for c in "xai-abc".chars() {
+            handle_key(&mut s, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        assert_eq!(s.keys[key_index(VendorId::Grok)].buf, "xai-abc");
+        assert!(s.keys[key_index(VendorId::Grok)].dirty);
+        // No other field was touched.
+        assert!(s.keys[key_index(VendorId::Zai)].buf.is_empty());
+    }
+
+    #[test]
+    fn ctrl_v_toggles_reveal_on_focused_key_field() {
+        let mut s = blank_state(VendorId::Anthropic);
+        let zi = key_index(VendorId::Zai);
+        s.focus = Focus::Key(zi);
+        s.keys[zi] = KeyInput::from_config(Some("secret"));
+        assert!(!s.keys[zi].revealed);
         handle_key(&mut s, KeyCode::Char('v'), KeyModifiers::CONTROL);
-        assert!(s.zai.revealed);
+        assert!(s.keys[zi].revealed);
         handle_key(&mut s, KeyCode::Char('v'), KeyModifiers::CONTROL);
-        assert!(!s.zai.revealed);
+        assert!(!s.keys[zi].revealed);
+    }
+
+    #[test]
+    fn control_chorded_chars_do_not_type_into_fields() {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.focus = Focus::Key(0);
+        // Ctrl-A must NOT insert a literal 'a' or mark the field dirty.
+        handle_key(&mut s, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert!(s.keys[0].buf.is_empty());
+        assert!(!s.keys[0].dirty);
+        // Ctrl-C quits the host TUI even while the overlay owns focus.
+        assert_eq!(
+            handle_key(&mut s, KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Action::Quit
+        );
+        // A plain char still types normally.
+        handle_key(&mut s, KeyCode::Char('x'), KeyModifiers::NONE);
+        assert_eq!(s.keys[0].buf, "x");
+    }
+
+    #[test]
+    fn ctrl_v_on_non_key_focus_is_noop() {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.focus = Focus::Primary;
+        // Must not panic when no key field is focused.
+        assert_eq!(
+            handle_key(&mut s, KeyCode::Char('v'), KeyModifiers::CONTROL),
+            Action::Continue
+        );
     }
 
     fn state_focused_on_zai() -> SettingsState {
-        SettingsState {
-            focus: Focus::ZaiKey,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::default(),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
-            status: String::new(),
-        }
+        let mut state = blank_state(VendorId::Anthropic);
+        state.focus = Focus::Key(key_index(VendorId::Zai));
+        state
     }
 
     #[test]
     fn handle_key_ctrl_c_quits_without_typing_into_key_field() {
         let mut s = state_focused_on_zai();
+        let zi = key_index(VendorId::Zai);
         assert_eq!(
             handle_key(&mut s, KeyCode::Char('c'), KeyModifiers::CONTROL),
             Action::Quit
         );
-        assert!(s.zai.buf.is_empty());
+        assert!(s.keys[zi].buf.is_empty());
         // Untouched means save still leaves an existing key on disk alone.
-        assert!(!s.zai.dirty);
+        assert!(!s.keys[zi].dirty);
     }
 
     #[test]
     fn handle_key_alt_chord_does_not_type_into_key_field() {
         let mut s = state_focused_on_zai();
+        let zi = key_index(VendorId::Zai);
         handle_key(&mut s, KeyCode::Char('x'), KeyModifiers::ALT);
-        assert!(s.zai.buf.is_empty());
-        assert!(!s.zai.dirty);
+        assert!(s.keys[zi].buf.is_empty());
+        assert!(!s.keys[zi].dirty);
     }
 
     #[test]
     fn handle_key_platform_modifier_chords_do_not_type_into_key_field() {
         for modifier in [KeyModifiers::SUPER, KeyModifiers::HYPER, KeyModifiers::META] {
             let mut s = state_focused_on_zai();
+            let zi = key_index(VendorId::Zai);
             handle_key(&mut s, KeyCode::Char('x'), modifier);
-            assert!(s.zai.buf.is_empty(), "modifier {modifier:?}");
-            assert!(!s.zai.dirty, "modifier {modifier:?}");
+            assert!(s.keys[zi].buf.is_empty(), "modifier {modifier:?}");
+            assert!(!s.keys[zi].dirty, "modifier {modifier:?}");
         }
     }
 
     #[test]
     fn handle_key_shift_still_types_uppercase() {
         let mut s = state_focused_on_zai();
+        let zi = key_index(VendorId::Zai);
         handle_key(&mut s, KeyCode::Char('A'), KeyModifiers::SHIFT);
-        assert_eq!(s.zai.buf, "A");
-        assert!(s.zai.dirty);
+        assert_eq!(s.keys[zi].buf, "A");
+        assert!(s.keys[zi].dirty);
     }
 
     #[test]
     fn handle_key_plain_space_still_cycles_primary_vendor() {
-        let mut s = SettingsState {
-            focus: Focus::Primary,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::default(),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::default(),
-            status: String::new(),
-        };
+        let mut s = blank_state(VendorId::Anthropic);
         handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::NONE);
         assert_eq!(s.primary, VendorId::Openai);
     }
@@ -1161,28 +1225,18 @@ primary = "deepseek"
     #[test]
     fn handle_key_ctrl_s_attempts_save_from_any_field() {
         let (_dir, path) = temp_config(None);
-        // We can't easily redirect default_config_path() in the test, so we
-        // exercise save_to_path directly instead.
         let s = state_with("zk", "ok", VendorId::Zai);
         save_to_path(&s, &path).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("api_key = \"zk\""));
     }
-
     #[test]
     fn save_to_path_writes_kimi_key_when_dirty() {
         let (_dir, path) = temp_config(None);
-        let mut s = SettingsState {
-            focus: Focus::Primary,
-            primary_choices: VendorId::all().to_vec(),
-            primary: VendorId::Anthropic,
-            zai: KeyInput::default(),
-            openrouter: KeyInput::default(),
-            deepseek: KeyInput::default(),
-            kimi: KeyInput::from_config(Some("kk")),
-            status: String::new(),
-        };
-        s.kimi.dirty = true;
+        let mut s = blank_state(VendorId::Anthropic);
+        let kimi = key_index(VendorId::Kimi);
+        s.keys[kimi] = KeyInput::from_config(Some("kk"));
+        s.keys[kimi].dirty = true;
         save_to_path(&s, &path).unwrap();
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("[kimi]"));

@@ -83,6 +83,10 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                 VendorSnapshot::Openrouter(s) => openrouter_sections(s),
                 VendorSnapshot::Deepseek(s) => deepseek_sections(s),
                 VendorSnapshot::Kimi(s) => kimi_sections(s, now, pace_tolerance),
+                VendorSnapshot::Kilo(s) => kilo_sections(s),
+                VendorSnapshot::Novita(s) => novita_sections(s),
+                VendorSnapshot::Moonshot(s) => moonshot_sections(s),
+                VendorSnapshot::Grok(s) => grok_sections(s),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -274,6 +278,87 @@ fn openrouter_sections(s: &crate::usage::OpenRouterSnapshot) -> Vec<Section> {
         }],
     });
     v
+}
+
+fn kilo_sections(s: &crate::usage::KiloSnapshot) -> Vec<Section> {
+    vec![
+        Section::Title {
+            left: s.label.clone(),
+            right: None,
+        },
+        Section::Spacer,
+        Section::Text {
+            label: "Balance".into(),
+            value: format!("${:.2}", s.balance),
+        },
+    ]
+}
+
+fn novita_sections(s: &crate::usage::NovitaSnapshot) -> Vec<Section> {
+    let mut v = vec![
+        Section::Title {
+            left: "Novita".into(),
+            right: None,
+        },
+        Section::Spacer,
+        Section::Text {
+            label: "Balance".into(),
+            value: format!("${:.2}", s.available),
+        },
+        Section::Block {
+            label: "Breakdown".into(),
+            body: vec![format!(
+                "top-up ${:.2} · credit limit ${:.2}",
+                s.cash, s.credit_limit
+            )],
+        },
+    ];
+    if s.outstanding > 0.0 {
+        v.push(Section::Spacer);
+        v.push(Section::Block {
+            label: "Owed".into(),
+            body: vec![format!("${:.2}", s.outstanding)],
+        });
+    }
+    v
+}
+
+fn moonshot_sections(s: &crate::usage::MoonshotSnapshot) -> Vec<Section> {
+    let cur = &s.currency;
+    let fmt = |v: f64| match cur.as_str() {
+        "USD" => format!("${v:.2}"),
+        "CNY" => format!("¥{v:.2}"),
+        _ => format!("{v:.2} {cur}"),
+    };
+    vec![
+        Section::Title {
+            left: "Kimi (Moonshot)".into(),
+            right: None,
+        },
+        Section::Spacer,
+        Section::Text {
+            label: "Balance".into(),
+            value: fmt(s.available),
+        },
+        Section::Block {
+            label: "Breakdown".into(),
+            body: vec![format!("cash {} · voucher {}", fmt(s.cash), fmt(s.voucher))],
+        },
+    ]
+}
+
+fn grok_sections(s: &crate::usage::GrokSnapshot) -> Vec<Section> {
+    vec![
+        Section::Title {
+            left: "Grok (xAI)".into(),
+            right: None,
+        },
+        Section::Spacer,
+        Section::Text {
+            label: "Prepaid balance".into(),
+            value: format!("${:.2}", s.balance),
+        },
+    ]
 }
 
 fn deepseek_sections(s: &crate::usage::DeepseekSnapshot) -> Vec<Section> {
