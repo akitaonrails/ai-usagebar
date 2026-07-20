@@ -126,6 +126,8 @@ pub struct Cli {
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum Vendor {
     Anthropic,
+    #[value(name = "anthropic_api")]
+    AnthropicApi,
     Openai,
     Zai,
     Openrouter,
@@ -141,6 +143,7 @@ impl Vendor {
     pub fn to_id(self) -> crate::vendor::VendorId {
         match self {
             Vendor::Anthropic => crate::vendor::VendorId::Anthropic,
+            Vendor::AnthropicApi => crate::vendor::VendorId::AnthropicApi,
             Vendor::Openai => crate::vendor::VendorId::Openai,
             Vendor::Zai => crate::vendor::VendorId::Zai,
             Vendor::Openrouter => crate::vendor::VendorId::Openrouter,
@@ -223,6 +226,7 @@ impl Cli {
 fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
     match id {
         crate::vendor::VendorId::Anthropic => Vendor::Anthropic,
+        crate::vendor::VendorId::AnthropicApi => Vendor::AnthropicApi,
         crate::vendor::VendorId::Openai => Vendor::Openai,
         crate::vendor::VendorId::Zai => Vendor::Zai,
         crate::vendor::VendorId::Openrouter => Vendor::Openrouter,
@@ -330,6 +334,16 @@ mod tests {
         let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
         assert_eq!(cli.vendor, Some(Vendor::Kimi));
         assert_eq!(cli.vendor.unwrap().to_id(), crate::vendor::VendorId::Kimi);
+    }
+
+    #[test]
+    fn vendor_anthropic_api_uses_the_documented_slug() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "anthropic_api"]);
+        assert_eq!(cli.vendor, Some(Vendor::AnthropicApi));
+        assert_eq!(
+            cli.vendor.unwrap().to_id(),
+            crate::vendor::VendorId::AnthropicApi
+        );
     }
 
     #[test]

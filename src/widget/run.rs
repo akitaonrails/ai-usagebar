@@ -9,6 +9,7 @@ use chrono::Utc;
 use reqwest::Client;
 
 use crate::anthropic::{self, creds::CredsTarget, fetch::FetchOutcome};
+use crate::anthropic_api;
 use crate::cache::{Cache, DEFAULT_TTL};
 use crate::config::Config;
 use crate::deepseek;
@@ -136,6 +137,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
     }
     match vendor {
         Vendor::Anthropic => anthropic_output(cli, &config).await,
+        Vendor::AnthropicApi => anthropic_api_output(cli, &config).await,
         Vendor::Openrouter => openrouter_output(cli, &config).await,
         Vendor::Openai => openai_output(cli, &config).await,
         Vendor::Zai => zai_output(cli, &config).await,
@@ -287,6 +289,43 @@ async fn kilo_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let vendor_outcome: VendorOutcome = outcome.into();
     let opts = RenderOpts::from_cli(cli);
     Ok(kilo::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let key = crate::config::resolve_api_key(
+        "Anthropic_API",
+        &config.anthropic_api.api_key_env,
+        config.anthropic_api.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "anthropic_api")?;
+    let endpoints = anthropic_api::fetch::Endpoints::default();
+    let outcome = match anthropic_api::fetch_snapshot(
+        &client,
+        &key,
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+        config.anthropic_api.monthly_limit,
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+        Err(e) => return Err(e),
+    };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(anthropic_api::vendor::render(
         &vendor_outcome,
         &snap,
         &theme,

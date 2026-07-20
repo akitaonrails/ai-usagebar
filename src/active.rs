@@ -100,6 +100,7 @@ pub fn cycle_at(
 fn parse_slug(s: &str) -> Option<VendorId> {
     match s {
         "anthropic" => Some(VendorId::Anthropic),
+        "anthropic_api" => Some(VendorId::AnthropicApi),
         "openai" => Some(VendorId::Openai),
         "zai" => Some(VendorId::Zai),
         "openrouter" => Some(VendorId::Openrouter),

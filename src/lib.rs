@@ -10,6 +10,7 @@
 
 pub mod active;
 pub mod anthropic;
+pub mod anthropic_api;
 pub mod cache;
 pub mod config;
 pub mod countdown;

@@ -39,6 +39,37 @@ Each release is also published at
   **team-scoped**. An organization-scoped key reports an actionable error asking
   for `[grok] team_id` rather than querying a URL built from an organization id.
 
+- **Anthropic (API) vendor** — month-to-date **spend** for the API/Console
+  account, separate from the Claude Code OAuth account the existing `anthropic`
+  vendor covers. Sums the current calendar month's daily buckets from
+  `GET api.anthropic.com/v1/organizations/cost_report` (Admin API, paginated via
+  `has_more`/`next_page`), converting the `amount` field from cents to dollars.
+  Renders `$1.34 / $1000 · 0%` when `monthly_limit` is configured, `$1.34/mo`
+  otherwise — the limit is a config value, since the API exposes neither it nor
+  the remaining prepaid balance (Console dashboard only). Opt-in; requires a
+  Console **Admin key** (`sk-ant-admin01-…`), which is only available to
+  **organization** accounts.
+
+  The cost API omits **Priority Tier** costs, so for an affected organization
+  this figure is below its real total spend; the tooltip, TUI panel, README, and
+  `config.example.toml` all say so rather than implying it is complete.
+
+  Parsing is strict — the documented envelope fields are required, so a 200
+  error envelope or a drifted shape is a schema error instead of a fabricated
+  "$0.00 this month"; a genuine `data: []` is still a real zero. Incomplete
+  pagination (`has_more` with no `next_page`, a repeated cursor, or exceeding
+  the page cap) fails rather than caching a partial month. The cache records the
+  UTC month it covers, so a rollover — including during an outage — refetches
+  instead of showing last month as the current one. When a fetch fails with
+  nothing usable cached, the original error is surfaced so the Admin-key
+  guidance reaches the user.
+
+  The cache also fingerprints the Admin key, preventing a key switch to another
+  organization from reusing the previous organization's spend. Cost records
+  must carry the documented `USD` currency before they are summed, configured
+  limits must be positive and finite, response bodies are bounded, and fallback
+  data older than seven days is refused.
+
 ### CI
 
 - **PRs are now gated on Linux — the platform the widget actually ships on.**

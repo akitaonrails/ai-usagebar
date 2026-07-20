@@ -67,8 +67,7 @@ Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
 `%USERPROFILE%\.codex\auth.json` (OpenAI Codex). Run the official `claude` /
 `codex` CLI once on Windows to populate them, exactly as on Linux/macOS.
-API-key vendors (Z.AI, OpenRouter, DeepSeek, Kimi) work unchanged via environment
-variables or `config.toml`.
+API-key vendors work unchanged via environment variables or `config.toml`.
 
 ## Authentication
 
@@ -77,6 +76,7 @@ Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth c
 | Vendor | Method | Action required |
 |---|---|---|
 | Anthropic | OAuth, read from `~/.claude/.credentials.json` (or the macOS login Keychain — see below) | Run `claude` once to log in. Token auto-refreshes. |
+| Anthropic (API) | Console Admin key (`ANTHROPIC_ADMIN_KEY` env or `[anthropic_api] api_key` in config) | Set either. Opt-in. This is an organization Admin key (`sk-ant-admin01-…`), not an inference key or Claude Code OAuth credential. |
 | OpenAI | OAuth, read from `~/.codex/auth.json` | Run `codex login` once. Token auto-refreshes. |
 | Z.AI | API key (`ZAI_API_KEY` env or `[zai] api_key` in config) | Set either. |
 | OpenRouter | API key (`OPENROUTER_API_KEY` env or `[openrouter] api_key` in config) | Set either. |
@@ -105,9 +105,9 @@ rather than silently querying the wrong URL.
 
 ### Enabling a vendor
 
-`enabled = true` is what makes a vendor fetch. DeepSeek, Kimi, Kilo, Novita,
-Moonshot, and Grok all default to **disabled** so that existing installs are
-unaffected until you opt in. Two ways to do it:
+`enabled = true` is what makes a vendor fetch. Anthropic (API), DeepSeek, Kimi,
+Kilo, Novita, Moonshot, and Grok all default to **disabled** so that existing
+installs are unaffected until you opt in. Two ways to do it:
 
 - **Via the TUI Settings overlay** (`ai-usagebar-tui`, then `s`): saving a
   non-empty API key sets that vendor's `enabled = true` for you. Clearing the
@@ -121,7 +121,7 @@ vendor you haven't opted into cannot be set as primary.
 
 For each API-key vendor, ai-usagebar checks in this order:
 
-1. **Env var named by `api_key_env`** in config (defaults: `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `KILO_API_KEY`, `NOVITA_API_KEY`, `MOONSHOT_API_KEY`, `XAI_MANAGEMENT_KEY`). If set + non-empty, used.
+1. **Env var named by `api_key_env`** in config (defaults: `ANTHROPIC_ADMIN_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `KILO_API_KEY`, `NOVITA_API_KEY`, `MOONSHOT_API_KEY`, `XAI_MANAGEMENT_KEY`). If set + non-empty, used.
 2. **Inline `api_key`** in the same config section.
 3. Otherwise, **error** with a message naming both options.
 
@@ -137,19 +137,26 @@ On macOS, recent Claude Code builds don't write `~/.claude/.credentials.json` �
 
 ## Configuration
 
-`~/.config/ai-usagebar/config.toml` (optional — defaults enable Anthropic, OpenAI, Z.AI, and OpenRouter; DeepSeek and Kimi are opt-in). Full example:
+`~/.config/ai-usagebar/config.toml` (optional — defaults enable Anthropic, OpenAI, Z.AI, and OpenRouter; all other vendors are opt-in). Full example:
 
 ```toml
 [ui]
 # Which vendor the widget shows when --vendor is omitted, AND which tab
 # is selected when the TUI opens. Defaults to anthropic when not set.
 # Only a vendor that is enabled can be primary.
-# primary = "anthropic"   # anthropic | openai | zai | openrouter | deepseek
-#                         # | kimi | kilo | novita | moonshot | grok
+# primary = "anthropic"   # anthropic | anthropic_api | openai | zai
+#                         # | openrouter | deepseek | kimi | kilo | novita
+#                         # | moonshot | grok
 
 [anthropic]
 enabled = true
 # credentials_path = "/home/you/.claude/.credentials.json"
+
+[anthropic_api]
+enabled = true             # disabled by default; requires an organization Admin key
+api_key_env = "ANTHROPIC_ADMIN_KEY"
+# api_key = "sk-ant-admin01-..."  # not an inference key; chmod 600 if inline
+# monthly_limit = 1000     # optional positive, finite USD display limit
 
 [openai]
 enabled = true
@@ -209,6 +216,7 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 ```bash
 # Local testing — auto-detects TTY and renders human-readable output.
 ai-usagebar                        # uses [ui] primary (defaults to anthropic)
+ai-usagebar --vendor anthropic_api
 ai-usagebar --vendor openai
 ai-usagebar --vendor zai
 ai-usagebar --vendor openrouter
@@ -443,6 +451,7 @@ Then `hyprctl reload` (no logout needed).
 | **Novita** | `api.novita.ai/openapi/v1/billing/balance/detail` (documented) | Remaining credit balance ($) | No — widget/TUI only |
 | **Moonshot** | `api.moonshot.ai\|.cn/v1/users/me/balance` (documented) | Account balance ($ on `.ai`, ¥ on `.cn`) | No — widget/TUI only |
 | **Grok (xAI)** | `management-api.x.ai/v1/billing/teams/{team}/prepaid/balance` (Management API; documented) | Prepaid credit balance ($) | No — widget/TUI only |
+| **Anthropic (API)** | `api.anthropic.com/v1/organizations/cost_report` (Admin API; documented) | Month-to-date spend ($, excludes Priority Tier), optional spend-vs-limit % | No — widget/TUI only |
 
 ### Endpoint stability
 
@@ -499,6 +508,12 @@ When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests,
 ### Grok
 
 `{grok_balance}` — prepaid credit balance (USD) from the xAI Management API (`management-api.x.ai`).
+
+### Anthropic (API)
+
+`{aapi_headline}`, `{aapi_spent}`, `{aapi_limit}`, `{aapi_pct}` — month-to-date spend for the API/Console account from the Admin API `cost_report`. The headline is `$1.34 / $1000 · 0%` when a positive, finite `monthly_limit` is set in config, `$1.34/mo` otherwise. Generic aliases `{plan}`, `{session_pct}`, and `{weekly_pct}` are also available (the last two both map to the spend-vs-limit %).
+
+> **Two things this figure is not.** It is **spend**, not remaining credit — Anthropic exposes no API for the prepaid balance, which is visible only on the Console dashboard. And per the [Cost API docs](https://platform.claude.com/docs/en/manage-claude/usage-cost-api) it **omits Priority Tier costs**, so an organization on Priority Tier is seeing less than its true total spend.
 
 ## Local development
 
