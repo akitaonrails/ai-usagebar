@@ -6,6 +6,7 @@
 //!   Shift+Tab / h / ←   prev tab
 //!   r   refresh active tab
 //!   R   refresh all tabs
+//!   c   local Claude Code context sessions (when enabled)
 //!   q / Esc / Ctrl-C   quit
 
 use std::io;
@@ -61,6 +62,7 @@ async fn run() -> io::Result<()> {
         .map_err(io::Error::other)?;
 
     let mut app = App::new_with_primary(tabs, config.ui.primary);
+    app.context_enabled = config.context.enabled;
 
     // RAII: restoring the terminal must survive an error or a panic in the
     // loop below. Doing it inline left the user in raw mode on the alternate
@@ -113,6 +115,10 @@ where
 {
     // Kick off initial fetches for every vendor in parallel.
     let (tx, mut rx) = mpsc::unbounded_channel::<(u64, TabId, TabState)>();
+    let (context_tx, mut context_rx) = mpsc::unbounded_channel::<(
+        u64,
+        std::result::Result<ai_usagebar::context::ContextScan, String>,
+    )>();
     spawn_all(app, client, config, &tx);
 
     // ONE reader thread for the whole session. Spawning a fresh
@@ -150,6 +156,13 @@ where
             Some((generation, tab, state)) = rx.recv() => {
                 app.apply_refresh(generation, &tab, state);
             }
+            // Local transcript scans carry their own generation so a slow
+            // pre-`r` result cannot replace a newer scan.
+            Some((generation, result)) = context_rx.recv() => {
+                if let Some(context) = app.context.as_mut() {
+                    context.apply_scan(generation, result);
+                }
+            }
             // Periodic auto-refresh of all tabs.
             _ = tick.tick() => {
                 spawn_all(app, client, config, &tx);
@@ -168,6 +181,23 @@ where
                     // Treat each *press* as exactly one action; ignore
                     // Repeat and Release entirely.
                     if k.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    // Context overlay consumes all keys while open.
+                    if app.context.is_some() {
+                        use ai_usagebar::tui::context::{Action as CAction, handle_key as chandle};
+                        let action = {
+                            let context = app.context.as_mut().expect("checked above");
+                            chandle(context, k.code, k.modifiers)
+                        };
+                        match action {
+                            CAction::Continue => {}
+                            CAction::Close => app.context = None,
+                            CAction::Refresh => {
+                                spawn_context_scan(app, config, &context_tx);
+                            }
+                            CAction::Quit => return Ok(()),
+                        }
                         continue;
                     }
                     // Settings overlay consumes all keys when open.
@@ -190,6 +220,7 @@ where
                                 if let Ok(reloaded) = ai_usagebar::config::Config::load() {
                                     *config = reloaded;
                                 }
+                                app.context_enabled = config.context.enabled;
                                 app.set_tabs(tabs_from_config(config));
                                 app.select_primary(config.ui.primary);
                                 spawn_all(app, client, config, &tx);
@@ -207,6 +238,20 @@ where
                         app.settings = Some(
                             ai_usagebar::tui::settings::SettingsState::from_config(&cfg),
                         );
+                        continue;
+                    }
+                    if matches!(k.code, KeyCode::Char('c'))
+                        && !k.modifiers.intersects(
+                            KeyModifiers::CONTROL
+                                | KeyModifiers::ALT
+                                | KeyModifiers::SUPER
+                                | KeyModifiers::HYPER
+                                | KeyModifiers::META,
+                        )
+                        && app.context_enabled
+                    {
+                        app.context = Some(ai_usagebar::tui::context::ContextState::default());
+                        spawn_context_scan(app, config, &context_tx);
                         continue;
                     }
                     if handle_key(app, k.code, k.modifiers) {
@@ -229,6 +274,35 @@ where
             return Ok(());
         }
     }
+}
+
+fn spawn_context_scan(
+    app: &mut App,
+    config: &Config,
+    tx: &mpsc::UnboundedSender<(
+        u64,
+        std::result::Result<ai_usagebar::context::ContextScan, String>,
+    )>,
+) {
+    let Some(context) = app.context.as_mut() else {
+        return;
+    };
+    app.context_generation = app.context_generation.wrapping_add(1);
+    let generation = app.context_generation;
+    context.begin_refresh(generation);
+    let context_config = config.context.clone();
+    let tx = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let result = (|| {
+            let path = match context_config.projects_path.as_deref() {
+                Some(path) => path.to_path_buf(),
+                None => ai_usagebar::context::default_projects_path()?,
+            };
+            ai_usagebar::context::scan_dir(&path, &context_config)
+        })()
+        .map_err(|error| error.to_string());
+        let _ = tx.send((generation, result));
+    });
 }
 
 fn spawn_all(

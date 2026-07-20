@@ -34,6 +34,8 @@ pub fn draw(f: &mut Frame, app: &App) {
     // Settings overlay sits on top — rendered last so it covers everything.
     if let Some(s) = &app.settings {
         crate::tui::settings::render(f, f.area(), s, &app.theme);
+    } else if let Some(context) = &app.context {
+        crate::tui::context::render(f, f.area(), context, &app.theme);
     }
 }
 
@@ -235,14 +237,17 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     // title row of every panel, and (b) prone to getting cropped on narrow
     // 875x600 windows. Keep the footer to just the keybinding hints.
     let theme = bubble_theme(&app.theme);
-    let help = Help::new([
+    let mut bindings = vec![
         KeyBinding::with_keys(["tab", "h/l"], "switch"),
         KeyBinding::new("r", "refresh"),
         KeyBinding::new("R", "refresh all"),
         KeyBinding::new("s", "settings"),
-        KeyBinding::with_keys(["q", "esc"], "quit"),
-    ])
-    .theme(theme);
+    ];
+    if app.context_enabled {
+        bindings.push(KeyBinding::new("c", "context"));
+    }
+    bindings.push(KeyBinding::with_keys(["q", "esc"], "quit"));
+    let help = Help::new(bindings).theme(theme);
     f.render_widget(&help, area);
 }
 
@@ -326,5 +331,31 @@ mod tests {
         // passing off "now" as a response time.
         let app = app_with(vec![ready_at(None), TabState::Loading]);
         assert_eq!(header_refresh_text(&app), "last refresh —");
+    }
+
+    #[test]
+    fn context_footer_hint_is_visible_only_when_the_feature_is_enabled() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        fn rendered(mut app: App, enabled: bool) -> String {
+            app.context_enabled = enabled;
+            let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<Vec<_>>()
+                .concat()
+        }
+
+        let disabled = rendered(app_with(vec![TabState::Loading, TabState::Loading]), false);
+        assert!(!disabled.contains("context"));
+
+        let enabled = rendered(app_with(vec![TabState::Loading, TabState::Loading]), true);
+        assert!(enabled.contains("context"));
     }
 }

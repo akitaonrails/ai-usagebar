@@ -141,6 +141,9 @@ vendor's response shape drifts:
   resolves `$HOME` / `%USERPROFILE%` via `directories::BaseDirs` and is reused
   by both OAuth-credential vendors (`anthropic`, `openai`) so the OS convention
   lives in one place.
+- `src/context/` — opt-in, bounded reader for local Claude Code JSONL
+  transcripts. This format is best-effort and schema-tolerant; tests must use
+  `scan_dir(&Path)` with a temp directory and never inspect a real user history.
 - `src/tui/settings.rs` — Settings overlay (toml_edit-backed,
   auto-signals waybar after save)
 - `src/tui/panels.rs` — native ratatui per-vendor panels

@@ -10,6 +10,8 @@ This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar)
 
 - **Per-vendor Waybar modules** with the same JSON shape as claudebar.
 - **Tabbed TUI** (`ai-usagebar-tui`) with Tab/h/l switching, per-tab refresh, and 60-second auto-refresh. Native ratatui widgets fill the available terminal width and keep the vendor tabs visually consistent.
+- **Optional local Claude Code context monitor** in the TUI, with a bounded,
+  compaction-aware view of recent session input-context usage.
 - **Native desktop integrations** for GNOME Shell and the macOS menu bar, with selectors for Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek.
 - **Scroll-to-cycle on the bar**: wire `on-scroll-up` / `on-scroll-down`, and one bar item cycles through your enabled vendors.
 - **Config-driven primary vendor**: set `[ui] primary` once; the widget shows that vendor by default and the TUI opens on its tab.
@@ -147,6 +149,13 @@ On macOS, recent Claude Code builds don't write `~/.claude/.credentials.json` �
 # primary = "anthropic"   # anthropic | anthropic_api | openai | zai
 #                         # | openrouter | deepseek | kimi | kilo | novita
 #                         # | moonshot | grok
+
+[context]
+enabled = false           # opt in, then press c in ai-usagebar-tui
+# projects_path = "~/.claude/projects"
+# context_window_tokens = 200000  # optional fallback denominator
+# [context.model_context_window_tokens]
+# "claude-opus-4-6" = 1000000    # exact model id overrides the fallback
 
 [anthropic]
 enabled = true
@@ -536,11 +545,45 @@ make clippy                                        # cargo clippy -D warnings
 - `r` — refresh active tab
 - `R` — refresh all tabs
 - `s` — open Settings overlay (primary vendor + API keys)
+- `c` — open local Claude context sessions (only when `[context] enabled = true`)
 - `q` / `Esc` / `Ctrl-C` — quit
 
 Auto-refresh runs every 60 seconds in the background. Vendors use the same layout. Here's OpenRouter showing the credit balance gauge (red because 98% is consumed), usage-by-period totals, and tier:
 
 ![ai-usagebar-tui showing the OpenRouter tab — Credit balance gauge at 98% in red ($13.67 left of $900), Usage by period with today/week/month, paid tier](screenshots/tui-openrouter.png)
+
+### Local context overlay
+
+The optional context overlay answers a different local question from the
+vendor tabs: how much input context was present in recent Claude Code sessions.
+Enable it by hand, restart the TUI, and press `c`:
+
+```toml
+[context]
+enabled = true
+# projects_path = "~/.claude/projects"  # this is the default
+# context_window_tokens = 200000         # optional fallback
+
+# Exact model ids override the fallback when 200K and 1M sessions coexist.
+[context.model_context_window_tokens]
+"claude-opus-4-6" = 1000000
+```
+
+Use `↑`/`↓` or `j`/`k` to select a session, `Enter` for its detail gauge,
+`Esc` to return, and `r` to rescan. The percentage follows
+[Claude Code's status-line definition](https://code.claude.com/docs/en/statusline):
+`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`. If no
+trustworthy window size is configured for a model, the overlay shows the raw
+token count rather than guessing a percentage. After compaction it shows a
+waiting state until the next assistant response establishes the new context.
+
+This is a best-effort reader for Claude Code's undocumented local JSONL format,
+not an API. It reads only bounded tails from the 100 most recently modified
+top-level sessions, ignores unknown or corrupt lines, skips `subagents`
+sidechains, never follows discovered symlinks, and does the filesystem work on
+the blocking pool so the TUI remains responsive. Nothing under
+`~/.claude/projects` is read while the feature is disabled. Context controls
+stay in TOML rather than expanding the already-full Settings modal.
 
 ### Settings overlay
 

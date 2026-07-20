@@ -11,6 +11,18 @@ Each release is also published at
 
 ### Added
 
+- **Opt-in local Claude Code context monitor in the TUI.** Press `c` to list
+  the 100 most recently modified top-level sessions from
+  `~/.claude/projects`, then `Enter` for a detail gauge. The percentage uses
+  Claude Code's input-only formula (fresh input + cache creation + cache
+  reads); mixed 200K/1M histories can supply exact per-model window sizes, and
+  an unknown denominator stays a raw token count instead of becoming a false
+  percentage. The scanner runs off the async runtime, reads only bounded JSONL
+  tails, skips subagent transcripts and symlinks, tolerates corrupt/unknown
+  records, sanitizes display text, and invalidates a pre-compaction reading
+  until the next assistant response. The feature is disabled by default and
+  performs no filesystem scan until explicitly enabled.
+
 - **Four account-balance vendors** that read remaining credit via each
   provider's API and render it as money, alongside the existing usage vendors:
   - **Kilo** — `GET api.kilo.ai/api/profile/balance` (USD; optional org id).

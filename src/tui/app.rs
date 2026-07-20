@@ -93,6 +93,14 @@ pub struct App {
     pub quit: bool,
     /// When `Some`, the Settings overlay is open and consuming key events.
     pub settings: Option<crate::tui::settings::SettingsState>,
+    /// Local context monitoring is separately opt-in and never changes the
+    /// vendor tab set.
+    pub context_enabled: bool,
+    /// Monotonic across overlay close/reopen cycles so an old detached scan
+    /// can never share the new overlay's first generation number.
+    pub context_generation: u64,
+    /// When `Some`, the local Claude Code context overlay owns keyboard input.
+    pub context: Option<crate::tui::context::ContextState>,
 }
 
 impl App {
@@ -117,6 +125,9 @@ impl App {
             theme,
             quit: false,
             settings: None,
+            context_enabled: false,
+            context_generation: 0,
+            context: None,
         }
     }
 
