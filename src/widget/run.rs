@@ -42,7 +42,12 @@ pub async fn run(cli: Cli) -> i32 {
 /// Cycle to the next/prev enabled vendor and signal waybar to refresh.
 /// Always exits 0 — Waybar swallows non-zero exits anyway.
 async fn run_cycle(cli: &Cli) -> i32 {
-    let config = Config::load().unwrap_or_default();
+    // Cycling against the *default* vendor set because the config failed to
+    // parse would persist a selection the user never made. Do nothing instead;
+    // the next render surfaces the config error through the `⚠` fallback.
+    let Ok(config) = Config::load() else {
+        return 0;
+    };
     let enabled = config.enabled_vendors();
     if enabled.is_empty() {
         return 0;
@@ -95,7 +100,10 @@ async fn run_once(cli: &Cli, out: &mut impl Write) {
 }
 
 async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
-    let config = Config::load().unwrap_or_default();
+    // A broken config is reported through the `⚠` fallback (still exit 0)
+    // rather than silently reverting to the default vendor set — otherwise a
+    // typo'd section shows another account's usage with no diagnostic.
+    let config = Config::load()?;
     let vendor = cli.resolved_vendor(&config);
     if !dispatch_is_eligible(cli, &config, vendor) {
         return Err(AppError::Other(format!(
@@ -470,6 +478,17 @@ mod tests {
         let out = fallback(&err, &cli_default());
         assert_eq!(out.text, "⚠");
         assert!(out.tooltip.contains("missing token"));
+    }
+
+    #[test]
+    fn fallback_reports_a_broken_config_without_breaking_exit_0() {
+        // Propagating the config error must still land in the `⚠` fallback —
+        // Waybar hides modules that exit non-zero, so a broken config has to
+        // be *visible*, not fatal.
+        let toml_err = toml::from_str::<Config>("[zai\nenabled = true\n").unwrap_err();
+        let out = fallback(&AppError::Toml(toml_err), &cli_default());
+        assert_eq!(out.text, "⚠");
+        assert!(out.tooltip.contains("TOML error"));
     }
 
     #[test]

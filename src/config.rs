@@ -24,8 +24,14 @@ use crate::cache::Cache;
 use crate::error::{AppError, Result};
 use crate::vendor::VendorId;
 
+/// A misspelled section name is silently ignored without this: `[openrouer]`
+/// leaves OpenRouter on its defaults and the user sees the wrong vendor set
+/// with no diagnostic. Denying unknown keys is deliberately applied at the
+/// *section* level only — the set of sections is small and stable, whereas
+/// denying unknown keys inside every section would hard-fail configs that
+/// carry a field from a future or removed version.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub ui: UiConfig,
     pub anthropic: AnthropicConfig,
@@ -607,6 +613,40 @@ enabled = false
         assert!(c.is_enabled(VendorId::Deepseek));
         assert!(c.enabled_vendors().contains(&VendorId::Deepseek));
         assert_eq!(c.deepseek.api_key.as_deref(), Some("sk-test"));
+    }
+
+    #[test]
+    fn misspelled_section_is_rejected_not_ignored() {
+        // The regression this guards: `[openrouer]` used to parse fine, leave
+        // OpenRouter on its defaults, and give the user no hint at all.
+        let f = write_toml(
+            r#"
+            [openrouer]
+            enabled = true
+            api_key = "sk-or-v1-typo"
+            "#,
+        );
+        let err = Config::load_from(f.path()).unwrap_err().to_string();
+        assert!(
+            err.contains("openrouer"),
+            "error should name the typo: {err}"
+        );
+    }
+
+    #[test]
+    fn invalid_toml_is_an_error_not_silent_defaults() {
+        let f = write_toml("[zai\nenabled = true\n");
+        assert!(Config::load_from(f.path()).is_err());
+    }
+
+    #[test]
+    fn a_missing_file_is_still_just_defaults() {
+        // Absence stays the legitimate "use defaults" case — only real parse
+        // and I/O failures are errors.
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope").join("config.toml");
+        let c = Config::load_from(&missing).unwrap();
+        assert!(c.is_enabled(VendorId::Anthropic));
     }
 
     #[test]

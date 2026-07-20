@@ -9,7 +9,27 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Changed
+
+- **A misspelled config *section* is now an error instead of being ignored.**
+  `[openrouer]` used to parse cleanly, leave OpenRouter on its defaults, and
+  give no hint that the section had been dropped. `Config` denies unknown
+  top-level keys. This is deliberately section-level only: the set of sections
+  is small and stable, whereas denying unknown keys inside every section would
+  hard-fail configs carrying a field from a future or removed version.
+
 ### Fixed
+
+- **An invalid config is no longer silently replaced by the defaults.** Every
+  caller used `Config::load().unwrap_or_default()`, so a TOML syntax error, a
+  permission problem, or a failed validation produced the default vendor set
+  with no diagnostic — the user saw the wrong tabs and credentials and had
+  nothing to go on. The widget now reports it through the existing `⚠` fallback
+  (still exiting 0, as Waybar requires), the TUI prints the path and the parse
+  error *before* entering raw mode, in-session reloads keep the last good
+  config instead of reverting to defaults, and `--cycle-next/--cycle-prev` does
+  nothing rather than persisting a selection derived from the wrong vendor set.
+  A missing file remains the legitimate "use defaults" case.
 
 - **Cached data is no longer served forever after a failure.** `MAX_STALE`
   (7 days) was declared but never referenced, so every vendor's fallback path

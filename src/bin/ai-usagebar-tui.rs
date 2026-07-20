@@ -38,7 +38,15 @@ async fn main() {
 }
 
 async fn run() -> io::Result<()> {
-    let mut config = Config::load().unwrap_or_default();
+    // Report a broken config instead of silently starting on defaults, and do
+    // it before raw mode so the message is actually readable.
+    let mut config = Config::load().map_err(|e| {
+        io::Error::other(format!(
+            "{} could not be loaded: {e}\n\
+             Fix the file (or move it aside) and try again.",
+            ai_usagebar::config::config_path_hint()
+        ))
+    })?;
     let tabs = tabs_from_config(&config);
     if tabs.is_empty() {
         eprintln!(
@@ -133,7 +141,12 @@ where
                                 // while the TUI was open appear without a
                                 // restart, and queue an immediate refresh of
                                 // every tab so newly-set API keys are picked up.
-                                *config = ai_usagebar::config::Config::load().unwrap_or_default();
+                                // Keep the config we already have if the reload
+                                // fails — reverting to defaults would silently
+                                // drop the user's real settings mid-session.
+                                if let Ok(reloaded) = ai_usagebar::config::Config::load() {
+                                    *config = reloaded;
+                                }
                                 app.set_tabs(tabs_from_config(config));
                                 app.select_primary(config.ui.primary);
                                 spawn_all(app, client, config, &tx);
@@ -143,7 +156,10 @@ where
                     }
                     // Normal key handling (settings closed).
                     if matches!(k.code, KeyCode::Char('s')) {
-                        let cfg = ai_usagebar::config::Config::load().unwrap_or_default();
+                        // Prefer the file (it may have changed on disk), but fall
+                        // back to the config in memory rather than to defaults.
+                        let cfg = ai_usagebar::config::Config::load()
+                            .unwrap_or_else(|_| config.clone());
                         app.settings = Some(
                             ai_usagebar::tui::settings::SettingsState::from_config(&cfg),
                         );
