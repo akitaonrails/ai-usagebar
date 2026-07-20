@@ -13,6 +13,7 @@ pub mod anthropic;
 pub mod anthropic_api;
 pub mod cache;
 pub mod config;
+pub mod context;
 pub mod countdown;
 pub mod deepseek;
 pub mod error;

@@ -14,7 +14,7 @@
 //! treated as "use defaults". API keys are read from env vars (the relevant
 //! `*_api_key_env` field lets the user override which env var name).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,7 @@ use crate::vendor::VendorId;
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub ui: UiConfig,
+    pub context: ContextConfig,
     pub anthropic: AnthropicConfig,
     pub anthropic_api: AnthropicApiConfig,
     pub openai: OpenAiConfig,
@@ -55,6 +56,35 @@ pub struct Config {
 pub struct UiConfig {
     /// `None` → fall back to anthropic for backward compatibility.
     pub primary: Option<VendorId>,
+}
+
+/// Optional local Claude Code context-window monitor. This is deliberately
+/// separate from vendors: sessions are discovered from local transcripts and
+/// change while the TUI is running, whereas vendor tabs are config-declared
+/// account identities.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ContextConfig {
+    /// Keep the filesystem scanner completely dormant unless explicitly
+    /// enabled. The `c` key and its footer hint are hidden while disabled.
+    pub enabled: bool,
+    /// Override Claude Code's normal `~/.claude/projects` transcript root.
+    pub projects_path: Option<PathBuf>,
+    /// Optional fallback denominator. When absent, sessions without an exact
+    /// model override show their input-token count without inventing a %.
+    pub context_window_tokens: Option<u64>,
+    /// Exact Claude model id -> context-window size. This takes precedence
+    /// over `context_window_tokens`, which keeps mixed 200K/1M histories safe.
+    pub model_context_window_tokens: BTreeMap<String, u64>,
+}
+
+impl ContextConfig {
+    pub fn window_tokens_for(&self, model: Option<&str>) -> Option<u64> {
+        model
+            .and_then(|model| self.model_context_window_tokens.get(model).copied())
+            .filter(|tokens| *tokens > 0)
+            .or_else(|| self.context_window_tokens.filter(|tokens| *tokens > 0))
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -437,6 +467,7 @@ impl Config {
     }
 
     fn expand_paths(&mut self) {
+        expand_tilde_opt(&mut self.context.projects_path);
         expand_tilde_opt(&mut self.anthropic.credentials_path);
         expand_tilde_opt(&mut self.openai.codex_auth_path);
         for account in &mut self.anthropic.accounts {
@@ -472,6 +503,23 @@ impl Config {
     /// labels are both CLI selectors and TUI tab identities, so duplicates
     /// would make either destination ambiguous.
     pub fn validate(&self) -> Result<()> {
+        if self.context.context_window_tokens == Some(0) {
+            return Err(AppError::Other(
+                "[context] context_window_tokens must be greater than zero".into(),
+            ));
+        }
+        for (model, tokens) in &self.context.model_context_window_tokens {
+            if model.trim().is_empty() {
+                return Err(AppError::Other(
+                    "[context] model_context_window_tokens keys must not be empty".into(),
+                ));
+            }
+            if *tokens == 0 {
+                return Err(AppError::Other(format!(
+                    "[context] model_context_window_tokens entry {model:?} must be greater than zero"
+                )));
+            }
+        }
         if let Some(limit) = self.anthropic_api.monthly_limit
             && (!limit.is_finite() || limit <= 0.0)
         {
@@ -677,6 +725,55 @@ enabled = false
         );
     }
 
+    #[test]
+    fn context_monitor_is_opt_in_and_window_sizes_are_explicit() {
+        let defaults = Config::default();
+        assert!(!defaults.context.enabled);
+        assert_eq!(
+            defaults.context.window_tokens_for(Some("claude-test")),
+            None
+        );
+
+        let file = write_toml(
+            r#"
+            [context]
+            enabled = true
+            context_window_tokens = 200000
+
+            [context.model_context_window_tokens]
+            claude-opus-1m = 1000000
+            "claude exact id" = 300000
+            "#,
+        );
+        let config = Config::load_from(file.path()).unwrap();
+        assert!(config.context.enabled);
+        assert_eq!(
+            config.context.window_tokens_for(Some("claude-opus-1m")),
+            Some(1_000_000)
+        );
+        assert_eq!(
+            config.context.window_tokens_for(Some("claude exact id")),
+            Some(300_000)
+        );
+        assert_eq!(
+            config.context.window_tokens_for(Some("another-model")),
+            Some(200_000)
+        );
+    }
+
+    #[test]
+    fn context_window_sizes_must_be_nonzero_and_model_ids_nonempty() {
+        for source in [
+            "[context]\ncontext_window_tokens = 0\n",
+            "[context.model_context_window_tokens]\nclaude = 0\n",
+            "[context.model_context_window_tokens]\n\" \" = 200000\n",
+        ] {
+            let file = write_toml(source);
+            let error = Config::load_from(file.path()).unwrap_err().to_string();
+            assert!(error.contains("context"), "{error}");
+        }
+    }
+
     // serial guard for env-var manipulation tests so they don't race
     fn env_guard() -> std::sync::MutexGuard<'static, ()> {
         static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -857,6 +954,9 @@ enabled = false
         // `~` relative to the process's cwd.
         let f = write_toml(
             r#"
+            [context]
+            projects_path = "~/.claude/projects"
+
             [anthropic]
             credentials_path = "~/.claude/.credentials.json"
 
@@ -868,6 +968,7 @@ enabled = false
         let c = Config::load_from(f.path()).unwrap();
         let home = crate::cache::home_dir().unwrap();
 
+        assert_eq!(c.context.projects_path, Some(home.join(".claude/projects")));
         let got = c.anthropic.credentials_path.unwrap();
         assert_eq!(got, home.join(".claude/.credentials.json"));
         assert!(!got.to_string_lossy().contains('~'));
@@ -1074,6 +1175,7 @@ enabled = false
         // unnoticed, and `deny_unknown_fields` would reject the copy on the
         // user's machine instead of in CI.
         let c = Config::load_from(&config_example()).unwrap();
+        assert!(!c.context.enabled);
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
         assert!(!c.is_enabled(VendorId::AnthropicApi));

@@ -11,6 +11,21 @@
 # Valid: anthropic | openai | zai | openrouter | deepseek | kimi
 # primary = "anthropic"
 
+# Optional, TUI-only monitor for local Claude Code session context. When
+# enabled, press `c` in ai-usagebar-tui. The scanner reads only bounded tails
+# below ~/.claude/projects, skips subagent transcripts and never follows
+# discovered symlinks. Nothing is read while this remains disabled.
+[context]
+enabled = false
+# projects_path = "~/.claude/projects"  # default
+# Set a fallback only when it matches the sessions you use. Without a known
+# denominator the overlay shows raw input tokens rather than inventing a %.
+# context_window_tokens = 200000
+# Exact per-model values take precedence, which is useful when 200K and 1M
+# sessions coexist. Keys must match the model id stored in the transcript.
+# [context.model_context_window_tokens]
+# "claude-opus-4-6" = 1000000
+
 [anthropic]
 enabled = true
 # Path to the Claude CLI OAuth credentials. Leave commented out to use
