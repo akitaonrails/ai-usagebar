@@ -73,8 +73,12 @@ pub async fn fetch_snapshot(
     let (mut creds, creds_source) = creds::resolve(creds_target)?;
     let plan_label = creds.claude_ai_oauth.plan_label();
 
-    if let Some(bytes) = cache.fresh_payload(cache_ttl)? {
-        return Ok(reuse_cache(bytes, plan_label, cache, false));
+    // Corrupt fresh cache falls through to a live fetch rather than returning
+    // an all-zero snapshot labelled "Unknown".
+    if let Some(bytes) = cache.fresh_payload(cache_ttl)?
+        && let Ok(outcome) = reuse_cache(bytes, plan_label.clone(), cache, false)
+    {
+        return Ok(outcome);
     }
 
     // Maybe refresh.
@@ -179,15 +183,19 @@ pub async fn fetch_snapshot(
     }
 }
 
-fn reuse_cache(bytes: Vec<u8>, plan_label: String, cache: &Cache, stale: bool) -> FetchOutcome {
-    let snap =
-        parse_payload(&bytes, plan_label).unwrap_or_else(|_| empty_snapshot("Unknown".into()));
-    FetchOutcome {
+fn reuse_cache(
+    bytes: Vec<u8>,
+    plan_label: String,
+    cache: &Cache,
+    stale: bool,
+) -> Result<FetchOutcome> {
+    let snap = parse_payload(&bytes, plan_label)?;
+    Ok(FetchOutcome {
         snapshot: snap,
         stale,
         last_error: cache.read_last_error(),
         cache_age: cache.payload_age(),
-    }
+    })
 }
 
 fn fallback_to_cache(
@@ -246,10 +254,6 @@ fn handle_auth_failure(cache: &Cache, plan_label: String, transient: bool) -> Re
 fn parse_payload(bytes: &[u8], plan_label: String) -> Result<AnthropicSnapshot> {
     let resp: UsageResponse = serde_json::from_slice(bytes)?;
     Ok(resp.into_snapshot(plan_label))
-}
-
-fn empty_snapshot(plan_label: String) -> AnthropicSnapshot {
-    UsageResponse::default().into_snapshot(plan_label)
 }
 
 async fn fetch_usage(client: &reqwest::Client, url: &str, creds: &OauthCreds) -> Result<Vec<u8>> {
@@ -328,6 +332,43 @@ mod tests {
         let cache = Cache::at(td.path().join("anthropic"));
         cache.ensure_dir().unwrap();
         (td, cache)
+    }
+
+    #[tokio::test]
+    async fn corrupt_fresh_cache_refetches_instead_of_showing_unknown() {
+        // `reuse_cache` used to swallow a parse failure into an all-zero
+        // snapshot labelled "Unknown" and serve it for the rest of the TTL —
+        // a fabricated reading presented as current.
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/api/oauth/usage")
+            .with_status(200)
+            .with_body(r#"{"five_hour":{"utilization":42},"seven_day":{"utilization":15}}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache.write_payload(b"{ truncated").unwrap();
+
+        let creds = future_creds();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/api/oauth/usage", server.url()),
+            token: format!("{}/token", server.url()),
+        };
+        // A long TTL: the payload IS fresh, it is simply unusable.
+        let outcome = fetch_snapshot(
+            &client,
+            &creds::CredsTarget::Explicit(creds.path().to_path_buf()),
+            &cache,
+            &endpoints,
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.snapshot.session.utilization_pct, 42);
+        assert_ne!(outcome.snapshot.plan, "Unknown");
+        assert!(!outcome.stale);
     }
 
     #[tokio::test]
