@@ -58,7 +58,7 @@ pub async fn fetch_snapshot(
 
     match fetch_live(client, &endpoints.usages, api_key).await {
         Ok(snap) => {
-            let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap_or_default();
+            let bytes = serde_json::to_vec(&snap_to_json(&snap))?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -194,7 +194,7 @@ async fn fetch_live(client: &reqwest::Client, url: &str, api_key: &str) -> Resul
         });
     }
 
-    let bytes = resp.bytes().await?;
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
     let r: UsagesResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("kimi usages response: {e}")))?;
     r.into_snapshot()

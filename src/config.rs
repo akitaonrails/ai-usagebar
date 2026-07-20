@@ -153,7 +153,13 @@ pub struct OpenAiConfig {
     pub enabled: bool,
     /// Override the Codex auth file path (defaults to `~/.codex/auth.json`).
     pub codex_auth_path: Option<PathBuf>,
-    /// Optional admin key env var name for the API-key-only fallback path.
+    /// Reserved, and inert: names the env var an API-key-only path *would*
+    /// read (admin key → `/v1/organization/costs`). Nothing consumes it —
+    /// OpenAI usage comes solely from Codex OAuth. Kept because that path is
+    /// still intended, not for back-compat: `[openai]` doesn't deny unknown
+    /// fields, so an existing `admin_key_env` would load either way. See
+    /// `config.example.toml`, which ships it commented out so nobody sets it
+    /// expecting an effect.
     pub admin_key_env: String,
 }
 
@@ -893,5 +899,69 @@ enabled = false
         // No [[anthropic.accounts]] → the single default account, empty list,
         // nothing to migrate (issue #14, back-compat rule 1).
         assert!(Config::default().anthropic.accounts.is_empty());
+    }
+
+    /// The shipped example, which `make install` puts in
+    /// `share/ai-usagebar/config.example.toml`. Repo-relative, so this stays
+    /// hermetic — it never touches the user's real config.
+    fn config_example() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config.example.toml")
+    }
+
+    #[test]
+    fn shipped_example_parses_as_a_real_config() {
+        // The example is documentation users copy verbatim, but nothing used
+        // to parse it — so a renamed section or field could rot there
+        // unnoticed, and `deny_unknown_fields` would reject the copy on the
+        // user's machine instead of in CI.
+        let c = Config::load_from(&config_example()).unwrap();
+        assert!(c.is_enabled(VendorId::Anthropic));
+        assert!(c.is_enabled(VendorId::Openai));
+        assert!(!c.is_enabled(VendorId::Deepseek));
+        assert!(!c.is_enabled(VendorId::Kimi));
+    }
+
+    #[test]
+    fn shipped_example_does_not_advertise_admin_key_env_as_working() {
+        // The regression: the example shipped an *uncommented*
+        // `admin_key_env = "OPENAI_ADMIN_KEY"`, indistinguishable from a live
+        // setting. Nothing reads it, so a user could set it, skip
+        // `codex login`, and wait for usage that never arrives.
+        let text = std::fs::read_to_string(config_example()).unwrap();
+        let live: Vec<&str> = text
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.contains("admin_key_env") && !l.starts_with('#'))
+            .collect();
+        assert!(
+            live.is_empty(),
+            "admin_key_env must stay commented out while it is inert: {live:?}"
+        );
+        // Still documented, though — silently dropping it would leave users
+        // who already set it with no explanation of why it does nothing.
+        assert!(
+            text.contains("admin_key_env") && text.contains("RESERVED"),
+            "the example should keep describing admin_key_env as reserved"
+        );
+    }
+
+    #[test]
+    fn admin_key_env_is_accepted_but_changes_nothing() {
+        // The field survives because the API-key-only path is still intended.
+        // What has to hold today is narrower: setting it loads without error
+        // and moves nothing the code actually acts on.
+        let f = write_toml(
+            r#"
+            [openai]
+            admin_key_env = "SOME_ADMIN_KEY"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert_eq!(c.openai.admin_key_env, "SOME_ADMIN_KEY");
+        // Nothing else moved: OpenAI still resolves through Codex OAuth only.
+        let default = OpenAiConfig::default();
+        assert_eq!(c.openai.enabled, default.enabled);
+        assert_eq!(c.openai.codex_auth_path, default.codex_auth_path);
+        assert_eq!(c.enabled_vendors(), Config::default().enabled_vendors());
     }
 }

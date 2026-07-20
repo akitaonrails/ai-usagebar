@@ -7,10 +7,17 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use crate::cache::atomic_write;
+use crate::cache::{acquire_lock, atomic_write};
 use crate::error::{AppError, Result};
 use crate::vendor::VendorId;
+
+/// Much shorter than the vendors' fetch locks (15–45s): the critical section
+/// here is one small read plus a rename, so a wait this long already means a
+/// wedged holder — and a scroll event that blocks for seconds is worse than a
+/// dropped one.
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn state_dir() -> Result<PathBuf> {
     let base = directories::BaseDirs::new()
@@ -54,6 +61,14 @@ pub fn cycle(enabled: &[VendorId], start: VendorId, delta: i32) -> Result<Vendor
     cycle_at(&state_path()?, enabled, start, delta)
 }
 
+/// The flock guarding a state file's read-modify-write, as a sibling of the
+/// state file itself (mirroring `Cache::lock_path`'s `.fetch.lock`).
+fn lock_path_for(state: &Path) -> PathBuf {
+    let mut p = state.as_os_str().to_os_string();
+    p.push(".lock");
+    PathBuf::from(p)
+}
+
 /// Cycle using an explicit state-file path. The real-path [`cycle`] is a thin
 /// wrapper over this; tests drive this with a `TempDir` path so the cycle +
 /// persistence logic is covered without reading or writing the real cache.
@@ -66,6 +81,11 @@ pub fn cycle_at(
     if enabled.is_empty() {
         return Err(AppError::Other("no enabled vendors to cycle".into()));
     }
+    // One flick of a scroll wheel fires several `--cycle-next` processes at
+    // once. An atomic *write* only guarantees no torn file — it does not stop
+    // two of them reading the same current vendor and both persisting the same
+    // next one, silently eating a step. The lock has to span read→compute→write.
+    let _lock = acquire_lock(&lock_path_for(path), LOCK_TIMEOUT)?;
     let current = read_from(path)
         .filter(|v| enabled.contains(v))
         .unwrap_or(start);
@@ -102,6 +122,38 @@ mod tests {
         VendorId::Zai,
         VendorId::Openrouter,
     ];
+
+    /// One flick of a scroll wheel fires several `--cycle-next` processes at
+    /// once. Before the lock spanned the read-modify-write, two of them could
+    /// read the same current vendor and both persist the same next one, so N
+    /// events advanced fewer than N steps. With the lock held across the whole
+    /// operation, every cycle observes its predecessor's write.
+    #[test]
+    fn concurrent_cycles_do_not_lose_a_step() {
+        let td = TempDir::new().unwrap();
+        let path = td.path().join("active_vendor");
+        let start = VendorId::Anthropic;
+
+        // Four threads, each doing one +1 step, over a 4-vendor set: if no step
+        // is lost the value returns exactly to `start`.
+        const THREADS: usize = 4;
+        std::thread::scope(|s| {
+            for _ in 0..THREADS {
+                s.spawn(|| {
+                    let _ = cycle_at(&path, &CYCLE_SET, start, 1);
+                });
+            }
+        });
+
+        let landed = read_from(&path).expect("a vendor must have been persisted");
+        assert_eq!(
+            landed,
+            start,
+            "{THREADS} single steps over {} vendors must return to the start; \
+             landing on {landed:?} means a step was lost to a race",
+            CYCLE_SET.len()
+        );
+    }
 
     #[test]
     fn parse_slug_round_trip() {

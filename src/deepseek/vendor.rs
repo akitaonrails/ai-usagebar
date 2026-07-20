@@ -19,16 +19,28 @@ pub const DEFAULT_FORMAT: &str = "{ds_balance}";
 
 pub fn build_placeholders(snap: &DeepseekSnapshot) -> HashMap<&'static str, String> {
     let avail = if snap.is_available { "up" } else { "down" };
+    let balance = format_money(snap.balance, &snap.currency);
     placeholders(vec![
         ("icon", "󰧑".to_string()),
         ("vendor_short", "dsk".to_string()),
-        // Cross-vendor aliases — no rate-limit windows for DeepSeek.
+        // Cross-vendor aliases — DeepSeek has neither rate-limit windows nor a
+        // spend denominator (`/user/balance` reports only money *remaining*),
+        // so these percentages are structurally meaningless for this vendor.
+        //
+        // These remain numeric for compatibility with generic third-party
+        // formats. The bundled native surfaces key off `vendor_short` and hide
+        // both quota rows for DeepSeek, so the aliases never become fake 0%
+        // bars there.
         ("session_pct", "0".to_string()),
         ("session_reset", "—".to_string()),
         ("weekly_pct", "0".to_string()),
         ("weekly_reset", "—".to_string()),
-        ("plan", "DeepSeek".to_string()),
-        ("ds_balance", format_money(snap.balance, &snap.currency)),
+        // `plan` is the only generic alias the native surfaces render as free
+        // text (GNOME dropdown title, macOS menu header), so it carries the
+        // headline number a balance vendor actually has. Mirrors OpenRouter's
+        // "OpenRouter — {label}".
+        ("plan", format!("DeepSeek — {balance}")),
+        ("ds_balance", balance),
         ("ds_granted", format_money(snap.granted, &snap.currency)),
         ("ds_topped_up", format_money(snap.topped_up, &snap.currency)),
         ("ds_available", avail.to_string()),
@@ -256,6 +268,35 @@ mod tests {
         let theme = Theme::default();
         let out = render(&outcome, &snap, &theme, &opts(), Utc::now());
         assert!(out.text.contains("⏸"));
+    }
+
+    #[test]
+    fn plan_alias_carries_balance_in_snapshot_currency() {
+        assert_eq!(
+            build_placeholders(&sample_snap())["plan"],
+            "DeepSeek — $5.50"
+        );
+
+        let mut snap = sample_snap();
+        snap.balance = 20.0;
+        snap.currency = "CNY".into();
+        assert_eq!(build_placeholders(&snap)["plan"], "DeepSeek — ¥20.00");
+    }
+
+    // The prefix both native surfaces request verbatim — see the `FORMAT`
+    // constants in gnome-extension/marker-logic.js and macos/ai-usagebar-menubar.swift.
+    // `plan` is the one generic field they render as free text, so it is the
+    // only place a balance vendor can get its headline number onto the panel
+    // without a change on the surface side.
+    #[test]
+    fn desktop_format_header_shows_balance() {
+        let values = build_placeholders(&sample_snap());
+        let out = substitute(
+            "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset}",
+            &values,
+        );
+        let fields: Vec<&str> = out.split(";;").collect();
+        assert_eq!(fields[0], "DeepSeek — $5.50");
     }
 
     #[test]

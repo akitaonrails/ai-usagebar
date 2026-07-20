@@ -224,7 +224,7 @@ async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<
     }
     let resp = req.send().await?;
     let status = resp.status();
-    let bytes = resp.bytes().await?.to_vec();
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
 
     if !status.is_success() {
         let body: String = String::from_utf8_lossy(&bytes).chars().take(200).collect();

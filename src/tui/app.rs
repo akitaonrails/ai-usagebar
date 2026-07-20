@@ -90,7 +90,6 @@ pub struct App {
     /// previous Settings reload cannot land in a new tab at the old index.
     pub tab_generation: u64,
     pub theme: Theme,
-    pub last_refresh: chrono::DateTime<chrono::Utc>,
     pub quit: bool,
     /// When `Some`, the Settings overlay is open and consuming key events.
     pub settings: Option<crate::tui::settings::SettingsState>,
@@ -116,7 +115,6 @@ impl App {
             tabs: vec![TabState::Loading; n],
             tab_generation: 0,
             theme,
-            last_refresh: Utc::now(),
             quit: false,
             settings: None,
         }
@@ -163,7 +161,6 @@ impl App {
             return false;
         };
         self.tabs[index] = state;
-        self.last_refresh = Utc::now();
         true
     }
 
@@ -335,6 +332,7 @@ pub const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     // Use `App::with_theme(.., Theme::default())` rather than `App::new`, which
     // would read the real Omarchy theme file + `$HOME`. The tab-selection logic
@@ -459,6 +457,46 @@ mod tests {
         assert!(app.apply_refresh(generation, &anthropic, TabState::Error("ready".into())));
         assert!(matches!(app.tabs[0], TabState::Loading));
         assert!(matches!(&app.tabs[1], TabState::Error(message) if message == "ready"));
+    }
+
+    fn ready_at(fetched_at: chrono::DateTime<Utc>) -> TabState {
+        TabState::Ready(Box::new(ReadyTab {
+            snapshot: crate::usage::VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
+                label: "test".into(),
+                total_credits: 0.0,
+                total_usage: 0.0,
+                usage_daily: 0.0,
+                usage_weekly: 0.0,
+                usage_monthly: 0.0,
+                is_free_tier: false,
+                limit: None,
+                limit_remaining: None,
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: Some(fetched_at),
+        }))
+    }
+
+    #[test]
+    fn apply_refresh_stamps_fetched_at_on_only_the_matching_tab() {
+        // Pins the per-tab `fetched_at` the header now reads: a landed Anthropic
+        // response leaves the still-loading OpenAI tab with no time of its own.
+        // Dropping the global `last_refresh` clock is not observable from here
+        // (it was write-only) — that is asserted against the rendered header in
+        // `view::tests::header_refresh_*`.
+        let anthropic = TabId::vendor(VendorId::Anthropic);
+        let openai = TabId::vendor(VendorId::Openai);
+        let mut app = App::with_theme(vec![anthropic.clone(), openai], Theme::default());
+        let generation = app.tab_generation;
+        let fetched_at = Utc.with_ymd_and_hms(2026, 5, 23, 12, 0, 0).unwrap();
+
+        assert!(app.apply_refresh(generation, &anthropic, ready_at(fetched_at)));
+        match &app.tabs[0] {
+            TabState::Ready(ready) => assert_eq!(ready.fetched_at, Some(fetched_at)),
+            other => panic!("expected Anthropic tab Ready, got {other:?}"),
+        }
+        assert!(matches!(app.tabs[1], TabState::Loading));
     }
 
     #[test]

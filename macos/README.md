@@ -15,7 +15,8 @@ A single Swift file (`NSStatusItem` + `NSAttributedString`); no Xcode project.
 
 The selector supports **Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek**.
 **Kimi is widget/TUI-only in this release**; desktop protocol and marker parity
-for Kimi is dedicated future work.
+for Kimi is dedicated future work. DeepSeek is balance-only, so the app shows
+its balance in the header and suppresses the 5h/weekly quota rows.
 
 ## Requirements
 

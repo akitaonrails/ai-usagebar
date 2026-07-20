@@ -15,7 +15,8 @@ GNOME screenshot is currently bundled.
 
 The selector supports **Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek**.
 **Kimi is widget/TUI-only in this release**; desktop protocol and marker parity
-for Kimi is dedicated future work.
+for Kimi is dedicated future work. DeepSeek is balance-only, so the extension
+shows its balance in the header and suppresses the 5h/weekly quota rows.
 
 ## Requirements
 
@@ -66,7 +67,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 It runs:
 
 ```
-ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;{scoped_model};;{scoped_pct};;{scoped_reset};;{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;__aiub_end__'
+ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;{scoped_model};;{scoped_pct};;{scoped_reset};;{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short};;__aiub_end__'
 ```
 
 parses the Waybar JSON (`{text, tooltip, class}`), extracts the formatted
@@ -85,7 +86,8 @@ point uses Rust's point-delta
 severity bands: at least 10 points ahead is red, 1–9 ahead is orange, -10
 through on-pace is yellow, and more than 10 under is green. A missing reset
 (including `—`) keeps its row visible but suppresses the marker, even if an
-older binary reports elapsed `0`. The final `__aiub_end__` literal is ignored;
+older binary reports elapsed `0`. `{vendor_short}` distinguishes balance-only
+DeepSeek from quota vendors. The final `__aiub_end__` literal is ignored;
 it receives a stale `⏸` suffix so the last elapsed field remains numeric.
 
 The subprocess is spawned **asynchronously** (`Gio.Subprocess` +

@@ -17,8 +17,8 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {barMarkup, colorForPct, field, FIELD, FORMAT, integer, markerElapsed,
-    splitFormatOutput} from './marker-logic.js';
+import {barMarkup, colorForPct, field, FIELD, FORMAT, hasUsageWindows, integer, markerElapsed,
+    plainTextFromPango, splitFormatOutput} from './marker-logic.js';
 
 const ROLE = 'ai-usagebar';
 
@@ -296,7 +296,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             this._setError('saída inválida', stdout);
             return;
         }
-        const raw = (data.text ?? '').toString().replace(/<[^>]*>/g, '');
+        const raw = plainTextFromPango(data.text);
         const f = splitFormatOutput(raw);
         if (f.length <= FIELD.extraLimit) {
             // Loading… / ⚠ — show the binary's own text.
@@ -306,6 +306,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         }
         this._data = {
             plan: field(f[FIELD.plan]),
+            hasUsageWindows: hasUsageWindows(f[FIELD.vendorShort]),
             session: {pct: integer(f[FIELD.sessionPct]) ?? 0, reset: field(f[FIELD.sessionReset]),
                 elapsed: markerElapsed(field(f[FIELD.sessionReset]), integer(f[FIELD.sessionElapsed]))},
             weekly: {pct: integer(f[FIELD.weeklyPct]) ?? 0, reset: field(f[FIELD.weeklyReset]),
@@ -360,9 +361,9 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         };
 
         const parts = [];
-        if (this._settings.get_boolean('show-session'))
+        if (d.hasUsageWindows && this._settings.get_boolean('show-session'))
             parts.push(seg('5h', d.session.pct, `${d.session.pct}%`, d.session.elapsed));
-        if (this._settings.get_boolean('show-weekly'))
+        if (d.hasUsageWindows && this._settings.get_boolean('show-weekly'))
             parts.push(seg('7d', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.elapsed));
         if (this._settings.get_boolean('show-extra') &&
             d.extra.pct != null && d.extra.spent && d.extra.limit)
@@ -390,8 +391,10 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             }
         };
 
-        upd('session', d.session.pct, `${d.session.pct}%`, d.session.reset, true, d.session.elapsed);
-        upd('weekly', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.reset, true, d.weekly.elapsed);
+        upd('session', d.session.pct, `${d.session.pct}%`, d.session.reset,
+            d.hasUsageWindows, d.session.elapsed);
+        upd('weekly', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.reset,
+            d.hasUsageWindows, d.weekly.elapsed);
         // Label the per-model weekly row by the scoped model (e.g. "Fable").
         this._rows.sonnet.nameL.text = d.sonnet.label || 'Sonnet only';
         upd('sonnet', d.sonnet.pct, `${d.sonnet.pct ?? 0}%`, d.sonnet.reset, d.sonnet.pct != null, d.sonnet.elapsed);

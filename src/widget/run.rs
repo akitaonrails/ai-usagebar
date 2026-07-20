@@ -60,7 +60,12 @@ async fn run_cycle(cli: &Cli) -> i32 {
         _ => enabled[0],
     };
     let delta = if cli.cycle_next { 1 } else { -1 };
-    let _ = crate::active::cycle(&enabled, start, delta);
+    // Signalling after a *failed* persist told Waybar to re-render a selection
+    // that was never written, so the bar redrew the same vendor and the scroll
+    // looked like it had been swallowed. Only announce a change that happened.
+    if crate::active::cycle(&enabled, start, delta).is_err() {
+        return 0;
+    }
 
     // Refresh the bar immediately. The Waybar module's `signal: 13` setting
     // means SIGRTMIN+13 re-runs the exec. SIGRTMIN is libc-dependent; the
@@ -69,11 +74,24 @@ async fn run_cycle(cli: &Cli) -> i32 {
     0
 }
 
+/// `--watch` repaints in place, which only makes sense on a terminal. Piped or
+/// redirected, the escape sequence is just garbage in the captured output.
+/// Split out from the loop so the decision is testable without a real TTY.
+fn should_clear_screen(stdout_is_tty: bool) -> bool {
+    stdout_is_tty
+}
+
 async fn run_watch(cli: Cli, secs: u64) -> i32 {
     let interval = Duration::from_secs(secs.max(1));
+    let clear = {
+        use std::io::IsTerminal;
+        should_clear_screen(std::io::stdout().is_terminal())
+    };
     loop {
-        // Clear screen + home cursor.
-        print!("\x1b[2J\x1b[H");
+        if clear {
+            // Clear screen + home cursor.
+            print!("\x1b[2J\x1b[H");
+        }
         let _ = std::io::stdout().flush();
         run_once(&cli, &mut std::io::stdout()).await;
         println!();
@@ -478,6 +496,29 @@ mod tests {
         let out = fallback(&err, &cli_default());
         assert_eq!(out.text, "⚠");
         assert!(out.tooltip.contains("missing token"));
+    }
+
+    #[test]
+    fn watch_only_clears_the_screen_on_a_terminal() {
+        // Redirected to a file or piped, the clear-screen escape is garbage in
+        // the captured output.
+        assert!(should_clear_screen(true));
+        assert!(!should_clear_screen(false));
+    }
+
+    #[test]
+    fn a_failed_cycle_persist_is_not_announced_to_waybar() {
+        // Signalling after a failed persist made Waybar re-render the *same*
+        // vendor, so the scroll looked swallowed. An empty vendor set is the
+        // reachable failure: `cycle_at` errors and nothing is written.
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("active_vendor");
+        let r = crate::active::cycle_at(&path, &[], crate::vendor::VendorId::Anthropic, 1);
+        assert!(r.is_err());
+        assert!(
+            crate::active::read_from(&path).is_none(),
+            "a failed cycle must not have persisted anything"
+        );
     }
 
     #[test]

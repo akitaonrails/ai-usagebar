@@ -4,7 +4,7 @@
 //! - `client_id` is the public Claude CLI ID (not a secret).
 //! - Beta header `anthropic-beta: oauth-2025-04-20` is required.
 //! - `User-Agent: claude-cli/1.0` matches the CLI; some endpoints gate on it.
-//! - `expires_in` may arrive as float; we accept either.
+//! - `expires_in` may arrive as an integral float; we accept either form.
 //! - The server sometimes returns a rotated `refresh_token`, sometimes not —
 //!   callers fall back to the old one when absent.
 
@@ -30,11 +30,39 @@ struct RefreshRequest<'a> {
 
 #[derive(Debug, Deserialize)]
 pub struct RefreshResponse {
+    #[serde(deserialize_with = "de_nonempty_string")]
     pub access_token: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_nonempty_string")]
     pub refresh_token: Option<String>,
     #[serde(deserialize_with = "de_expires_in")]
     pub expires_in: u64,
+}
+
+fn de_nonempty_string<'de, D>(d: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(d)?;
+    if value.trim().is_empty() {
+        Err(serde::de::Error::custom("token cannot be empty"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn de_opt_nonempty_string<'de, D>(d: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(d)?
+        .map(|value| {
+            if value.trim().is_empty() {
+                Err(serde::de::Error::custom("token cannot be empty"))
+            } else {
+                Ok(value)
+            }
+        })
+        .transpose()
 }
 
 fn de_expires_in<'de, D>(d: D) -> std::result::Result<u64, D::Error>
@@ -44,12 +72,19 @@ where
     let v = serde_json::Value::deserialize(d)?;
     match v {
         serde_json::Value::Number(n) => {
-            if let Some(u) = n.as_u64() {
+            const MAX_SAFE_EXPIRES_IN: u64 = (i64::MAX as u64) / 2_000;
+            if let Some(u) = n.as_u64().filter(|u| *u <= MAX_SAFE_EXPIRES_IN) {
                 Ok(u)
-            } else if let Some(f) = n.as_f64() {
+            } else if let Some(f) = n.as_f64()
+                && f.is_finite()
+                && f.fract() == 0.0
+                && (0.0..=MAX_SAFE_EXPIRES_IN as f64).contains(&f)
+            {
                 Ok(f as u64)
             } else {
-                Err(serde::de::Error::custom("expires_in not numeric"))
+                Err(serde::de::Error::custom(
+                    "expires_in must be a non-negative integer in range",
+                ))
             }
         }
         _ => Err(serde::de::Error::custom("expires_in must be a number")),
@@ -79,7 +114,8 @@ pub async fn refresh(
         .await?;
 
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    let body = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
+    let body = String::from_utf8_lossy(&body).into_owned();
 
     if !status.is_success() {
         // claudebar tolerates three error-body shapes (claudebar:464-476):
@@ -185,6 +221,37 @@ mod tests {
     #[test]
     fn parse_error_body_invalid_json_returns_none() {
         assert!(parse_error_body("not json").is_none());
+    }
+
+    #[test]
+    fn malformed_expires_in_is_not_truncated_or_saturated() {
+        for value in [
+            "3600.5",
+            "-1",
+            "1e300",
+            "18446744073709551615",
+            "true",
+            r#""3600""#,
+        ] {
+            let body = format!(r#"{{"access_token":"new","expires_in":{value}}}"#);
+            assert!(
+                serde_json::from_str::<RefreshResponse>(&body).is_err(),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_refresh_tokens_are_schema_drift_not_credentials_to_persist() {
+        for body in [
+            r#"{"access_token":"","expires_in":3600}"#,
+            r#"{"access_token":"new","refresh_token":"   ","expires_in":3600}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<RefreshResponse>(body).is_err(),
+                "{body}"
+            );
+        }
     }
 
     #[tokio::test]

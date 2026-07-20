@@ -135,7 +135,7 @@ async fn fetch_live(
     .map_err(|_| AppError::Transport(format!("zai timeout: {url}")))??;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?.to_vec();
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
 
     if !status.is_success() {
         let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();
@@ -317,7 +317,7 @@ mod tests {
 
         let (_td, cache) = cache_fixture();
         let seed = r#"{"code":200,"data":{"limits":[
-            {"type":"TOKENS_LIMIT","percentage":10}
+            {"type":"TOKENS_LIMIT","unit":3,"percentage":10}
         ],"level":"lite"},"success":true}"#;
         cache.write_payload(seed.as_bytes()).unwrap();
 

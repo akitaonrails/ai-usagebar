@@ -53,7 +53,7 @@ pub async fn fetch_snapshot(
 
     match fetch_live(client, &endpoints.balance, api_key).await {
         Ok(snap) => {
-            let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap_or_default();
+            let bytes = serde_json::to_vec(&snap_to_json(&snap))?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -120,6 +120,14 @@ fn parse_cache(bytes: &[u8]) -> Result<DeepseekSnapshot> {
             )))
         }
     };
+    let currency = v["currency"]
+        .as_str()
+        .ok_or_else(|| AppError::Schema("deepseek cache missing 'currency'".into()))?;
+    if !matches!(currency, "USD" | "CNY") {
+        return Err(AppError::Schema(format!(
+            "deepseek cache has unsupported currency {currency:?}"
+        )));
+    }
     Ok(DeepseekSnapshot {
         is_available: v["is_available"]
             .as_bool()
@@ -127,10 +135,7 @@ fn parse_cache(bytes: &[u8]) -> Result<DeepseekSnapshot> {
         balance: money("balance")?,
         granted: money("granted")?,
         topped_up: money("topped_up")?,
-        currency: v["currency"]
-            .as_str()
-            .ok_or_else(|| AppError::Schema("deepseek cache missing 'currency'".into()))?
-            .to_string(),
+        currency: currency.to_string(),
     })
 }
 
@@ -161,7 +166,7 @@ async fn fetch_live(
     .map_err(|_| AppError::Transport(format!("deepseek timeout: {url}")))??;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?;
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
 
     if !status.is_success() {
         let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();
@@ -173,7 +178,7 @@ async fn fetch_live(
 
     let r: BalanceResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("deepseek balance response: {e}")))?;
-    Ok(r.into_snapshot())
+    r.into_snapshot()
 }
 
 #[cfg(test)]
@@ -186,6 +191,22 @@ mod tests {
         let cache = Cache::at(td.path().join("deepseek"));
         cache.ensure_dir().unwrap();
         (td, cache)
+    }
+
+    #[test]
+    fn cached_unknown_currency_is_rejected_like_a_live_response() {
+        let cache = serde_json::json!({
+            "is_available": true,
+            "balance": 10.0,
+            "granted": 10.0,
+            "topped_up": 0.0,
+            "currency": "EUR"
+        });
+        let error = parse_cache(cache.to_string().as_bytes()).unwrap_err();
+        assert!(
+            error.to_string().contains("unsupported currency"),
+            "{error}"
+        );
     }
 
     #[tokio::test]

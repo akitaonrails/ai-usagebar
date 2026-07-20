@@ -81,6 +81,15 @@ pub fn render(
     // The default format above uses ${…} (legible in a shell context), so
     // strip the $ to match our placeholder syntax.
     values.insert("or_balance_bar", or_balance_bar(snap, theme));
+    // Both sinks fed by this map (bar text and --tooltip-format) end up as
+    // Pango markup, and the label is API-controlled — escape it here, its only
+    // markup insertion point. The default tooltip escapes the raw snapshot
+    // itself, and or_balance_bar is markup we emit, so neither is touched.
+    for key in ["plan", "or_label"] {
+        if let Some(value) = values.get_mut(key) {
+            *value = escape(value);
+        }
+    }
 
     let format_clean = format.replace("${", "{");
     let mut text = substitute(&format_clean, &values);
@@ -264,6 +273,45 @@ mod tests {
             format_pace_color: false,
             tooltip_pace_pts: false,
         }
+    }
+
+    #[test]
+    fn api_controlled_label_is_pango_escaped_in_custom_formats() {
+        // The label comes from the API and both sinks fed by the placeholder
+        // map are Pango markup. Unescaped, a label like `a & b <span…>` either
+        // breaks the markup or lets an attacker-shaped key name paint text the
+        // widget never intended.
+        let mut snap = sample_snap();
+        snap.label = "A & B <b>spoof</b>".into();
+
+        let mut o = opts();
+        o.format = Some("{plan}|{or_label}".into());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &o,
+            Utc::now(),
+        );
+        assert!(
+            out.text.contains("A &amp; B &lt;b&gt;spoof&lt;/b&gt;"),
+            "label was not escaped: {}",
+            out.text
+        );
+        assert!(!out.text.contains("<b>spoof</b>"));
+
+        // ...and the same through the tooltip sink.
+        let mut o2 = opts();
+        o2.tooltip_format = Some("{or_label}".into());
+        let out2 = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &o2,
+            Utc::now(),
+        );
+        assert!(out2.tooltip.contains("A &amp; B"));
+        assert!(!out2.tooltip.contains("<b>spoof</b>"));
     }
 
     #[test]
