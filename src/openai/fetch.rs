@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::cache::{Cache, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock};
 use crate::error::{AppError, Result};
 use crate::usage::OpenAiSnapshot;
 
@@ -141,7 +141,7 @@ fn fallback(
     plan_hint: Option<&str>,
     last_error: Option<(u16, String)>,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(AppError::Other("openai: no usable cache".into()));
     };
     let mut out = reuse(bytes, cache, true, plan_hint);
@@ -150,7 +150,7 @@ fn fallback(
 }
 
 fn fallback_silent(cache: &Cache, plan_hint: Option<&str>) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(AppError::Transport(
             "openai: no cache and network unreachable".into(),
         ));
@@ -163,7 +163,7 @@ fn handle_auth_failure(
     plan_hint: Option<&str>,
     transient: bool,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return if transient {
             Err(AppError::Transport(
                 "openai: no cache and refresh failed transiently".into(),

@@ -9,6 +9,32 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cached data is no longer served forever after a failure.** `MAX_STALE`
+  (7 days) was declared but never referenced, so every vendor's fallback path
+  called `maybe_payload()` with no age limit: after weeks without network or
+  credentials the bar kept showing historical numbers as if they were current,
+  distinguished only by a `⏸` and an old timestamp. Failure paths now use the
+  new `Cache::fallback_payload(MAX_STALE)` and surface the real error once the
+  last good value ages out.
+
+- **A corrupt or incompatible *fresh* cache no longer renders as a zeroed
+  snapshot.** Anthropic, OpenAI, Z.AI, OpenRouter and DeepSeek turned an
+  unparseable payload into "$0.00" / "0%" / "Unknown plan" and displayed it as
+  current data; they now fall through to a live fetch, matching what Kimi
+  already did. Cached monetary fields are required rather than
+  `unwrap_or(0.0)`, so a truncated write is refetched instead of shown as an
+  empty balance.
+
+- **Z.AI no longer accepts an in-band failure as valid usage.** The API signals
+  errors inside HTTP 200 (`success: false`, non-200 `code`, `data: null`).
+  That body deserialized cleanly, was written to the cache — clearing the
+  previously recorded error — and rendered as an unknown plan with empty
+  windows, indistinguishable from an account with no usage. The envelope is now
+  validated before anything is cached, so a failure keeps the last good payload
+  and reports the error.
+
 ## [0.13.0] — 2026-07-17
 
 ### Added

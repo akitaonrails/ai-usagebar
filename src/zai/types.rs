@@ -45,6 +45,35 @@ pub struct Envelope {
     pub msg: String,
 }
 
+impl Envelope {
+    /// Z.AI signals failure *inside* a 200 response: `success: false` with a
+    /// non-200 `code` and the reason in `msg`, and `data: null`. Without this
+    /// check such a body deserializes cleanly, overwrites a good cache, clears
+    /// the previous error, and renders as an unknown plan with empty windows —
+    /// indistinguishable from a real account with no usage.
+    ///
+    /// `code` is accepted when absent (0) or 200; anything else is a failure.
+    pub fn check_ok(&self) -> crate::error::Result<()> {
+        if !self.success || (self.code != 0 && self.code != 200) {
+            let msg = if self.msg.is_empty() {
+                "no message".to_string()
+            } else {
+                self.msg.clone()
+            };
+            return Err(crate::error::AppError::Schema(format!(
+                "zai: API reported failure (code {}, success {}): {msg}",
+                self.code, self.success
+            )));
+        }
+        if self.data.is_none() {
+            return Err(crate::error::AppError::Schema(
+                "zai: success response carried no `data`".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
 pub struct MonitorData {

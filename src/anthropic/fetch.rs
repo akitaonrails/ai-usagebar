@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::cache::{Cache, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock};
 use crate::error::{AppError, Result};
 use crate::usage::AnthropicSnapshot;
 
@@ -180,7 +180,7 @@ fn fallback_to_cache(
     plan_label: String,
     last_error: Option<(u16, String)>,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(AppError::Other("no usable cache".into()));
     };
     let snap = parse_payload(&bytes, plan_label)?;
@@ -193,7 +193,7 @@ fn fallback_to_cache(
 }
 
 fn fallback_to_cache_silent(cache: &Cache, plan_label: String) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(AppError::Transport(
             "no cache and network unreachable".into(),
         ));
@@ -208,7 +208,7 @@ fn fallback_to_cache_silent(cache: &Cache, plan_label: String) -> Result<FetchOu
 }
 
 fn handle_auth_failure(cache: &Cache, plan_label: String, transient: bool) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return if transient {
             Err(AppError::Transport(
                 "no cache and refresh failed transiently".into(),

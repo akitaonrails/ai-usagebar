@@ -104,8 +104,26 @@ impl Cache {
 
     /// Read the payload regardless of age. `Err` if the file exists but is
     /// unreadable; `Ok(None)` if it just doesn't exist.
+    ///
+    /// Prefer [`Cache::fallback_payload`] on failure paths — this one imposes
+    /// no age limit, so it will happily hand back a month-old figure.
     pub fn maybe_payload(&self) -> Result<Option<Vec<u8>>> {
         if !self.payload_path().exists() {
+            return Ok(None);
+        }
+        self.read_payload().map(Some)
+    }
+
+    /// Payload for the *failure* path: the last good value, but only while it
+    /// is still worth showing. Beyond `max_stale` this returns `Ok(None)` so
+    /// the caller surfaces the real error instead of presenting week-old
+    /// numbers as if they were current — a bar that silently freezes on
+    /// history is worse than one that says it cannot reach the API.
+    pub fn fallback_payload(&self, max_stale: Duration) -> Result<Option<Vec<u8>>> {
+        let Some(age) = self.payload_age() else {
+            return Ok(None);
+        };
+        if age > max_stale {
             return Ok(None);
         }
         self.read_payload().map(Some)
@@ -346,6 +364,34 @@ mod tests {
         cache.write_payload(b"fresh").unwrap();
         assert!(!cache.is_stale());
         assert!(cache.read_last_error().is_none());
+    }
+
+    #[test]
+    fn fallback_payload_refuses_a_payload_older_than_max_stale() {
+        use std::time::SystemTime;
+
+        let (_td, cache) = fixture();
+        cache.write_payload(b"old").unwrap();
+
+        // Backdate the payload past the limit. `MAX_STALE` was dead code
+        // before this: every failure path served history forever.
+        let eight_days_ago = SystemTime::now() - Duration::from_secs(8 * 24 * 3600);
+        let f = File::options()
+            .write(true)
+            .open(cache.payload_path())
+            .unwrap();
+        f.set_modified(eight_days_ago).unwrap();
+
+        // Still readable when age is not considered...
+        assert!(cache.maybe_payload().unwrap().is_some());
+        // ...but refused as a fallback.
+        assert!(cache.fallback_payload(MAX_STALE).unwrap().is_none());
+        // A payload inside the window is still served.
+        cache.write_payload(b"new").unwrap();
+        assert_eq!(
+            cache.fallback_payload(MAX_STALE).unwrap().as_deref(),
+            Some(&b"new"[..])
+        );
     }
 
     #[test]
