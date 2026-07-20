@@ -5,9 +5,10 @@
 
 use std::time::Duration;
 
-use crate::cache::{Cache, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock_async};
 use crate::error::{AppError, Result};
 use crate::usage::{GrokSnapshot, finite_amount};
+use crate::vendor::{MAX_BODY_BYTES, read_body_capped};
 
 use super::types::{BalanceResp, Validation, to_snapshot};
 
@@ -56,7 +57,7 @@ pub async fn fetch_snapshot(
     team_id: Option<&str>,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
-    let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
+    let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
     // Identity is derived from the *inputs*, not the resolved team, so a fresh
     // cache still costs zero network calls.
@@ -85,8 +86,7 @@ pub async fn fetch_snapshot(
                 "target": target,
                 "team": team,
                 "snapshot": { "balance": snap.balance },
-            }))
-            .unwrap_or_default();
+            }))?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -146,7 +146,7 @@ async fn resolve_team(
 }
 
 fn fallback_silent(cache: &Cache, target: &str, original: AppError) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
     reuse_cache(&bytes, cache, true, target)
@@ -162,7 +162,7 @@ fn fallback_with_error(
     target: &str,
     original: AppError,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
     // A cache we cannot attribute to this target is no better than no cache.
@@ -235,7 +235,7 @@ async fn get_json<T: for<'de> serde::Deserialize<'de>>(
     .map_err(|_| AppError::Transport(format!("grok timeout: {url}")))??;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?;
+    let bytes = read_body_capped(resp, MAX_BODY_BYTES).await?;
     if !status.is_success() {
         let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();
         return Err(AppError::Http {

@@ -5,9 +5,10 @@
 
 use std::time::Duration;
 
-use crate::cache::{Cache, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock_async};
 use crate::error::{AppError, Result};
 use crate::usage::{KiloSnapshot, finite_amount};
+use crate::vendor::{MAX_BODY_BYTES, read_body_capped};
 
 use super::types::{BalanceData, to_snapshot};
 
@@ -48,7 +49,7 @@ pub async fn fetch_snapshot(
     organization_id: Option<&str>,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
-    let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
+    let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
     let target = target_key(organization_id);
 
@@ -65,7 +66,7 @@ pub async fn fetch_snapshot(
                 "target": target,
                 "snapshot": { "label": snap.label, "balance": snap.balance },
             });
-            let bytes = serde_json::to_vec(&cache_repr).unwrap_or_default();
+            let bytes = serde_json::to_vec(&cache_repr)?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -101,7 +102,7 @@ fn target_key(organization_id: Option<&str>) -> String {
 }
 
 fn fallback_silent(cache: &Cache, target: &str, original: AppError) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
     reuse_cache(&bytes, cache, true, target)
@@ -116,7 +117,7 @@ fn fallback_with_error(
     target: &str,
     original: AppError,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
     // A cache we cannot attribute to this target is no better than no cache.
@@ -181,7 +182,7 @@ async fn fetch_live(
         .map_err(|_| AppError::Transport(format!("kilo timeout: {}", endpoints.balance)))??;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?;
+    let bytes = read_body_capped(resp, MAX_BODY_BYTES).await?;
 
     if !status.is_success() {
         let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();

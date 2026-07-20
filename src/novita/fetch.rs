@@ -4,9 +4,10 @@
 
 use std::time::Duration;
 
-use crate::cache::{Cache, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock_async};
 use crate::error::{AppError, Result};
 use crate::usage::{NovitaSnapshot, finite_amount};
+use crate::vendor::{MAX_BODY_BYTES, read_body_capped};
 
 use super::types::{BalanceData, to_snapshot};
 
@@ -43,7 +44,7 @@ pub async fn fetch_snapshot(
     cache_ttl: Duration,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
-    let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
+    let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
     if let Some(bytes) = cache.fresh_payload(cache_ttl)?
         && let Ok(outcome) = reuse_cache(&bytes, cache, false)
@@ -54,8 +55,7 @@ pub async fn fetch_snapshot(
     match fetch_live(client, endpoints, api_key).await {
         Ok(balance) => {
             let snap = to_snapshot(balance)?;
-            let bytes = serde_json::to_vec(&serde_json::json!({ "snapshot": serde_repr(&snap) }))
-                .unwrap_or_default();
+            let bytes = serde_json::to_vec(&serde_json::json!({ "snapshot": serde_repr(&snap) }))?;
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -81,7 +81,7 @@ pub async fn fetch_snapshot(
 }
 
 fn fallback_silent(cache: &Cache, original: AppError) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
     reuse_cache(&bytes, cache, true)
@@ -95,7 +95,7 @@ fn fallback_with_error(
     last_error: Option<(u16, String)>,
     original: AppError,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(original);
     };
     let Ok(mut outcome) = reuse_cache(&bytes, cache, true) else {
@@ -162,7 +162,7 @@ async fn fetch_live(
     .map_err(|_| AppError::Transport(format!("novita timeout: {}", endpoints.balance)))??;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?;
+    let bytes = read_body_capped(resp, MAX_BODY_BYTES).await?;
 
     if !status.is_success() {
         let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();
