@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::cache::{Cache, acquire_lock};
 use crate::error::{AppError, Result};
-use crate::usage::MoonshotSnapshot;
+use crate::usage::{MoonshotSnapshot, finite_amount};
 
 use super::types::{BalanceEnvelope, to_snapshot};
 
@@ -68,14 +68,20 @@ pub async fn fetch_snapshot(
     cache.ensure_dir()?;
     let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
 
-    if let Some(bytes) = cache.fresh_payload(cache_ttl)? {
-        return Ok(reuse_cache(bytes, cache, false));
+    let target = target_key(endpoints, currency);
+
+    if let Some(bytes) = cache.fresh_payload(cache_ttl)?
+        && let Ok(outcome) = reuse_cache(&bytes, cache, false, &target)
+    {
+        return Ok(outcome);
     }
 
     match fetch_live(client, endpoints, api_key, currency).await {
         Ok(snap) => {
-            let bytes = serde_json::to_vec(&serde_json::json!({ "snapshot": serde_repr(&snap) }))
-                .unwrap_or_default();
+            let bytes = serde_json::to_vec(
+                &serde_json::json!({ "target": target, "snapshot": serde_repr(&snap) }),
+            )
+            .unwrap_or_default();
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -84,51 +90,64 @@ pub async fn fetch_snapshot(
                 cache_age: Some(Duration::ZERO),
             })
         }
-        Err(e) if e.is_transient() => fallback_silent(cache),
+        Err(e) if e.is_transient() => fallback_silent(cache, &target, e),
         Err(AppError::Http { status, body }) => {
             cache.mark_stale();
             cache.write_last_error(status, &body);
-            fallback_with_error(cache, Some((status, body)))
+            let diag = (status, body.clone());
+            fallback_with_error(cache, Some(diag), &target, AppError::Http { status, body })
         }
         Err(e) => {
             cache.mark_stale();
             cache.write_last_error(0, &e.to_string());
-            fallback_with_error(cache, Some((0, e.to_string())))
+            let diag = (0, e.to_string());
+            fallback_with_error(cache, Some(diag), &target, e)
         }
     }
 }
 
-fn fallback_silent(cache: &Cache) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
-        return Err(AppError::Transport(
-            "moonshot: no cache and network unreachable".into(),
-        ));
-    };
-    Ok(reuse_cache(bytes, cache, true))
+/// Identity of the account+region the cached figure belongs to. `.ai` reports
+/// USD and `.cn` reports CNY, so a cached number is meaningless — and actively
+/// misleading — once the user points the vendor at the other region.
+fn target_key(endpoints: &Endpoints, currency: &str) -> String {
+    format!("{}|{}", endpoints.balance, currency)
 }
 
-fn fallback_with_error(cache: &Cache, last_error: Option<(u16, String)>) -> Result<FetchOutcome> {
+fn fallback_silent(cache: &Cache, target: &str, original: AppError) -> Result<FetchOutcome> {
     let Some(bytes) = cache.maybe_payload()? else {
-        return Err(AppError::Other("moonshot: no usable cache".into()));
+        return Err(original);
     };
-    let mut outcome = reuse_cache(bytes, cache, true);
+    reuse_cache(&bytes, cache, true, target)
+}
+
+/// On failure we show the last good figure with the error alongside it. With
+/// nothing usable cached there is nothing to show, so the **original** error is
+/// returned rather than a generic "no usable cache" that hides what went wrong.
+fn fallback_with_error(
+    cache: &Cache,
+    last_error: Option<(u16, String)>,
+    target: &str,
+    original: AppError,
+) -> Result<FetchOutcome> {
+    let Some(bytes) = cache.maybe_payload()? else {
+        return Err(original);
+    };
+    // A cache we cannot attribute to this target is no better than no cache.
+    let Ok(mut outcome) = reuse_cache(&bytes, cache, true, target) else {
+        return Err(original);
+    };
     outcome.last_error = last_error;
     Ok(outcome)
 }
 
-fn reuse_cache(bytes: Vec<u8>, cache: &Cache, stale: bool) -> FetchOutcome {
-    let snap = parse_cache(&bytes).unwrap_or(MoonshotSnapshot {
-        available: 0.0,
-        voucher: 0.0,
-        cash: 0.0,
-        currency: "USD".into(),
-    });
-    FetchOutcome {
+fn reuse_cache(bytes: &[u8], cache: &Cache, stale: bool, target: &str) -> Result<FetchOutcome> {
+    let snap = parse_cache(bytes, target)?;
+    Ok(FetchOutcome {
         snapshot: snap,
         stale,
         last_error: cache.read_last_error(),
         cache_age: cache.payload_age(),
-    }
+    })
 }
 
 fn serde_repr(snap: &MoonshotSnapshot) -> serde_json::Value {
@@ -140,16 +159,34 @@ fn serde_repr(snap: &MoonshotSnapshot) -> serde_json::Value {
     })
 }
 
-fn parse_cache(bytes: &[u8]) -> Result<MoonshotSnapshot> {
+fn parse_cache(bytes: &[u8], target: &str) -> Result<MoonshotSnapshot> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
+    // Payloads written before the target was recorded cannot be attributed to
+    // a region/currency, so they are discarded rather than shown against this one.
+    let cached_target = v.get("target").and_then(serde_json::Value::as_str);
+    if cached_target != Some(target) {
+        return Err(AppError::Schema(format!(
+            "moonshot cache belongs to a different endpoint/currency ({}); refetching",
+            cached_target.unwrap_or("unknown")
+        )));
+    }
     let s = v
         .get("snapshot")
         .ok_or_else(|| AppError::Schema("moonshot cache missing 'snapshot' field".into()))?;
+    let field = |name: &str| -> Result<f64> {
+        let v = s[name]
+            .as_f64()
+            .ok_or_else(|| AppError::Schema(format!("moonshot cache missing '{name}'")))?;
+        finite_amount("moonshot cache", name, v)
+    };
     Ok(MoonshotSnapshot {
-        available: s["available"].as_f64().unwrap_or(0.0),
-        voucher: s["voucher"].as_f64().unwrap_or(0.0),
-        cash: s["cash"].as_f64().unwrap_or(0.0),
-        currency: s["currency"].as_str().unwrap_or("USD").to_string(),
+        available: field("available")?,
+        voucher: field("voucher")?,
+        cash: field("cash")?,
+        currency: s["currency"]
+            .as_str()
+            .ok_or_else(|| AppError::Schema("moonshot cache missing 'currency'".into()))?
+            .to_string(),
     })
 }
 
@@ -181,7 +218,9 @@ async fn fetch_live(
     }
     let env: BalanceEnvelope = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("moonshot {}: {e}", endpoints.balance)))?;
-    Ok(to_snapshot(env.data, currency))
+    // A 200 can still carry the documented in-band failure indicators.
+    env.check_ok()?;
+    to_snapshot(env.data, currency)
 }
 
 #[cfg(test)]
@@ -226,9 +265,16 @@ mod tests {
         let endpoints = Endpoints {
             balance: format!("{}/v1/users/me/balance", server.url()),
         };
-        let out = fetch_snapshot(&client, "ms-test", &cache, &endpoints, Duration::from_secs(0), "USD")
-            .await
-            .unwrap();
+        let out = fetch_snapshot(
+            &client,
+            "ms-test",
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+            "USD",
+        )
+        .await
+        .unwrap();
         assert!((out.snapshot.available - 49.58894).abs() < 1e-6);
         assert_eq!(out.snapshot.currency, "USD");
         assert!(!out.stale);
@@ -245,20 +291,101 @@ mod tests {
             .await;
 
         let (_td, cache) = cache_fixture();
-        let seed = serde_json::json!({ "snapshot": {
-            "available": 49.0, "voucher": 46.0, "cash": 3.0, "currency": "USD"
-        }});
+        let endpoints = Endpoints {
+            balance: format!("{}/v1/users/me/balance", server.url()),
+        };
+        let seed = serde_json::json!({
+            "target": target_key(&endpoints, "USD"),
+            "snapshot": {
+                "available": 49.0, "voucher": 46.0, "cash": 3.0, "currency": "USD"
+            },
+        });
         cache.write_payload(seed.to_string().as_bytes()).unwrap();
 
+        let client = reqwest::Client::new();
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+            "USD",
+        )
+        .await
+        .unwrap();
+        assert!(out.stale);
+        assert_eq!(out.snapshot.available, 49.0);
+        assert_eq!(out.last_error.as_ref().map(|(c, _)| *c), Some(401));
+    }
+
+    #[tokio::test]
+    async fn in_band_failure_on_200_is_not_a_zero_balance() {
+        // The documented failure shape: HTTP 200 with status:false.
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/v1/users/me/balance")
+            .with_status(200)
+            .with_body(r#"{"code":40100,"data":{"available_balance":0.0,"voucher_balance":0.0,"cash_balance":0.0},"status":false,"scode":"0x1"}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
         let client = reqwest::Client::new();
         let endpoints = Endpoints {
             balance: format!("{}/v1/users/me/balance", server.url()),
         };
-        let out = fetch_snapshot(&client, "k", &cache, &endpoints, Duration::from_secs(0), "USD")
-            .await
-            .unwrap();
-        assert!(out.stale);
-        assert_eq!(out.snapshot.available, 49.0);
-        assert_eq!(out.last_error.as_ref().map(|(c, _)| *c), Some(401));
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+            "USD",
+        )
+        .await;
+        assert!(out.is_err(), "expected a schema error, got {out:?}");
+    }
+
+    #[tokio::test]
+    async fn switching_region_refetches_instead_of_reusing_the_cache() {
+        // A CNY figure cached for .cn must never be shown as the .ai USD balance.
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/v1/users/me/balance")
+            .with_status(200)
+            .with_body(
+                r#"{"code":0,"data":{"available_balance":12.0,"voucher_balance":0.0,
+                    "cash_balance":12.0},"status":true}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let endpoints = Endpoints {
+            balance: format!("{}/v1/users/me/balance", server.url()),
+        };
+        // Fresh, but cached against the CNY target.
+        let seed = serde_json::json!({
+            "target": target_key(&endpoints, "CNY"),
+            "snapshot": {
+                "available": 999.0, "voucher": 0.0, "cash": 999.0, "currency": "CNY"
+            },
+        });
+        cache.write_payload(seed.to_string().as_bytes()).unwrap();
+
+        let client = reqwest::Client::new();
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(3600),
+            "USD",
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.snapshot.available, 12.0);
+        assert_eq!(out.snapshot.currency, "USD");
+        assert!(!out.stale);
     }
 }

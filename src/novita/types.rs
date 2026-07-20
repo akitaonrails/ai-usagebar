@@ -8,10 +8,13 @@
 
 use serde::Deserialize;
 
-use crate::usage::NovitaSnapshot;
+use crate::error::Result;
+use crate::usage::{NovitaSnapshot, parse_amount};
 
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default)]
+/// Every field the endpoint documents is **required**. A 200 body missing them
+/// is an error envelope or a schema change — reporting it as a zero balance
+/// would cache a fabricated figure as authoritative.
+#[derive(Debug, Clone, Deserialize)]
 pub struct BalanceData {
     #[serde(rename = "availableBalance")]
     pub available_balance: String,
@@ -24,18 +27,18 @@ pub struct BalanceData {
 }
 
 /// Parse a "1/10000 USD" integer-string field into dollars. Non-numeric or
-/// empty values degrade to `0.0` rather than failing the whole fetch.
-fn to_usd(s: &str) -> f64 {
-    s.trim().parse::<f64>().unwrap_or(0.0) / 10_000.0
+/// empty values are schema errors, not zeros.
+fn to_usd(field: &str, s: &str) -> Result<f64> {
+    Ok(parse_amount("novita", field, s)? / 10_000.0)
 }
 
-pub fn to_snapshot(b: BalanceData) -> NovitaSnapshot {
-    NovitaSnapshot {
-        available: to_usd(&b.available_balance),
-        cash: to_usd(&b.cash_balance),
-        credit_limit: to_usd(&b.credit_limit),
-        outstanding: to_usd(&b.outstanding_invoices),
-    }
+pub fn to_snapshot(b: BalanceData) -> Result<NovitaSnapshot> {
+    Ok(NovitaSnapshot {
+        available: to_usd("availableBalance", &b.available_balance)?,
+        cash: to_usd("cashBalance", &b.cash_balance)?,
+        credit_limit: to_usd("creditLimit", &b.credit_limit)?,
+        outstanding: to_usd("outstandingInvoices", &b.outstanding_invoices)?,
+    })
 }
 
 #[cfg(test)]
@@ -52,7 +55,7 @@ mod tests {
             "outstandingInvoices":"0"
         }"#;
         let d: BalanceData = serde_json::from_str(raw).unwrap();
-        let snap = to_snapshot(d);
+        let snap = to_snapshot(d).unwrap();
         assert_eq!(snap.available, 100.0);
         assert_eq!(snap.cash, 80.0);
         assert_eq!(snap.credit_limit, 20.0);
@@ -60,10 +63,33 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_blank_fields_default_to_zero() {
-        let d: BalanceData = serde_json::from_str("{}").unwrap();
-        let snap = to_snapshot(d);
-        assert_eq!(snap.available, 0.0);
+    fn missing_fields_are_a_schema_error_not_zero() {
+        // A 200 error envelope must not be read as "you have $0.00".
+        assert!(serde_json::from_str::<BalanceData>("{}").is_err());
+        assert!(
+            serde_json::from_str::<BalanceData>(r#"{"message":"invalid key","code":401}"#).is_err()
+        );
+        // A partial body is drift, not a balance.
+        assert!(serde_json::from_str::<BalanceData>(r#"{"availableBalance":"1"}"#).is_err());
+    }
+
+    #[test]
+    fn blank_or_non_numeric_amount_is_a_schema_error() {
+        let blank = BalanceData {
+            available_balance: "".into(),
+            cash_balance: "0".into(),
+            credit_limit: "0".into(),
+            outstanding_invoices: "0".into(),
+        };
+        assert!(to_snapshot(blank).is_err());
+
+        let junk = BalanceData {
+            available_balance: "n/a".into(),
+            cash_balance: "0".into(),
+            credit_limit: "0".into(),
+            outstanding_invoices: "0".into(),
+        };
+        assert!(to_snapshot(junk).is_err());
     }
 
     #[test]
@@ -71,8 +97,11 @@ mod tests {
         // 12345 tenthousandths = $1.2345
         let snap = to_snapshot(BalanceData {
             available_balance: "12345".into(),
-            ..Default::default()
-        });
+            cash_balance: "0".into(),
+            credit_limit: "0".into(),
+            outstanding_invoices: "0".into(),
+        })
+        .unwrap();
         assert!((snap.available - 1.2345).abs() < 1e-9);
     }
 }

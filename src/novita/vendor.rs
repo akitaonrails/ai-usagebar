@@ -212,14 +212,26 @@ mod tests {
     #[test]
     fn default_render_shows_available_balance() {
         let snap = sample_snap();
-        let out = render(&sample_outcome(snap.clone()), &snap, &Theme::default(), &opts(), Utc::now());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            Utc::now(),
+        );
         assert!(out.text.contains("$100.00"));
     }
 
     #[test]
     fn tooltip_includes_balance_and_breakdown() {
         let snap = sample_snap();
-        let out = render(&sample_outcome(snap.clone()), &snap, &Theme::default(), &opts(), Utc::now());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            Utc::now(),
+        );
         assert!(out.tooltip.contains("Balance"));
         assert!(out.tooltip.contains("$100.00"));
         assert!(out.tooltip.contains("top-up $80.00"));
@@ -230,13 +242,24 @@ mod tests {
     fn owed_line_only_when_positive() {
         let mut snap = sample_snap();
         snap.outstanding = 3.0;
-        let out = render(&sample_outcome(snap.clone()), &snap, &Theme::default(), &opts(), Utc::now());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            Utc::now(),
+        );
         assert!(out.tooltip.contains("owed $3.00"));
     }
 
     #[test]
     fn severity_scales_with_balance() {
-        let mk = |b: f64| NovitaSnapshot { available: b, cash: 0.0, credit_limit: 0.0, outstanding: 0.0 };
+        let mk = |b: f64| NovitaSnapshot {
+            available: b,
+            cash: 0.0,
+            credit_limit: 0.0,
+            outstanding: 0.0,
+        };
         assert_eq!(severity(&mk(0.5)), PaceSeverity::Critical);
         assert_eq!(severity(&mk(3.0)), PaceSeverity::High);
         assert_eq!(severity(&mk(12.0)), PaceSeverity::Mid);
@@ -248,7 +271,13 @@ mod tests {
         let snap = sample_snap();
         let mut o = opts();
         o.tooltip_format = Some("bal: {nv_balance} · owed {nv_owed}".into());
-        let out = render(&sample_outcome(snap.clone()), &snap, &Theme::default(), &o, Utc::now());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &o,
+            Utc::now(),
+        );
         assert_eq!(out.tooltip, "bal: $100.00 · owed $0.00");
     }
 }

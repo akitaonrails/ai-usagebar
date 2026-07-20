@@ -1016,6 +1016,10 @@ enabled = false
         assert!(c.is_enabled(VendorId::Openai));
         assert!(!c.is_enabled(VendorId::Deepseek));
         assert!(!c.is_enabled(VendorId::Kimi));
+        assert!(!c.is_enabled(VendorId::Kilo));
+        assert!(!c.is_enabled(VendorId::Novita));
+        assert!(!c.is_enabled(VendorId::Moonshot));
+        assert!(!c.is_enabled(VendorId::Grok));
     }
 
     #[test]
@@ -1060,5 +1064,27 @@ enabled = false
         assert_eq!(c.openai.enabled, default.enabled);
         assert_eq!(c.openai.codex_auth_path, default.codex_auth_path);
         assert_eq!(c.enabled_vendors(), Config::default().enabled_vendors());
+    }
+
+    #[test]
+    fn config_example_documents_every_vendor_without_secrets() {
+        let raw = std::fs::read_to_string(config_example()).unwrap();
+        let cfg = Config::load_from(&config_example()).unwrap();
+        // Every vendor the binary can dispatch needs a documented section, or
+        // users have no way to discover how to turn it on.
+        for id in VendorId::all() {
+            let section = id.slug();
+            assert!(
+                raw.contains(&format!("[{section}]")),
+                "config.example.toml has no [{section}] section"
+            );
+        }
+
+        // The example must not ship anything enabled-by-key-only, and must not
+        // carry a real secret.
+        assert!(!cfg.kilo.enabled && cfg.kilo.api_key.is_none());
+        assert!(!cfg.novita.enabled && cfg.novita.api_key.is_none());
+        assert!(!cfg.moonshot.enabled && cfg.moonshot.api_key.is_none());
+        assert!(!cfg.grok.enabled && cfg.grok.api_key.is_none());
     }
 }

@@ -14,6 +14,35 @@
 
 use chrono::{DateTime, Utc};
 
+use crate::error::{AppError, Result};
+
+/// Reject a non-finite monetary value. A NaN or infinity reaching a balance
+/// field means the payload was not what we think it is; displaying it as money
+/// (or caching it as authoritative) is worse than failing loudly.
+pub fn finite_amount(vendor: &str, field: &str, v: f64) -> Result<f64> {
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        Err(AppError::Schema(format!(
+            "{vendor}: `{field}` is not a finite number"
+        )))
+    }
+}
+
+/// Parse a monetary field that the wire encodes as a string. A malformed or
+/// empty value is a schema error, **not** a zero balance — silently reporting
+/// $0.00 for an error envelope is the failure mode this guards against.
+pub fn parse_amount(vendor: &str, field: &str, s: &str) -> Result<f64> {
+    let t = s.trim();
+    if t.is_empty() {
+        return Err(AppError::Schema(format!("{vendor}: `{field}` is empty")));
+    }
+    let v: f64 = t
+        .parse()
+        .map_err(|_| AppError::Schema(format!("{vendor}: `{field}` is not numeric (got {t:?})")))?;
+    finite_amount(vendor, field, v)
+}
+
 /// A single usage window — generic enough that every vendor with a notion of
 /// "% used vs. when does it reset" can express itself with it.
 ///

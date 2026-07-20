@@ -39,14 +39,62 @@ pub struct KeyVendor {
 }
 
 pub const KEY_VENDORS: &[KeyVendor] = &[
-    KeyVendor { id: VendorId::Zai, label: "Z.AI", env: "ZAI_API_KEY", section: "zai", note: "" },
-    KeyVendor { id: VendorId::Openrouter, label: "OpenRouter", env: "OPENROUTER_API_KEY", section: "openrouter", note: "" },
-    KeyVendor { id: VendorId::Deepseek, label: "DeepSeek", env: "DEEPSEEK_API_KEY", section: "deepseek", note: "" },
-    KeyVendor { id: VendorId::Kimi, label: "Kimi", env: "KIMI_API_KEY", section: "kimi", note: "coding-plan usage" },
-    KeyVendor { id: VendorId::Kilo, label: "Kilo", env: "KILO_API_KEY", section: "kilo", note: "" },
-    KeyVendor { id: VendorId::Novita, label: "Novita", env: "NOVITA_API_KEY", section: "novita", note: "" },
-    KeyVendor { id: VendorId::Moonshot, label: "Moonshot", env: "MOONSHOT_API_KEY", section: "moonshot", note: "account balance" },
-    KeyVendor { id: VendorId::Grok, label: "Grok", env: "XAI_MANAGEMENT_KEY", section: "grok", note: "management key, not the inference key" },
+    KeyVendor {
+        id: VendorId::Zai,
+        label: "Z.AI",
+        env: "ZAI_API_KEY",
+        section: "zai",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Openrouter,
+        label: "OpenRouter",
+        env: "OPENROUTER_API_KEY",
+        section: "openrouter",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Deepseek,
+        label: "DeepSeek",
+        env: "DEEPSEEK_API_KEY",
+        section: "deepseek",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Kimi,
+        label: "Kimi",
+        env: "KIMI_API_KEY",
+        section: "kimi",
+        note: "coding-plan usage",
+    },
+    KeyVendor {
+        id: VendorId::Kilo,
+        label: "Kilo",
+        env: "KILO_API_KEY",
+        section: "kilo",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Novita,
+        label: "Novita",
+        env: "NOVITA_API_KEY",
+        section: "novita",
+        note: "",
+    },
+    KeyVendor {
+        id: VendorId::Moonshot,
+        label: "Moonshot",
+        env: "MOONSHOT_API_KEY",
+        section: "moonshot",
+        note: "account balance",
+    },
+    KeyVendor {
+        id: VendorId::Grok,
+        label: "Grok",
+        env: "XAI_MANAGEMENT_KEY",
+        section: "grok",
+        note: "management key, not the inference key",
+    },
 ];
 
 /// Read the inline `api_key` currently in config for a given section, so the
@@ -190,6 +238,9 @@ impl KeyInput {
 #[derive(Debug, Clone)]
 pub struct SettingsState {
     pub focus: Focus,
+    /// Enabled vendors only. The primary selector must not offer a value that
+    /// cannot actually be used by the widget or TUI.
+    pub primary_choices: Vec<VendorId>,
     pub primary: VendorId,
     /// One input per [`KEY_VENDORS`] entry, same order.
     pub keys: Vec<KeyInput>,
@@ -203,9 +254,20 @@ impl SettingsState {
             .iter()
             .map(|kv| KeyInput::from_config(config_inline_key(cfg, kv.section)))
             .collect();
+        let primary_choices = cfg.enabled_vendors();
+        // A configured but disabled primary is ineffective. Display the first
+        // enabled vendor instead; when none are enabled retain the historical
+        // Anthropic fallback in memory without inventing a persisted primary.
+        let primary = cfg
+            .ui
+            .primary
+            .filter(|vendor| primary_choices.contains(vendor))
+            .or_else(|| primary_choices.first().copied())
+            .unwrap_or_else(|| cfg.ui.primary.unwrap_or(VendorId::Anthropic));
         Self {
             focus: Focus::Primary,
-            primary: cfg.ui.primary.unwrap_or(VendorId::Anthropic),
+            primary_choices,
+            primary,
             keys,
             status: String::new(),
         }
@@ -326,15 +388,17 @@ fn try_save(state: &mut SettingsState) -> Action {
 }
 
 fn handle_primary(state: &mut SettingsState, code: KeyCode) {
-    let all = VendorId::all();
-    let idx = all.iter().position(|v| *v == state.primary).unwrap_or(0) as i32;
-    let len = all.len() as i32;
+    // Left/Right cycles the primary-vendor radio over enabled vendors only.
+    let choices = &state.primary_choices;
+    let Some(idx) = choices.iter().position(|v| *v == state.primary) else {
+        return;
+    };
     let step = match code {
         KeyCode::Left => -1,
         KeyCode::Right | KeyCode::Char(' ') => 1,
         _ => return,
     };
-    state.primary = all[((idx + step).rem_euclid(len)) as usize];
+    state.primary = choices[((idx as i32 + step).rem_euclid(choices.len() as i32)) as usize];
 }
 
 fn handle_input(input: &mut KeyInput, code: KeyCode) {
@@ -378,16 +442,18 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
         })?
     };
 
-    set_string(&mut doc, "ui", "primary", state.primary.slug())?;
+    // Do not write a disabled primary as a side effect of saving an API key.
+    // With no enabled vendors, leave any existing value alone so the legacy
+    // resolver's Anthropic fallback remains intact.
+    if state.primary_choices.contains(&state.primary) {
+        set_string(&mut doc, "ui", "primary", state.primary.slug())?;
+    }
 
     for (i, kv) in KEY_VENDORS.iter().enumerate() {
-        let Some(input) = state.keys.get(i) else { continue };
-        if input.dirty && !input.buf.is_empty() {
-            set_string(&mut doc, kv.section, "api_key", &input.buf)?;
-            // Adding a key opts the vendor in — otherwise the opt-in vendors
-            // stay disabled and never fetch.
-            set_bool(&mut doc, kv.section, "enabled", true)?;
-        }
+        let Some(input) = state.keys.get(i) else {
+            continue;
+        };
+        update_key(&mut doc, kv.section, input)?;
     }
 
     let bytes = doc.to_string();
@@ -403,6 +469,24 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Apply one key field to the document. Untouched fields are left alone; a
+/// field the user cleared is *removed*, so an inline secret can be deleted
+/// from the overlay rather than lingering in the file. Writing a non-empty key
+/// also opts the vendor in — the opt-in vendors would otherwise never fetch.
+fn update_key(doc: &mut DocumentMut, section: &str, input: &KeyInput) -> Result<()> {
+    if !input.dirty {
+        return Ok(());
+    }
+    if input.buf.is_empty() {
+        if let Some(table) = doc.get_mut(section).and_then(toml_edit::Item::as_table_mut) {
+            table.remove("api_key");
+        }
+        return Ok(());
+    }
+    set_string(doc, section, "api_key", &input.buf)?;
+    set_bool(doc, section, "enabled", true)
 }
 
 /// Set or update a string field in a TOML section, preserving comments and
@@ -517,11 +601,9 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             ("^S", "save"),
             ("esc", "close"),
         ]),
-        Focus::Save => bubble.help_line([
-            ("↑↓/tab", "move"),
-            ("enter/^S", "save"),
-            ("esc", "close"),
-        ]),
+        Focus::Save => {
+            bubble.help_line([("↑↓/tab", "move"), ("enter/^S", "save"), ("esc", "close")])
+        }
     };
     f.render_widget(Paragraph::new(hint), chunks[1]);
 }
@@ -544,16 +626,15 @@ fn primary_line(state: &SettingsState, theme: &BubbleTheme) -> Line<'static> {
             Span::styled("◀ ", theme.accent),
             Span::styled(
                 format!(" {name} "),
-                theme.selected.add_modifier(Modifier::REVERSED | Modifier::BOLD),
+                theme
+                    .selected
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
             ),
             Span::styled(" ▶", theme.accent),
             theme.muted("    ← → to change"),
         ])
     } else {
-        Line::from(vec![
-            theme.span("     "),
-            Span::styled(name, theme.text),
-        ])
+        Line::from(vec![theme.span("     "), Span::styled(name, theme.text)])
     }
 }
 
@@ -562,7 +643,9 @@ fn key_row(kv: &KeyVendor, input: &KeyInput, focused: bool, theme: &BubbleTheme)
     let value = value_text(input, focused);
 
     // Env / status suffix: env-var name, whether an env override is set, note.
-    let env_set = std::env::var(kv.env).map(|v| !v.is_empty()).unwrap_or(false);
+    let env_set = std::env::var(kv.env)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
     let mut suffix = format!("   {}", kv.env);
     if env_set {
         suffix.push_str(" · env set (overrides)");
@@ -607,7 +690,11 @@ fn key_row(kv: &KeyVendor, input: &KeyInput, focused: bool, theme: &BubbleTheme)
 /// revealed buffer with a cursor mark inserted when focused.
 fn value_text(input: &KeyInput, focused: bool) -> String {
     if input.buf.is_empty() {
-        return if focused { "‸".to_string() } else { "(empty)".to_string() };
+        return if focused {
+            "‸".to_string()
+        } else {
+            "(empty)".to_string()
+        };
     }
     let base = input.display();
     if !focused {
@@ -621,7 +708,9 @@ fn value_text(input: &KeyInput, focused: bool) -> String {
 
 fn save_line(focused: bool, theme: &BubbleTheme) -> Line<'static> {
     let style = if focused {
-        theme.selected.add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        theme
+            .selected
+            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
     } else {
         theme.accent.add_modifier(Modifier::BOLD)
     };
@@ -679,6 +768,7 @@ mod tests {
     fn blank_state(primary: VendorId) -> SettingsState {
         SettingsState {
             focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
             primary,
             keys: KEY_VENDORS.iter().map(|_| KeyInput::default()).collect(),
             status: String::new(),
@@ -745,6 +835,27 @@ mod tests {
         let s = SettingsState::from_config(&cfg);
         assert_eq!(s.keys[key_index(VendorId::Kilo)].buf, "sk-kilo");
         assert!(!s.keys[key_index(VendorId::Kilo)].dirty);
+    }
+
+    #[test]
+    fn from_config_offers_enabled_vendors_only() {
+        let cfg = Config::default();
+        let s = SettingsState::from_config(&cfg);
+        assert_eq!(s.primary_choices, cfg.enabled_vendors());
+        // Opt-in vendors are disabled by default and must not be offered.
+        assert!(!s.primary_choices.contains(&VendorId::Grok));
+        assert!(s.primary_choices.contains(&s.primary));
+    }
+
+    #[test]
+    fn from_config_falls_back_when_configured_primary_is_disabled() {
+        // Grok is opt-in; a config naming it as primary without enabling it
+        // must display the first enabled vendor instead.
+        let mut cfg = Config::default();
+        cfg.ui.primary = Some(VendorId::Grok);
+        let s = SettingsState::from_config(&cfg);
+        assert_ne!(s.primary, VendorId::Grok);
+        assert_eq!(Some(s.primary), cfg.enabled_vendors().first().copied());
     }
 
     #[test]
@@ -932,6 +1043,73 @@ api_key_env = "OPENROUTER_API_KEY"
         assert_eq!(s.primary, VendorId::Zai);
         handle_key(&mut s, KeyCode::Left, KeyModifiers::NONE);
         assert_eq!(s.primary, VendorId::Openai);
+    }
+
+    #[test]
+    fn left_right_offers_enabled_vendors_only() {
+        // The selector must never land on a vendor the widget cannot use.
+        let mut s = blank_state(VendorId::Anthropic);
+        s.primary_choices = vec![VendorId::Anthropic, VendorId::Grok];
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Grok);
+        // Wraps within the enabled set rather than walking into disabled ones.
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Anthropic);
+        handle_key(&mut s, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Grok);
+    }
+
+    #[test]
+    fn no_enabled_vendors_leaves_primary_selector_inert() {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.primary_choices = vec![];
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Anthropic);
+    }
+
+    #[test]
+    fn save_does_not_write_a_disabled_primary() {
+        // Saving an API key must not persist a primary the resolver would
+        // ignore; an existing value in the file stays untouched.
+        let (_dir, path) = temp_config(Some("[ui]\nprimary = \"anthropic\"\n"));
+        let mut s = state_with("zk", "ok", VendorId::Grok);
+        s.primary_choices = vec![VendorId::Anthropic];
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("primary = \"anthropic\""));
+        assert!(!raw.contains("primary = \"grok\""));
+        // The keys still saved.
+        assert!(raw.contains("zk"));
+    }
+
+    #[test]
+    fn save_removes_an_inline_key_the_user_cleared() {
+        // Clearing the field in the overlay must delete the secret from the
+        // file — otherwise there is no way to remove it short of hand-editing.
+        let (_dir, path) = temp_config(Some(
+            "[zai]\nenabled = true\napi_key = \"old-secret\"\nplan_tier = \"pro\"\n",
+        ));
+        let mut s = blank_state(VendorId::Zai);
+        s.primary_choices = vec![VendorId::Zai];
+        s.keys[key_index(VendorId::Zai)] = KeyInput::default();
+        s.keys[key_index(VendorId::Zai)].dirty = true;
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("old-secret"));
+        assert!(!raw.contains("api_key"));
+        // Unrelated fields in the same section survive.
+        assert!(raw.contains("plan_tier = \"pro\""));
+    }
+
+    #[test]
+    fn untouched_key_field_is_left_alone() {
+        // Not dirty => the file's existing secret must survive a save.
+        let (_dir, path) = temp_config(Some("[zai]\napi_key = \"keep-me\"\n"));
+        let mut s = blank_state(VendorId::Zai);
+        s.primary_choices = vec![VendorId::Zai];
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("keep-me"));
     }
 
     #[test]

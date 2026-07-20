@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::cache::{Cache, acquire_lock};
 use crate::error::{AppError, Result};
-use crate::usage::GrokSnapshot;
+use crate::usage::{GrokSnapshot, finite_amount};
 
 use super::types::{BalanceResp, Validation, to_snapshot};
 
@@ -58,15 +58,35 @@ pub async fn fetch_snapshot(
     cache.ensure_dir()?;
     let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
 
-    if let Some(bytes) = cache.fresh_payload(cache_ttl)? {
-        return Ok(reuse_cache(bytes, cache, false));
+    // Identity is derived from the *inputs*, not the resolved team, so a fresh
+    // cache still costs zero network calls.
+    let target = target_key(management_key, team_id);
+
+    if let Some(bytes) = cache.fresh_payload(cache_ttl)?
+        && let Ok(outcome) = reuse_cache(&bytes, cache, false, &target)
+    {
+        return Ok(outcome);
     }
 
-    match fetch_live(client, endpoints, management_key, team_id).await {
+    let team = match resolve_team(client, endpoints, management_key, team_id).await {
+        Ok(t) => t,
+        Err(e) if e.is_transient() => return fallback_silent(cache, &target, e),
+        Err(e) => {
+            cache.mark_stale();
+            cache.write_last_error(0, &e.to_string());
+            let diag = (0, e.to_string());
+            return fallback_with_error(cache, Some(diag), &target, e);
+        }
+    };
+
+    match fetch_live(client, endpoints, management_key, &team).await {
         Ok(snap) => {
-            let bytes =
-                serde_json::to_vec(&serde_json::json!({ "snapshot": { "balance": snap.balance } }))
-                    .unwrap_or_default();
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "target": target,
+                "team": team,
+                "snapshot": { "balance": snap.balance },
+            }))
+            .unwrap_or_default();
             cache.write_payload(&bytes)?;
             Ok(FetchOutcome {
                 snapshot: snap,
@@ -75,55 +95,117 @@ pub async fn fetch_snapshot(
                 cache_age: Some(Duration::ZERO),
             })
         }
-        Err(e) if e.is_transient() => fallback_silent(cache),
+        Err(e) if e.is_transient() => fallback_silent(cache, &target, e),
         Err(AppError::Http { status, body }) => {
             cache.mark_stale();
             cache.write_last_error(status, &body);
-            fallback_with_error(cache, Some((status, body)))
+            let diag = (status, body.clone());
+            fallback_with_error(cache, Some(diag), &target, AppError::Http { status, body })
         }
         Err(e) => {
             cache.mark_stale();
             cache.write_last_error(0, &e.to_string());
-            fallback_with_error(cache, Some((0, e.to_string())))
+            let diag = (0, e.to_string());
+            fallback_with_error(cache, Some(diag), &target, e)
         }
     }
 }
 
-fn fallback_silent(cache: &Cache) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
-        return Err(AppError::Transport(
-            "grok: no cache and network unreachable".into(),
-        ));
-    };
-    Ok(reuse_cache(bytes, cache, true))
+/// Identity of the inputs that determine *whose* balance gets fetched. With an
+/// explicit `team_id` that is the team; otherwise the team is derived from the
+/// management key, so the key itself is the identity — fingerprinted, never
+/// stored in clear. (The fingerprint is only a change detector: if its value
+/// ever shifts, the effect is one extra refetch.)
+fn target_key(management_key: &str, team_id: Option<&str>) -> String {
+    match team_id.filter(|t| !t.is_empty()) {
+        Some(t) => format!("team:{t}"),
+        None => {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            management_key.hash(&mut h);
+            format!("key:{:016x}", h.finish())
+        }
+    }
 }
 
-fn fallback_with_error(cache: &Cache, last_error: Option<(u16, String)>) -> Result<FetchOutcome> {
+/// An explicit `team_id` wins; otherwise introspect the management key. The
+/// scope decides whether `scopeId` is a team at all — see [`Validation`].
+async fn resolve_team(
+    client: &reqwest::Client,
+    endpoints: &Endpoints,
+    key: &str,
+    team_id: Option<&str>,
+) -> Result<String> {
+    match team_id {
+        Some(t) if !t.is_empty() => Ok(t.to_string()),
+        _ => {
+            let v: Validation = get_json(client, &endpoints.validation_url(), key).await?;
+            v.resolved_team()
+        }
+    }
+}
+
+fn fallback_silent(cache: &Cache, target: &str, original: AppError) -> Result<FetchOutcome> {
     let Some(bytes) = cache.maybe_payload()? else {
-        return Err(AppError::Other("grok: no usable cache".into()));
+        return Err(original);
     };
-    let mut outcome = reuse_cache(bytes, cache, true);
+    reuse_cache(&bytes, cache, true, target)
+}
+
+/// On failure we show the last good figure with the error alongside it. With
+/// nothing usable cached there is nothing to show, so the **original** error is
+/// returned — a first run against an organization-scoped key must reach the
+/// user with its guidance intact, not as a generic "no usable cache".
+fn fallback_with_error(
+    cache: &Cache,
+    last_error: Option<(u16, String)>,
+    target: &str,
+    original: AppError,
+) -> Result<FetchOutcome> {
+    let Some(bytes) = cache.maybe_payload()? else {
+        return Err(original);
+    };
+    // A cache we cannot attribute to this target is no better than no cache.
+    let Ok(mut outcome) = reuse_cache(&bytes, cache, true, target) else {
+        return Err(original);
+    };
     outcome.last_error = last_error;
     Ok(outcome)
 }
 
-fn reuse_cache(bytes: Vec<u8>, cache: &Cache, stale: bool) -> FetchOutcome {
-    let snap = parse_cache(&bytes).unwrap_or(GrokSnapshot { balance: 0.0 });
-    FetchOutcome {
+fn reuse_cache(bytes: &[u8], cache: &Cache, stale: bool, target: &str) -> Result<FetchOutcome> {
+    let snap = parse_cache(bytes, target)?;
+    Ok(FetchOutcome {
         snapshot: snap,
         stale,
         last_error: cache.read_last_error(),
         cache_age: cache.payload_age(),
-    }
+    })
 }
 
-fn parse_cache(bytes: &[u8]) -> Result<GrokSnapshot> {
+fn parse_cache(bytes: &[u8], target: &str) -> Result<GrokSnapshot> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
+    // A balance cached for another team (or fetched with a different key) is
+    // not this team's money. Payloads written before the target was recorded
+    // are equally unattributable.
+    let cached_target = v.get("target").and_then(serde_json::Value::as_str);
+    if cached_target != Some(target) {
+        return Err(AppError::Schema(format!(
+            "grok cache belongs to a different team ({}); refetching",
+            v.get("team")
+                .and_then(serde_json::Value::as_str)
+                .or(cached_target)
+                .unwrap_or("unknown")
+        )));
+    }
     let s = v
         .get("snapshot")
         .ok_or_else(|| AppError::Schema("grok cache missing 'snapshot' field".into()))?;
+    let balance = s["balance"]
+        .as_f64()
+        .ok_or_else(|| AppError::Schema("grok cache missing 'balance'".into()))?;
     Ok(GrokSnapshot {
-        balance: s["balance"].as_f64().unwrap_or(0.0),
+        balance: finite_amount("grok cache", "balance", balance)?,
     })
 }
 
@@ -131,23 +213,10 @@ async fn fetch_live(
     client: &reqwest::Client,
     endpoints: &Endpoints,
     key: &str,
-    team_id: Option<&str>,
+    team: &str,
 ) -> Result<GrokSnapshot> {
-    let team = match team_id {
-        Some(t) if !t.is_empty() => t.to_string(),
-        _ => {
-            let v: Validation = get_json(client, &endpoints.validation_url(), key).await?;
-            v.resolved_team().ok_or_else(|| {
-                AppError::Other(
-                    "grok: could not resolve team_id from the management key; \
-                     set `team_id` under [grok] in config"
-                        .into(),
-                )
-            })?
-        }
-    };
-    let resp: BalanceResp = get_json(client, &endpoints.balance_url(&team), key).await?;
-    Ok(to_snapshot(resp))
+    let resp: BalanceResp = get_json(client, &endpoints.balance_url(team), key).await?;
+    to_snapshot(resp)
 }
 
 async fn get_json<T: for<'de> serde::Deserialize<'de>>(
@@ -261,7 +330,15 @@ mod tests {
 
         let (_td, cache) = cache_fixture();
         cache
-            .write_payload(serde_json::json!({ "snapshot": { "balance": 12.0 } }).to_string().as_bytes())
+            .write_payload(
+                serde_json::json!({
+                    "target": "team:t",
+                    "team": "t",
+                    "snapshot": { "balance": 12.0 },
+                })
+                .to_string()
+                .as_bytes(),
+            )
             .unwrap();
 
         let client = reqwest::Client::new();
@@ -279,5 +356,130 @@ mod tests {
         assert!(out.stale);
         assert_eq!(out.snapshot.balance, 12.0);
         assert_eq!(out.last_error.as_ref().map(|(c, _)| *c), Some(404));
+    }
+
+    #[tokio::test]
+    async fn switching_team_refetches_instead_of_reusing_the_cache() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/v1/billing/teams/team-b/prepaid/balance")
+            .with_status(200)
+            .with_body(r#"{"total":{"val":"-300"}}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        // Fresh, but it is team-a's money.
+        cache
+            .write_payload(
+                serde_json::json!({
+                    "target": "team:team-a",
+                    "team": "team-a",
+                    "snapshot": { "balance": 999.0 },
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints { base: server.url() };
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(3600),
+            Some("team-b"),
+        )
+        .await
+        .unwrap();
+        assert!((out.snapshot.balance - 3.0).abs() < 1e-9);
+        assert!(!out.stale);
+    }
+
+    #[tokio::test]
+    async fn fresh_cache_makes_no_network_call() {
+        // No mocks registered: any request would fail the test.
+        let server = mockito::Server::new_async().await;
+        let (_td, cache) = cache_fixture();
+        cache
+            .write_payload(
+                serde_json::json!({
+                    "target": "team:t",
+                    "team": "t",
+                    "snapshot": { "balance": 4.5 },
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
+
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints { base: server.url() };
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(3600),
+            Some("t"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.snapshot.balance, 4.5);
+    }
+
+    #[tokio::test]
+    async fn organization_scoped_key_reports_an_actionable_error() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/auth/management-keys/validation")
+            .with_status(200)
+            .with_body(r#"{"scope":"SCOPE_ORGANIZATION","scopeId":"org-77"}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints { base: server.url() };
+        // No cache to fall back on, so the guidance must surface to the user.
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+            None,
+        )
+        .await;
+        let err = out.unwrap_err().to_string();
+        assert!(err.contains("team_id"), "unhelpful error: {err}");
+        assert!(!err.contains("org-77"), "must not adopt the org id: {err}");
+    }
+
+    #[tokio::test]
+    async fn malformed_200_balance_does_not_become_zero() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/v1/billing/teams/t/prepaid/balance")
+            .with_status(200)
+            .with_body(r#"{"error":"forbidden"}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints { base: server.url() };
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+            Some("t"),
+        )
+        .await;
+        assert!(out.is_err(), "expected a schema error, got {out:?}");
     }
 }

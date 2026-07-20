@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::cache::{Cache, acquire_lock};
 use crate::error::{AppError, Result};
-use crate::usage::KiloSnapshot;
+use crate::usage::{KiloSnapshot, finite_amount};
 
 use super::types::{BalanceData, to_snapshot};
 
@@ -50,14 +50,19 @@ pub async fn fetch_snapshot(
     cache.ensure_dir()?;
     let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
 
-    if let Some(bytes) = cache.fresh_payload(cache_ttl)? {
-        return Ok(reuse_cache(bytes, cache, false));
+    let target = target_key(organization_id);
+
+    if let Some(bytes) = cache.fresh_payload(cache_ttl)?
+        && let Ok(outcome) = reuse_cache(&bytes, cache, false, &target)
+    {
+        return Ok(outcome);
     }
 
     match fetch_live(client, endpoints, api_key, organization_id).await {
         Ok(balance) => {
-            let snap = to_snapshot(balance);
+            let snap = to_snapshot(balance)?;
             let cache_repr = serde_json::json!({
+                "target": target,
                 "snapshot": { "label": snap.label, "balance": snap.balance },
             });
             let bytes = serde_json::to_vec(&cache_repr).unwrap_or_default();
@@ -69,59 +74,89 @@ pub async fn fetch_snapshot(
                 cache_age: Some(Duration::ZERO),
             })
         }
-        Err(e) if e.is_transient() => fallback_silent(cache),
+        Err(e) if e.is_transient() => fallback_silent(cache, &target, e),
         Err(AppError::Http { status, body }) => {
             cache.mark_stale();
             cache.write_last_error(status, &body);
-            fallback_with_error(cache, Some((status, body)))
+            let diag = (status, body.clone());
+            fallback_with_error(cache, Some(diag), &target, AppError::Http { status, body })
         }
         Err(e) => {
             cache.mark_stale();
             cache.write_last_error(0, &e.to_string());
-            fallback_with_error(cache, Some((0, e.to_string())))
+            let diag = (0, e.to_string());
+            fallback_with_error(cache, Some(diag), &target, e)
         }
     }
 }
 
-fn fallback_silent(cache: &Cache) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
-        return Err(AppError::Transport(
-            "kilo: no cache and network unreachable".into(),
-        ));
-    };
-    Ok(reuse_cache(bytes, cache, true))
+/// Identity of the account the cached figure belongs to. A balance fetched for
+/// one organization must never be displayed after the user switches to another
+/// (or back to the personal account).
+fn target_key(organization_id: Option<&str>) -> String {
+    match organization_id.filter(|o| !o.is_empty()) {
+        Some(org) => format!("org:{org}"),
+        None => "personal".to_string(),
+    }
 }
 
-fn fallback_with_error(cache: &Cache, last_error: Option<(u16, String)>) -> Result<FetchOutcome> {
+fn fallback_silent(cache: &Cache, target: &str, original: AppError) -> Result<FetchOutcome> {
     let Some(bytes) = cache.maybe_payload()? else {
-        return Err(AppError::Other("kilo: no usable cache".into()));
+        return Err(original);
     };
-    let mut outcome = reuse_cache(bytes, cache, true);
+    reuse_cache(&bytes, cache, true, target)
+}
+
+/// On failure we show the last good figure with the error alongside it. With
+/// nothing usable cached there is nothing to show, so the **original** error is
+/// returned rather than a generic "no usable cache" that hides what went wrong.
+fn fallback_with_error(
+    cache: &Cache,
+    last_error: Option<(u16, String)>,
+    target: &str,
+    original: AppError,
+) -> Result<FetchOutcome> {
+    let Some(bytes) = cache.maybe_payload()? else {
+        return Err(original);
+    };
+    // A cache we cannot attribute to this target is no better than no cache.
+    let Ok(mut outcome) = reuse_cache(&bytes, cache, true, target) else {
+        return Err(original);
+    };
     outcome.last_error = last_error;
     Ok(outcome)
 }
 
-fn reuse_cache(bytes: Vec<u8>, cache: &Cache, stale: bool) -> FetchOutcome {
-    let snap = parse_cache(&bytes).unwrap_or_else(|_| KiloSnapshot {
-        label: "Kilo".into(),
-        balance: 0.0,
-    });
-    FetchOutcome {
+fn reuse_cache(bytes: &[u8], cache: &Cache, stale: bool, target: &str) -> Result<FetchOutcome> {
+    let snap = parse_cache(bytes, target)?;
+    Ok(FetchOutcome {
         snapshot: snap,
         stale,
         last_error: cache.read_last_error(),
         cache_age: cache.payload_age(),
-    }
+    })
 }
 
-fn parse_cache(bytes: &[u8]) -> Result<KiloSnapshot> {
+fn parse_cache(bytes: &[u8], target: &str) -> Result<KiloSnapshot> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
+    // Payloads written before the target was recorded are not attributable to
+    // an account, so they are discarded rather than shown against this one.
+    let cached_target = v.get("target").and_then(serde_json::Value::as_str);
+    if cached_target != Some(target) {
+        return Err(AppError::Schema(format!(
+            "kilo cache belongs to a different account ({}); refetching",
+            cached_target.unwrap_or("unknown")
+        )));
+    }
     let s = v
         .get("snapshot")
         .ok_or_else(|| AppError::Schema("kilo cache missing 'snapshot' field".into()))?;
+    let balance = s["balance"]
+        .as_f64()
+        .ok_or_else(|| AppError::Schema("kilo cache missing 'balance'".into()))?;
     Ok(KiloSnapshot {
         label: s["label"].as_str().unwrap_or("Kilo").to_string(),
-        balance: s["balance"].as_f64().unwrap_or(0.0),
+        balance: finite_amount("kilo", "balance", balance)?,
     })
 }
 
@@ -243,18 +278,95 @@ mod tests {
             .await;
 
         let (_td, cache) = cache_fixture();
-        let seed = serde_json::json!({ "snapshot": { "label": "Kilo", "balance": 20.0 } });
+        let seed = serde_json::json!({
+            "target": "personal",
+            "snapshot": { "label": "Kilo", "balance": 20.0 },
+        });
         cache.write_payload(seed.to_string().as_bytes()).unwrap();
 
         let client = reqwest::Client::new();
         let endpoints = Endpoints {
             balance: format!("{}/api/profile/balance", server.url()),
         };
-        let out = fetch_snapshot(&client, "k", &cache, &endpoints, Duration::from_secs(0), None)
-            .await
-            .unwrap();
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+            None,
+        )
+        .await
+        .unwrap();
         assert!(out.stale);
         assert_eq!(out.snapshot.balance, 20.0);
         assert_eq!(out.last_error.as_ref().map(|(c, _)| *c), Some(401));
+    }
+
+    #[tokio::test]
+    async fn switching_organization_refetches_instead_of_reusing_the_cache() {
+        // A fresh cache for the personal account must not be shown as the
+        // organization's balance just because the TTL has not expired.
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/api/profile/balance")
+            .match_header("x-kilocode-organizationid", "org_9")
+            .with_status(200)
+            .with_body(r#"{"balance":7.5}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let seed = serde_json::json!({
+            "target": "personal",
+            "snapshot": { "label": "Kilo", "balance": 999.0 },
+        });
+        cache.write_payload(seed.to_string().as_bytes()).unwrap();
+
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            balance: format!("{}/api/profile/balance", server.url()),
+        };
+        // A long TTL: the payload IS fresh, it just belongs to another target.
+        let out = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(3600),
+            Some("org_9"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.snapshot.balance, 7.5);
+        assert!(!out.stale);
+    }
+
+    #[tokio::test]
+    async fn malformed_200_body_does_not_become_a_zero_balance() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/api/profile/balance")
+            .with_status(200)
+            .with_body(r#"{"error":"quota exceeded"}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            balance: format!("{}/api/profile/balance", server.url()),
+        };
+        // No cache to fall back on: the schema error must surface.
+        let err = fetch_snapshot(
+            &client,
+            "k",
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+            None,
+        )
+        .await;
+        assert!(err.is_err(), "expected a schema error, got {err:?}");
     }
 }

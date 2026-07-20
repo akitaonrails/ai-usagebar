@@ -220,14 +220,26 @@ mod tests {
     #[test]
     fn default_render_shows_balance() {
         let snap = sample_snap();
-        let out = render(&sample_outcome(snap.clone()), &snap, &Theme::default(), &opts(), Utc::now());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            Utc::now(),
+        );
         assert!(out.text.contains("$49.58"));
     }
 
     #[test]
     fn tooltip_includes_cash_and_voucher() {
         let snap = sample_snap();
-        let out = render(&sample_outcome(snap.clone()), &snap, &Theme::default(), &opts(), Utc::now());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            Utc::now(),
+        );
         assert!(out.tooltip.contains("cash $3.00"));
         assert!(out.tooltip.contains("voucher $46.58"));
     }
@@ -236,7 +248,13 @@ mod tests {
     fn cny_uses_yuan_symbol() {
         let mut snap = sample_snap();
         snap.currency = "CNY".into();
-        let out = render(&sample_outcome(snap.clone()), &snap, &Theme::default(), &opts(), Utc::now());
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            Utc::now(),
+        );
         assert!(out.text.contains("¥49.58"));
     }
 

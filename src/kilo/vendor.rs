@@ -212,10 +212,34 @@ mod tests {
 
     #[test]
     fn severity_scales_with_balance() {
-        assert_eq!(severity(&KiloSnapshot { label: "".into(), balance: 0.5 }), PaceSeverity::Critical);
-        assert_eq!(severity(&KiloSnapshot { label: "".into(), balance: 3.0 }), PaceSeverity::High);
-        assert_eq!(severity(&KiloSnapshot { label: "".into(), balance: 12.0 }), PaceSeverity::Mid);
-        assert_eq!(severity(&KiloSnapshot { label: "".into(), balance: 50.0 }), PaceSeverity::Low);
+        assert_eq!(
+            severity(&KiloSnapshot {
+                label: "".into(),
+                balance: 0.5
+            }),
+            PaceSeverity::Critical
+        );
+        assert_eq!(
+            severity(&KiloSnapshot {
+                label: "".into(),
+                balance: 3.0
+            }),
+            PaceSeverity::High
+        );
+        assert_eq!(
+            severity(&KiloSnapshot {
+                label: "".into(),
+                balance: 12.0
+            }),
+            PaceSeverity::Mid
+        );
+        assert_eq!(
+            severity(&KiloSnapshot {
+                label: "".into(),
+                balance: 50.0
+            }),
+            PaceSeverity::Low
+        );
     }
 
     #[test]

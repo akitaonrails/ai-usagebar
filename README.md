@@ -72,7 +72,7 @@ variables or `config.toml`.
 
 ## Authentication
 
-Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth credentials that their official CLIs already wrote to disk, so **no env vars are needed.** Z.AI, OpenRouter, DeepSeek, and Kimi use API keys. You can pass those through env vars or, if you don't source secrets in your shell, put them inline in `config.toml`.
+Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth credentials that their official CLIs already wrote to disk, so **no env vars are needed.** Every other vendor uses an API key. You can pass those through env vars or, if you don't source secrets in your shell, put them inline in `config.toml`.
 
 | Vendor | Method | Action required |
 |---|---|---|
@@ -80,14 +80,48 @@ Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth c
 | OpenAI | OAuth, read from `~/.codex/auth.json` | Run `codex login` once. Token auto-refreshes. |
 | Z.AI | API key (`ZAI_API_KEY` env or `[zai] api_key` in config) | Set either. |
 | OpenRouter | API key (`OPENROUTER_API_KEY` env or `[openrouter] api_key` in config) | Set either. |
-| DeepSeek | API key (`DEEPSEEK_API_KEY` env or `[deepseek] api_key` in config) | Set either. Disabled by default — add `[deepseek] enabled = true` to config. |
-| Kimi | API key (`KIMI_API_KEY` env or `[kimi] api_key` in config) | Set either. Disabled by default — add `[kimi] enabled = true` to config. |
+| DeepSeek | API key (`DEEPSEEK_API_KEY` env or `[deepseek] api_key` in config) | Set either. Opt-in — see below. |
+| Kimi | API key (`KIMI_API_KEY` env or `[kimi] api_key` in config) | Set either. Opt-in — see below. |
+| Kilo | API key (`KILO_API_KEY` env or `[kilo] api_key` in config) | Set either. Opt-in. For a team balance, also set `[kilo] organization_id`; omit it for the personal balance. |
+| Novita | API key (`NOVITA_API_KEY` env or `[novita] api_key` in config) | Set either. Opt-in. |
+| Moonshot | API key (`MOONSHOT_API_KEY` env or `[moonshot] api_key` in config) | Set either. Opt-in. Set `[moonshot] region = "cn"` for `api.moonshot.cn` (balance in CNY); the default `"global"` uses `api.moonshot.ai` (USD). |
+| Grok (xAI) | **Management** key (`XAI_MANAGEMENT_KEY` env or `[grok] api_key` in config) | Set either. Opt-in. This is **not** the inference key — create it under xAI Console → Management keys. See the team note below. |
+
+#### Grok: team-scoped vs organization-scoped keys
+
+The balance lives at `/v1/billing/teams/{team}/prepaid/balance`, so a team has to
+be identified. With a **team-scoped** management key the team is read
+automatically from the key. With an **organization-scoped** key it cannot be —
+that key's `scopeId` is an *organization* id, not a team — so set the team
+explicitly:
+
+```toml
+[grok]
+team_id = "your-team-id"
+```
+
+Without it, an organization-scoped key reports an error saying exactly this
+rather than silently querying the wrong URL.
+
+### Enabling a vendor
+
+`enabled = true` is what makes a vendor fetch. DeepSeek, Kimi, Kilo, Novita,
+Moonshot, and Grok all default to **disabled** so that existing installs are
+unaffected until you opt in. Two ways to do it:
+
+- **Via the TUI Settings overlay** (`ai-usagebar-tui`, then `s`): saving a
+  non-empty API key sets that vendor's `enabled = true` for you. Clearing the
+  field again removes the inline key from `config.toml`.
+- **By hand**: add `enabled = true` to the vendor's section alongside the key.
+
+The primary-vendor selector only offers vendors that are currently enabled, so a
+vendor you haven't opted into cannot be set as primary.
 
 ### Credential resolution order (for API-key vendors)
 
 For each API-key vendor, ai-usagebar checks in this order:
 
-1. **Env var named by `api_key_env`** in config (defaults: `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`). If set + non-empty, used.
+1. **Env var named by `api_key_env`** in config (defaults: `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `KIMI_API_KEY`, `KILO_API_KEY`, `NOVITA_API_KEY`, `MOONSHOT_API_KEY`, `XAI_MANAGEMENT_KEY`). If set + non-empty, used.
 2. **Inline `api_key`** in the same config section.
 3. Otherwise, **error** with a message naming both options.
 
@@ -109,7 +143,9 @@ On macOS, recent Claude Code builds don't write `~/.claude/.credentials.json` �
 [ui]
 # Which vendor the widget shows when --vendor is omitted, AND which tab
 # is selected when the TUI opens. Defaults to anthropic when not set.
-# primary = "anthropic"   # anthropic | openai | zai | openrouter | deepseek | kimi
+# Only a vendor that is enabled can be primary.
+# primary = "anthropic"   # anthropic | openai | zai | openrouter | deepseek
+#                         # | kimi | kilo | novita | moonshot | grok
 
 [anthropic]
 enabled = true
@@ -139,6 +175,33 @@ api_key_env = "DEEPSEEK_API_KEY"
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "KIMI_API_KEY"
 # api_key = "sk-..."       # used if KIMI_API_KEY is unset; chmod 600 the file!
+
+# --- Account-balance vendors (all opt-in) ---
+
+[kilo]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "KILO_API_KEY"
+# api_key = "..."          # used if KILO_API_KEY is unset; chmod 600 the file!
+# organization_id = "org_..."   # team balance; omit for the personal balance
+
+[novita]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "NOVITA_API_KEY"
+# api_key = "..."          # used if NOVITA_API_KEY is unset; chmod 600 the file!
+
+[moonshot]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "MOONSHOT_API_KEY"
+# api_key = "sk-..."       # used if MOONSHOT_API_KEY is unset; chmod 600 the file!
+# region = "global"        # global → api.moonshot.ai (USD) | cn → api.moonshot.cn (CNY)
+
+[grok]
+enabled = true             # disabled by default; enable once you add an API key
+# The xAI *Management* key, NOT the inference key.
+api_key_env = "XAI_MANAGEMENT_KEY"
+# api_key = "..."          # used if XAI_MANAGEMENT_KEY is unset; chmod 600 the file!
+# Required for organization-scoped keys; auto-resolved for team-scoped ones.
+# team_id = "..."
 ```
 
 ## Quick start

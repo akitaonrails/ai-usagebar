@@ -26,6 +26,19 @@ Each release is also published at
   All four are opt-in (disabled until a key is configured) and wired into the
   Waybar widget, the TUI panels, and the settings overlay.
 
+  Money is parsed **strictly**: every documented monetary field is required, and
+  a malformed or error-carrying 200 response is a schema error rather than a
+  fresh "$0.00" snapshot. Moonshot's in-band `code`/`status` failure indicators
+  are honored. Each cache records the target it was fetched for (Kilo
+  organization, Moonshot region/currency, Grok team or key), so changing the
+  target refetches instead of showing the previous account's figure. When a
+  fetch fails with nothing usable cached, the original error is surfaced instead
+  of a generic "no usable cache".
+
+  For Grok, `scopeId` is only treated as a team id when the management key is
+  **team-scoped**. An organization-scoped key reports an actionable error asking
+  for `[grok] team_id` rather than querying a URL built from an organization id.
+
 ### CI
 
 - **PRs are now gated on Linux — the platform the widget actually ships on.**
