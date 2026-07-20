@@ -14,6 +14,43 @@ use crate::widget::cli::Cli;
 /// Vendor fetchers still apply their own tighter per-request timeouts.
 pub const HTTP_CLIENT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Upper bound on a vendor response body. Every one of these endpoints returns
+/// a small JSON document — the largest observed is a few kilobytes — so this is
+/// generous by three orders of magnitude while still bounding the damage from a
+/// misbehaving proxy or a hijacked endpoint.
+pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+
+/// Read a response body with an upper bound.
+///
+/// Every vendor buffered the whole body with `resp.bytes()` *before* anything
+/// validated it. The widget is re-executed by Waybar every 60s, so an endpoint
+/// answering with an unbounded stream had a free hand at the machine's memory.
+/// `Content-Length` is checked first when present, then the body is read in
+/// chunks so a lying or absent length cannot get past the cap either.
+pub async fn read_body_capped(
+    mut resp: reqwest::Response,
+    max: usize,
+) -> crate::error::Result<Vec<u8>> {
+    let too_big = |n: u64| {
+        crate::error::AppError::Schema(format!(
+            "response body exceeds the {max}-byte limit ({n} bytes); refusing to buffer it"
+        ))
+    };
+    if let Some(len) = resp.content_length()
+        && len > max as u64
+    {
+        return Err(too_big(len));
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if buf.len() + chunk.len() > max {
+            return Err(too_big((buf.len() + chunk.len()) as u64));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
 /// Stable enum used by `--vendor` and in config files.
 #[derive(
     Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize,
@@ -89,6 +126,45 @@ impl RenderOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn body_over_the_cap_is_refused_and_under_it_round_trips() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/big")
+            .with_status(200)
+            .with_body("x".repeat(4096))
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/small")
+            .with_status(200)
+            .with_body("hello")
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+
+        // Over the cap: refused rather than buffered.
+        let resp = client
+            .get(format!("{}/big", server.url()))
+            .send()
+            .await
+            .unwrap();
+        let err = read_body_capped(resp, 1024).await.unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds"),
+            "unexpected error: {err}"
+        );
+
+        // Under the cap: identical to the previous `resp.bytes()` behaviour.
+        let resp = client
+            .get(format!("{}/small", server.url()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(read_body_capped(resp, 1024).await.unwrap(), b"hello");
+    }
 
     #[test]
     fn vendor_id_slug_round_trip() {

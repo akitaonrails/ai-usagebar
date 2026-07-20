@@ -161,7 +161,7 @@ async fn fetch_live(
     .map_err(|_| AppError::Transport(format!("deepseek timeout: {url}")))??;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?;
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
 
     if !status.is_success() {
         let body = String::from_utf8_lossy(&bytes).chars().take(200).collect();
@@ -173,7 +173,7 @@ async fn fetch_live(
 
     let r: BalanceResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("deepseek balance response: {e}")))?;
-    Ok(r.into_snapshot())
+    r.into_snapshot()
 }
 
 #[cfg(test)]

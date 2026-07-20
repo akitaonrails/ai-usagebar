@@ -65,19 +65,48 @@ pub struct CreditsBlock {
     pub approx_cloud_messages: Option<Vec<i64>>,
 }
 
+/// Accept a JSON int or float (the API returns these counters as either),
+/// plus a numeric string — the same value in a third coat of paint. Anything
+/// else (null, bool, array, object, unparseable string) is schema drift and
+/// must fail the parse: `fetch_usage` validates before writing the cache, so a
+/// fabricated `0` here would be persisted and rendered as a real 0% bar.
 fn de_int_or_float_lenient<'de, D>(d: D) -> Result<i64, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let v = serde_json::Value::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::Null => 0,
-        serde_json::Value::Number(n) => n
-            .as_i64()
-            .or_else(|| n.as_f64().map(|f| f as i64))
-            .unwrap_or(0),
-        _ => 0,
-    })
+    match v {
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i)
+            } else if let Some(i) = n.as_f64().and_then(exact_i64) {
+                Ok(i)
+            } else {
+                Err(serde::de::Error::custom("number out of i64 range"))
+            }
+        }
+        serde_json::Value::String(s) => s
+            .parse::<i64>()
+            .ok()
+            .or_else(|| s.parse::<f64>().ok().and_then(exact_i64))
+            .ok_or_else(|| serde::de::Error::custom(format!("expected numeric string, got {s:?}"))),
+        other => Err(serde::de::Error::custom(format!(
+            "expected number or numeric string, got {other:?}"
+        ))),
+    }
+}
+
+/// `f as i64` saturates instead of failing, so `NaN` would coin a `0` and
+/// `1e300` an `i64::MAX` — both indistinguishable from a counter the API
+/// really sent. Only a magnitude the cast reproduces exactly survives.
+fn exact_i64(f: f64) -> Option<i64> {
+    // `i64::MAX as f64` rounds up to 2^63, hence the strict upper bound;
+    // `i64::MIN as f64` is exact, so its bound is inclusive.
+    if f.is_finite() && f >= i64::MIN as f64 && f < i64::MAX as f64 {
+        Some(f as i64)
+    } else {
+        None
+    }
 }
 
 fn de_opt_int_or_float<'de, D>(d: D) -> Result<Option<i64>, D::Error>
@@ -149,16 +178,18 @@ fn window_or_default(w: Option<Window>, default_dur: chrono::Duration) -> UsageW
 }
 
 fn to_window(w: &Window, default_dur: chrono::Duration) -> UsageWindow {
-    let dur = if w.limit_window_seconds > 0 {
-        chrono::Duration::seconds(w.limit_window_seconds)
-    } else {
-        default_dur
+    // `Duration::seconds` panics past ~1e16, and the widget must always exit 0
+    // — so an absurd counter degrades to the caller's default, never a crash.
+    let dur = match chrono::Duration::try_seconds(w.limit_window_seconds) {
+        Some(d) if w.limit_window_seconds > 0 => d,
+        _ => default_dur,
     };
     let resets_at = match w.reset_at {
         Some(secs) => chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0),
         None => w
             .reset_after_seconds
-            .map(|s| chrono::Utc::now() + chrono::Duration::seconds(s)),
+            .and_then(chrono::Duration::try_seconds)
+            .and_then(|d| chrono::Utc::now().checked_add_signed(d)),
     };
     UsageWindow {
         utilization_pct: (w.used_percent as i32).clamp(0, 100),
@@ -268,6 +299,88 @@ mod tests {
         let r: UsageResponse = serde_json::from_str("{}").unwrap();
         let s = r.into_snapshot(Some("team"));
         assert_eq!(s.plan, "ChatGPT Team");
+    }
+
+    #[test]
+    fn window_counters_accept_int_float_and_numeric_string() {
+        let w: Window =
+            serde_json::from_str(r#"{"used_percent":7,"limit_window_seconds":18000.9}"#).unwrap();
+        assert_eq!(w.used_percent, 7);
+        assert_eq!(w.limit_window_seconds, 18000);
+
+        let w: Window =
+            serde_json::from_str(r#"{"used_percent":"42","limit_window_seconds":"604800.5"}"#)
+                .unwrap();
+        assert_eq!(w.used_percent, 42);
+        assert_eq!(w.limit_window_seconds, 604800);
+    }
+
+    #[test]
+    fn null_counter_is_schema_drift() {
+        // `reset_at` is the only field the API is documented to omit, and it
+        // carries its own Option deserializer. A null counter is drift.
+        let body = r#"{"used_percent":null,"limit_window_seconds":1}"#;
+        assert!(serde_json::from_str::<Window>(body).is_err());
+        let body = r#"{"used_percent":1,"limit_window_seconds":null}"#;
+        assert!(serde_json::from_str::<Window>(body).is_err());
+    }
+
+    #[test]
+    fn non_numeric_counter_shapes_are_schema_drift() {
+        for bad in [
+            r#""many""#,
+            r#"{"value":1}"#,
+            "[1]",
+            "true",
+            // Each parses as an f64, but `as i64` saturates rather than
+            // failing, so it would coin a 0 / i64::MAX that reads as real.
+            r#""NaN""#,
+            r#""inf""#,
+            "1e300",
+            "-1e300",
+            r#""1e300""#,
+        ] {
+            let body = format!(r#"{{"used_percent":{bad},"limit_window_seconds":1}}"#);
+            assert!(
+                serde_json::from_str::<Window>(&body).is_err(),
+                "used_percent {bad} must not deserialize"
+            );
+        }
+    }
+
+    #[test]
+    fn drifted_counter_fails_whole_usage_response() {
+        // The error has to reach `parse_payload` so the widget shows `⚠`
+        // rather than caching and rendering a 0% bar.
+        let body = r#"{"plan_type":"plus","rate_limit":{
+            "primary_window":{"used_percent":"n/a","limit_window_seconds":18000}
+        }}"#;
+        assert!(serde_json::from_str::<UsageResponse>(body).is_err());
+    }
+
+    #[test]
+    fn omitted_counters_still_default_to_zero() {
+        // Deliberate boundary: an *absent* counter keeps the struct-level
+        // `#[serde(default)]`, matching the optional `code_review_rate_limit`
+        // blocks. Only a present-but-wrong value counts as drift.
+        let w: Window = serde_json::from_str("{}").unwrap();
+        assert_eq!(w.used_percent, 0);
+        assert_eq!(w.limit_window_seconds, 0);
+    }
+
+    #[test]
+    fn oversized_window_seconds_degrades_instead_of_panicking() {
+        // i64::MAX is a faithful integer, so it clears the deserializer — but
+        // `chrono::Duration::seconds` panics on it, and a panicking widget
+        // exits non-zero and gets hidden by Waybar.
+        let body = r#"{"rate_limit":{"primary_window":{
+            "used_percent":1,"limit_window_seconds":9223372036854775807,
+            "reset_after_seconds":9223372036854775807
+        }}}"#;
+        let r: UsageResponse = serde_json::from_str(body).unwrap();
+        let s = r.into_snapshot(None);
+        assert_eq!(s.session.window_duration, chrono::Duration::hours(5));
+        assert!(s.session.resets_at.is_none());
     }
 
     #[test]

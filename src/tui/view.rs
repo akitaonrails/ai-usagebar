@@ -94,9 +94,27 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         theme.muted(" · "),
         theme.span(format!("active {active}")),
         theme.muted(" · "),
-        theme.muted(format!("last refresh {}", local_time_hms(app.last_refresh))),
+        theme.muted(header_refresh_text(app)),
     ]);
     f.render_widget(Paragraph::new(line), inner);
+}
+
+/// The header's refresh stamp, read from the ACTIVE tab's own `fetched_at`.
+///
+/// This used to be a single `App::last_refresh` bumped by whichever vendor
+/// finished last, so a tab that was still loading — or had failed minutes ago —
+/// advertised a sibling's success as its own. A tab with no landed response has
+/// no time to show, so it gets the same `—` the panels use for an unknown
+/// fetched-at rather than a borrowed or invented one.
+fn header_refresh_text(app: &App) -> String {
+    let fetched_at = match app.tabs.get(app.active) {
+        Some(TabState::Ready(ready)) => ready.fetched_at,
+        _ => None,
+    };
+    match fetched_at {
+        Some(at) => format!("last refresh {}", local_time_hms(at)),
+        None => "last refresh —".to_string(),
+    }
 }
 
 fn draw_main(f: &mut Frame, app: &App, area: Rect) {
@@ -216,4 +234,87 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     ])
     .theme(theme);
     f.render_widget(&help, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::Theme;
+    use crate::tui::app::ReadyTab;
+    use crate::usage::{OpenRouterSnapshot, VendorSnapshot};
+    use chrono::{DateTime, TimeZone, Utc};
+
+    fn ready_at(fetched_at: Option<DateTime<Utc>>) -> TabState {
+        TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Openrouter(OpenRouterSnapshot {
+                label: "test".into(),
+                total_credits: 0.0,
+                total_usage: 0.0,
+                usage_daily: 0.0,
+                usage_weekly: 0.0,
+                usage_monthly: 0.0,
+                is_free_tier: false,
+                limit: None,
+                limit_remaining: None,
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at,
+        }))
+    }
+
+    // `App::with_theme(.., Theme::default())` rather than `App::new`, which
+    // would read the real Omarchy theme file + `$HOME`. The header stamp under
+    // test is theme-agnostic.
+    fn app_with(tabs: Vec<TabState>) -> App {
+        let mut app = App::with_theme(
+            vec![
+                TabId::vendor(VendorId::Anthropic),
+                TabId::vendor(VendorId::Openrouter),
+            ],
+            Theme::default(),
+        );
+        app.tabs = tabs;
+        app
+    }
+
+    #[test]
+    fn header_refresh_follows_the_active_tab() {
+        let anthropic_at = Utc.with_ymd_and_hms(2026, 5, 23, 12, 0, 0).unwrap();
+        let openrouter_at = Utc.with_ymd_and_hms(2026, 5, 23, 9, 30, 0).unwrap();
+        let mut app = app_with(vec![
+            ready_at(Some(anthropic_at)),
+            ready_at(Some(openrouter_at)),
+        ]);
+
+        // Compare against the formatting helper, not a literal, so the test
+        // doesn't depend on the machine's timezone.
+        let anthropic_header = format!("last refresh {}", local_time_hms(anthropic_at));
+        let openrouter_header = format!("last refresh {}", local_time_hms(openrouter_at));
+        assert_ne!(anthropic_header, openrouter_header);
+
+        assert_eq!(header_refresh_text(&app), anthropic_header);
+        app.next_tab();
+        assert_eq!(header_refresh_text(&app), openrouter_header);
+    }
+
+    #[test]
+    fn header_refresh_is_dash_when_active_tab_never_fetched() {
+        // The sibling's successful fetch is exactly what the old global clock
+        // would have displayed here.
+        let sibling = ready_at(Some(Utc.with_ymd_and_hms(2026, 5, 23, 12, 0, 0).unwrap()));
+        let mut app = app_with(vec![TabState::Loading, sibling]);
+        assert_eq!(header_refresh_text(&app), "last refresh —");
+
+        app.tabs[0] = TabState::Error("401 Unauthorized".into());
+        assert_eq!(header_refresh_text(&app), "last refresh —");
+    }
+
+    #[test]
+    fn header_refresh_is_dash_when_ready_tab_has_no_fetched_at() {
+        // Ready but the cache never reported an age — show nothing rather than
+        // passing off "now" as a response time.
+        let app = app_with(vec![ready_at(None), TabState::Loading]);
+        assert_eq!(header_refresh_text(&app), "last refresh —");
+    }
 }

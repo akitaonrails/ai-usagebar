@@ -22,9 +22,11 @@ enabled = true
 # Path to the Codex CLI OAuth credentials. Leave commented out to use
 # the default ~/.codex/auth.json.
 # codex_auth_path = "/home/you/.codex/auth.json"
-# Reserved for a future API-key-only fallback path (admin key reads
-# `/v1/organization/costs`). Today, OpenAI requires Codex OAuth.
-admin_key_env = "OPENAI_ADMIN_KEY"
+# RESERVED — setting this does nothing today. It names the env var a future
+# API-key-only path would read (admin key → `/v1/organization/costs`). No code
+# consumes it: OpenAI usage comes only from Codex OAuth. Left commented out so
+# it isn't mistaken for a working alternative to `codex login`.
+# admin_key_env = "OPENAI_ADMIN_KEY"
 
 [zai]
 enabled = true

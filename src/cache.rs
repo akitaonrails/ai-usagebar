@@ -169,9 +169,9 @@ impl Cache {
         self.stale_path().exists()
     }
 
-    /// Write the `.last_error` marker — first line `code`, second line `msg`.
-    /// Best-effort, never errors (matches claudebar:478-486 which silently
-    /// continues if the cache dir isn't writable).
+    /// Write the `.last_error` marker — first line `code`, everything after it
+    /// `msg`. Best-effort, never errors (matches claudebar:478-486 which
+    /// silently continues if the cache dir isn't writable).
     pub fn write_last_error(&self, code: u16, msg: &str) {
         let _ = self.ensure_dir();
         let path = self.last_error_path();
@@ -186,10 +186,13 @@ impl Cache {
 
     pub fn read_last_error(&self) -> Option<(u16, String)> {
         let raw = fs::read_to_string(self.last_error_path()).ok()?;
-        let mut lines = raw.lines();
-        let code = lines.next()?.parse::<u16>().ok()?;
-        let msg = lines.next().unwrap_or_default().to_string();
-        Some((code, msg))
+        // The message is *everything* past the first newline, not just the next
+        // line: vendors store the raw HTTP body here and those are routinely
+        // multi-line JSON, so taking one line truncated the user's diagnostic.
+        // Files from before this fix parse unchanged — the writer always framed
+        // them this way, only the reader threw the tail away.
+        let (code, msg) = raw.split_once('\n').unwrap_or((raw.as_str(), ""));
+        Some((code.parse::<u16>().ok()?, msg.to_string()))
     }
 }
 
@@ -430,6 +433,45 @@ mod tests {
         let (code, msg) = cache.read_last_error().unwrap();
         assert_eq!(code, 429);
         assert_eq!(msg, "");
+    }
+
+    /// The regression this guards: vendors write the raw HTTP body, which is
+    /// usually multi-line JSON. The reader kept only line 2, so the tooltip
+    /// showed `{` and dropped the actual API explanation.
+    #[test]
+    fn last_error_round_trips_a_multi_line_message() {
+        let (_td, cache) = fixture();
+        let body = "{\n  \"error\": \"quota exhausted\",\n  \"retry_after\": 3600\n}";
+        cache.write_last_error(429, body);
+
+        let (code, msg) = cache.read_last_error().unwrap();
+        assert_eq!(code, 429);
+        assert_eq!(msg, body);
+        assert!(
+            msg.contains("quota exhausted"),
+            "message was truncated to its first line: {msg:?}"
+        );
+    }
+
+    /// A user upgrades with a `.last_error` already on disk; it must still
+    /// parse. Trailing-newline-free files (the whole marker being just a code)
+    /// count too — that is the one shape the old `lines()` reader tolerated.
+    #[test]
+    fn last_error_reads_files_written_by_the_previous_version() {
+        let (_td, cache) = fixture();
+
+        fs::write(cache.last_error_path(), "503\nservice unavailable").unwrap();
+        assert_eq!(
+            cache.read_last_error(),
+            Some((503, "service unavailable".into()))
+        );
+
+        fs::write(cache.last_error_path(), "429").unwrap();
+        assert_eq!(cache.read_last_error(), Some((429, String::new())));
+
+        // A non-numeric first line is still no error at all, never a fake 0.
+        fs::write(cache.last_error_path(), "not-a-code\nboom").unwrap();
+        assert!(cache.read_last_error().is_none());
     }
 
     #[test]

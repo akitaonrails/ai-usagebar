@@ -269,7 +269,7 @@ async fn fetch_usage(client: &reqwest::Client, url: &str, creds: &OauthCreds) ->
         .await?;
 
     let status = resp.status();
-    let bytes = resp.bytes().await?;
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
 
     if status.is_success() {
         // Validate it's a usage shape — keep claudebar's "must have five_hour"

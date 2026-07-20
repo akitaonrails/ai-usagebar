@@ -194,7 +194,7 @@ async fn fetch_live(client: &reqwest::Client, url: &str, api_key: &str) -> Resul
         });
     }
 
-    let bytes = resp.bytes().await?;
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
     let r: UsagesResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("kimi usages response: {e}")))?;
     r.into_snapshot()

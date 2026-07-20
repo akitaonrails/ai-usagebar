@@ -34,7 +34,7 @@ pub struct UsageResponse {
 pub struct LimitEntry {
     #[serde(default)]
     pub kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_percent_opt")]
     pub percent: Option<f64>,
     #[serde(default)]
     pub resets_at: Option<String>,
@@ -57,7 +57,7 @@ pub struct LimitModel {
 /// A single usage window — `utilization` is `0..=100` (integer percent).
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Window {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_percent")]
     pub utilization: f64,
     #[serde(default)]
     pub resets_at: Option<String>,
@@ -99,6 +99,47 @@ where
     }
 }
 
+/// Slack tolerated above 100. The endpoint occasionally reports a hair over its
+/// own cap — `used/limit` rounding, or usage that landed just before the block
+/// did — and `to_window` saturates that back to 100.
+const PCT_SLACK: f64 = 1.0;
+
+/// Gate a wire percentage into `0..=100` (+ [`PCT_SLACK`]).
+///
+/// Rejecting here rather than in `to_window` is deliberate: `to_window` is
+/// infallible and `into_snapshot` has no error channel, so the parse boundary
+/// is the only place a bad value can still become a loud failure. A rejection
+/// surfaces as `AppError::Json` and reaches the user as `⚠` — never as a
+/// number we invented. Past the slack the field simply isn't a percentage on
+/// this scale (rescaled to per-mille, a raw counter, a sentinel), and clamping
+/// it would paint a "100%" bar we cannot vouch for. Non-finite values matter
+/// most: `f64::NAN as i32` is silently `0`.
+fn checked_percent<E: serde::de::Error>(v: f64) -> std::result::Result<f64, E> {
+    if !v.is_finite() {
+        return Err(E::custom(format!("percentage {v} is not finite")));
+    }
+    if !(0.0..=100.0 + PCT_SLACK).contains(&v) {
+        return Err(E::custom(format!("percentage {v} outside 0..=100")));
+    }
+    Ok(v)
+}
+
+fn de_percent<'de, D>(d: D) -> std::result::Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    checked_percent(f64::deserialize(d)?)
+}
+
+fn de_percent_opt<'de, D>(d: D) -> std::result::Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<f64>::deserialize(d)?
+        .map(checked_percent)
+        .transpose()
+}
+
 impl UsageResponse {
     /// Lift the wire response into our canonical [`AnthropicSnapshot`].
     ///
@@ -118,8 +159,10 @@ impl UsageResponse {
                 };
             };
             UsageWindow {
-                // Round to nearest, matching claudebar's `| round` jq filter.
-                utilization_pct: w.utilization.round() as i32,
+                // Round to nearest, matching claudebar's `| round` jq filter,
+                // then absorb the overshoot `de_percent` deliberately lets
+                // through (100.4 → 100) so the bar never renders past full.
+                utilization_pct: (w.utilization.round() as i32).clamp(0, 100),
                 resets_at: w
                     .resets_at
                     .as_deref()
@@ -145,9 +188,14 @@ impl UsageResponse {
             .filter(|l| l.kind.as_deref() == Some("weekly_scoped"))
             .filter_map(|l| {
                 let label = l.scope?.model?.display_name?;
+                // Same `?` discipline as the label above: an entry without a
+                // percentage is dropped, not defaulted. `unwrap_or(0.0)` drew a
+                // confident "Fable 0%" bar under a real model name — a number
+                // the API never sent, which is worse than no bar at all.
+                let utilization = l.percent?;
                 let window = to_window(
                     Some(Window {
-                        utilization: l.percent.unwrap_or(0.0),
+                        utilization,
                         resets_at: l.resets_at,
                     }),
                     WEEKLY,
@@ -261,6 +309,79 @@ mod tests {
         assert_eq!(snap.session.utilization_pct, 0);
         assert_eq!(snap.weekly.utilization_pct, 0);
         assert!(snap.session.resets_at.is_none());
+    }
+
+    #[test]
+    fn benign_overshoot_saturates_to_hundred() {
+        // A hair over the cap is rounding noise, not drift — it must render as
+        // a full bar, not break the widget.
+        let raw = r#"{
+            "five_hour": {"utilization": 100.4},
+            "seven_day": {"utilization": 100.6}
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let snap = resp.into_snapshot("Pro".into());
+        assert_eq!(snap.session.utilization_pct, 100);
+        assert_eq!(snap.weekly.utilization_pct, 100); // rounds to 101, saturated
+    }
+
+    #[test]
+    fn out_of_range_utilization_is_rejected_not_clamped() {
+        for raw in [
+            r#"{"five_hour": {"utilization": 500}}"#,
+            r#"{"five_hour": {"utilization": -1}}"#,
+            r#"{"seven_day": {"utilization": 101.5}}"#,
+        ] {
+            let err = serde_json::from_str::<UsageResponse>(raw).unwrap_err();
+            assert!(err.to_string().contains("outside 0..=100"), "{raw}: {err}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_scoped_percent_is_rejected() {
+        // `limits[].percent` reaches the same bar via the synthesized Window.
+        let raw = r#"{
+            "limits": [{"kind": "weekly_scoped", "percent": 420,
+                        "scope": {"model": {"display_name": "Fable"}}}]
+        }"#;
+        let err = serde_json::from_str::<UsageResponse>(raw).unwrap_err();
+        assert!(err.to_string().contains("outside 0..=100"), "{err}");
+    }
+
+    #[test]
+    fn non_finite_percentage_is_rejected() {
+        // `f64::NAN as i32` is silently 0 — the fabricated number this gate
+        // exists to prevent. JSON has no NaN literal, so drive it directly.
+        for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(checked_percent::<serde_json::Error>(v).is_err(), "{v}");
+        }
+    }
+
+    #[test]
+    fn scoped_limit_without_a_percentage_is_dropped_not_zeroed() {
+        // The gate rejects impossible numbers; an absent one is not a parse
+        // failure. But it must not become a bar either: `unwrap_or(0.0)` drew a
+        // confident "Fable 0%" under a real model name that the API never sent.
+        let raw = r#"{
+            "limits": [{"kind": "weekly_scoped", "percent": null,
+                        "scope": {"model": {"display_name": "Fable"}}}]
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let snap = resp.into_snapshot("Pro".into());
+        assert!(
+            snap.scoped.is_empty(),
+            "a scoped limit with no percentage must not render a fabricated bar"
+        );
+
+        // A real percentage still produces the window, so the drop is targeted.
+        let ok = r#"{
+            "limits": [{"kind": "weekly_scoped", "percent": 84,
+                        "scope": {"model": {"display_name": "Fable"}}}]
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(ok).unwrap();
+        let snap = resp.into_snapshot("Pro".into());
+        assert_eq!(snap.scoped[0].label, "Fable");
+        assert_eq!(snap.scoped[0].window.utilization_pct, 84);
     }
 
     #[test]

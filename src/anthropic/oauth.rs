@@ -79,7 +79,10 @@ pub async fn refresh(
         .await?;
 
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    let body = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES)
+        .await
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
 
     if !status.is_success() {
         // claudebar tolerates three error-body shapes (claudebar:464-476):

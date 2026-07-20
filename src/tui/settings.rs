@@ -272,6 +272,17 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
         _ => {}
     }
 
+    // A modifier chord is not text. The overlay swallows every key while open,
+    // so without this Ctrl-C types "c" into the focused API key instead of
+    // reaching the app's quit binding, and every other chord corrupts the
+    // secret silently. SHIFT is deliberately not rejected — it is how
+    // uppercase arrives.
+    if matches!(code, KeyCode::Char(_))
+        && mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return Action::Continue;
+    }
+
     // Field-specific handling.
     match state.focus {
         Focus::Primary => handle_primary(state, code),
@@ -1052,6 +1063,63 @@ primary = "deepseek"
         assert!(s.zai.revealed);
         handle_key(&mut s, KeyCode::Char('v'), KeyModifiers::CONTROL);
         assert!(!s.zai.revealed);
+    }
+
+    fn state_focused_on_zai() -> SettingsState {
+        SettingsState {
+            focus: Focus::ZaiKey,
+            primary_choices: VendorId::all().to_vec(),
+            primary: VendorId::Anthropic,
+            zai: KeyInput::default(),
+            openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
+            status: String::new(),
+        }
+    }
+
+    #[test]
+    fn handle_key_ctrl_c_does_not_type_into_key_field() {
+        let mut s = state_focused_on_zai();
+        assert_eq!(
+            handle_key(&mut s, KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Action::Continue
+        );
+        assert!(s.zai.buf.is_empty());
+        // Untouched means save still leaves an existing key on disk alone.
+        assert!(!s.zai.dirty);
+    }
+
+    #[test]
+    fn handle_key_alt_chord_does_not_type_into_key_field() {
+        let mut s = state_focused_on_zai();
+        handle_key(&mut s, KeyCode::Char('x'), KeyModifiers::ALT);
+        assert!(s.zai.buf.is_empty());
+        assert!(!s.zai.dirty);
+    }
+
+    #[test]
+    fn handle_key_shift_still_types_uppercase() {
+        let mut s = state_focused_on_zai();
+        handle_key(&mut s, KeyCode::Char('A'), KeyModifiers::SHIFT);
+        assert_eq!(s.zai.buf, "A");
+        assert!(s.zai.dirty);
+    }
+
+    #[test]
+    fn handle_key_plain_space_still_cycles_primary_vendor() {
+        let mut s = SettingsState {
+            focus: Focus::Primary,
+            primary_choices: VendorId::all().to_vec(),
+            primary: VendorId::Anthropic,
+            zai: KeyInput::default(),
+            openrouter: KeyInput::default(),
+            deepseek: KeyInput::default(),
+            kimi: KeyInput::default(),
+            status: String::new(),
+        };
+        handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::NONE);
+        assert_eq!(s.primary, VendorId::Openai);
     }
 
     #[test]
