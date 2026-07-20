@@ -20,6 +20,20 @@ Each release is also published at
 
 ### Fixed
 
+- **macOS: a locked Keychain is no longer reported as "not logged in".**
+  `keychain::read_raw` mapped *every* `security(1)` failure to "no item",
+  so a locked login Keychain, a denied ACL, or an operational error all
+  produced the friendly "run `claude` to authenticate" message while the
+  credentials sat there intact. Only `errSecItemNotFound` (44) now means
+  absent; anything else surfaces with the exit code, `security`'s own stderr,
+  and what to do about it — and it takes precedence over the file's error,
+  since it is the more actionable one.
+
+- **macOS: a refresh can no longer create a second, unreadable Keychain item.**
+  With `$USER` unset the read selected by service alone while the write passed
+  `-a ""`, so the two no longer addressed the same item. Both now use the same
+  selection.
+
 - **The TUI no longer freezes while a cache lock is contended.** `acquire_lock`
   parks the thread in a sleep loop for up to 15–45s, and the TUI runs on a
   current-thread runtime — so a lock held by a concurrent widget invocation
