@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::cache::{Cache, MAX_STALE, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock_async};
 use crate::error::{AppError, Result};
 use crate::usage::OpenAiSnapshot;
 
@@ -51,7 +51,7 @@ pub async fn fetch_snapshot(
     cache_ttl: Duration,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
-    let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
+    let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
     let mut auth = creds::read_from(creds_path)?;
     let plan_hint = auth.tokens.plan_type_from_id_token();

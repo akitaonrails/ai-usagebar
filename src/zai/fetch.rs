@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use crate::cache::{Cache, MAX_STALE, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock_async};
 use crate::error::{AppError, Result};
 use crate::usage::ZaiSnapshot;
 
@@ -44,7 +44,7 @@ pub async fn fetch_snapshot(
     config_plan_tier: Option<&str>,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
-    let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
+    let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
     if let Some(bytes) = cache.fresh_payload(cache_ttl)?
         && let Ok(outcome) = reuse(bytes, cache, false, config_plan_tier)

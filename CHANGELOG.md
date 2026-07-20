@@ -20,6 +20,24 @@ Each release is also published at
 
 ### Fixed
 
+- **The TUI no longer freezes while a cache lock is contended.** `acquire_lock`
+  parks the thread in a sleep loop for up to 15–45s, and the TUI runs on a
+  current-thread runtime — so a lock held by a concurrent widget invocation
+  stalled keyboard input, the refresh timer and every other vendor's request at
+  once. Adds `Cache::acquire_lock_async`, which waits on the blocking pool, and
+  routes every vendor through it.
+
+- **The TUI no longer leaks a blocking task per event-loop iteration.** A fresh
+  `spawn_blocking(event::poll)` was created on every `select!`; whenever another
+  branch won, the previous one kept running, so several orphaned pollers raced
+  on `event::read()` and could swallow keypresses. A single reader thread now
+  feeds keys through a channel.
+
+- **The terminal is restored even when the TUI exits through an error or a
+  panic.** Raw mode, the alternate screen and the cursor are now owned by an
+  RAII guard rather than undone by straight-line code after the event loop,
+  which was skipped entirely on any early return.
+
 - **A rotated OAuth refresh token is no longer lost silently.** Both Anthropic
   and OpenAI persisted refreshed credentials with `let _ = write_back(...)`.
   When the server rotates the refresh token and that write fails, the old token
