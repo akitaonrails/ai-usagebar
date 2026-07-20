@@ -59,10 +59,21 @@ pub fn write_back(path: &Path, auth: &AuthFile) -> Result<()> {
 }
 
 impl Tokens {
-    /// Compute the Unix-seconds expiry from the embedded id_token. Returns
-    /// 0 (forcing immediate refresh) when the token isn't parseable.
+    /// Compute the Unix-seconds expiry. The id_token's `exp` claim is the
+    /// primary source (Codex CLI does not always write `expires_at`), but the
+    /// explicit field is used when the claim is absent or unparseable —
+    /// otherwise a refresh that returns no new id_token leaves the old expired
+    /// claim in place and every subsequent run refreshes again.
+    /// Returns 0 (forcing an immediate refresh) when neither is usable.
     pub fn expires_at_secs(&self) -> i64 {
-        parse_jwt_exp(&self.id_token).unwrap_or(0)
+        if let Some(exp) = parse_jwt_exp(&self.id_token) {
+            return exp;
+        }
+        self.expires_at
+            .as_deref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.timestamp())
+            .unwrap_or(0)
     }
 
     /// Plan tier from the id_token's nested claim
@@ -164,6 +175,28 @@ mod tests {
         let auth = read_from(f.path()).unwrap();
         assert_eq!(auth.tokens.expires_at_secs(), 0);
         assert!(auth.tokens.plan_type_from_id_token().is_none());
+    }
+
+    #[test]
+    fn explicit_expires_at_is_used_when_the_id_token_has_no_exp() {
+        // A refresh that returns no new id_token used to leave the old expired
+        // claim in place, so every later run refreshed again.
+        let mut tokens = Tokens {
+            access_token: "AT".into(),
+            refresh_token: "RT".into(),
+            id_token: "not-a-jwt".into(),
+            account_id: None,
+            expires_at: Some("2030-01-01T00:00:00Z".into()),
+            extra: Default::default(),
+        };
+        let expected = chrono::DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z")
+            .unwrap()
+            .timestamp();
+        assert_eq!(tokens.expires_at_secs(), expected);
+
+        // Unparseable on both sides still forces a refresh.
+        tokens.expires_at = Some("whenever".into());
+        assert_eq!(tokens.expires_at_secs(), 0);
     }
 
     #[test]

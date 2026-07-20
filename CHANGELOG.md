@@ -20,6 +20,22 @@ Each release is also published at
 
 ### Fixed
 
+- **A rotated OAuth refresh token is no longer lost silently.** Both Anthropic
+  and OpenAI persisted refreshed credentials with `let _ = write_back(...)`.
+  When the server rotates the refresh token and that write fails, the old token
+  on disk is already spent: the current run works, and the *next* one cannot
+  refresh, so the user appears to be logged out for no visible reason. A failed
+  write-back after a rotation is now reported and treated as an auth failure.
+  A failed write that only carried a new *access* token is still ignored —
+  nothing is lost there, the next run simply refreshes again.
+
+- **OpenAI no longer re-refreshes on every run after an id_token-less refresh.**
+  Expiry was read exclusively from the `id_token` exp claim, and the explicit
+  `expires_at` field in `auth.json` was ignored. A refresh response without a
+  new `id_token` therefore left the old, expired claim in place. `expires_at`
+  is now used as the fallback source and is written from the response's
+  `expires_in`.
+
 - **An invalid config is no longer silently replaced by the defaults.** Every
   caller used `Config::load().unwrap_or_default()`, so a TOML syntax error, a
   permission problem, or a failed validation produced the default vendor set

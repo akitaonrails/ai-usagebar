@@ -72,13 +72,36 @@ pub async fn fetch_snapshot(
         {
             Ok(Ok(rr)) => {
                 auth.tokens.access_token = rr.access_token;
+                // A rotated refresh token exists only in memory until it is
+                // persisted; losing it silently logs the user out on the next
+                // run. See the matching comment in `anthropic::fetch`.
+                let rotated = rr.refresh_token.is_some();
                 if let Some(rt) = rr.refresh_token {
                     auth.tokens.refresh_token = rt;
                 }
                 if let Some(id) = rr.id_token {
                     auth.tokens.id_token = id;
                 }
-                let _ = creds::write_back(creds_path, &auth);
+                // Expiry is normally read from the id_token's exp claim, so a
+                // refresh that returns no new id_token would leave the old
+                // (expired) claim in place and make every later run refresh
+                // again. Record the response's own `expires_in` as the explicit
+                // `expires_at` so the expiry is known either way.
+                if let Some(secs) = rr.expires_in
+                    && let Some(dt) = chrono::DateTime::from_timestamp(now + secs as i64, 0)
+                {
+                    auth.tokens.expires_at = Some(dt.to_rfc3339());
+                }
+                if let Err(e) = creds::write_back(creds_path, &auth)
+                    && rotated
+                {
+                    let msg = format!(
+                        "refreshed token could not be saved ({e}); the rotated \
+                         refresh token is lost — re-run `codex login`"
+                    );
+                    cache.write_last_error(0, &msg);
+                    return handle_auth_failure(cache, plan_hint.as_deref(), false);
+                }
             }
             Ok(Err(AppError::Http { status, body })) => {
                 cache.write_last_error(status, &body);

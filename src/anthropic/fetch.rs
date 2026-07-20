@@ -103,14 +103,29 @@ pub async fn fetch_snapshot(
         {
             Ok(Ok(rr)) => {
                 creds.claude_ai_oauth.access_token = rr.access_token;
+                // A rotated refresh token exists *only* in memory until it is
+                // persisted. If the server rotated it and the write-back fails,
+                // the old token on disk is already spent: the next run cannot
+                // refresh and the user is silently logged out. That is a hard
+                // failure, not a best-effort detail.
+                let rotated = rr.refresh_token.is_some();
                 if let Some(new_rt) = rr.refresh_token {
                     creds.claude_ai_oauth.refresh_token = new_rt;
                 }
                 creds.claude_ai_oauth.expires_at_ms =
                     Utc::now().timestamp_millis() + (rr.expires_in as i64) * 1000;
-                // Best-effort persist; the refresh worked, so callers should
-                // still see fresh data even if writing the creds back failed.
-                let _ = creds::write_back_to(&creds_source, &creds.claude_ai_oauth);
+                // When only the access token changed, a failed write loses
+                // nothing — the next run just refreshes again — so carry on.
+                if let Err(e) = creds::write_back_to(&creds_source, &creds.claude_ai_oauth)
+                    && rotated
+                {
+                    let msg = format!(
+                        "refreshed token could not be saved ({e}); the rotated \
+                         refresh token is lost — re-run `claude` to log in again"
+                    );
+                    cache.write_last_error(0, &msg);
+                    return handle_auth_failure(cache, plan_label, false);
+                }
             }
             Ok(Err(AppError::Http { status, body })) => {
                 cache.write_last_error(status, &body);
