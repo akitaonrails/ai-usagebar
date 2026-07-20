@@ -9,6 +9,8 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-07-20
+
 ### Added
 
 - **Opt-in local Claude Code context monitor in the TUI.** Press `c` to list
@@ -82,7 +84,7 @@ Each release is also published at
   limits must be positive and finite, response bodies are bounded, and fallback
   data older than seven days is refused.
 
-### CI
+### Changed
 
 - **PRs are now gated on Linux — the platform the widget actually ships on.**
   Only Windows ran on pull requests; Linux was first exercised *after* a tag
@@ -762,7 +764,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/akitaonrails/ai-usagebar/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.12.0
 [0.11.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.11.0
