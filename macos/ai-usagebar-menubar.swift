@@ -41,6 +41,11 @@ let SETTINGS_DEFAULTS: [String: Any] = [
 
 var VENDOR: String { DEF.string(forKey: "vendor") ?? "anthropic" }
 var INTERVAL: Double { let v = DEF.double(forKey: "interval"); return v > 0 ? v : 30 }
+/// Upper bound on one `ai-usagebar` invocation. It can block on the cache
+/// flock (up to 15s) and then refresh OAuth over the network, so without a
+/// bound a hung run holds a worker indefinitely and the panel simply stops
+/// updating with no explanation. Matches the GNOME extension's own timeout.
+let REFRESH_TIMEOUT: Double = 45
 var BAR_WIDTH: Int { max(4, min(20, DEF.integer(forKey: "barWidth"))) }
 let MENU_BAR_W = 14
 var SHOW_SESSION: Bool { DEF.bool(forKey: "showSession") }
@@ -276,8 +281,19 @@ let VENDOR_AUTH: [VendorAuth] = [
     VendorAuth(id: "deepseek", name: "DeepSeek", kind: "apikey", cli: "", login: "", pkg: "", env: "DEEPSEEK_API_KEY"),
 ]
 
+// The config file the Rust binary would actually read. On macOS
+// `directories::ProjectDirs` resolves to ~/Library/Application Support, so
+// checking only ~/.config reported "no key configured" for a key the binary
+// was happily using. Prefer the canonical location, fall back to the legacy
+// Unix path the docs have always shown (the binary accepts both).
+func configPathTOML() -> String {
+    let appSupport = "\(NSHomeDirectory())/Library/Application Support/ai-usagebar/config.toml"
+    if FileManager.default.fileExists(atPath: appSupport) { return appSupport }
+    return "\(NSHomeDirectory())/.config/ai-usagebar/config.toml"
+}
+
 func configHasApiKeyTOML(_ section: String) -> Bool {
-    let path = "\(NSHomeDirectory())/.config/ai-usagebar/config.toml"
+    let path = configPathTOML()
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
     var inSection = false
     for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -517,6 +533,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var prefsHost: NSHostingController<SettingsView>?
     var lastSnapshot: Snapshot?
     var pendingRefresh: DispatchWorkItem?
+    /// Bumped on every refresh attempt. A result whose generation is no longer
+    /// current belongs to a superseded attempt — most often the previously
+    /// selected vendor — and must not be rendered. Without this, the timer,
+    /// the Preferences window and a vendor change could each start their own
+    /// subprocess and whichever finished last won, regardless of what the user
+    /// had actually selected. Main-thread only.
+    var refreshGeneration: Int = 0
+    /// At most one subprocess in flight; a request arriving while one runs is
+    /// coalesced rather than stacked.
+    var refreshInFlight = false
+    var refreshQueued = false
     let headerItem = NSMenuItem()
     var rows: [String: NSMenuItem] = [:]
 
@@ -619,13 +646,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setError("ai-usagebar não encontrado (PATH / ~/.cargo/bin / homebrew)")
             return
         }
+        // Coalesce: one subprocess at a time, and remember that another was
+        // asked for so a vendor change during a fetch is not simply dropped.
+        if refreshInFlight {
+            refreshQueued = true
+            return
+        }
+        refreshInFlight = true
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        // Captured for THIS attempt: reading `VENDOR` again on completion would
+        // label a late result with whatever is selected by then.
+        let vendor = VENDOR
+
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
-            p.arguments = ["--vendor", VENDOR, "--format", FORMAT_WITH_SENTINEL]
+            p.arguments = ["--vendor", vendor, "--format", FORMAT_WITH_SENTINEL]
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
+
+            // The subprocess takes the cache lock and may refresh OAuth over
+            // the network; without a bound it can hold this worker for a very
+            // long time. Kill it and report instead of hanging silently.
+            let watchdog = DispatchWorkItem { if p.isRunning { p.terminate() } }
+            DispatchQueue.global(qos: .utility)
+                .asyncAfter(deadline: .now() + REFRESH_TIMEOUT, execute: watchdog)
+
             var out = ""
             do {
                 try p.run()
@@ -633,10 +681,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 p.waitUntilExit()
                 out = String(data: data, encoding: .utf8) ?? ""
             } catch {
-                DispatchQueue.main.async { self?.setError("falha ao executar ai-usagebar") }
+                watchdog.cancel()
+                DispatchQueue.main.async {
+                    self?.finishRefresh(generation) { $0.setError("falha ao executar ai-usagebar") }
+                }
                 return
             }
-            DispatchQueue.main.async { self?.consume(out) }
+            watchdog.cancel()
+            let timedOut = out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            DispatchQueue.main.async {
+                self?.finishRefresh(generation) { me in
+                    // Selection may have changed while this ran.
+                    guard vendor == VENDOR else { return }
+                    if timedOut {
+                        me.setError("ai-usagebar demorou demais (>\(Int(REFRESH_TIMEOUT))s)")
+                    } else {
+                        me.consume(out)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Applies `body` only when `generation` is still the current attempt, then
+    /// releases the in-flight slot and runs any request that arrived meanwhile.
+    private func finishRefresh(_ generation: Int, _ body: (AppDelegate) -> Void) {
+        let current = generation == refreshGeneration
+        if current {
+            refreshInFlight = false
+            body(self)
+        }
+        if current && refreshQueued {
+            refreshQueued = false
+            refresh()
         }
     }
 

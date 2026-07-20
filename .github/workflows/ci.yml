@@ -1,8 +1,7 @@
 name: CI
 
-# Native Windows test signal for PRs. The Waybar widget is Wayland-only, so the
-# Linux gate lives in the maintainer's existing flow; this job proves the CLI +
-# TUI build and test on a real windows-latest runner (no WSL).
+# Cross-platform test signal for PRs and main. Linux carries the strict quality
+# gate, macOS also compiles the native menu app, and Windows runs natively.
 on:
   push:
     branches: [main]
@@ -13,7 +12,58 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  # The platform the widget actually ships on. Until this existed, Linux was
+  # only exercised *after* a tag was pushed — by which point the tag is
+  # immutable and a failure costs a new patch release.
+  linux:
+    name: test (ubuntu-latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+      - name: Test GNOME marker logic
+        run: node gnome-extension/marker-logic.test.mjs
+
+      - name: Unused dependencies
+        uses: bnjbvr/cargo-machete@v0.9.2
+
+  macos:
+    name: test (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+      # The menu bar app is 700+ lines of Swift with no test harness; at least
+      # prove it still compiles, which nothing verified before.
+      - name: Build the menu bar app
+        run: swiftc -O -o /tmp/ai-usagebar-menubar macos/ai-usagebar-menubar.swift
+
   windows:
     name: test (windows-latest)
     runs-on: windows-latest

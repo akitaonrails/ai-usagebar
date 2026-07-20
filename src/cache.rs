@@ -104,8 +104,26 @@ impl Cache {
 
     /// Read the payload regardless of age. `Err` if the file exists but is
     /// unreadable; `Ok(None)` if it just doesn't exist.
+    ///
+    /// Prefer [`Cache::fallback_payload`] on failure paths — this one imposes
+    /// no age limit, so it will happily hand back a month-old figure.
     pub fn maybe_payload(&self) -> Result<Option<Vec<u8>>> {
         if !self.payload_path().exists() {
+            return Ok(None);
+        }
+        self.read_payload().map(Some)
+    }
+
+    /// Payload for the *failure* path: the last good value, but only while it
+    /// is still worth showing. Beyond `max_stale` this returns `Ok(None)` so
+    /// the caller surfaces the real error instead of presenting week-old
+    /// numbers as if they were current — a bar that silently freezes on
+    /// history is worse than one that says it cannot reach the API.
+    pub fn fallback_payload(&self, max_stale: Duration) -> Result<Option<Vec<u8>>> {
+        let Some(age) = self.payload_age() else {
+            return Ok(None);
+        };
+        if age > max_stale {
             return Ok(None);
         }
         self.read_payload().map(Some)
@@ -180,6 +198,20 @@ impl Cache {
 ///
 /// The flock file is created if missing, but its content is unused — only
 /// the lock matters.
+/// Async wrapper around [`acquire_lock`].
+///
+/// The blocking version parks the calling thread in a sleep loop for up to
+/// `timeout`. On a current-thread runtime — which is what the TUI uses — that
+/// stalls *everything*: keyboard input, the refresh timer, and every other
+/// vendor's in-flight request. Running the wait on the blocking pool keeps the
+/// reactor free while a contended lock is waited on.
+pub async fn acquire_lock_async(path: &Path, timeout: Duration) -> Result<LockGuard> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || acquire_lock(&path, timeout))
+        .await
+        .map_err(|e| AppError::Other(format!("cache lock task failed: {e}")))?
+}
+
 pub fn acquire_lock(path: &Path, timeout: Duration) -> Result<LockGuard> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| AppError::io_at(parent, e))?;
@@ -349,6 +381,40 @@ mod tests {
     }
 
     #[test]
+    fn fallback_payload_refuses_a_payload_older_than_the_limit() {
+        let (_td, cache) = fixture();
+        cache.write_payload(b"old").unwrap();
+
+        // Let the payload acquire real age rather than rewriting its mtime:
+        // Windows denies reopening the just-persisted file for an attribute
+        // write, and the boundary being tested is the same either way. The
+        // margin is ~12x the threshold so filesystem timestamp granularity
+        // cannot make this flaky.
+        std::thread::sleep(Duration::from_millis(60));
+
+        // Still readable when age is not considered — `maybe_payload` is the
+        // unbounded reader, which is exactly why failure paths must not use it.
+        assert!(cache.maybe_payload().unwrap().is_some());
+
+        // Past the limit, the failure path gets nothing and the caller has to
+        // surface the real error. `MAX_STALE` was dead code before this:
+        // every fallback served history forever.
+        assert!(
+            cache
+                .fallback_payload(Duration::from_millis(5))
+                .unwrap()
+                .is_none()
+        );
+
+        // Inside the window it is still served, so the guard is a limit and
+        // not a blanket refusal.
+        assert_eq!(
+            cache.fallback_payload(MAX_STALE).unwrap().as_deref(),
+            Some(&b"old"[..])
+        );
+    }
+
+    #[test]
     fn last_error_round_trip() {
         let (_td, cache) = fixture();
         cache.write_last_error(503, "service unavailable");
@@ -376,6 +442,44 @@ mod tests {
 
         let res = acquire_lock(&lock_path, Duration::from_millis(100));
         assert!(matches!(res, Err(AppError::Other(_))));
+    }
+
+    /// The regression this guards: `acquire_lock` parks the thread in a sleep
+    /// loop, so on the TUI's current-thread runtime a contended lock froze
+    /// keyboard input, the refresh timer and every other vendor's fetch until
+    /// it timed out. `acquire_lock_async` moves the wait to the blocking pool,
+    /// so unrelated timers must keep firing while the lock is held elsewhere.
+    #[tokio::test(flavor = "current_thread")]
+    async fn async_lock_does_not_stall_the_runtime() {
+        let (_td, cache) = fixture();
+        let lock_path = cache.lock_path();
+        let _held = acquire_lock(&lock_path, Duration::from_millis(500)).unwrap();
+
+        // This will wait the full timeout — it can never win the lock.
+        let waiter = acquire_lock_async(&lock_path, Duration::from_millis(400));
+
+        // Meanwhile the runtime must still be able to make progress.
+        let mut ticks = 0usize;
+        let ticker = async {
+            let mut iv = tokio::time::interval(Duration::from_millis(20));
+            iv.tick().await;
+            loop {
+                iv.tick().await;
+                ticks += 1;
+            }
+        };
+
+        tokio::select! {
+            res = waiter => {
+                // The lock attempt is expected to time out.
+                assert!(matches!(res, Err(AppError::Other(_))));
+            }
+            _ = ticker => unreachable!("the ticker loops forever"),
+        }
+        assert!(
+            ticks > 1,
+            "runtime was starved while the lock was contended ({ticks} ticks)"
+        );
     }
 
     #[test]

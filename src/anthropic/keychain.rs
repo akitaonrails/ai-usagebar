@@ -20,20 +20,29 @@ const SERVICE: &str = "Claude Code-credentials";
 
 /// The Keychain item's *account* is the macOS short username. We match on it
 /// when updating so we touch exactly the item Claude Code created.
-fn account() -> String {
-    std::env::var("USER").unwrap_or_default()
+///
+/// `None` when `$USER` is unset or empty: read and write must then agree to
+/// select by service alone. Previously the read omitted `-a` while the write
+/// passed `-a ""`, so a refresh could create a *second*, empty-account item
+/// that the read would never find again.
+fn account() -> Option<String> {
+    std::env::var("USER").ok().filter(|u| !u.is_empty())
 }
+
+/// `security` exits with the raw OSStatus. 44 is `errSecItemNotFound`.
+const ERR_SEC_ITEM_NOT_FOUND: i32 = 44;
 
 /// Read the raw credentials JSON from the login Keychain.
 ///
-/// Returns `Ok(None)` when no such item exists (so callers can fall through to
-/// the file path / a "run `claude`" error), and `Err` only on an unexpected
-/// `security` failure.
+/// Returns `Ok(None)` only when the item genuinely does not exist, so callers
+/// can fall through to the file path / a "run `claude`" error. Every other
+/// `security` failure is an `Err`: a locked Keychain or a denied ACL is not the
+/// same as "you are not logged in", and reporting it as such sent users off to
+/// re-authenticate when the credentials were there all along.
 pub fn read_raw() -> Result<Option<String>> {
     let mut cmd = Command::new("/usr/bin/security");
     cmd.args(["find-generic-password", "-s", SERVICE, "-w"]);
-    let acct = account();
-    if !acct.is_empty() {
+    if let Some(acct) = account() {
         cmd.args(["-a", &acct]);
     }
 
@@ -42,10 +51,22 @@ pub fn read_raw() -> Result<Option<String>> {
         .map_err(|e| AppError::Other(format!("could not run `security`: {e}")))?;
 
     if !out.status.success() {
-        // `security` exits 44 (errSecItemNotFound) when the item is absent.
-        // Treat any non-success as "not in Keychain" — never a hard error,
-        // so the caller can still surface the friendlier file-missing message.
-        return Ok(None);
+        if out.status.code() == Some(ERR_SEC_ITEM_NOT_FOUND) {
+            return Ok(None);
+        }
+        let detail = String::from_utf8_lossy(&out.stderr);
+        let detail = detail.trim();
+        return Err(AppError::Credentials(format!(
+            "could not read the Claude credentials from the macOS Keychain \
+             (security exited {}): {}. If the login Keychain is locked, unlock \
+             it and retry; if access was denied, allow ai-usagebar when prompted.",
+            out.status.code().unwrap_or(-1),
+            if detail.is_empty() {
+                "no detail"
+            } else {
+                detail
+            }
+        )));
     }
 
     let value = String::from_utf8(out.stdout)
@@ -68,25 +89,32 @@ pub fn read_raw() -> Result<Option<String>> {
 /// rare proactive token refresh, so we accept the local-only exposure of a
 /// secret that already lives in this user's Keychain.
 pub fn write_raw(json: &str) -> Result<()> {
-    let status = Command::new("/usr/bin/security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            SERVICE,
-            "-a",
-            &account(),
-            "-w",
-            json,
-        ])
-        .status()
+    let mut cmd = Command::new("/usr/bin/security");
+    cmd.args(["add-generic-password", "-U", "-s", SERVICE]);
+    // Must mirror `read_raw`'s selection exactly, or an update can create a
+    // second item the read will never find.
+    if let Some(acct) = account() {
+        cmd.args(["-a", &acct]);
+    }
+    cmd.args(["-w", json]);
+
+    let out = cmd
+        .output()
         .map_err(|e| AppError::Other(format!("could not run `security`: {e}")))?;
 
-    if status.success() {
-        Ok(())
-    } else {
-        Err(AppError::Other(
-            "failed to update Claude credentials in the macOS Keychain".into(),
-        ))
+    if out.status.success() {
+        return Ok(());
     }
+    let detail = String::from_utf8_lossy(&out.stderr);
+    let detail = detail.trim();
+    Err(AppError::Credentials(format!(
+        "failed to update the Claude credentials in the macOS Keychain \
+         (security exited {}): {}",
+        out.status.code().unwrap_or(-1),
+        if detail.is_empty() {
+            "no detail"
+        } else {
+            detail
+        }
+    )))
 }

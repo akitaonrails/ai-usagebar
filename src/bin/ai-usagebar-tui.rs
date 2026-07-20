@@ -9,7 +9,6 @@
 //!   q / Esc / Ctrl-C   quit
 
 use std::io;
-use std::time::Duration;
 
 use ai_usagebar::config::Config;
 use ai_usagebar::tui::app::{
@@ -38,7 +37,15 @@ async fn main() {
 }
 
 async fn run() -> io::Result<()> {
-    let mut config = Config::load().unwrap_or_default();
+    // Report a broken config instead of silently starting on defaults, and do
+    // it before raw mode so the message is actually readable.
+    let mut config = Config::load().map_err(|e| {
+        io::Error::other(format!(
+            "{} could not be loaded: {e}\n\
+             Fix the file (or move it aside) and try again.",
+            ai_usagebar::config::config_path_hint()
+        ))
+    })?;
     let tabs = tabs_from_config(&config);
     if tabs.is_empty() {
         eprintln!(
@@ -55,22 +62,44 @@ async fn run() -> io::Result<()> {
 
     let mut app = App::new_with_primary(tabs, config.ui.primary);
 
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
+    // RAII: restoring the terminal must survive an error or a panic in the
+    // loop below. Doing it inline left the user in raw mode on the alternate
+    // screen with no cursor whenever anything went wrong.
+    let _guard = TerminalGuard::enter()?;
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let res = event_loop(&mut terminal, &mut app, &client, &mut config).await;
+    event_loop(&mut terminal, &mut app, &client, &mut config).await
+}
 
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-    res
+/// Owns the terminal mode changes and undoes them on drop, in reverse order.
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enter() -> io::Result<Self> {
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+            // Do not leave raw mode enabled if only half the setup succeeded.
+            let _ = disable_raw_mode();
+            return Err(e);
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        // Best-effort: we are often unwinding, so there is nowhere to report.
+        let mut stdout = io::stdout();
+        let _ = execute!(
+            stdout,
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            ratatui::crossterm::cursor::Show
+        );
+        let _ = disable_raw_mode();
+    }
 }
 
 async fn event_loop<B: ratatui::backend::Backend>(
@@ -85,6 +114,29 @@ where
     // Kick off initial fetches for every vendor in parallel.
     let (tx, mut rx) = mpsc::unbounded_channel::<(u64, TabId, TabState)>();
     spawn_all(app, client, config, &tx);
+
+    // ONE reader thread for the whole session. Spawning a fresh
+    // `spawn_blocking(event::poll)` on every `select!` iteration leaked a
+    // blocking task each time another branch won: those tasks kept running and
+    // raced each other on `event::read()`, so keypresses could be consumed by
+    // an orphan and lost. A dedicated thread also means a slow branch can never
+    // delay input.
+    let (key_tx, mut key_rx) = mpsc::unbounded_channel::<event::KeyEvent>();
+    std::thread::spawn(move || {
+        loop {
+            // A blocking read is fine here: this thread does nothing else, and
+            // the channel send wakes the runtime.
+            match event::read() {
+                Ok(Event::Key(k)) => {
+                    if key_tx.send(k).is_err() {
+                        return; // receiver gone: the TUI is shutting down.
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+    });
 
     let mut tick = tokio::time::interval(REFRESH_INTERVAL);
     tick.tick().await; // consume the immediate tick.
@@ -102,12 +154,11 @@ where
             _ = tick.tick() => {
                 spawn_all(app, client, config, &tx);
             }
-            // Keyboard events. Poll with a small budget so the select wakes
-            // up promptly when nothing else is going on.
-            res = tokio::task::spawn_blocking(|| event::poll(Duration::from_millis(150))) => {
-                let polled = res.unwrap_or(Ok(false)).unwrap_or(false);
-                if polled
-                    && let Ok(Event::Key(k)) = event::read()
+            // Keyboard events, delivered by the single reader thread.
+            maybe_key = key_rx.recv() => {
+                let Some(k) = maybe_key else {
+                    return Ok(()); // reader thread ended: stdin closed.
+                };
                 {
                     // On Windows Terminal (and terminals advertising the
                     // Kitty keyboard protocol) crossterm reports key Repeat
@@ -133,7 +184,12 @@ where
                                 // while the TUI was open appear without a
                                 // restart, and queue an immediate refresh of
                                 // every tab so newly-set API keys are picked up.
-                                *config = ai_usagebar::config::Config::load().unwrap_or_default();
+                                // Keep the config we already have if the reload
+                                // fails — reverting to defaults would silently
+                                // drop the user's real settings mid-session.
+                                if let Ok(reloaded) = ai_usagebar::config::Config::load() {
+                                    *config = reloaded;
+                                }
                                 app.set_tabs(tabs_from_config(config));
                                 app.select_primary(config.ui.primary);
                                 spawn_all(app, client, config, &tx);
@@ -143,7 +199,10 @@ where
                     }
                     // Normal key handling (settings closed).
                     if matches!(k.code, KeyCode::Char('s')) {
-                        let cfg = ai_usagebar::config::Config::load().unwrap_or_default();
+                        // Prefer the file (it may have changed on disk), but fall
+                        // back to the config in memory rather than to defaults.
+                        let cfg = ai_usagebar::config::Config::load()
+                            .unwrap_or_else(|_| config.clone());
                         app.settings = Some(
                             ai_usagebar::tui::settings::SettingsState::from_config(&cfg),
                         );

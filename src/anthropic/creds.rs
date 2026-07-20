@@ -190,9 +190,15 @@ pub fn resolve(target: &CredsTarget) -> Result<(CredentialsFile, CredsSource)> {
 /// | missing             | usable          | keychain                   |
 /// | missing             | absent          | original I/O error         |
 /// | unusable (#15)      | usable          | keychain                   |
-/// | unusable (#15)      | absent/broken   | file result, unchanged     |
+/// | unusable (#15)      | absent          | file result, unchanged     |
 /// | unparsable JSON     | usable          | keychain                   |
-/// | unparsable JSON     | absent/broken   | original parse error       |
+/// | unparsable JSON     | absent          | original parse error       |
+/// | any                 | **unreadable**  | the Keychain error         |
+///
+/// The last row matters: a *locked* login Keychain or a denied ACL is not the
+/// same as "no credentials". Reporting it as absent surfaced a "run `claude`"
+/// message and sent users to re-authenticate while their credentials were
+/// sitting there intact, so that failure now wins over the file's own error.
 ///
 /// *usable file short-circuits — no `security(1)` subprocess on the happy path.
 fn read_default_with(
@@ -431,6 +437,24 @@ mod tests {
         let path = dir.path().join("missing.json");
         let err = read_default_with(&path, || Ok(None)).unwrap_err();
         assert!(matches!(err, AppError::Io { .. }));
+    }
+
+    #[test]
+    fn a_locked_keychain_wins_over_the_file_missing_error() {
+        // The regression this guards: `read_raw` mapped *every* `security`
+        // failure to Ok(None), so a locked login Keychain looked identical to
+        // "not logged in" and the user was told to run `claude` while their
+        // credentials sat there intact.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("missing.json");
+        let err = read_default_with(&path, || {
+            Err(AppError::Credentials("the Keychain is locked".into()))
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Credentials(ref m) if m.contains("locked")),
+            "expected the Keychain error to surface, got {err:?}"
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::cache::{Cache, acquire_lock};
+use crate::cache::{Cache, MAX_STALE, acquire_lock_async};
 use crate::error::{AppError, Result};
 use crate::usage::OpenAiSnapshot;
 
@@ -51,13 +51,17 @@ pub async fn fetch_snapshot(
     cache_ttl: Duration,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
-    let _lock = acquire_lock(&cache.lock_path(), LOCK_TIMEOUT)?;
+    let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
     let mut auth = creds::read_from(creds_path)?;
     let plan_hint = auth.tokens.plan_type_from_id_token();
 
-    if let Some(bytes) = cache.fresh_payload(cache_ttl)? {
-        return Ok(reuse(bytes, cache, false, plan_hint.as_deref()));
+    // Corrupt fresh cache falls through to a live fetch rather than returning
+    // an all-zero snapshot.
+    if let Some(bytes) = cache.fresh_payload(cache_ttl)?
+        && let Ok(outcome) = reuse(bytes, cache, false, plan_hint.as_deref())
+    {
+        return Ok(outcome);
     }
 
     // Maybe refresh — Codex CLI doesn't always populate expires_at, so we use
@@ -72,13 +76,36 @@ pub async fn fetch_snapshot(
         {
             Ok(Ok(rr)) => {
                 auth.tokens.access_token = rr.access_token;
+                // A rotated refresh token exists only in memory until it is
+                // persisted; losing it silently logs the user out on the next
+                // run. See the matching comment in `anthropic::fetch`.
+                let rotated = rr.refresh_token.is_some();
                 if let Some(rt) = rr.refresh_token {
                     auth.tokens.refresh_token = rt;
                 }
                 if let Some(id) = rr.id_token {
                     auth.tokens.id_token = id;
                 }
-                let _ = creds::write_back(creds_path, &auth);
+                // Expiry is normally read from the id_token's exp claim, so a
+                // refresh that returns no new id_token would leave the old
+                // (expired) claim in place and make every later run refresh
+                // again. Record the response's own `expires_in` as the explicit
+                // `expires_at` so the expiry is known either way.
+                if let Some(secs) = rr.expires_in
+                    && let Some(dt) = chrono::DateTime::from_timestamp(now + secs as i64, 0)
+                {
+                    auth.tokens.expires_at = Some(dt.to_rfc3339());
+                }
+                if let Err(e) = creds::write_back(creds_path, &auth)
+                    && rotated
+                {
+                    let msg = format!(
+                        "refreshed token could not be saved ({e}); the rotated \
+                         refresh token is lost — re-run `codex login`"
+                    );
+                    cache.write_last_error(0, &msg);
+                    return handle_auth_failure(cache, plan_hint.as_deref(), false);
+                }
             }
             Ok(Err(AppError::Http { status, body })) => {
                 cache.write_last_error(status, &body);
@@ -126,14 +153,19 @@ pub async fn fetch_snapshot(
     }
 }
 
-fn reuse(bytes: Vec<u8>, cache: &Cache, stale: bool, plan_hint: Option<&str>) -> FetchOutcome {
-    let snap = parse_payload(&bytes, plan_hint).unwrap_or_else(|_| empty(plan_hint));
-    FetchOutcome {
+fn reuse(
+    bytes: Vec<u8>,
+    cache: &Cache,
+    stale: bool,
+    plan_hint: Option<&str>,
+) -> Result<FetchOutcome> {
+    let snap = parse_payload(&bytes, plan_hint)?;
+    Ok(FetchOutcome {
         snapshot: snap,
         stale,
         last_error: cache.read_last_error(),
         cache_age: cache.payload_age(),
-    }
+    })
 }
 
 fn fallback(
@@ -141,21 +173,21 @@ fn fallback(
     plan_hint: Option<&str>,
     last_error: Option<(u16, String)>,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(AppError::Other("openai: no usable cache".into()));
     };
-    let mut out = reuse(bytes, cache, true, plan_hint);
+    let mut out = reuse(bytes, cache, true, plan_hint)?;
     out.last_error = last_error;
     Ok(out)
 }
 
 fn fallback_silent(cache: &Cache, plan_hint: Option<&str>) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(AppError::Transport(
             "openai: no cache and network unreachable".into(),
         ));
     };
-    Ok(reuse(bytes, cache, true, plan_hint))
+    reuse(bytes, cache, true, plan_hint)
 }
 
 fn handle_auth_failure(
@@ -163,7 +195,7 @@ fn handle_auth_failure(
     plan_hint: Option<&str>,
     transient: bool,
 ) -> Result<FetchOutcome> {
-    let Some(bytes) = cache.maybe_payload()? else {
+    let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return if transient {
             Err(AppError::Transport(
                 "openai: no cache and refresh failed transiently".into(),
@@ -174,16 +206,12 @@ fn handle_auth_failure(
             ))
         };
     };
-    Ok(reuse(bytes, cache, true, plan_hint))
+    reuse(bytes, cache, true, plan_hint)
 }
 
 fn parse_payload(bytes: &[u8], plan_hint: Option<&str>) -> Result<OpenAiSnapshot> {
     let r: UsageResponse = serde_json::from_slice(bytes)?;
     Ok(r.into_snapshot(plan_hint))
-}
-
-fn empty(plan_hint: Option<&str>) -> OpenAiSnapshot {
-    UsageResponse::default().into_snapshot(plan_hint)
 }
 
 async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<Vec<u8>> {
@@ -281,6 +309,43 @@ mod tests {
         .unwrap();
         assert_eq!(out.snapshot.plan, "ChatGPT Plus");
         assert_eq!(out.snapshot.session.utilization_pct, 1);
+        assert!(!out.stale);
+    }
+
+    #[tokio::test]
+    async fn corrupt_fresh_cache_refetches_instead_of_showing_an_empty_snapshot() {
+        // `reuse` used to swallow a parse failure into `empty(plan_hint)` and
+        // serve that all-zero snapshot for the rest of the TTL.
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/backend-api/wham/usage")
+            .with_status(200)
+            .with_body(
+                r#"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":37,"limit_window_seconds":18000}}}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache.write_payload(b"{ truncated").unwrap();
+
+        let creds = future_creds();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        // A long TTL: the payload IS fresh, it is simply unusable.
+        let out = fetch_snapshot(
+            &client,
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(3600),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.snapshot.session.utilization_pct, 37);
         assert!(!out.stale);
     }
 
