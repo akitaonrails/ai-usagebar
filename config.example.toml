@@ -23,6 +23,11 @@ enabled = true
 # instead — for your API/Console account, which is separate from the Claude Code
 # OAuth login above.
 #
+# NOTE: the cost API does NOT report Priority Tier usage, so if your
+# organization is on Priority Tier the figure shown here is LOWER than your
+# real total spend. See
+# https://platform.claude.com/docs/en/manage-claude/usage-cost-api
+#
 # Opt-in (disabled until you set a key). Requires a Console *Admin key*
 # (`sk-ant-admin01-...`, sent as the `x-api-key` header), distinct from an
 # inference key. Admin keys exist only for ORGANIZATION accounts: set one up

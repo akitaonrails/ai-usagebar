@@ -7,47 +7,57 @@
 //! `"123.45"` USD represents `$1.23` — so divide by 100 for dollars. There is
 //! no API for the remaining prepaid credit balance (Console dashboard only), so
 //! this vendor reports **month-to-date spend** instead.
+//!
+//! Anthropic documents that this endpoint **excludes Priority Tier costs**
+//! (<https://platform.claude.com/docs/en/manage-claude/usage-cost-api>), so for
+//! an organization on Priority Tier the total here is below its real spend. The
+//! tooltip, the TUI panel, and the README all say so — the number must never be
+//! presented as complete spend.
 
 use serde::Deserialize;
 
-use crate::error::{AppError, Result};
+use crate::error::Result;
+use crate::usage::parse_amount;
 
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default)]
+/// The documented envelope. `data` and `has_more` are **required**: a 200 error
+/// envelope, or a response whose shape drifted, must not deserialize into an
+/// empty report that reads as genuine zero spend. Only `next_page` is optional,
+/// because the docs return it as `null` on the last page.
+///
+/// An empty `data: []` remains the legitimate zero-cost case — a real month with
+/// no usage — and is preserved as such.
+#[derive(Debug, Clone, Deserialize)]
 pub struct CostReport {
     pub data: Vec<Bucket>,
     pub has_more: bool,
+    #[serde(default)]
     pub next_page: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default)]
+/// A time bucket. `results` is required and may legitimately be empty (a day
+/// with no spend).
+#[derive(Debug, Clone, Deserialize)]
 pub struct Bucket {
     pub results: Vec<CostResult>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CostResult {
     /// Cost in the currency's lowest unit (cents), as a decimal string.
     pub amount: String,
 }
 
-/// Sum every result's cents on one page and return dollars. A non-numeric
-/// `amount` (e.g. a field-rename on schema drift, which `#[serde(default)]`
-/// turns into an empty string) raises `AppError::Schema` rather than silently
-/// coercing to 0 — so the fetch layer marks the cache stale and records the
-/// drift instead of reporting a bogus $0.00.
+/// Sum every result's cents on one page and return dollars. A missing,
+/// non-numeric, or non-finite `amount` raises `AppError::Schema` rather than
+/// silently coercing to 0 — reporting a bogus $0.00 spend, and caching it as
+/// authoritative, is the failure this guards against.
 pub fn page_dollars(report: &CostReport) -> Result<f64> {
     let mut cents = 0.0_f64;
     for r in report.data.iter().flat_map(|b| b.results.iter()) {
-        cents += r.amount.trim().parse::<f64>().map_err(|e| {
-            AppError::Schema(format!(
-                "anthropic-api cost_report amount {:?}: {e}",
-                r.amount
-            ))
-        })?;
+        cents += parse_amount("anthropic-api", "cost_report.amount", &r.amount)?;
     }
+    // Guard the running total too: enough large values can overflow to inf.
+    crate::usage::finite_amount("anthropic-api", "cost_report total", cents)?;
     Ok(cents / 100.0)
 }
 
@@ -77,16 +87,58 @@ mod tests {
     }
 
     #[test]
-    fn empty_report_is_zero() {
-        let report: CostReport = serde_json::from_str("{}").unwrap();
+    fn a_month_with_no_usage_is_genuinely_zero() {
+        // The legitimate zero case: a well-formed report with no buckets.
+        let report: CostReport =
+            serde_json::from_str(r#"{"data":[],"has_more":false,"next_page":null}"#).unwrap();
         assert_eq!(page_dollars(&report).unwrap(), 0.0);
+        // A bucket with no results (a day with no spend) is equally valid.
+        let report2: CostReport =
+            serde_json::from_str(r#"{"data":[{"results":[]}],"has_more":false}"#).unwrap();
+        assert_eq!(page_dollars(&report2).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn malformed_envelope_is_rejected_rather_than_read_as_zero_spend() {
+        // The regression this guards: `{}` used to deserialize into an empty
+        // report and display as a genuine $0.00 month.
+        assert!(serde_json::from_str::<CostReport>("{}").is_err());
+        // A 200 error envelope.
+        assert!(
+            serde_json::from_str::<CostReport>(r#"{"error":{"message":"invalid x-api-key"}}"#)
+                .is_err()
+        );
+        // Drifted shape: `data` present but `has_more` gone.
+        assert!(serde_json::from_str::<CostReport>(r#"{"data":[]}"#).is_err());
+        // Drifted bucket: `results` gone.
+        assert!(serde_json::from_str::<CostReport>(r#"{"data":[{}],"has_more":false}"#).is_err());
+        // Drifted result: `amount` renamed away.
+        assert!(
+            serde_json::from_str::<CostReport>(
+                r#"{"data":[{"results":[{"cost":"1"}]}],"has_more":false}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn non_numeric_amount_is_a_schema_error() {
-        // Schema drift: `amount` renamed → serde default fills "" → parse fails.
-        let body = r#"{"data":[{"results":[{"amount":""}]}]}"#;
+        for bad in [r#""""#, r#""n/a""#, r#""  ""#] {
+            let body =
+                format!(r#"{{"data":[{{"results":[{{"amount":{bad}}}]}}],"has_more":false}}"#);
+            let report: CostReport = serde_json::from_str(&body).unwrap();
+            assert!(
+                page_dollars(&report).is_err(),
+                "amount {bad} should not parse as spend"
+            );
+        }
+    }
+
+    #[test]
+    fn non_finite_amount_is_rejected() {
+        // "inf" parses as f64::INFINITY — it must not become a displayed spend.
+        let body = r#"{"data":[{"results":[{"amount":"inf"}]}],"has_more":false}"#;
         let report: CostReport = serde_json::from_str(body).unwrap();
-        assert!(matches!(page_dollars(&report), Err(AppError::Schema(_))));
+        assert!(page_dollars(&report).is_err());
     }
 }

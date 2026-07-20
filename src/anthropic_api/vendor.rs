@@ -153,6 +153,12 @@ fn render_tooltip(
     lines.push(TooltipLine::Body(format!(
         " <span foreground='{dim}'>     remaining credit is Console-only (no API)</span>"
     )));
+    lines.push(TooltipLine::Body(format!(
+        " <span foreground='{dim}'>  󰋼  excludes Priority Tier cost, which the</span>"
+    )));
+    lines.push(TooltipLine::Body(format!(
+        " <span foreground='{dim}'>     cost API does not report</span>"
+    )));
 
     if let Some((code, msg)) = outcome.last_error.as_ref() {
         // code 0 = a non-HTTP failure (schema drift, transport). Show it under a

@@ -174,6 +174,10 @@ fn anthropic_api_sections(s: &crate::usage::AnthropicApiSnapshot) -> Vec<Section
         label: "".into(),
         value: "Prepaid credit balance is Console-only (no API).".into(),
     });
+    v.push(Section::Text {
+        label: "".into(),
+        value: "Excludes Priority Tier cost (not reported by this API).".into(),
+    });
     v
 }
 
