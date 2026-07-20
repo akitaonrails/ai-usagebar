@@ -6,6 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use ratatui_bubbletea_components::{Help, KeyBinding, ListItem, SelectList};
 
+use crate::config::ContextLayout;
 use crate::context::{ContextScan, ContextSession, ContextUsage};
 use crate::format::local_time_hms;
 use crate::pango::severity_for;
@@ -19,6 +20,7 @@ pub struct ContextState {
     pub detail: bool,
     pub generation: u64,
     pub load: ContextLoad,
+    pub layout: ContextLayout,
     selection_id: Option<String>,
 }
 
@@ -36,12 +38,21 @@ impl Default for ContextState {
             detail: false,
             generation: 0,
             load: ContextLoad::Loading,
+            layout: ContextLayout::default(),
             selection_id: None,
         }
     }
 }
 
 impl ContextState {
+    /// Open with the configured starting layout; `v` cycles it afterwards.
+    pub fn new(layout: ContextLayout) -> Self {
+        Self {
+            layout,
+            ..Self::default()
+        }
+    }
+
     /// Begin a scan with an identity allocated by the long-lived host app.
     /// The host, rather than this disposable overlay, owns monotonicity across
     /// close/reopen cycles.
@@ -125,6 +136,10 @@ pub fn handle_key(state: &mut ContextState, code: KeyCode, mods: KeyModifiers) -
         }
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => Action::Close,
         KeyCode::Char('r') => Action::Refresh,
+        KeyCode::Char('v') => {
+            state.layout = state.layout.next();
+            Action::Continue
+        }
         KeyCode::Enter if state.selected_session().is_some() => {
             state.detail = true;
             Action::Continue
@@ -156,14 +171,17 @@ pub fn handle_key(state: &mut ContextState, code: KeyCode, mods: KeyModifiers) -
     }
 }
 
+/// Render the overlay docked into `area` (the view layer decides how much of
+/// the dashboard body that is). Fills `area` like a vendor panel rather than
+/// floating, so it reads as its own surface.
 pub fn render(f: &mut Frame, area: Rect, state: &ContextState, theme: &Theme) {
-    let modal = centered_rect(90, 90, area);
-    f.render_widget(Clear, modal);
-
     let bubble = bubble_theme(theme);
-    let block = bubble.titled_modal_block(" Claude context ");
-    let inner = block.inner(modal);
-    f.render_widget(block, modal);
+    f.render_widget(Clear, area);
+    let block = bubble
+        .titled_block(" Claude context ")
+        .border_style(bubble.focused_border);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -211,6 +229,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &ContextState, theme: &Theme) {
         Help::new([
             KeyBinding::with_keys(["↑/↓", "j/k"], "session"),
             KeyBinding::new("r", "rescan"),
+            KeyBinding::new("v", "layout"),
             KeyBinding::new("esc", "back"),
             KeyBinding::new("q", "close"),
         ])
@@ -219,6 +238,7 @@ pub fn render(f: &mut Frame, area: Rect, state: &ContextState, theme: &Theme) {
             KeyBinding::with_keys(["↑/↓", "j/k"], "select"),
             KeyBinding::new("enter", "details"),
             KeyBinding::new("r", "rescan"),
+            KeyBinding::new("v", "layout"),
             KeyBinding::with_keys(["q", "esc"], "close"),
         ])
     }
@@ -250,6 +270,7 @@ fn render_list(f: &mut Frame, area: Rect, state: &ContextState, scan: &ContextSc
     if scan.walk_capped {
         status.push_str(" · directory scan capped");
     }
+    status.push_str(&format!(" · layout: {}", state.layout.label()));
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(status, bubble.muted),
@@ -385,17 +406,6 @@ fn format_tokens(value: u64) -> String {
     out
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let height = (area.height * percent_y) / 100;
-    let width = (area.width * percent_x) / 100;
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
-}
-
 pub use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 
 #[cfg(test)]
@@ -486,6 +496,27 @@ mod tests {
         assert_eq!(
             handle_key(&mut state, KeyCode::Esc, KeyModifiers::NONE),
             Action::Close
+        );
+    }
+
+    #[test]
+    fn v_cycles_the_three_layouts_and_wraps() {
+        let mut state = ContextState::new(ContextLayout::Full);
+        state.detail = true;
+        for expected in [
+            ContextLayout::Split,
+            ContextLayout::Bottom,
+            ContextLayout::Full,
+        ] {
+            assert_eq!(
+                handle_key(&mut state, KeyCode::Char('v'), KeyModifiers::NONE),
+                Action::Continue
+            );
+            assert_eq!(state.layout, expected);
+        }
+        assert!(
+            state.detail,
+            "changing layout must not leave the detail view"
         );
     }
 

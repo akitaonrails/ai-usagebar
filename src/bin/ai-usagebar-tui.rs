@@ -250,7 +250,9 @@ where
                         )
                         && app.context_enabled
                     {
-                        app.context = Some(ai_usagebar::tui::context::ContextState::default());
+                        app.context = Some(ai_usagebar::tui::context::ContextState::new(
+                            config.context.layout,
+                        ));
                         spawn_context_scan(app, config, &context_tx);
                         continue;
                     }
