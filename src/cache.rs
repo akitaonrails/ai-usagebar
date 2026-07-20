@@ -381,30 +381,36 @@ mod tests {
     }
 
     #[test]
-    fn fallback_payload_refuses_a_payload_older_than_max_stale() {
-        use std::time::SystemTime;
-
+    fn fallback_payload_refuses_a_payload_older_than_the_limit() {
         let (_td, cache) = fixture();
         cache.write_payload(b"old").unwrap();
 
-        // Backdate the payload past the limit. `MAX_STALE` was dead code
-        // before this: every failure path served history forever.
-        let eight_days_ago = SystemTime::now() - Duration::from_secs(8 * 24 * 3600);
-        let f = File::options()
-            .write(true)
-            .open(cache.payload_path())
-            .unwrap();
-        f.set_modified(eight_days_ago).unwrap();
+        // Let the payload acquire real age rather than rewriting its mtime:
+        // Windows denies reopening the just-persisted file for an attribute
+        // write, and the boundary being tested is the same either way. The
+        // margin is ~12x the threshold so filesystem timestamp granularity
+        // cannot make this flaky.
+        std::thread::sleep(Duration::from_millis(60));
 
-        // Still readable when age is not considered...
+        // Still readable when age is not considered — `maybe_payload` is the
+        // unbounded reader, which is exactly why failure paths must not use it.
         assert!(cache.maybe_payload().unwrap().is_some());
-        // ...but refused as a fallback.
-        assert!(cache.fallback_payload(MAX_STALE).unwrap().is_none());
-        // A payload inside the window is still served.
-        cache.write_payload(b"new").unwrap();
+
+        // Past the limit, the failure path gets nothing and the caller has to
+        // surface the real error. `MAX_STALE` was dead code before this:
+        // every fallback served history forever.
+        assert!(
+            cache
+                .fallback_payload(Duration::from_millis(5))
+                .unwrap()
+                .is_none()
+        );
+
+        // Inside the window it is still served, so the guard is a limit and
+        // not a blanket refusal.
         assert_eq!(
             cache.fallback_payload(MAX_STALE).unwrap().as_deref(),
-            Some(&b"new"[..])
+            Some(&b"old"[..])
         );
     }
 
