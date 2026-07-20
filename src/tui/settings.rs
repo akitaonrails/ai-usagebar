@@ -418,7 +418,11 @@ fn update_key(doc: &mut DocumentMut, section: &str, input: &KeyInput) -> Result<
 }
 
 fn default_config_path() -> Result<PathBuf> {
-    crate::config::default_path()
+    // Save back to the same file Config::load() selected. On macOS this may be
+    // the legacy ~/.config path when the canonical Application Support file is
+    // absent; writing a new canonical file would shadow the existing config on
+    // the next load and silently discard all settings the overlay did not copy.
+    crate::config::resolved_path()
         .ok_or_else(|| AppError::Other("could not resolve config dir".into()))
 }
 
@@ -1079,5 +1083,13 @@ primary = "deepseek"
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("[kimi]"));
         assert!(raw.contains("api_key = \"kk\""));
+    }
+
+    #[test]
+    fn settings_save_uses_the_same_config_path_as_load() {
+        assert_eq!(
+            default_config_path().unwrap(),
+            crate::config::resolved_path().unwrap()
+        );
     }
 }

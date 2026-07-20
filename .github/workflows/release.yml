@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Tag or commit to build (e.g. v0.2.0)"
+        description: "Existing release tag to build (e.g. v0.13.1)"
         required: true
         default: ""
 

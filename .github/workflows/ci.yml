@@ -1,8 +1,7 @@
 name: CI
 
-# Native Windows test signal for PRs. The Waybar widget is Wayland-only, so the
-# Linux gate lives in the maintainer's existing flow; this job proves the CLI +
-# TUI build and test on a real windows-latest runner (no WSL).
+# Cross-platform test signal for PRs and main. Linux carries the strict quality
+# gate, macOS also compiles the native menu app, and Windows runs natively.
 on:
   push:
     branches: [main]
@@ -45,7 +44,7 @@ jobs:
         run: node gnome-extension/marker-logic.test.mjs
 
       - name: Unused dependencies
-        uses: bnjbvr/cargo-machete@main
+        uses: bnjbvr/cargo-machete@v0.9.2
 
   macos:
     name: test (macos-latest)

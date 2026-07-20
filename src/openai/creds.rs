@@ -59,20 +59,20 @@ pub fn write_back(path: &Path, auth: &AuthFile) -> Result<()> {
 }
 
 impl Tokens {
-    /// Compute the Unix-seconds expiry. The id_token's `exp` claim is the
-    /// primary source (Codex CLI does not always write `expires_at`), but the
-    /// explicit field is used when the claim is absent or unparseable —
-    /// otherwise a refresh that returns no new id_token leaves the old expired
-    /// claim in place and every subsequent run refreshes again.
+    /// Compute the Unix-seconds expiry. A persisted `expires_at` is the newest
+    /// information after a refresh and must win over the id_token's claim: the
+    /// token endpoint may return `expires_in` without returning a replacement
+    /// id_token, leaving the old (expired) claim in place. Fall back to the
+    /// access-token JWT (the source current Codex itself uses), then the legacy
+    /// id-token claim, for auth files that do not carry the explicit field.
     /// Returns 0 (forcing an immediate refresh) when neither is usable.
     pub fn expires_at_secs(&self) -> i64 {
-        if let Some(exp) = parse_jwt_exp(&self.id_token) {
-            return exp;
-        }
         self.expires_at
             .as_deref()
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.timestamp())
+            .or_else(|| parse_jwt_exp(&self.access_token))
+            .or_else(|| parse_jwt_exp(&self.id_token))
             .unwrap_or(0)
     }
 
@@ -178,13 +178,15 @@ mod tests {
     }
 
     #[test]
-    fn explicit_expires_at_is_used_when_the_id_token_has_no_exp() {
+    fn explicit_expires_at_overrides_an_old_expired_id_token() {
         // A refresh that returns no new id_token used to leave the old expired
-        // claim in place, so every later run refreshed again.
+        // claim in place. The refreshed `expires_at` must win or every later
+        // run refreshes again.
+        let expired_jwt = fake_jwt(serde_json::json!({"exp": 1}));
         let mut tokens = Tokens {
             access_token: "AT".into(),
             refresh_token: "RT".into(),
-            id_token: "not-a-jwt".into(),
+            id_token: expired_jwt,
             account_id: None,
             expires_at: Some("2030-01-01T00:00:00Z".into()),
             extra: Default::default(),
@@ -194,9 +196,22 @@ mod tests {
             .timestamp();
         assert_eq!(tokens.expires_at_secs(), expected);
 
-        // Unparseable on both sides still forces a refresh.
+        // An invalid explicit value still falls back to the JWT.
         tokens.expires_at = Some("whenever".into());
-        assert_eq!(tokens.expires_at_secs(), 0);
+        assert_eq!(tokens.expires_at_secs(), 1);
+    }
+
+    #[test]
+    fn access_token_expiry_wins_over_the_legacy_id_token_claim() {
+        let tokens = Tokens {
+            access_token: fake_jwt(serde_json::json!({"exp": 2_000_000_000})),
+            refresh_token: "RT".into(),
+            id_token: fake_jwt(serde_json::json!({"exp": 1})),
+            account_id: None,
+            expires_at: None,
+            extra: Default::default(),
+        };
+        assert_eq!(tokens.expires_at_secs(), 2_000_000_000);
     }
 
     #[test]
