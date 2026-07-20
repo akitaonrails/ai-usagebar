@@ -20,6 +20,20 @@ Each release is also published at
 
 ### Fixed
 
+- **Switching vendors no longer leaves the previous vendor's numbers on the
+  desktop bars.** GNOME dropped any refresh requested while one was in flight,
+  so a vendor change during a fetch never started one for the new vendor: the
+  old vendor's result was applied and stayed until the next timer tick. The
+  request is now queued and run when the current attempt settles, and a result
+  is discarded if it has been superseded or if the selection changed while it
+  ran. The macOS menu bar had no such protection at all — the timer, the
+  Preferences window and a vendor change could each start a subprocess, and
+  whichever finished last won. It now runs at most one at a time, tags each
+  attempt with a generation, and ignores stale results. macOS also gains a
+  45-second watchdog: the subprocess can block on the cache lock and then
+  refresh OAuth, and without a bound a hung run left the panel frozen with no
+  explanation.
+
 - **The config file is found at one agreed location on every platform.** The
   binary resolved it through `directories::ProjectDirs` (macOS:
   `~/Library/Application Support/ai-usagebar/`), while the README, the shipped

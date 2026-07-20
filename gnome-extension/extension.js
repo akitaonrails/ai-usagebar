@@ -59,6 +59,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         this._openPrefs = openPrefs;
         this._data = null;          // parsed snapshot for redraws
         this._busy = false;
+        // A refresh asked for while one was in flight, to run once it settles.
+        this._refreshPending = false;
         this._timer = 0;
         this._refreshTimeoutId = 0;
         this._refreshCancellable = null;
@@ -179,12 +181,22 @@ class AiUsageBarIndicator extends PanelMenu.Button {
     }
 
     _refresh() {
-        if (this._busy)
+        // Dropping the request while busy meant a vendor change *during* a
+        // fetch never started one for the new vendor: the in-flight result for
+        // the OLD vendor was applied and stayed on the panel until the next
+        // timer tick. Remember that a refresh was asked for and run it as soon
+        // as the current one settles.
+        if (this._busy) {
+            this._refreshPending = true;
             return;
+        }
         this._busy = true;
         const token = ++this._refreshToken;
 
         const bin = resolveBinary(this._settings);
+        // Captured for THIS attempt: the setting can change while we wait, and
+        // a late result must not be rendered as if it belonged to the vendor
+        // now selected.
         const vendor = this._settings.get_string('vendor') || 'anthropic';
         const argv = [bin, '--vendor', vendor, '--format', FORMAT];
         const cancellable = new Gio.Cancellable();
@@ -200,6 +212,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         } catch (e) {
             this._busy = false;
             this._refreshCancellable = null;
+            this._refreshPending = false;
             this._setError(`não consegui executar "${bin}"`, String(e));
             return;
         }
@@ -217,6 +230,11 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             if (this._refreshToken === token) {
                 this._busy = false;
                 this._setError('ai-usagebar demorou demais', `timeout após ${REFRESH_TIMEOUT_SECS}s`);
+                // Do not strand a request that arrived while this one hung.
+                if (this._refreshPending) {
+                    this._refreshPending = false;
+                    this._refresh();
+                }
             }
             return GLib.SOURCE_REMOVE;
         });
@@ -234,12 +252,21 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         };
 
         proc.communicate_utf8_async(null, cancellable, (p, res) => {
-            if (this._refreshToken === token)
+            const current = this._refreshToken === token;
+            if (current)
                 this._busy = false;
             try {
                 const [, out, err] = p.communicate_utf8_finish(res);
                 cleanup();
                 if (timedOut)
+                    return;
+                // A superseded attempt must not paint the panel: its numbers
+                // belong to whatever vendor was selected when it started.
+                if (!current)
+                    return;
+                // The selection may have changed while this ran even without a
+                // newer attempt (the change is queued as `_refreshPending`).
+                if ((this._settings.get_string('vendor') || 'anthropic') !== vendor)
                     return;
                 if ((!out || !out.trim()) && !p.get_successful()) {
                     this._setError('ai-usagebar falhou', err || '');
@@ -248,9 +275,15 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                 this._consume(out || '');
             } catch (e) {
                 cleanup();
-                if (!(e instanceof GLib.Error &&
+                if (current && !(e instanceof GLib.Error &&
                       e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) && !timedOut)
                     this._setError('erro ao ler a saída', String(e));
+            } finally {
+                // Run whatever was requested while we were busy.
+                if (current && this._refreshPending) {
+                    this._refreshPending = false;
+                    this._refresh();
+                }
             }
         });
     }
