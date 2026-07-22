@@ -92,7 +92,7 @@ pub async fn fetch_snapshot_at(
                 cache_age: Some(Duration::ZERO),
             })
         }
-        Err(e) if e.is_transient() => fallback_silent(cache, now),
+        Err(e) if e.is_transient() => fallback_silent(cache, now, e),
         Err(AppError::Http { status, body }) => {
             cache.mark_stale();
             cache.write_last_error(status, &body);
@@ -220,15 +220,18 @@ async fn post_rpc(
     let resp = req.send().await?;
 
     let status = resp.status();
+    // Cap error bodies too. A local endpoint is still untrusted, and reading a
+    // non-2xx response with `text()` would bypass the invariant enforced for
+    // successful JSON responses.
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = String::from_utf8_lossy(&bytes).into_owned();
         return Err(AppError::Http {
             status: status.as_u16(),
             body,
         });
     }
 
-    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
     Ok(serde_json::from_slice(&bytes)?)
 }
 
@@ -270,22 +273,41 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
         for bucket in buckets {
             let id = bucket["bucketId"].as_str().unwrap_or_default();
             let window = bucket["window"].as_str().unwrap_or_default();
-            let is_weekly = id.ends_with("weekly") || window == "weekly";
+            let is_weekly = if id.ends_with("weekly") || window == "weekly" {
+                true
+            } else if id.ends_with("5h") || window == "5h" {
+                false
+            } else {
+                // A new cadence is not a 5-hour bucket by default. Ignore it
+                // so it cannot overwrite a known slot.
+                continue;
+            };
             let is_gemini = if id.starts_with("gemini") {
                 true
             } else if id.starts_with("3p") {
                 false
+            } else if group_name.contains("Gemini") {
+                true
+            } else if group_name.contains("Claude") || group_name.contains("GPT") {
+                false
             } else {
-                group_name.contains("Gemini")
+                // Likewise, an unrelated future group is not implicitly the
+                // third-party pool.
+                continue;
             };
 
-            let slot = match (is_gemini, is_weekly) {
-                (true, false) => &mut gemini_5h,
-                (true, true) => &mut gemini_weekly,
-                (false, false) => &mut tp_5h,
-                (false, true) => &mut tp_weekly,
+            let (slot, slot_name) = match (is_gemini, is_weekly) {
+                (true, false) => (&mut gemini_5h, "Gemini 5h"),
+                (true, true) => (&mut gemini_weekly, "Gemini weekly"),
+                (false, false) => (&mut tp_5h, "Claude/GPT 5h"),
+                (false, true) => (&mut tp_weekly, "Claude/GPT weekly"),
             };
-            *slot = Some(usage_window(bucket, is_weekly)?);
+            let parsed = usage_window(bucket, is_weekly)?;
+            if slot.replace(parsed).is_some() {
+                return Err(AppError::Schema(format!(
+                    "antigravity: duplicate {slot_name} bucket"
+                )));
+            }
         }
     }
 
@@ -313,16 +335,16 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
 fn usage_window(bucket: &serde_json::Value, is_weekly: bool) -> Result<UsageWindow> {
     let remaining = bucket["remainingFraction"]
         .as_f64()
-        .filter(|f| f.is_finite())
+        .filter(|f| f.is_finite() && (0.0..=1.0).contains(f))
         .ok_or_else(|| {
-            AppError::Other(format!(
-                "antigravity: bucket {} has no finite remainingFraction",
+            AppError::Schema(format!(
+                "antigravity: bucket {} has no valid remainingFraction in 0..=1",
                 bucket["bucketId"].as_str().unwrap_or("<unnamed>")
             ))
         })?;
     Ok(UsageWindow {
         utilization_pct: pct_used(remaining),
-        resets_at: parse_ts(bucket["resetTime"].as_str()),
+        resets_at: parse_reset(&bucket["resetTime"], "quota resetTime")?,
         window_duration: if is_weekly {
             chrono::Duration::days(7)
         } else {
@@ -334,13 +356,20 @@ fn usage_window(bucket: &serde_json::Value, is_weekly: bool) -> Result<UsageWind
 /// The API reports how much is *left*; every other vendor here reports how much
 /// is *spent*.
 fn pct_used(remaining_fraction: f64) -> i32 {
-    let used = (1.0 - remaining_fraction.clamp(0.0, 1.0)) * 100.0;
+    let used = (1.0 - remaining_fraction) * 100.0;
     used.round() as i32
 }
 
-fn parse_ts(s: Option<&str>) -> Option<DateTime<Utc>> {
-    s.and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+fn parse_reset(value: &serde_json::Value, field: &str) -> Result<Option<DateTime<Utc>>> {
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::String(s) => DateTime::parse_from_rfc3339(s)
+            .map(|dt| Some(dt.with_timezone(&Utc)))
+            .map_err(|_| AppError::Schema(format!("antigravity: invalid {field}"))),
+        _ => Err(AppError::Schema(format!(
+            "antigravity: {field} must be a timestamp or null"
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -485,13 +514,11 @@ fn parse_proc_net_line(line: &str) -> Option<(u16, u64)> {
 // Cache
 // ---------------------------------------------------------------------------
 
-fn fallback_silent(cache: &Cache, now: DateTime<Utc>) -> Result<FetchOutcome> {
+fn fallback_silent(cache: &Cache, now: DateTime<Utc>, original: AppError) -> Result<FetchOutcome> {
     let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
-        return Err(AppError::Transport(
-            "antigravity: no cache and language server unreachable".into(),
-        ));
+        return Err(original);
     };
-    reuse_cache(bytes, cache, true, None, now)
+    reuse_cache(bytes, cache, true, None, now).or(Err(original))
 }
 
 /// Serve the stale cache when there is one. With no cache to fall back on,
@@ -507,7 +534,9 @@ fn fallback_with_error(
     let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(reason);
     };
-    let mut outcome = reuse_cache(bytes, cache, true, None, now)?;
+    let Ok(mut outcome) = reuse_cache(bytes, cache, true, None, now) else {
+        return Err(reason);
+    };
     outcome.last_error = last_error;
     Ok(outcome)
 }
@@ -578,13 +607,28 @@ pub fn parse_cache_at(
     // to 0 would render a confident "0% used" and keep serving it for the rest
     // of the TTL; returning an error makes the caller fall through to a live
     // fetch instead of displaying a fabricated snapshot.
+    let cached_pct = |pct_key: &'static str| -> Result<Option<i32>> {
+        match v.get(pct_key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => value
+                .as_i64()
+                .filter(|pct| (0..=100).contains(pct))
+                .map(|pct| Some(pct as i32))
+                .ok_or_else(|| {
+                    AppError::Schema(format!(
+                        "antigravity: cached {pct_key} must be an integer in 0..=100"
+                    ))
+                }),
+        }
+    };
+
     let window = |pct_key: &'static str, reset_key: &str, weekly: bool| {
-        let pct = v[pct_key].as_i64().ok_or_else(|| {
-            AppError::Other(format!("antigravity: cached payload missing {pct_key}"))
+        let pct = cached_pct(pct_key)?.ok_or_else(|| {
+            AppError::Schema(format!("antigravity: cached payload missing {pct_key}"))
         })?;
         Ok::<_, AppError>(UsageWindow {
-            utilization_pct: pct as i32,
-            resets_at: parse_ts(v[reset_key].as_str()),
+            utilization_pct: pct,
+            resets_at: parse_reset(&v[reset_key], reset_key)?,
             window_duration: if weekly {
                 chrono::Duration::days(7)
             } else {
@@ -593,16 +637,19 @@ pub fn parse_cache_at(
         })
     };
 
-    let optional = |pct_key: &str, reset_key: &str, weekly: bool| {
-        v[pct_key].as_i64().map(|pct| UsageWindow {
-            utilization_pct: pct as i32,
-            resets_at: parse_ts(v[reset_key].as_str()),
+    let optional = |pct_key: &'static str, reset_key: &str, weekly: bool| {
+        let Some(pct) = cached_pct(pct_key)? else {
+            return Ok(None);
+        };
+        Ok::<_, AppError>(Some(UsageWindow {
+            utilization_pct: pct,
+            resets_at: parse_reset(&v[reset_key], reset_key)?,
             window_duration: if weekly {
                 chrono::Duration::days(7)
             } else {
                 chrono::Duration::hours(5)
             },
-        })
+        }))
     };
 
     let snap = AntigravitySnapshot {
@@ -610,8 +657,8 @@ pub fn parse_cache_at(
         account: cached_account.unwrap_or_default().to_string(),
         session: window("session_pct", "session_reset", false)?,
         weekly: window("weekly_pct", "weekly_reset", true)?,
-        third_party_session: optional("tp_session_pct", "tp_session_reset", false),
-        third_party_weekly: optional("tp_weekly_pct", "tp_weekly_reset", true),
+        third_party_session: optional("tp_session_pct", "tp_session_reset", false)?,
+        third_party_weekly: optional("tp_weekly_pct", "tp_weekly_reset", true)?,
     };
 
     if let Some(window) = expired_window(&snap, now) {
@@ -742,11 +789,44 @@ mod tests {
         assert!(snap.third_party_weekly.is_none());
     }
 
+    #[test]
+    fn duplicate_or_unclassified_buckets_cannot_overwrite_a_slot() {
+        let duplicate: serde_json::Value = serde_json::from_str(
+            r#"{"response":{"groups":[{"displayName":"Gemini Models","buckets":[
+              {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.9},
+              {"bucketId":"gemini-5h-copy","window":"5h","remainingFraction":0.1},
+              {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.8}
+            ]}]}}"#,
+        )
+        .unwrap();
+        let err = parse_quota_summary(&duplicate, "Pro".into()).unwrap_err();
+        assert!(err.to_string().contains("duplicate Gemini 5h"), "{err}");
+
+        // A future pool or cadence is ignored, not silently treated as the
+        // Claude/GPT 5h slot.
+        let unrelated: serde_json::Value = serde_json::from_str(
+            r#"{"response":{"groups":[
+              {"displayName":"Gemini Models","buckets":[
+                {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.9},
+                {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.8},
+                {"bucketId":"gemini-monthly","window":"monthly","remainingFraction":0.7}
+              ]},
+              {"displayName":"Future Models","buckets":[
+                {"bucketId":"future-5h","window":"5h","remainingFraction":0.1}
+              ]}
+            ]}}"#,
+        )
+        .unwrap();
+        let snap = parse_quota_summary(&unrelated, "Pro".into()).unwrap();
+        assert!(snap.third_party_session.is_none());
+        assert!(snap.third_party_weekly.is_none());
+    }
+
     /// A drifted bucket must fail the parse rather than report a reassuring
     /// "0% used" for a window whose real state is unknown.
     #[test]
     fn a_bucket_without_a_usable_fraction_is_rejected() {
-        for bad in [r#""oops""#, "null"] {
+        for bad in [r#""oops""#, "null", "-0.01", "1.01"] {
             let v: serde_json::Value = serde_json::from_str(&format!(
                 r#"{{"response":{{"groups":[{{"displayName":"Gemini Models","buckets":[
                   {{"bucketId":"gemini-5h","window":"5h","remainingFraction":{bad}}},
@@ -755,6 +835,16 @@ mod tests {
             .unwrap();
             let err = parse_quota_summary(&v, "Pro".into()).unwrap_err();
             assert!(err.to_string().contains("gemini-5h"), "{bad}: {err}");
+        }
+    }
+
+    #[test]
+    fn malformed_present_reset_is_rejected_instead_of_disabling_expiry() {
+        for bad in [serde_json::json!("not-a-time"), serde_json::json!(42)] {
+            let mut v: serde_json::Value = serde_json::from_str(QUOTA_JSON).unwrap();
+            v["response"]["groups"][0]["buckets"][0]["resetTime"] = bad;
+            let err = parse_quota_summary(&v, "Pro".into()).unwrap_err();
+            assert!(err.to_string().contains("resetTime"), "{err}");
         }
     }
 
@@ -786,6 +876,32 @@ mod tests {
         }
         // A wholly empty object is not a zero-usage snapshot either.
         assert!(parse_cache_at(b"{}", None, now()).is_err());
+    }
+
+    #[test]
+    fn cached_percentages_are_range_checked_before_narrowing() {
+        let full = snap_to_json(&parsed());
+        for (key, bad) in [
+            ("session_pct", serde_json::json!(-1)),
+            ("weekly_pct", serde_json::json!(101)),
+            ("session_pct", serde_json::json!(i64::MAX)),
+            ("tp_session_pct", serde_json::json!("75")),
+        ] {
+            let mut v = full.clone();
+            v[key] = bad;
+            let bytes = serde_json::to_vec(&v).unwrap();
+            let err = parse_cache_at(&bytes, None, now()).unwrap_err();
+            assert!(err.to_string().contains(key), "{key}: {err}");
+        }
+    }
+
+    #[test]
+    fn malformed_cached_reset_is_rejected_instead_of_served_for_a_week() {
+        let mut v = snap_to_json(&parsed());
+        v["session_reset"] = serde_json::json!("not-a-time");
+        let bytes = serde_json::to_vec(&v).unwrap();
+        let err = parse_cache_at(&bytes, None, now()).unwrap_err();
+        assert!(err.to_string().contains("session_reset"), "{err}");
     }
 
     /// With Antigravity closed the cache is served for up to `MAX_STALE`, but a
@@ -910,13 +1026,10 @@ mod tests {
     }
 
     #[test]
-    fn pct_used_inverts_and_clamps() {
+    fn pct_used_inverts_valid_fractions() {
         assert_eq!(pct_used(1.0), 0);
         assert_eq!(pct_used(0.0), 100);
         assert_eq!(pct_used(0.5), 50);
-        // Guard against a server sending a fraction outside [0,1].
-        assert_eq!(pct_used(1.5), 0);
-        assert_eq!(pct_used(-0.5), 100);
     }
 
     #[test]
@@ -1025,6 +1138,41 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("no local language server found"), "{msg}");
         assert!(!msg.contains("no usable cache"), "{msg}");
+    }
+
+    #[test]
+    fn unusable_cache_does_not_replace_the_live_diagnosis() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::at(dir.path().join("antigravity"));
+        cache.write_payload(b"{}").unwrap();
+
+        let reason = AppError::Credentials("Antigravity must be running".into());
+        let err = fallback_with_error(&cache, None, reason, now()).unwrap_err();
+        assert!(err.to_string().contains("must be running"), "{err}");
+
+        let original = AppError::Transport("original loopback failure".into());
+        let err = fallback_silent(&cache, now(), original).unwrap_err();
+        assert!(
+            err.to_string().contains("original loopback failure"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_error_bodies_are_bounded_too() {
+        let mut server = mockito::Server::new_async().await;
+        let path = format!("/{STATUS_RPC}");
+        server
+            .mock("POST", path.as_str())
+            .with_status(500)
+            .with_body("x".repeat(crate::vendor::MAX_BODY_BYTES + 1))
+            .create_async()
+            .await;
+
+        let err = post_rpc(&reqwest::Client::new(), &server.url(), None, STATUS_RPC)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("exceeds"), "{err}");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Shared vendor IDs and renderer/fetcher structs used by the widget and TUI.
 //!
-//! Snapshots remain a discriminated `VendorSnapshot` enum because the six
-//! vendors have genuinely different shapes — see `usage.rs`.
+//! Snapshots remain a discriminated `VendorSnapshot` enum because the vendors
+//! have genuinely different shapes — see `usage.rs`.
 
 use std::time::Duration;
 

@@ -9,15 +9,6 @@ Each release is also published at
 
 ## [Unreleased]
 
-### Fixed
-
-- Bordered tooltips no longer ragged-edge on rows containing an escaped
-  character: `visible_width` counted `&amp;` as five glyphs instead of one, so
-  every such row stopped short of the right border. Affects any vendor whose
-  API-supplied labels contain `&`, `<` or `>`.
-
-## [0.15.0] — 2026-07-22
-
 ### Added
 
 - **Google Antigravity vendor.** Reports the four real quota windows — a 5-hour
@@ -30,15 +21,24 @@ Each release is also published at
   `config.toml`. Percentages are *consumed*, matching every other vendor — the
   Antigravity UI shows the inverse (what remains).
 
-  Quota is parsed strictly: a bucket without a finite `remainingFraction`, or a
-  cached payload missing a required window, is an error that triggers a refetch
-  rather than a confident "0% used". The cache fingerprints the signed-in
-  account, so switching Google accounts cannot show the previous account's
-  figures. A cached window whose reset has already passed is refused rather than
-  served as current — with nothing running the cache would otherwise be offered
-  for up to seven days, long past the five hours after which the session window
-  is guaranteed to have rolled over. When a fetch fails with nothing usable cached, the original error is
-  surfaced instead of a generic "no usable cache".
+  Quota and cached values are parsed strictly: malformed, out-of-range,
+  duplicate or missing required buckets trigger a refetch rather than a
+  confident bar. Response bodies are bounded on success and error paths. The
+  cache fingerprints the signed-in account, so switching Google accounts
+  cannot show the previous account's figures, and a window whose reset has
+  passed is refused rather than served as current. When a fetch fails with
+  nothing usable cached, the original actionable error is preserved.
+
+### Fixed
+
+- Bordered tooltips no longer ragged-edge on rows containing an escaped
+  character: `visible_width` counted `&amp;` as five glyphs instead of one, so
+  every such row stopped short of the right border. Affects any vendor whose
+  API-supplied labels contain `&`, `<` or `>`.
+
+## [0.15.0] — 2026-07-22
+
+### Added
 
 - The local Claude context monitor docks into the dashboard body instead of
   floating: `v` cycles `full` (its own screen) → `split` (beside the vendor
