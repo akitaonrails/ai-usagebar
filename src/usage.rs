@@ -56,7 +56,8 @@ pub struct UsageWindow {
     pub window_duration: chrono::Duration,
 }
 
-/// Money expressed in cents to dodge float roundoff.
+/// Money in minor currency units (historically always cents; see
+/// `ExtraUsage::decimal_places` for the actual scale) to dodge float roundoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cents(pub i64);
 
@@ -102,21 +103,86 @@ pub struct ScopedWindow {
 }
 
 /// "Extra usage" pay-as-you-go block (claudebar's `extra_usage`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtraUsage {
-    pub limit: Cents,
+    /// `None` when the payload carries no usable `monthly_limit` — an
+    /// explicit null (observed for plans without a spending cap, e.g. Claude
+    /// Pro, #30) or an absent field. Either way the spend is real and stays
+    /// visible; only the limit is unreported, and the renderers say exactly
+    /// that rather than inferring a plan tier from it.
+    pub limit: Option<Cents>,
     pub spent: Cents,
+    /// ISO code from the block (`"BRL"`, `"USD"`, …). `None` on older payloads
+    /// that predate the field — formatted as `$` for back-compat, which was
+    /// the only behaviour before the field existed.
+    pub currency: Option<String>,
+    /// Minor-unit digits from the block's `decimal_places` (BRL/USD = 2,
+    /// JPY = 0). Both money values above are in this scale.
+    pub decimal_places: u32,
 }
 
 impl ExtraUsage {
     /// Integer percentage of the monthly limit consumed (0..=100, saturating
     /// at 0 when limit is non-positive — matches claudebar:540-542).
-    pub fn percent(self) -> i32 {
-        if self.limit.0 <= 0 {
-            0
-        } else {
-            ((self.spent.0 * 100) / self.limit.0) as i32
+    ///
+    /// With no cap there is no denominator, so no meaningful percentage
+    /// exists; 0 keeps the bar and severity calm rather than inventing one.
+    pub fn percent(&self) -> i32 {
+        match self.limit {
+            Some(l) if l.0 > 0 => ((self.spent.0 * 100) / l.0) as i32,
+            _ => 0,
         }
+    }
+
+    pub fn fmt_spent(&self) -> String {
+        fmt_minor(self.spent.0, self.decimal_places, self.currency.as_deref())
+    }
+
+    pub fn fmt_limit(&self) -> Option<String> {
+        self.limit
+            .map(|l| fmt_minor(l.0, self.decimal_places, self.currency.as_deref()))
+    }
+}
+
+/// Format an amount in minor units with its own currency and scale. Rendering
+/// R$ 141.57 as "$141.57" is a claim about the wrong currency — the same class
+/// of defect as a fabricated number. Known codes get their symbol (mirroring
+/// `deepseek::format_money`); anything else renders as `AMOUNT CODE`, which is
+/// still truthful.
+pub fn fmt_minor(minor: i64, decimal_places: u32, currency: Option<&str>) -> String {
+    let scale = 10_u64.pow(decimal_places);
+    // `unsigned_abs`, not negation: `-i64::MIN` overflows. Unreachable from
+    // the wire (the parse gate rejects negatives) but this is a pub fn.
+    let sign = if minor < 0 { "-" } else { "" };
+    let abs = minor.unsigned_abs();
+    let number = if decimal_places == 0 {
+        format!("{abs}")
+    } else {
+        format!(
+            "{}.{:0width$}",
+            abs / scale,
+            abs % scale,
+            width = decimal_places as usize
+        )
+    };
+    match currency {
+        None | Some("USD") => format!("{sign}${number}"),
+        Some("BRL") => format!("{sign}R${number}"),
+        Some("EUR") => format!("{sign}€{number}"),
+        Some("GBP") => format!("{sign}£{number}"),
+        Some("JPY") | Some("CNY") => format!("{sign}¥{number}"),
+        Some(other) => format!("{sign}{number} {other}"),
+    }
+}
+
+/// ISO 4217 minor-unit digits for a currency when the payload omits
+/// `decimal_places`. Defaulting JPY to the historical 2 would divide every
+/// amount by 100 (¥500 shown as ¥5.00); unknown codes keep 2, the scale every
+/// observed payload without the field has used.
+pub fn default_decimal_places(currency: Option<&str>) -> u32 {
+    match currency {
+        Some("JPY") => 0,
+        _ => 2,
     }
 }
 
@@ -381,7 +447,7 @@ pub fn anthropic_severity(snap: &AnthropicSnapshot) -> crate::pacing::PaceSeveri
             .as_ref()
             .is_some_and(|s| s.utilization_pct >= 100)
         || snap.scoped.iter().any(|s| s.window.utilization_pct >= 100);
-    if any_at_cap && let Some(extra) = snap.extra {
+    if any_at_cap && let Some(extra) = snap.extra.as_ref() {
         let p = extra.percent();
         if p > max {
             max = p;
@@ -412,10 +478,48 @@ mod tests {
             sonnet: sonnet.map(w),
             scoped: vec![],
             extra: extra.map(|(limit, spent)| ExtraUsage {
-                limit: Cents(limit),
+                limit: Some(Cents(limit)),
                 spent: Cents(spent),
+                currency: None,
+                decimal_places: 2,
             }),
         }
+    }
+
+    #[test]
+    fn fmt_minor_honors_currency_and_scale() {
+        // No currency (older payloads) keeps the historical `$`.
+        assert_eq!(fmt_minor(250, 2, None), "$2.50");
+        // The #30 reporter's actual figures: BRL must not be claimed as `$`.
+        assert_eq!(fmt_minor(14157, 2, Some("BRL")), "R$141.57");
+        assert_eq!(fmt_minor(14157, 2, Some("USD")), "$141.57");
+        // Zero-exponent currency: no decimal point, no /100.
+        assert_eq!(fmt_minor(500, 0, Some("JPY")), "¥500");
+        // Sign precedes the symbol, matching `fmt_dollars`.
+        assert_eq!(fmt_minor(-150, 2, Some("BRL")), "-R$1.50");
+        // Unknown code stays truthful as a suffix rather than guessing a symbol.
+        assert_eq!(fmt_minor(1234, 2, Some("CHF")), "12.34 CHF");
+    }
+
+    #[test]
+    fn extra_usage_formats_in_its_own_currency() {
+        let e = ExtraUsage {
+            limit: None,
+            spent: Cents(14157),
+            currency: Some("BRL".into()),
+            decimal_places: 2,
+        };
+        assert_eq!(e.fmt_spent(), "R$141.57");
+        assert_eq!(e.fmt_limit(), None);
+
+        let capped = ExtraUsage {
+            limit: Some(Cents(5000)),
+            spent: Cents(250),
+            currency: None,
+            decimal_places: 2,
+        };
+        assert_eq!(capped.fmt_spent(), "$2.50");
+        assert_eq!(capped.fmt_limit().as_deref(), Some("$50.00"));
     }
 
     #[test]
@@ -437,8 +541,10 @@ mod tests {
     fn extra_percent_with_zero_limit_is_zero() {
         assert_eq!(
             ExtraUsage {
-                limit: Cents(0),
-                spent: Cents(100)
+                limit: Some(Cents(0)),
+                spent: Cents(100),
+                currency: None,
+                decimal_places: 2,
             }
             .percent(),
             0
@@ -450,8 +556,10 @@ mod tests {
         // Bash integer division — 33/100 -> 33%, 50/100 -> 50%.
         assert_eq!(
             ExtraUsage {
-                limit: Cents(10000),
-                spent: Cents(3333)
+                limit: Some(Cents(10000)),
+                spent: Cents(3333),
+                currency: None,
+                decimal_places: 2,
             }
             .percent(),
             33
