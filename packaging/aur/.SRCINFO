@@ -16,6 +16,6 @@ pkgbase = ai-usagebar
 	options = !lto
 	options = !debug
 	source = ai-usagebar-0.16.0.tar.gz::https://github.com/akitaonrails/ai-usagebar/archive/refs/tags/v0.16.0.tar.gz
-	sha256sums = SKIP
+	sha256sums = 381524ffd45258d571766ea2eea3322d29803cb39a8c516c9837c506b860e4d6
 
 pkgname = ai-usagebar
