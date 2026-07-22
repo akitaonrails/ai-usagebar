@@ -88,6 +88,7 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                 VendorSnapshot::Novita(s) => novita_sections(s),
                 VendorSnapshot::Moonshot(s) => moonshot_sections(s),
                 VendorSnapshot::Grok(s) => grok_sections(s),
+                VendorSnapshot::Antigravity(s) => antigravity_sections(s, now),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -327,6 +328,33 @@ fn openrouter_sections(s: &crate::usage::OpenRouterSnapshot) -> Vec<Section> {
             "paid tier".into()
         }],
     });
+    v
+}
+
+/// Antigravity holds two independent pools (Gemini, Claude & GPT OSS), each
+/// with a 5-hour and a weekly window. Grouped by window type so the two pools
+/// sit side by side, matching the GNOME dropdown.
+fn antigravity_sections(s: &crate::usage::AntigravitySnapshot, now: DateTime<Utc>) -> Vec<Section> {
+    use crate::antigravity::vendor::{GROUP_PRIMARY, GROUP_THIRD_PARTY};
+
+    let mut v = vec![Section::Title {
+        left: s.plan.clone(),
+        right: None,
+    }];
+    for (heading, primary, third_party) in [
+        ("Session", &s.session, s.third_party_session.as_ref()),
+        ("Weekly", &s.weekly, s.third_party_weekly.as_ref()),
+    ] {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: heading.into(),
+            value: String::new(),
+        });
+        push_window(&mut v, GROUP_PRIMARY, primary, now, 5, false);
+        if let Some(w) = third_party {
+            push_window(&mut v, GROUP_THIRD_PARTY, w, now, 5, false);
+        }
+    }
     v
 }
 

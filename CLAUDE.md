@@ -132,6 +132,13 @@ vendor's response shape drifts:
 - `src/active.rs` — scroll-cycle active vendor state file
 - `src/anthropic/`, `src/openai/`, `src/openrouter/`, `src/zai/`,
   `src/deepseek/` — per-vendor types + fetch + render
+- `src/antigravity/` — Google Antigravity. Unlike every other vendor it has
+  no credential and no remote endpoint: quota comes from whichever local
+  Antigravity product is running (2.0, the IDE, or an interactive `agy`
+  session), over a loopback RPC on a **dynamically assigned** port that is
+  discovered from `/proc` (Linux only; elsewhere set `ANTIGRAVITY_LS_ADDRESS`).
+  Tests must never probe `/proc` or the wall clock — use `candidate_bases_with`
+  and `parse_cache_at`/`fetch_snapshot_at`, not their production wrappers.
 - `src/anthropic/keychain.rs` — macOS-only `security(1)` fallback when
   `~/.claude/.credentials.json` is absent (Claude Code on macOS stores
   the OAuth blob in the login Keychain). Module-gated with

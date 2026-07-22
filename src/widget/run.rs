@@ -10,6 +10,7 @@ use reqwest::Client;
 
 use crate::anthropic::{self, creds::CredsTarget, fetch::FetchOutcome};
 use crate::anthropic_api;
+use crate::antigravity;
 use crate::cache::{Cache, DEFAULT_TTL};
 use crate::config::Config;
 use crate::deepseek;
@@ -147,6 +148,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Novita => novita_output(cli, &config).await,
         Vendor::Moonshot => moonshot_output(cli, &config).await,
         Vendor::Grok => grok_output(cli, &config).await,
+        Vendor::Antigravity => antigravity_output(cli, &config).await,
     }
 }
 
@@ -155,6 +157,30 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
 /// that default to disabled (such as Kimi).
 fn dispatch_is_eligible(cli: &Cli, config: &Config, vendor: Vendor) -> bool {
     cli.has_explicit_vendor() || config.is_enabled(vendor.to_id())
+}
+
+/// Antigravity authenticates through whichever local product is running (the
+/// 2.0 app, the `agy` CLI, or the IDE) — there is no API key to resolve.
+async fn antigravity_output(cli: &Cli, _config: &Config) -> Result<WaybarOutput> {
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "antigravity")?;
+    let outcome = match antigravity::fetch_snapshot(&client, &cache, DEFAULT_TTL).await {
+        Ok(o) => o,
+        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+        Err(e) => return Err(e),
+    };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(antigravity::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
 }
 
 async fn grok_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
