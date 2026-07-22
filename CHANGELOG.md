@@ -38,9 +38,22 @@ Each release is also published at
   is guaranteed to have rolled over. When a fetch fails with nothing usable cached, the original error is
   surfaced instead of a generic "no usable cache".
 
+- **Two-pool support in the GNOME extension.** The dropdown groups Antigravity's
+  four windows under `Session` and `Weekly` headings, one bar per pool. The new
+  `Panel pools` preference draws both pools (default), either alone, or `auto`,
+  which falls back to the other pool once the shown one passes `Auto threshold`.
+  Pace markers are rendered for all four windows. The grouped layout is opted
+  into by the data — a vendor naming its primary rows — so single-pool vendors
+  are unaffected, and a binary predating the new placeholders keeps the flat
+  four-row layout.
+
 - The local Claude context monitor docks into the dashboard body instead of
   floating: `v` cycles `full` (its own screen) → `split` (beside the vendor
   panel) → `bottom`. `[context] layout` sets the one it opens with.
+
+### Changed
+
+- The GNOME extension supports GNOME Shell 45–50 (was 45–48).
 
 ## [0.14.0] — 2026-07-20
 

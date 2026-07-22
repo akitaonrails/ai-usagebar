@@ -12,6 +12,7 @@ import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Ex
 const VENDOR_AUTH = [
     {id: 'anthropic', name: 'Anthropic (Claude)', kind: 'oauth', cli: 'claude', login: 'claude', pkg: '@anthropic-ai/claude-code'},
     {id: 'openai', name: 'OpenAI (Codex)', kind: 'oauth', cli: 'codex', login: 'codex login', pkg: '@openai/codex'},
+    {id: 'antigravity', name: 'Google Antigravity', kind: 'oauth', cli: 'agy', login: 'agy'},
     {id: 'zai', name: 'Z.AI (GLM)', kind: 'apikey', env: 'ZAI_API_KEY'},
     {id: 'openrouter', name: 'OpenRouter', kind: 'apikey', env: 'OPENROUTER_API_KEY'},
     {id: 'deepseek', name: 'DeepSeek', kind: 'apikey', env: 'DEEPSEEK_API_KEY'},
@@ -56,6 +57,14 @@ function vendorConfigured(v) {
         return GLib.file_test(`${home}/.claude/.credentials.json`, GLib.FileTest.EXISTS);
     if (v.id === 'openai')
         return GLib.file_test(`${home}/.codex/auth.json`, GLib.FileTest.EXISTS);
+    // Antigravity 2.0, the `agy` CLI and the IDE are separate products sharing
+    // one quota, and any combination may be installed. Having any of their
+    // state directories is enough — the binary reads usage from whichever
+    // local server is running, so there is no credential file to look for.
+    if (v.id === 'antigravity') {
+        return ['antigravity', 'antigravity-cli', 'antigravity-ide']
+            .some(d => GLib.file_test(`${home}/.gemini/${d}`, GLib.FileTest.IS_DIR));
+    }
     return (GLib.getenv(v.env) || '').length > 0 || configHasApiKey(v.id);
 }
 
@@ -201,6 +210,31 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         settings.bind('show-extra', showExtra, 'active', Gio.SettingsBindFlags.DEFAULT);
         display.add(showExtra);
 
+        // Only Antigravity reports two independent pools today; for every other
+        // vendor these rows are inert, which the subtitle spells out.
+        const poolLabels = [_('Ambos'), _('Só o primeiro'), _('Só o segundo'), _('Automático')];
+        const poolValues = ['both', 'primary', 'secondary', 'auto'];
+        const pools = new Adw.ComboRow({
+            title: _('Pools no painel'),
+            subtitle: _('para vendors com dois pools independentes (ex.: Antigravity: Gemini e Claude & GPT OSS)'),
+            model: Gtk.StringList.new(poolLabels),
+        });
+        bindCombo(settings, 'panel-pools', pools, poolValues);
+        display.add(pools);
+
+        const autoThreshold = new Adw.SpinRow({
+            title: _('Limiar do modo automático (%)'),
+            subtitle: _('troca para o outro pool quando o primeiro passa deste uso'),
+            adjustment: new Gtk.Adjustment({lower: 50, upper: 100, step_increment: 1, page_increment: 5}),
+        });
+        settings.bind('panel-auto-threshold', autoThreshold, 'value', Gio.SettingsBindFlags.DEFAULT);
+        display.add(autoThreshold);
+
+        const syncThreshold = () =>
+            autoThreshold.set_sensitive(settings.get_string('panel-pools') === 'auto');
+        syncThreshold();
+        settings.connect('changed::panel-pools', syncThreshold);
+
         const showPercent = new Adw.SwitchRow({title: _('Mostrar porcentagem/valor')});
         settings.bind('show-percent', showPercent, 'active', Gio.SettingsBindFlags.DEFAULT);
         display.add(showPercent);
@@ -242,12 +276,13 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         settings.bind('refresh-interval', interval, 'value', Gio.SettingsBindFlags.DEFAULT);
         data.add(interval);
 
+        const vendorList = ['anthropic', 'openai', 'zai', 'openrouter', 'deepseek', 'antigravity'];
         const vendor = new Adw.ComboRow({
             title: _('Vendor'),
-            subtitle: _('anthropic expõe as janelas de 5h + semanal'),
-            model: Gtk.StringList.new(['anthropic', 'openai', 'zai', 'openrouter', 'deepseek']),
+            subtitle: _('anthropic e antigravity expõem as janelas de 5h + semanal'),
+            model: Gtk.StringList.new(vendorList),
         });
-        bindCombo(settings, 'vendor', vendor, ['anthropic', 'openai', 'zai', 'openrouter', 'deepseek']);
+        bindCombo(settings, 'vendor', vendor, vendorList);
         data.add(vendor);
 
         const binPath = new Adw.EntryRow({title: _('Caminho do binário (vazio = auto)')});
