@@ -63,9 +63,10 @@ pub struct Window {
     pub resets_at: Option<String>,
 }
 
-/// Pay-as-you-go extra usage. Both money values are non-negative integer cents,
-/// but the API sometimes returns integral floats (e.g. `0.0`). Missing values
-/// remain absent so an enabled but incomplete block cannot manufacture $0.00.
+/// Pay-as-you-go extra usage. Both money values are non-negative integer minor
+/// units, but the API sometimes returns integral floats (e.g. `0.0`). Missing
+/// values remain absent so an enabled but incomplete block cannot manufacture
+/// a zero balance.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ExtraUsageBlock {
     #[serde(default)]
@@ -74,6 +75,58 @@ pub struct ExtraUsageBlock {
     pub monthly_limit: Option<i64>,
     #[serde(default, deserialize_with = "de_opt_cents")]
     pub used_credits: Option<i64>,
+    /// ISO currency code (`"BRL"`, `"USD"`, …). Absent on older payloads,
+    /// which were always formatted as `$`.
+    #[serde(default, deserialize_with = "de_opt_currency")]
+    pub currency: Option<String>,
+    /// Minor-unit digits for both money fields. Gated at the parse boundary:
+    /// an absurd scale would corrupt every formatted amount downstream.
+    #[serde(default, deserialize_with = "de_opt_decimal_places")]
+    pub decimal_places: Option<u32>,
+}
+
+/// Accept a plausible minor-unit scale (0..=6 covers every ISO 4217 currency;
+/// the largest real exponent is 4). Integral floats are tolerated for the same
+/// reason `de_opt_cents` tolerates them: this endpoint emits them (the #30
+/// payload carries `used_credits: 14157.0`), and rejecting `2.0` would fail
+/// the whole response over a value that is unambiguous. Null/absent remains
+/// absent: a currency code alone is not enough to infer every ISO exponent.
+/// Anything else is drift: a wire `decimal_places: 100` would overflow the
+/// scale and mis-state every amount, so it fails loudly as `⚠` instead.
+fn de_opt_decimal_places<'de, D>(d: D) -> std::result::Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let n = match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Null => return Ok(None),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .or_else(|| n.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
+        _ => None,
+    };
+    match n {
+        Some(n) if (0..=6).contains(&n) => Ok(Some(n as u32)),
+        _ => Err(serde::de::Error::custom(
+            "decimal_places must be an integer in 0..=6",
+        )),
+    }
+}
+
+/// Gate the currency to a plausible ISO 4217 alpha code. The value is embedded
+/// verbatim in Pango bar markup and in the `;;`-delimited desktop FORMAT
+/// protocol, so an arbitrary string is an injection vector as well as drift;
+/// three ASCII uppercase letters can be neither.
+fn de_opt_currency<'de, D>(d: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<String>::deserialize(d)? {
+        None => Ok(None),
+        Some(s) if s.len() == 3 && s.bytes().all(|b| b.is_ascii_uppercase()) => Ok(Some(s)),
+        Some(s) => Err(serde::de::Error::custom(format!(
+            "currency {s:?} is not an ISO 4217 alpha code"
+        ))),
+    }
 }
 
 fn de_opt_cents<'de, D>(d: D) -> std::result::Result<Option<i64>, D::Error>
@@ -187,8 +240,18 @@ impl UsageResponse {
         let sonnet = self.seven_day_sonnet.map(|w| to_window(Some(w), WEEKLY));
         let extra = self.extra_usage.filter(|e| e.is_enabled).and_then(|e| {
             Some(ExtraUsage {
-                limit: Cents(e.monthly_limit?),
+                // `monthly_limit: null` is semantic, not drift: the endpoint
+                // sends it for plans with no spending cap (e.g. Pro), so it
+                // maps to None instead of discarding the block — which hid
+                // real credit spend (#30). Only an unusable `used_credits`
+                // still drops it: without the spend there is nothing to show.
+                limit: e.monthly_limit.map(Cents),
                 spent: Cents(e.used_credits?),
+                // Preserve an absent scale. Currency codes span zero through
+                // four decimal minor units, so guessing would fabricate the
+                // displayed major-unit amount.
+                decimal_places: e.decimal_places,
+                currency: e.currency,
             })
         });
         let scoped = self
@@ -241,8 +304,9 @@ mod tests {
         assert_eq!(snap.session.utilization_pct, 43); // rounded
         assert_eq!(snap.weekly.utilization_pct, 27);
         assert_eq!(snap.sonnet.as_ref().unwrap().utilization_pct, 4);
-        assert_eq!(snap.extra.unwrap().limit.0, 5000);
-        assert_eq!(snap.extra.unwrap().spent.0, 250);
+        let extra = snap.extra.as_ref().unwrap();
+        assert_eq!(extra.limit, Some(Cents(5000)));
+        assert_eq!(extra.spent.0, 250);
         assert!(snap.session.resets_at.is_some());
     }
 
@@ -312,15 +376,141 @@ mod tests {
     }
 
     #[test]
-    fn enabled_incomplete_extra_usage_does_not_invent_zero_money() {
+    fn enabled_extra_usage_without_spend_is_dropped() {
+        // `used_credits` is the essential datum: without it there is nothing
+        // truthful to display, so the block is dropped rather than inventing
+        // a $0.00 spend.
         for raw in [
             r#"{"extra_usage":{"is_enabled":true,"monthly_limit":5000}}"#,
-            r#"{"extra_usage":{"is_enabled":true,"used_credits":250}}"#,
-            r#"{"extra_usage":{"is_enabled":true,"monthly_limit":null,"used_credits":250}}"#,
+            r#"{"extra_usage":{"is_enabled":true,"monthly_limit":5000,"used_credits":null}}"#,
         ] {
             let resp: UsageResponse = serde_json::from_str(raw).unwrap();
             assert!(resp.into_snapshot("Pro".into()).extra.is_none(), "{raw}");
         }
+    }
+
+    #[test]
+    fn uncapped_plan_keeps_real_spend_visible() {
+        // The #30 regression: the endpoint sends `monthly_limit: null` for
+        // plans with no spending cap (e.g. Pro). Discarding the block hid
+        // genuine credit spend — this fixture is the reporter's actual cached
+        // response (R$ 141.57, an integral float).
+        let resp: UsageResponse = serde_json::from_str(
+            r#"{"extra_usage":{"is_enabled":true,"monthly_limit":null,
+                "used_credits":14157.0,"currency":"BRL","decimal_places":2,
+                "disabled_reason":null}}"#,
+        )
+        .unwrap();
+        let extra = resp.into_snapshot("Pro".into()).extra.unwrap();
+        assert_eq!(extra.limit, None);
+        assert_eq!(extra.spent.0, 14157);
+        // No denominator → no invented percentage; bar stays calm.
+        assert_eq!(extra.percent(), 0);
+        // The block's own currency and scale propagate, so the renderer can
+        // say R$141.57 instead of claiming `$` for reais.
+        assert_eq!(extra.currency.as_deref(), Some("BRL"));
+        assert_eq!(extra.decimal_places, Some(2));
+        assert_eq!(extra.fmt_spent(), "R$141.57");
+
+        // An *absent* limit renders the same way: with `#[serde(default)]`,
+        // absent and explicit null are indistinguishable at the struct level,
+        // and hiding real spend because a secondary field went missing is the
+        // exact failure mode of #30. Nothing is fabricated either way — the
+        // spend shown is exactly what the API sent.
+        let resp: UsageResponse =
+            serde_json::from_str(r#"{"extra_usage":{"is_enabled":true,"used_credits":250}}"#)
+                .unwrap();
+        let extra = resp.into_snapshot("Pro".into()).extra.unwrap();
+        assert_eq!(extra.limit, None);
+        assert_eq!(extra.spent.0, 250);
+    }
+
+    #[test]
+    fn implausible_decimal_places_is_schema_drift() {
+        // A wire scale outside 0..=6 would mis-state every formatted amount
+        // (10^100 overflows outright), so it fails loudly instead.
+        for value in ["7", "-1", "100", "2.5"] {
+            let raw = format!(
+                r#"{{"extra_usage":{{"is_enabled":true,"used_credits":250,"decimal_places":{value}}}}}"#
+            );
+            assert!(
+                serde_json::from_str::<UsageResponse>(&raw).is_err(),
+                "{raw}"
+            );
+        }
+        // An integral float is fine — this endpoint floats its numbers (the
+        // #30 payload has `used_credits: 14157.0`), and rejecting 2.0 would
+        // fail the whole response over an unambiguous value. Worse: the fetch
+        // caches the body BEFORE parsing, so a rejected response would evict
+        // the last good payload and leave a persistent ⚠.
+        let raw = r#"{"extra_usage":{"is_enabled":true,"used_credits":250,"decimal_places":2.0}}"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            resp.into_snapshot("Pro".into())
+                .extra
+                .unwrap()
+                .decimal_places,
+            Some(2)
+        );
+        // Null and absent stay absent. With no currency, legacy payloads still
+        // render using their historical USD/cent convention.
+        let raw = r#"{"extra_usage":{"is_enabled":true,"used_credits":250,"decimal_places":null}}"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let extra = resp.into_snapshot("Pro".into()).extra.unwrap();
+        assert_eq!(extra.decimal_places, None);
+        assert_eq!(extra.fmt_spent(), "$2.50");
+
+        // If a currency is present without its exponent, expose the raw minor
+        // units rather than guessing. KRW is zero-decimal and KWD is
+        // three-decimal; a blanket cent fallback corrupts both.
+        let raw = r#"{"extra_usage":{"is_enabled":true,"used_credits":500,"currency":"KRW"}}"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let extra = resp.into_snapshot("Pro".into()).extra.unwrap();
+        assert_eq!(extra.decimal_places, None);
+        assert_eq!(extra.fmt_spent(), "500 minor units KRW");
+
+        let raw = r#"{"extra_usage":{"is_enabled":true,"used_credits":1234,"currency":"KWD"}}"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let extra = resp.into_snapshot("Pro".into()).extra.unwrap();
+        assert_eq!(extra.decimal_places, None);
+        assert_eq!(extra.fmt_spent(), "1234 minor units KWD");
+
+        // Explicit exponents remain authoritative, including zero and three.
+        let raw = r#"{"extra_usage":{"is_enabled":true,"used_credits":500,"currency":"KRW","decimal_places":0}}"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            resp.into_snapshot("Pro".into()).extra.unwrap().fmt_spent(),
+            "500 KRW"
+        );
+        let raw = r#"{"extra_usage":{"is_enabled":true,"used_credits":1234,"currency":"KWD","decimal_places":3}}"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            resp.into_snapshot("Pro".into()).extra.unwrap().fmt_spent(),
+            "1.234 KWD"
+        );
+    }
+
+    #[test]
+    fn currency_must_be_an_iso_alpha_code() {
+        // The value lands verbatim in Pango markup and in the `;;`-delimited
+        // desktop FORMAT protocol, so anything but three ASCII uppercase
+        // letters is rejected as drift — it is an injection vector besides.
+        for value in [r#""brl""#, r#""""#, r#""R$""#, r#""USD;;0""#, r#""<b>""#] {
+            let raw = format!(
+                r#"{{"extra_usage":{{"is_enabled":true,"used_credits":250,"currency":{value}}}}}"#
+            );
+            assert!(
+                serde_json::from_str::<UsageResponse>(&raw).is_err(),
+                "{raw}"
+            );
+        }
+        // Null stays acceptable — same as absent.
+        let raw = r#"{"extra_usage":{"is_enabled":true,"used_credits":250,"currency":null}}"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            resp.into_snapshot("Pro".into()).extra.unwrap().currency,
+            None
+        );
     }
 
     #[test]
@@ -340,7 +530,7 @@ mod tests {
         )
         .unwrap();
         let extra = resp.into_snapshot("Pro".into()).extra.unwrap();
-        assert_eq!(extra.limit.0, 5000);
+        assert_eq!(extra.limit, Some(Cents(5000)));
         assert_eq!(extra.spent.0, 250);
     }
 

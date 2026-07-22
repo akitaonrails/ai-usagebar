@@ -107,8 +107,10 @@ async fn anthropic_live() {
     if let Some(s) = out.snapshot.sonnet.as_ref() {
         assert_pct("anthropic.sonnet", s.utilization_pct);
     }
-    if let Some(e) = out.snapshot.extra {
-        assert!(e.limit.0 >= 0, "anthropic extra.limit < 0");
+    if let Some(e) = out.snapshot.extra.as_ref() {
+        if let Some(l) = e.limit {
+            assert!(l.0 >= 0, "anthropic extra.limit < 0");
+        }
         // spent can equal or exceed limit briefly during reconciliation; just sanity-check.
         assert!(e.spent.0 >= 0, "anthropic extra.spent < 0");
     }
@@ -120,7 +122,8 @@ async fn anthropic_live() {
         out.snapshot.sonnet.as_ref().map(|s| s.utilization_pct),
         out.snapshot
             .extra
-            .map(|e| (e.spent.fmt_dollars(), e.limit.fmt_dollars())),
+            .as_ref()
+            .map(|e| (e.fmt_spent(), e.fmt_limit())),
     );
 }
 

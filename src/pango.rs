@@ -170,15 +170,36 @@ pub fn visible_width(s: &str) -> usize {
 fn entity_len(s: &str) -> Option<usize> {
     let body = s.strip_prefix('&')?;
     let end = body.find(';')?;
-    if end == 0 || end > 8 {
+    if end == 0 {
         return None;
     }
     let name = &body[..end];
-    let named = name.chars().all(|c| c.is_ascii_alphanumeric());
+    // GMarkup/Pango accepts XML's five predefined named entities plus
+    // decimal and lowercase-x hexadecimal character references. Treating an
+    // arbitrary short `&name;` or malformed `&#...;` as decoded would repeat
+    // the original width bug in the other direction.
+    let named = matches!(name, "amp" | "lt" | "gt" | "quot" | "apos");
     let numeric = name
-        .strip_prefix('#')
-        .is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_alphanumeric()));
+        .strip_prefix("#x")
+        .and_then(|digits| parse_xml_char(digits, 16))
+        .or_else(|| {
+            name.strip_prefix('#')
+                .and_then(|digits| parse_xml_char(digits, 10))
+        })
+        .is_some();
     (named || numeric).then_some(1 + end + 1)
+}
+
+fn parse_xml_char(digits: &str, radix: u32) -> Option<u32> {
+    if digits.is_empty() {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, radix).ok()?;
+    matches!(
+        value,
+        0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
+    )
+    .then_some(value)
 }
 
 #[cfg(test)]
@@ -293,6 +314,8 @@ mod tests {
         assert_eq!(visible_width(escape("Claude & GPT").as_str()), 12);
         assert_eq!(visible_width("&lt;&gt;&quot;&apos;"), 4);
         assert_eq!(visible_width("&#38;"), 1);
+        assert_eq!(visible_width("&#x26;"), 1);
+        assert_eq!(visible_width("&#00000038;"), 1);
         assert_eq!(visible_width("<span>a &amp; b</span>"), 5);
     }
 
@@ -301,6 +324,11 @@ mod tests {
         assert_eq!(visible_width("a & b"), 5);
         assert_eq!(visible_width("&"), 1);
         assert_eq!(visible_width("&;"), 2);
+        assert_eq!(visible_width("&nope;"), 6);
+        assert_eq!(visible_width("&AMP;"), 5);
+        assert_eq!(visible_width("&#GG;"), 5);
+        assert_eq!(visible_width("&#0;"), 4);
+        assert_eq!(visible_width("&#x110000;"), 10);
         // Too long to be an entity, so every character counts.
         assert_eq!(visible_width("&notanentityatall;"), 18);
     }
