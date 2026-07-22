@@ -32,7 +32,10 @@ Each release is also published at
   cached payload missing a required window, is an error that triggers a refetch
   rather than a confident "0% used". The cache fingerprints the signed-in
   account, so switching Google accounts cannot show the previous account's
-  figures. When a fetch fails with nothing usable cached, the original error is
+  figures. A cached window whose reset has already passed is refused rather than
+  served as current — with nothing running the cache would otherwise be offered
+  for up to seven days, long past the five hours after which the session window
+  is guaranteed to have rolled over. When a fetch fails with nothing usable cached, the original error is
   surfaced instead of a generic "no usable cache".
 
 - The local Claude context monitor docks into the dashboard body instead of

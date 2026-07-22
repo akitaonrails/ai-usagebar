@@ -54,6 +54,17 @@ pub async fn fetch_snapshot(
     cache: &Cache,
     cache_ttl: Duration,
 ) -> Result<FetchOutcome> {
+    fetch_snapshot_at(client, cache, cache_ttl, Utc::now()).await
+}
+
+/// Clock seam for [`fetch_snapshot`], so window expiry can be exercised at
+/// fixed instants instead of against the wall clock.
+pub async fn fetch_snapshot_at(
+    client: &reqwest::Client,
+    cache: &Cache,
+    cache_ttl: Duration,
+    now: DateTime<Utc>,
+) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
     let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
 
@@ -65,7 +76,7 @@ pub async fn fetch_snapshot(
     let account = session.as_ref().ok().map(|s| s.account.as_str());
 
     if let Some(bytes) = cache.fresh_payload(cache_ttl)?
-        && let Ok(outcome) = reuse_cache(bytes, cache, false, account)
+        && let Ok(outcome) = reuse_cache(bytes, cache, false, account, now)
     {
         return Ok(outcome);
     }
@@ -81,7 +92,7 @@ pub async fn fetch_snapshot(
                 cache_age: Some(Duration::ZERO),
             })
         }
-        Err(e) if e.is_transient() => fallback_silent(cache),
+        Err(e) if e.is_transient() => fallback_silent(cache, now),
         Err(AppError::Http { status, body }) => {
             cache.mark_stale();
             cache.write_last_error(status, &body);
@@ -89,13 +100,13 @@ pub async fn fetch_snapshot(
                 status,
                 body: body.clone(),
             };
-            fallback_with_error(cache, Some((status, body)), reason)
+            fallback_with_error(cache, Some((status, body)), reason, now)
         }
         Err(e) => {
             cache.mark_stale();
             cache.write_last_error(0, &e.to_string());
             let last_error = Some((0, e.to_string()));
-            fallback_with_error(cache, last_error, e)
+            fallback_with_error(cache, last_error, e, now)
         }
     }
 }
@@ -474,13 +485,13 @@ fn parse_proc_net_line(line: &str) -> Option<(u16, u64)> {
 // Cache
 // ---------------------------------------------------------------------------
 
-fn fallback_silent(cache: &Cache) -> Result<FetchOutcome> {
+fn fallback_silent(cache: &Cache, now: DateTime<Utc>) -> Result<FetchOutcome> {
     let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(AppError::Transport(
             "antigravity: no cache and language server unreachable".into(),
         ));
     };
-    reuse_cache(bytes, cache, true, None)
+    reuse_cache(bytes, cache, true, None, now)
 }
 
 /// Serve the stale cache when there is one. With no cache to fall back on,
@@ -491,11 +502,12 @@ fn fallback_with_error(
     cache: &Cache,
     last_error: Option<(u16, String)>,
     reason: AppError,
+    now: DateTime<Utc>,
 ) -> Result<FetchOutcome> {
     let Some(bytes) = cache.fallback_payload(MAX_STALE)? else {
         return Err(reason);
     };
-    let mut outcome = reuse_cache(bytes, cache, true, None)?;
+    let mut outcome = reuse_cache(bytes, cache, true, None, now)?;
     outcome.last_error = last_error;
     Ok(outcome)
 }
@@ -505,8 +517,9 @@ fn reuse_cache(
     cache: &Cache,
     stale: bool,
     account: Option<&str>,
+    now: DateTime<Utc>,
 ) -> Result<FetchOutcome> {
-    let snap = parse_cache(&bytes, account)?;
+    let snap = parse_cache_at(&bytes, account, now)?;
     Ok(FetchOutcome {
         snapshot: snap,
         stale,
@@ -521,6 +534,35 @@ fn reuse_cache(
 /// quota. With `None` we cannot verify — but nothing is consuming quota while
 /// Antigravity is down, so the last known figures are the best available truth.
 pub fn parse_cache(bytes: &[u8], account: Option<&str>) -> Result<AntigravitySnapshot> {
+    parse_cache_at(bytes, account, Utc::now())
+}
+
+/// A cached window whose reset has already passed describes a period that has
+/// since rolled over: the real figure is back near zero while the payload still
+/// carries the old one, and its countdown is pinned at "now". Serving that is
+/// presenting a known-obsolete number as current, so the payload is refused and
+/// the caller reports that Antigravity needs to be running.
+///
+/// This matters more here than for other vendors: "nothing running" is the
+/// normal state for Antigravity, and `MAX_STALE` is seven days — far past the
+/// five hours after which the session window is guaranteed wrong.
+fn expired_window(snap: &AntigravitySnapshot, now: DateTime<Utc>) -> Option<&'static str> {
+    [
+        ("Gemini 5h", Some(&snap.session)),
+        ("Gemini weekly", Some(&snap.weekly)),
+        ("Claude & GPT OSS 5h", snap.third_party_session.as_ref()),
+        ("Claude & GPT OSS weekly", snap.third_party_weekly.as_ref()),
+    ]
+    .into_iter()
+    .find(|(_, w)| w.and_then(|w| w.resets_at).is_some_and(|r| r <= now))
+    .map(|(name, _)| name)
+}
+
+pub fn parse_cache_at(
+    bytes: &[u8],
+    account: Option<&str>,
+    now: DateTime<Utc>,
+) -> Result<AntigravitySnapshot> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
 
     let cached_account = v.get("account").and_then(serde_json::Value::as_str);
@@ -563,14 +605,21 @@ pub fn parse_cache(bytes: &[u8], account: Option<&str>) -> Result<AntigravitySna
         })
     };
 
-    Ok(AntigravitySnapshot {
+    let snap = AntigravitySnapshot {
         plan: v["plan"].as_str().unwrap_or(DEFAULT_PLAN).to_string(),
         account: cached_account.unwrap_or_default().to_string(),
         session: window("session_pct", "session_reset", false)?,
         weekly: window("weekly_pct", "weekly_reset", true)?,
         third_party_session: optional("tp_session_pct", "tp_session_reset", false),
         third_party_weekly: optional("tp_weekly_pct", "tp_weekly_reset", true),
-    })
+    };
+
+    if let Some(window) = expired_window(&snap, now) {
+        return Err(AppError::Schema(format!(
+            "antigravity cache is past its {window} reset; refetching"
+        )));
+    }
+    Ok(snap)
 }
 
 pub fn snap_to_json(snap: &AntigravitySnapshot) -> serde_json::Value {
@@ -621,6 +670,14 @@ mod tests {
         ]
       }
     }"#;
+
+    /// Fixed instant, earlier than every reset in the fixture. Using the wall
+    /// clock here would make the suite start failing once those resets pass.
+    fn now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-07-22T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
 
     fn parsed() -> AntigravitySnapshot {
         let v: serde_json::Value = serde_json::from_str(QUOTA_JSON).unwrap();
@@ -711,7 +768,7 @@ mod tests {
     fn cache_round_trip_preserves_every_window() {
         let snap = parsed();
         let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
-        assert_eq!(parse_cache(&bytes, None).unwrap(), snap);
+        assert_eq!(parse_cache_at(&bytes, None, now()).unwrap(), snap);
     }
 
     /// A truncated payload must fail so the caller refetches. Defaulting the
@@ -724,11 +781,68 @@ mod tests {
             let mut v = full.clone();
             v.as_object_mut().unwrap().remove(missing);
             let bytes = serde_json::to_vec(&v).unwrap();
-            let err = parse_cache(&bytes, None).unwrap_err();
+            let err = parse_cache_at(&bytes, None, now()).unwrap_err();
             assert!(err.to_string().contains(missing), "{missing}: {err}");
         }
         // A wholly empty object is not a zero-usage snapshot either.
-        assert!(parse_cache(b"{}", None).is_err());
+        assert!(parse_cache_at(b"{}", None, now()).is_err());
+    }
+
+    /// With Antigravity closed the cache is served for up to `MAX_STALE`, but a
+    /// window whose reset has passed has since rolled over — the real figure is
+    /// back near zero while the payload still carries the old one. Serving that
+    /// would present a known-obsolete number as current.
+    #[test]
+    fn a_cache_past_its_reset_is_refused() {
+        let bytes = serde_json::to_vec(&snap_to_json(&parsed())).unwrap();
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+
+        // Before every reset: served.
+        assert!(parse_cache_at(&bytes, None, now()).is_ok());
+        // One second before the earliest (the two 5h windows, 17:47:00Z).
+        assert!(parse_cache_at(&bytes, None, at("2026-07-22T17:46:59Z")).is_ok());
+
+        // The reset instant itself already counts as rolled over.
+        let err = parse_cache_at(&bytes, None, at("2026-07-22T17:47:00Z")).unwrap_err();
+        assert!(err.to_string().contains("5h"), "{err}");
+
+        // Well past it — this is the reboot-with-nothing-running case.
+        assert!(parse_cache_at(&bytes, None, at("2026-07-23T09:00:00Z")).is_err());
+    }
+
+    /// The weekly windows outlive the 5-hour ones, so expiry must be reported
+    /// per window rather than assuming the shortest one speaks for all four.
+    #[test]
+    fn expiry_names_the_window_that_rolled_over() {
+        let mut snap = parsed();
+        // Drop the 5h windows so only the weeklies can expire.
+        snap.session.resets_at = None;
+        snap.third_party_session = None;
+        let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+
+        // Past the 5h resets but before either weekly: still usable.
+        assert!(parse_cache_at(&bytes, None, at("2026-07-23T09:00:00Z")).is_ok());
+
+        // Past the Gemini weekly (28th) but not the third-party one (29th).
+        let err = parse_cache_at(&bytes, None, at("2026-07-28T18:00:00Z")).unwrap_err();
+        assert!(err.to_string().contains("Gemini weekly"), "{err}");
+    }
+
+    /// A window with no reset time is unknown, not expired.
+    #[test]
+    fn a_window_without_a_reset_never_expires() {
+        let mut snap = parsed();
+        for w in [&mut snap.session, &mut snap.weekly] {
+            w.resets_at = None;
+        }
+        snap.third_party_session = None;
+        snap.third_party_weekly = None;
+        let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
+        let far_future = DateTime::parse_from_rfc3339("2030-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(parse_cache_at(&bytes, None, far_future).is_ok());
     }
 
     /// Switching Google accounts must not show the previous account's quota.
@@ -738,14 +852,17 @@ mod tests {
         snap.account = "acct:aaaa".into();
         let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
 
-        assert!(parse_cache(&bytes, Some("acct:bbbb")).is_err());
-        assert_eq!(parse_cache(&bytes, Some("acct:aaaa")).unwrap(), snap);
+        assert!(parse_cache_at(&bytes, Some("acct:bbbb"), now()).is_err());
+        assert_eq!(
+            parse_cache_at(&bytes, Some("acct:aaaa"), now()).unwrap(),
+            snap
+        );
 
         // A payload written before the account was recorded is unattributable.
         let mut legacy = snap_to_json(&snap);
         legacy.as_object_mut().unwrap().remove("account");
         let legacy = serde_json::to_vec(&legacy).unwrap();
-        assert!(parse_cache(&legacy, Some("acct:aaaa")).is_err());
+        assert!(parse_cache_at(&legacy, Some("acct:aaaa"), now()).is_err());
     }
 
     /// With no local server there is nothing to compare against — and nothing
@@ -755,7 +872,7 @@ mod tests {
         let mut snap = parsed();
         snap.account = "acct:aaaa".into();
         let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
-        assert_eq!(parse_cache(&bytes, None).unwrap(), snap);
+        assert_eq!(parse_cache_at(&bytes, None, now()).unwrap(), snap);
     }
 
     #[test]
@@ -780,7 +897,7 @@ mod tests {
         snap.third_party_session = None;
         snap.third_party_weekly = None;
         let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
-        assert_eq!(parse_cache(&bytes, None).unwrap(), snap);
+        assert_eq!(parse_cache_at(&bytes, None, now()).unwrap(), snap);
     }
 
     #[test]
@@ -789,7 +906,7 @@ mod tests {
         snap.third_party_session = None;
         snap.third_party_weekly = None;
         let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
-        assert_eq!(parse_cache(&bytes, None).unwrap(), snap);
+        assert_eq!(parse_cache_at(&bytes, None, now()).unwrap(), snap);
     }
 
     #[test]
@@ -904,7 +1021,7 @@ mod tests {
         let cache = Cache::at(dir.path().join("usage.json"));
         let reason = AppError::Credentials("Antigravity: no local language server found".into());
 
-        let err = fallback_with_error(&cache, None, reason).unwrap_err();
+        let err = fallback_with_error(&cache, None, reason, now()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("no local language server found"), "{msg}");
         assert!(!msg.contains("no usable cache"), "{msg}");
