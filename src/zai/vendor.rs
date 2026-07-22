@@ -7,9 +7,9 @@ use chrono::{DateTime, Utc};
 use crate::countdown;
 use crate::format::{placeholders, substitute, updated_at_hm};
 use crate::pacing::PaceSeverity;
-use crate::pango::{self, color_span, escape, severity_color, severity_for};
+use crate::pango::{color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
-use crate::tooltip::{Line as TooltipLine, render_bordered};
+use crate::tooltip::{Line as TooltipLine, push_window, render_bordered};
 use crate::usage::{UsageWindow, ZaiSnapshot};
 use crate::vendor::{RenderOpts, VendorOutcome};
 use crate::waybar::{Class, WaybarOutput};
@@ -130,18 +130,18 @@ fn render_tooltip(
     lines.push(TooltipLine::Body("".into()));
 
     if let Some(w) = snap.session.as_ref() {
-        push_window(&mut lines, "  󰔟  Session (5h)", w, theme, now);
+        push_window(&mut lines, "  󰔟  Session (5h)", w, theme, now, None);
     }
     if let Some(w) = snap.weekly.as_ref() {
         if snap.session.is_some() {
             lines.push(TooltipLine::Body("".into()));
         }
-        push_window(&mut lines, "  󰃰  Weekly", w, theme, now);
+        push_window(&mut lines, "  󰃰  Weekly", w, theme, now, None);
     }
     if let Some(w) = snap.mcp.as_ref() {
         lines.push(TooltipLine::Body("".into()));
         lines.push(TooltipLine::Sep);
-        push_window(&mut lines, "  󰓹  MCP tools (monthly)", w, theme, now);
+        push_window(&mut lines, "  󰓹  MCP tools (monthly)", w, theme, now, None);
     }
     if snap.session.is_none() && snap.weekly.is_none() && snap.mcp.is_none() {
         lines.push(TooltipLine::Body(format!(
@@ -176,30 +176,6 @@ fn render_tooltip(
     )));
 
     render_bordered(&lines, theme)
-}
-
-fn push_window(
-    lines: &mut Vec<TooltipLine>,
-    label: &str,
-    w: &UsageWindow,
-    theme: &Theme,
-    now: DateTime<Utc>,
-) {
-    let color = severity_color(severity_for(w.utilization_pct), theme);
-    let bar = pango::progress_bar(w.utilization_pct, color, theme, None);
-    let fg = &theme.fg;
-    let dim = &theme.dim;
-    lines.push(TooltipLine::Body(format!(
-        " <span foreground='{fg}'>{label}</span>"
-    )));
-    lines.push(TooltipLine::Body(format!(
-        "   {bar}  <span font_weight='bold' foreground='{color}'>{pct}%</span>",
-        pct = w.utilization_pct
-    )));
-    lines.push(TooltipLine::Body(format!(
-        " <span foreground='{dim}'>  ⏱  Resets in {cd}</span>",
-        cd = escape(&countdown::format(w.resets_at, now))
-    )));
 }
 
 impl From<FetchOutcome> for VendorOutcome {

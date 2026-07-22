@@ -136,15 +136,70 @@ fn repeat_char(c: char, n: u32) -> String {
 pub fn visible_width(s: &str) -> usize {
     let mut depth = 0usize;
     let mut count = 0usize;
-    for ch in s.chars() {
-        match ch {
-            '<' => depth += 1,
-            '>' if depth > 0 => depth = depth.saturating_sub(1),
-            _ if depth == 0 => count += 1,
-            _ => {}
-        }
+    let mut rest = s;
+    while let Some(ch) = rest.chars().next() {
+        let step = match ch {
+            '<' => {
+                depth += 1;
+                ch.len_utf8()
+            }
+            '>' if depth > 0 => {
+                depth -= 1;
+                ch.len_utf8()
+            }
+            // An entity such as "&amp;" is five bytes but one glyph; measuring
+            // it as five over-counts the line and ragged-edges the tooltip box.
+            '&' if depth == 0 => {
+                count += 1;
+                entity_len(rest).unwrap_or(ch.len_utf8())
+            }
+            _ => {
+                if depth == 0 {
+                    count += 1;
+                }
+                ch.len_utf8()
+            }
+        };
+        rest = &rest[step..];
     }
     count
+}
+
+/// Byte length of the XML entity starting at `s` (which begins with `&`), or
+/// `None` when this is a bare ampersand rather than an entity.
+fn entity_len(s: &str) -> Option<usize> {
+    let body = s.strip_prefix('&')?;
+    let end = body.find(';')?;
+    if end == 0 {
+        return None;
+    }
+    let name = &body[..end];
+    // GMarkup/Pango accepts XML's five predefined named entities plus
+    // decimal and lowercase-x hexadecimal character references. Treating an
+    // arbitrary short `&name;` or malformed `&#...;` as decoded would repeat
+    // the original width bug in the other direction.
+    let named = matches!(name, "amp" | "lt" | "gt" | "quot" | "apos");
+    let numeric = name
+        .strip_prefix("#x")
+        .and_then(|digits| parse_xml_char(digits, 16))
+        .or_else(|| {
+            name.strip_prefix('#')
+                .and_then(|digits| parse_xml_char(digits, 10))
+        })
+        .is_some();
+    (named || numeric).then_some(1 + end + 1)
+}
+
+fn parse_xml_char(digits: &str, radix: u32) -> Option<u32> {
+    if digits.is_empty() {
+        return None;
+    }
+    let value = u32::from_str_radix(digits, radix).ok()?;
+    matches!(
+        value,
+        0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
+    )
+    .then_some(value)
 }
 
 #[cfg(test)]
@@ -248,5 +303,44 @@ mod tests {
     #[test]
     fn visible_width_handles_nested_tags() {
         assert_eq!(visible_width("<a><b>xy</b></a>"), 2);
+    }
+
+    /// An escaped character occupies one cell on screen. Counting its source
+    /// bytes instead left every tooltip row containing one short on padding.
+    #[test]
+    fn visible_width_counts_an_entity_as_one_glyph() {
+        assert_eq!(visible_width("&amp;"), 1);
+        assert_eq!(visible_width("Claude &amp; GPT"), 12);
+        assert_eq!(visible_width(escape("Claude & GPT").as_str()), 12);
+        assert_eq!(visible_width("&lt;&gt;&quot;&apos;"), 4);
+        assert_eq!(visible_width("&#38;"), 1);
+        assert_eq!(visible_width("&#x26;"), 1);
+        assert_eq!(visible_width("&#00000038;"), 1);
+        assert_eq!(visible_width("<span>a &amp; b</span>"), 5);
+    }
+
+    #[test]
+    fn visible_width_treats_a_bare_ampersand_as_one_glyph() {
+        assert_eq!(visible_width("a & b"), 5);
+        assert_eq!(visible_width("&"), 1);
+        assert_eq!(visible_width("&;"), 2);
+        assert_eq!(visible_width("&nope;"), 6);
+        assert_eq!(visible_width("&AMP;"), 5);
+        assert_eq!(visible_width("&#GG;"), 5);
+        assert_eq!(visible_width("&#0;"), 4);
+        assert_eq!(visible_width("&#x110000;"), 10);
+        // Too long to be an entity, so every character counts.
+        assert_eq!(visible_width("&notanentityatall;"), 18);
+    }
+
+    #[test]
+    fn escaped_and_plain_labels_measure_the_same() {
+        for label in ["Claude & GPT (weekly)", "a<b>c", "quote\"d", "plain"] {
+            assert_eq!(
+                visible_width(escape(label).as_str()),
+                label.chars().count(),
+                "{label}"
+            );
+        }
     }
 }

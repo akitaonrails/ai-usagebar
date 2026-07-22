@@ -9,6 +9,13 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- Bordered tooltips no longer ragged-edge on rows containing an escaped
+  character: `visible_width` counted `&amp;` as five glyphs instead of one, so
+  every such row stopped short of the right border. Affects any vendor whose
+  API-supplied labels contain `&`, `<` or `>`.
+
 ## [0.15.0] — 2026-07-22
 
 ### Added

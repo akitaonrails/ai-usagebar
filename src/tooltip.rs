@@ -8,8 +8,12 @@
 //! Mirrors the visual style of `claudebar`'s `${B}╭${border_h}╮${E}` block
 //! (claudebar:843-859).
 
-use crate::pango::visible_width;
+use chrono::{DateTime, Utc};
+
+use crate::countdown;
+use crate::pango::{self, escape, severity_color, severity_for, visible_width};
 use crate::theme::Theme;
+use crate::usage::UsageWindow;
 
 /// One row of the bordered tooltip box.
 pub enum Line {
@@ -19,6 +23,35 @@ pub enum Line {
     Body(String),
     /// A horizontal separator drawn with `─` characters.
     Sep,
+}
+
+/// Append the standard three-line block every vendor uses for a usage window:
+/// icon + label, progress bar + bold percentage, then the dim reset countdown.
+///
+/// `elapsed` draws the pace marker inside the bar; pass `None` for a plain bar.
+pub fn push_window(
+    lines: &mut Vec<Line>,
+    label: &str,
+    w: &UsageWindow,
+    theme: &Theme,
+    now: DateTime<Utc>,
+    elapsed: Option<i32>,
+) {
+    let color = severity_color(severity_for(w.utilization_pct), theme);
+    let bar = pango::progress_bar(w.utilization_pct, color, theme, elapsed);
+    let fg = &theme.fg;
+    let dim = &theme.dim;
+    lines.push(Line::Body(format!(
+        " <span foreground='{fg}'>{label}</span>"
+    )));
+    lines.push(Line::Body(format!(
+        "   {bar}  <span font_weight='bold' foreground='{color}'>{pct}%</span>",
+        pct = w.utilization_pct
+    )));
+    lines.push(Line::Body(format!(
+        " <span foreground='{dim}'>  ⏱  Resets in {cd}</span>",
+        cd = escape(&countdown::format(w.resets_at, now))
+    )));
 }
 
 /// Render the bordered tooltip. Width is computed from the widest body/center
@@ -93,6 +126,22 @@ mod tests {
         assert!(out.contains("╰"));
         assert!(out.contains("╯"));
         assert!(out.contains("Hi"));
+    }
+
+    /// Escaped characters are one glyph wide; if the box measured them by
+    /// source length, rows containing one would stop short of the right border.
+    #[test]
+    fn rows_with_escaped_characters_keep_the_border_flush() {
+        let lines = vec![
+            Line::Body(crate::pango::escape("Claude & GPT (weekly)")),
+            Line::Body("Gemini (weekly)".into()),
+        ];
+        let out = render_bordered(&lines, &theme());
+        let right_edges: Vec<usize> = out.lines().map(crate::pango::visible_width).collect();
+        assert!(
+            right_edges.windows(2).all(|w| w[0] == w[1]),
+            "ragged box: {right_edges:?}\n{out}"
+        );
     }
 
     #[test]
