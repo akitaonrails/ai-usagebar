@@ -209,12 +209,22 @@ fn anthropic_sections(
     if let Some(e) = &s.extra {
         v.push(Section::Spacer);
         let pct = e.percent().clamp(0, 100) as u16;
+        // An uncapped plan (`monthly_limit: null`) has spend but no
+        // denominator: show the amount alone rather than "of $0.00" or a
+        // percentage nobody can vouch for (#30).
+        let (value_label, footnote) = match e.fmt_limit() {
+            Some(l) => (
+                format!("{} of {}", e.fmt_spent(), l),
+                format!("{pct}% of monthly limit consumed"),
+            ),
+            None => (e.fmt_spent(), "no monthly limit reported".to_string()),
+        };
         v.push(Section::Metric {
             label: "Extra usage".into(),
             pct,
             severity: severity_for(pct as i32),
-            value_label: format!("{} of {}", e.spent.fmt_dollars(), e.limit.fmt_dollars()),
-            footnote: format!("{}% of monthly limit consumed", pct),
+            value_label,
+            footnote,
         });
     }
     v
@@ -759,8 +769,10 @@ mod tests {
             }),
             scoped: vec![],
             extra: Some(ExtraUsage {
-                limit: Cents(5000),
+                limit: Some(Cents(5000)),
                 spent: Cents(250),
+                currency: None,
+                decimal_places: Some(2),
             }),
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
@@ -779,6 +791,56 @@ mod tests {
             .filter(|s| matches!(s, Section::Metric { .. }))
             .count();
         assert_eq!(metric_count, 4);
+    }
+
+    #[test]
+    fn anthropic_uncapped_extra_shows_spend_without_a_denominator() {
+        // The #30 shape: `monthly_limit: null` (Pro). The panel must show the
+        // spend alone — not "of $0.00", not an invented percentage.
+        let snap = AnthropicSnapshot {
+            plan: "Pro".into(),
+            session: UsageWindow {
+                utilization_pct: 10,
+                resets_at: None,
+                window_duration: chrono::Duration::hours(5),
+            },
+            weekly: UsageWindow {
+                utilization_pct: 20,
+                resets_at: None,
+                window_duration: chrono::Duration::days(7),
+            },
+            sonnet: None,
+            scoped: vec![],
+            extra: Some(ExtraUsage {
+                limit: None,
+                spent: Cents(14157),
+                currency: Some("BRL".into()),
+                decimal_places: Some(2),
+            }),
+        };
+        let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
+        let extra = sections
+            .iter()
+            .find_map(|s| match s {
+                Section::Metric {
+                    label,
+                    pct,
+                    value_label,
+                    footnote,
+                    ..
+                } if label == "Extra usage" => Some((*pct, value_label.clone(), footnote.clone())),
+                _ => None,
+            })
+            .expect("uncapped extra usage must still render a section");
+        assert_eq!(extra.0, 0);
+        // Non-vacuous currency pin: fmt_dollars would say "$141.57" here.
+        assert_eq!(extra.1, "R$141.57");
+        assert!(
+            !extra.1.contains(" of "),
+            "no denominator to show: {}",
+            extra.1
+        );
+        assert_eq!(extra.2, "no monthly limit reported");
     }
 
     #[test]

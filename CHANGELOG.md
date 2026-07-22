@@ -15,6 +15,36 @@ Each release is also published at
   floating: `v` cycles `full` (its own screen) → `split` (beside the vendor
   panel) → `bottom`. `[context] layout` sets the one it opens with.
 
+### Fixed
+
+- **Credit spend is no longer hidden on plans without a spending cap** (#30).
+  The usage endpoint sends `extra_usage.monthly_limit: null` for uncapped
+  plans (e.g. Claude Pro); the whole block was discarded, hiding genuine
+  `used_credits`. A null limit is semantic — "no cap" — not schema drift, so
+  `ExtraUsage.limit` is now optional: the spend renders on every surface, the
+  tooltip says `Limit: none reported` (stating the wire fact rather than
+  inferring a plan tier), the TUI shows the amount without a denominator, and
+  `{extra_limit}` expands to `—` (deliberately non-empty: GNOME and the macOS
+  menu bar hide the whole extra row on an empty limit).
+  The block is still dropped when `used_credits` itself is missing — without
+  the spend there is nothing truthful to show — and no percentage is invented
+  when there is no denominator.
+
+- **Extra usage renders in its own currency.** The block's `currency` and
+  `decimal_places` fields were ignored and every amount was formatted as `$`
+  with a hard-coded cent scale — the #30 reporter's R$ 141.57 would have shown
+  as "$141.57", a claim about the wrong currency. Known codes get their symbol
+  (`R$`, `€`, `£`, `¥`), unknown ones render as `AMOUNT CODE`, and an explicit
+  exponent is honored exactly, including zero- and three-decimal currencies.
+  If a currency is present but its exponent is absent, the raw value renders as
+  `N minor units CODE` rather than guessing and silently corrupting the amount;
+  payloads with neither field keep the historical `$`/cents behaviour. Both
+  new fields are gated at the parse boundary: `decimal_places` outside 0..=6 is
+  schema drift (integral floats are tolerated, since this endpoint floats its
+  numbers), and `currency` must be a three-letter ISO alpha code — the value is
+  embedded in Pango markup and the desktop `;;` protocol, so an arbitrary
+  string would be an injection vector besides being drift.
+
 ## [0.14.0] — 2026-07-20
 
 ### Added
