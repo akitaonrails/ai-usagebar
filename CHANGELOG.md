@@ -18,6 +18,23 @@ Each release is also published at
 
 ### Added
 
+- **Google Antigravity vendor.** Reports the four real quota windows — a 5-hour
+  and a weekly limit for each of the two independent model pools (Gemini, and
+  Claude & GPT OSS) — from `RetrieveUserQuotaSummary` on whichever Antigravity
+  product is running locally. Antigravity 2.0, the Antigravity IDE and an
+  interactive `agy` session all share one account-wide quota, so any of them
+  serves it; the local server's port is assigned dynamically and is discovered
+  rather than assumed. No credentials to configure: enable `[antigravity]` in
+  `config.toml`. Percentages are *consumed*, matching every other vendor — the
+  Antigravity UI shows the inverse (what remains).
+
+  Quota is parsed strictly: a bucket without a finite `remainingFraction`, or a
+  cached payload missing a required window, is an error that triggers a refetch
+  rather than a confident "0% used". The cache fingerprints the signed-in
+  account, so switching Google accounts cannot show the previous account's
+  figures. When a fetch fails with nothing usable cached, the original error is
+  surfaced instead of a generic "no usable cache".
+
 - The local Claude context monitor docks into the dashboard body instead of
   floating: `v` cycles `full` (its own screen) → `split` (beside the vendor
   panel) → `bottom`. `[context] layout` sets the one it opens with.

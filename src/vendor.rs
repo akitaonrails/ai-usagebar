@@ -69,6 +69,7 @@ pub enum VendorId {
     Novita,
     Moonshot,
     Grok,
+    Antigravity,
 }
 
 impl VendorId {
@@ -85,6 +86,7 @@ impl VendorId {
             VendorId::Novita => "novita",
             VendorId::Moonshot => "moonshot",
             VendorId::Grok => "grok",
+            VendorId::Antigravity => "antigravity",
         }
     }
 
@@ -101,6 +103,7 @@ impl VendorId {
             VendorId::Novita,
             VendorId::Moonshot,
             VendorId::Grok,
+            VendorId::Antigravity,
         ]
     }
 }

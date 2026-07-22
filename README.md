@@ -12,7 +12,7 @@ This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar)
 - **Tabbed TUI** (`ai-usagebar-tui`) with Tab/h/l switching, per-tab refresh, and 60-second auto-refresh. Native ratatui widgets fill the available terminal width and keep the vendor tabs visually consistent.
 - **Optional local Claude Code context monitor** in the TUI, with a bounded,
   compaction-aware view of recent session input-context usage.
-- **Native desktop integrations** for GNOME Shell and the macOS menu bar, with selectors for Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek.
+- **Native desktop integrations** for GNOME Shell and the macOS menu bar, with selectors for Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek; the GNOME extension adds Google Antigravity.
 - **Scroll-to-cycle on the bar**: wire `on-scroll-up` / `on-scroll-down`, and one bar item cycles through your enabled vendors.
 - **Config-driven primary vendor**: set `[ui] primary` once; the widget shows that vendor by default and the TUI opens on its tab.
 - **Local testing tools**: `--pretty` renders ANSI-colored terminal output (auto-detects TTY), and `--watch N` re-renders every N seconds.
@@ -88,6 +88,7 @@ Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth c
 | Novita | API key (`NOVITA_API_KEY` env or `[novita] api_key` in config) | Set either. Opt-in. |
 | Moonshot | API key (`MOONSHOT_API_KEY` env or `[moonshot] api_key` in config) | Set either. Opt-in. Set `[moonshot] region = "cn"` for `api.moonshot.cn` (balance in CNY); the default `"global"` uses `api.moonshot.ai` (USD). |
 | Grok (xAI) | **Management** key (`XAI_MANAGEMENT_KEY` env or `[grok] api_key` in config) | Set either. Opt-in. This is **not** the inference key — create it under xAI Console → Management keys. See the team note below. |
+| Google Antigravity | None — read from the local Antigravity server | Opt-in. Quota is served only while Antigravity 2.0, the Antigravity IDE, or an interactive `agy` session is running; all three share one account-wide quota. |
 
 #### Grok: team-scoped vs organization-scoped keys
 
@@ -108,7 +109,7 @@ rather than silently querying the wrong URL.
 ### Enabling a vendor
 
 `enabled = true` is what makes a vendor fetch. Anthropic (API), DeepSeek, Kimi,
-Kilo, Novita, Moonshot, and Grok all default to **disabled** so that existing
+Kilo, Novita, Moonshot, Grok, and Antigravity all default to **disabled** so that existing
 installs are unaffected until you opt in. Two ways to do it:
 
 - **Via the TUI Settings overlay** (`ai-usagebar-tui`, then `s`): saving a
@@ -260,7 +261,7 @@ The Waybar widget is optional. The TUI is the best way to see every enabled vend
 
 ## Native desktop integrations (v0.13)
 
-The [GNOME Shell extension](gnome-extension/README.md) and [macOS menu bar app](macos/README.md) support selectors for **Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek**. **Kimi is widget/TUI-only in v0.13**; do not select it in either native desktop integration yet. Desktop protocol and marker parity for Kimi is dedicated future work.
+The [GNOME Shell extension](gnome-extension/README.md) and [macOS menu bar app](macos/README.md) support selectors for **Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek**; the GNOME extension also supports **Google Antigravity**, whose two independent quota pools it renders as grouped rows. **Kimi is widget/TUI-only in v0.13**; do not select it in either native desktop integration yet. Desktop protocol and marker parity for Kimi is dedicated future work.
 
 ## Waybar config
 

@@ -81,6 +81,7 @@ fn vendor_label(id: VendorId) -> &'static str {
         VendorId::Novita => "Novita",
         VendorId::Moonshot => "Moonshot",
         VendorId::Grok => "Grok",
+        VendorId::Antigravity => "Antigravity",
     }
 }
 
@@ -97,6 +98,7 @@ fn compact_vendor_label(id: VendorId) -> &'static str {
         VendorId::Novita => "Novita",
         VendorId::Moonshot => "Moonshot",
         VendorId::Grok => "Grok",
+        VendorId::Antigravity => "Antigravity",
     }
 }
 

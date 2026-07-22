@@ -423,6 +423,12 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
             .await?;
             Ok(outcome.into())
         }
+        VendorId::Antigravity => {
+            // No credentials: the local Antigravity server is the source.
+            let cache = crate::cache::Cache::for_vendor("antigravity")?;
+            let outcome = crate::antigravity::fetch_snapshot(client, &cache, DEFAULT_TTL).await?;
+            Ok(outcome.into())
+        }
     }
 }
 

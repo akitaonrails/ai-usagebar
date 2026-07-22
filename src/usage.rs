@@ -201,7 +201,29 @@ pub enum VendorSnapshot {
     Moonshot(MoonshotSnapshot),
     Grok(GrokSnapshot),
     AnthropicApi(AnthropicApiSnapshot),
+    Antigravity(AntigravitySnapshot),
 }
+
+/// Google Antigravity 2.0 / CLI snapshot. The API groups models into Gemini
+/// and third-party (Claude/GPT) buckets, and each group carries its own 5-hour
+/// and weekly window — four independent windows in total.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AntigravitySnapshot {
+    pub plan: String,
+    /// Fingerprint of the signed-in account. Never displayed — it exists so a
+    /// cache written for one Google account is not served for another.
+    pub account: String,
+    /// Gemini group, 5-hour window.
+    pub session: UsageWindow,
+    /// Gemini group, weekly window.
+    pub weekly: UsageWindow,
+    /// Claude/GPT group, 5-hour window.
+    pub third_party_session: Option<UsageWindow>,
+    /// Claude/GPT group, weekly window.
+    pub third_party_weekly: Option<UsageWindow>,
+}
+
+impl Eq for AntigravitySnapshot {}
 
 /// Anthropic Admin API — month-to-date spend (USD) from the cost report. The
 /// monthly `limit` is supplied from config (the API exposes neither the limit

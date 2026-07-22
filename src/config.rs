@@ -46,6 +46,7 @@ pub struct Config {
     pub novita: NovitaConfig,
     pub moonshot: MoonshotConfig,
     pub grok: GrokConfig,
+    pub antigravity: AntigravityConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -409,6 +410,14 @@ impl Default for GrokConfig {
     }
 }
 
+/// Antigravity reads its quota from whichever local Antigravity product is
+/// running, so it needs no credentials — only an on/off switch.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AntigravityConfig {
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AnthropicApiConfig {
@@ -522,6 +531,7 @@ impl Config {
             VendorId::Novita => self.novita.enabled,
             VendorId::Moonshot => self.moonshot.enabled,
             VendorId::Grok => self.grok.enabled,
+            VendorId::Antigravity => self.antigravity.enabled,
         }
     }
 

@@ -137,6 +137,7 @@ pub enum Vendor {
     Novita,
     Moonshot,
     Grok,
+    Antigravity,
 }
 
 impl Vendor {
@@ -153,6 +154,7 @@ impl Vendor {
             Vendor::Novita => crate::vendor::VendorId::Novita,
             Vendor::Moonshot => crate::vendor::VendorId::Moonshot,
             Vendor::Grok => crate::vendor::VendorId::Grok,
+            Vendor::Antigravity => crate::vendor::VendorId::Antigravity,
         }
     }
 }
@@ -236,6 +238,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Novita => Vendor::Novita,
         crate::vendor::VendorId::Moonshot => Vendor::Moonshot,
         crate::vendor::VendorId::Grok => Vendor::Grok,
+        crate::vendor::VendorId::Antigravity => Vendor::Antigravity,
     }
 }
 

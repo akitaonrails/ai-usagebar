@@ -160,3 +160,10 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # not a team), so set the team explicitly here. Without it, an org-scoped key
 # reports an error saying so instead of querying the wrong team.
 # team_id = "..."
+
+# Google Antigravity. No credentials: usage is read from whichever local
+# Antigravity product is running (Antigravity 2.0, the `agy` CLI, or the IDE) —
+# all three share one account-wide quota. Set ANTIGRAVITY_LS_ADDRESS to
+# "host:port" only if auto-discovery of that local server ever fails.
+[antigravity]
+enabled = false
