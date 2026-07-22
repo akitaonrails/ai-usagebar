@@ -34,15 +34,16 @@ Each release is also published at
   `decimal_places` fields were ignored and every amount was formatted as `$`
   with a hard-coded cent scale — the #30 reporter's R$ 141.57 would have shown
   as "$141.57", a claim about the wrong currency. Known codes get their symbol
-  (`R$`, `€`, `£`, `¥`), unknown ones render as `AMOUNT CODE`, zero-exponent
-  currencies (JPY) format without an invented decimal point, and payloads
-  without the fields keep the historical `$`/cents behaviour (JPY defaults to
-  its ISO zero-decimal scale when the field is absent). Both new fields are
-  gated at the parse boundary: `decimal_places` outside 0..=6 is schema drift
-  (integral floats are tolerated, since this endpoint floats its numbers), and
-  `currency` must be a three-letter ISO alpha code — the value is embedded in
-  Pango markup and the desktop `;;` protocol, so an arbitrary string would be
-  an injection vector besides being drift.
+  (`R$`, `€`, `£`, `¥`), unknown ones render as `AMOUNT CODE`, and an explicit
+  exponent is honored exactly, including zero- and three-decimal currencies.
+  If a currency is present but its exponent is absent, the raw value renders as
+  `N minor units CODE` rather than guessing and silently corrupting the amount;
+  payloads with neither field keep the historical `$`/cents behaviour. Both
+  new fields are gated at the parse boundary: `decimal_places` outside 0..=6 is
+  schema drift (integral floats are tolerated, since this endpoint floats its
+  numbers), and `currency` must be a three-letter ISO alpha code — the value is
+  embedded in Pango markup and the desktop `;;` protocol, so an arbitrary
+  string would be an injection vector besides being drift.
 
 ## [0.14.0] — 2026-07-20
 

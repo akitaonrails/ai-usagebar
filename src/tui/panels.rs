@@ -772,7 +772,7 @@ mod tests {
                 limit: Some(Cents(5000)),
                 spent: Cents(250),
                 currency: None,
-                decimal_places: 2,
+                decimal_places: Some(2),
             }),
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
@@ -815,7 +815,7 @@ mod tests {
                 limit: None,
                 spent: Cents(14157),
                 currency: Some("BRL".into()),
-                decimal_places: 2,
+                decimal_places: Some(2),
             }),
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);

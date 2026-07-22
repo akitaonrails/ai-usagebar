@@ -117,8 +117,9 @@ pub struct ExtraUsage {
     /// the only behaviour before the field existed.
     pub currency: Option<String>,
     /// Minor-unit digits from the block's `decimal_places` (BRL/USD = 2,
-    /// JPY = 0). Both money values above are in this scale.
-    pub decimal_places: u32,
+    /// JPY/KRW = 0). `None` means the wire did not report the scale. We keep
+    /// that absence instead of guessing from an incomplete currency table.
+    pub decimal_places: Option<u32>,
 }
 
 impl ExtraUsage {
@@ -135,13 +136,31 @@ impl ExtraUsage {
     }
 
     pub fn fmt_spent(&self) -> String {
-        fmt_minor(self.spent.0, self.decimal_places, self.currency.as_deref())
+        self.fmt_amount(self.spent)
     }
 
     pub fn fmt_limit(&self) -> Option<String> {
-        self.limit
-            .map(|l| fmt_minor(l.0, self.decimal_places, self.currency.as_deref()))
+        self.limit.map(|l| self.fmt_amount(l))
     }
+
+    fn fmt_amount(&self, amount: Cents) -> String {
+        match (self.decimal_places, self.currency.as_deref()) {
+            (Some(decimal_places), currency) => fmt_minor(amount.0, decimal_places, currency),
+            // Legacy payloads predate both fields and were always cents/USD.
+            // Preserve that established behaviour only when neither field can
+            // tell us otherwise.
+            (None, None) => fmt_minor(amount.0, 2, None),
+            // A currency code alone does not determine its ISO minor-unit
+            // exponent. Keep the amount truthful instead of silently dividing
+            // zero-, three-, or four-decimal currencies by the wrong scale.
+            (None, Some(currency)) => fmt_minor_units(amount.0, currency),
+        }
+    }
+}
+
+fn fmt_minor_units(minor: i64, currency: &str) -> String {
+    let sign = if minor < 0 { "-" } else { "" };
+    format!("{sign}{} minor units {currency}", minor.unsigned_abs())
 }
 
 /// Format an amount in minor units with its own currency and scale. Rendering
@@ -172,17 +191,6 @@ pub fn fmt_minor(minor: i64, decimal_places: u32, currency: Option<&str>) -> Str
         Some("GBP") => format!("{sign}£{number}"),
         Some("JPY") | Some("CNY") => format!("{sign}¥{number}"),
         Some(other) => format!("{sign}{number} {other}"),
-    }
-}
-
-/// ISO 4217 minor-unit digits for a currency when the payload omits
-/// `decimal_places`. Defaulting JPY to the historical 2 would divide every
-/// amount by 100 (¥500 shown as ¥5.00); unknown codes keep 2, the scale every
-/// observed payload without the field has used.
-pub fn default_decimal_places(currency: Option<&str>) -> u32 {
-    match currency {
-        Some("JPY") => 0,
-        _ => 2,
     }
 }
 
@@ -481,7 +489,7 @@ mod tests {
                 limit: Some(Cents(limit)),
                 spent: Cents(spent),
                 currency: None,
-                decimal_places: 2,
+                decimal_places: Some(2),
             }),
         }
     }
@@ -507,7 +515,7 @@ mod tests {
             limit: None,
             spent: Cents(14157),
             currency: Some("BRL".into()),
-            decimal_places: 2,
+            decimal_places: Some(2),
         };
         assert_eq!(e.fmt_spent(), "R$141.57");
         assert_eq!(e.fmt_limit(), None);
@@ -516,7 +524,7 @@ mod tests {
             limit: Some(Cents(5000)),
             spent: Cents(250),
             currency: None,
-            decimal_places: 2,
+            decimal_places: Some(2),
         };
         assert_eq!(capped.fmt_spent(), "$2.50");
         assert_eq!(capped.fmt_limit().as_deref(), Some("$50.00"));
@@ -544,7 +552,7 @@ mod tests {
                 limit: Some(Cents(0)),
                 spent: Cents(100),
                 currency: None,
-                decimal_places: 2,
+                decimal_places: Some(2),
             }
             .percent(),
             0
@@ -559,7 +567,7 @@ mod tests {
                 limit: Some(Cents(10000)),
                 spent: Cents(3333),
                 currency: None,
-                decimal_places: 2,
+                decimal_places: Some(2),
             }
             .percent(),
             33

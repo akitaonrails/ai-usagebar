@@ -618,7 +618,7 @@ mod tests {
                 limit: Some(Cents(5000)),
                 spent: Cents(250),
                 currency: None,
-                decimal_places: 2,
+                decimal_places: Some(2),
             }),
         };
         FetchOutcome {
