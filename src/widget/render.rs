@@ -15,7 +15,7 @@ use crate::pacing;
 use crate::pango::{self, color_span, escape, severity_for};
 use crate::theme::Theme;
 use crate::tooltip::{self, Line};
-use crate::usage::anthropic_severity;
+use crate::usage::{ExtraUsage, anthropic_severity};
 use crate::waybar::{Class, WaybarOutput};
 
 /// Default format string when `--format` is omitted (claudebar:55).
@@ -234,18 +234,24 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
         (
             "extra_spent",
             snap.extra
-                .map(|e| e.spent.fmt_dollars())
+                .as_ref()
+                .map(ExtraUsage::fmt_spent)
                 .unwrap_or_default(),
         ),
         (
             "extra_limit",
+            // "—" (not empty) for an uncapped plan: GNOME and the macOS menu
+            // bar hide the whole extra row when this field is empty, which
+            // would hide real spend — the exact symptom of #30.
             snap.extra
-                .map(|e| e.limit.fmt_dollars())
+                .as_ref()
+                .map(|e| e.fmt_limit().unwrap_or_else(|| "—".into()))
                 .unwrap_or_default(),
         ),
         (
             "extra_pct",
             snap.extra
+                .as_ref()
                 .map(|e| e.percent().to_string())
                 .unwrap_or_else(|| "0".into()),
         ),
@@ -487,7 +493,7 @@ fn render_default_tooltip(input: &RenderInput) -> String {
         )));
     }
 
-    if let Some(extra) = snap.extra {
+    if let Some(extra) = snap.extra.as_ref() {
         let extra_color = pango::severity_color(severity_for(extra.percent()), theme);
         let extra_bar = pango::progress_bar(extra.percent(), extra_color, theme, None);
         lines.push(Line::Body("".into()));
@@ -499,11 +505,19 @@ fn render_default_tooltip(input: &RenderInput) -> String {
             "   {bar}  <span font_weight='bold' foreground='{color}'>{spent}</span>",
             bar = extra_bar,
             color = extra_color,
-            spent = escape(&extra.spent.fmt_dollars())
+            spent = escape(&extra.fmt_spent())
         )));
+        let lim = match extra.fmt_limit() {
+            Some(l) => l,
+            // No usable `monthly_limit` in the payload (null — observed for
+            // uncapped plans — or absent). "none reported" states exactly
+            // that; inferring a plan tier from it would overclaim, and a
+            // $0.00 ceiling would be invented.
+            None => "none reported".into(),
+        };
         lines.push(Line::Body(format!(
             " <span foreground='{dim}'>  󰀓  Limit: {lim}</span>",
-            lim = escape(&extra.limit.fmt_dollars())
+            lim = escape(&lim)
         )));
     }
 
@@ -601,8 +615,10 @@ mod tests {
             sonnet: Some(sonnet),
             scoped: vec![],
             extra: Some(ExtraUsage {
-                limit: Cents(5000),
+                limit: Some(Cents(5000)),
                 spent: Cents(250),
+                currency: None,
+                decimal_places: Some(2),
             }),
         };
         FetchOutcome {
@@ -625,6 +641,58 @@ mod tests {
             tooltip_pace_pts: false,
             now: now(),
         }
+    }
+
+    #[test]
+    fn uncapped_extra_usage_renders_spend_with_dash_limit() {
+        // The #30 shape: real spend, `monthly_limit: null`. The spend must
+        // stay visible and `{extra_limit}` must be "—", NOT empty — GNOME and
+        // the macOS menu bar hide the whole extra row on an empty limit,
+        // which would re-hide the spend the fix is recovering.
+        let mut oc = sample_outcome();
+        if let Some(e) = oc.snapshot.extra.as_mut() {
+            e.limit = None;
+            e.spent = Cents(14157);
+        }
+        let theme = Theme::default();
+        let mut inp = input(&oc, &theme);
+        inp.format = "{extra_spent}|{extra_limit}|{extra_pct}";
+        let out = render_anthropic(&inp);
+        assert!(out.text.contains("$141.57|—|0"), "got: {}", out.text);
+
+        // Default tooltip: spend shown, the missing limit stated as exactly
+        // that, and no fabricated "$0.00" anywhere near the extra block.
+        let inp2 = input(&oc, &theme);
+        let out2 = render_anthropic(&inp2);
+        assert!(out2.tooltip.contains("$141.57"));
+        assert!(out2.tooltip.contains("none reported"));
+        assert!(!out2.tooltip.contains("Limit: $0.00"));
+    }
+
+    #[test]
+    fn extra_usage_placeholders_and_tooltip_use_the_blocks_currency() {
+        // Non-vacuous currency pin: with BRL in the snapshot, formatting
+        // through fmt_dollars again ("$141.57") must fail this test — that is
+        // the wrong-currency claim the wiring exists to prevent.
+        let mut oc = sample_outcome();
+        if let Some(e) = oc.snapshot.extra.as_mut() {
+            e.limit = None;
+            e.spent = Cents(14157);
+            e.currency = Some("BRL".into());
+        }
+        let theme = Theme::default();
+        let mut inp = input(&oc, &theme);
+        inp.format = "{extra_spent}";
+        let out = render_anthropic(&inp);
+        assert!(out.text.contains("R$141.57"), "got: {}", out.text);
+        assert!(!out.text.contains("$141.57|"), "got: {}", out.text);
+
+        let inp2 = input(&oc, &theme);
+        let out2 = render_anthropic(&inp2);
+        assert!(
+            out2.tooltip.contains("R$141.57"),
+            "tooltip must carry the block's currency"
+        );
     }
 
     #[test]

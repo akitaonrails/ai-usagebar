@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {barMarkup, colorForDelta, disambiguateTags, field, FIELD, FORMAT, hasUsageWindows, integer,
-    isGrouped, markerElapsed, pickPool, plainTextFromPango, poolTag,
-    splitFormatOutput} from './marker-logic.js';
+    isGrouped, markerElapsed, pickPool, plainTextFromPango, poolAvailable, poolTag,
+    selectPools, splitFormatOutput} from './marker-logic.js';
 
 const colors = {low: 'low', mid: 'mid', high: 'high', critical: 'critical', empty: 'empty'};
 const visibleCells = markup => markup.replace(/<[^>]+>/g, '');
@@ -61,6 +61,8 @@ assert.equal(poolTag('{session_model}'), ''); // older binary echoes it back
 assert.equal(poolTag(undefined), '');
 // Leading punctuation must not become the tag.
 assert.equal(poolTag('  &claude'), 'C');
+const astralTag = poolTag('𐐨elta');
+assert.equal(Array.from(astralTag).length, 1); // never split a non-BMP letter
 
 assert.deepEqual(disambiguateTags('Gemini', 'Claude & GPT OSS'), ['G', 'C']);
 // Shared initial widens both tags until they differ.
@@ -68,6 +70,10 @@ assert.deepEqual(disambiguateTags('Gemini', 'GPT OSS'), ['GE', 'GP']);
 assert.deepEqual(disambiguateTags('Gemini Pro', 'Gemini Flash'), ['GEMINIP', 'GEMINIF']);
 // Nothing to disambiguate against.
 assert.deepEqual(disambiguateTags('Gemini', ''), ['G', '']);
+
+assert.equal(poolAvailable({session: 0, weekly: null}), true);
+assert.equal(poolAvailable({session: null, weekly: null}), false);
+assert.equal(poolAvailable(undefined), false);
 
 // Auto pool selection. A pool is spent when either window crosses the threshold.
 const free = {session: 10, weekly: 10};
@@ -84,8 +90,25 @@ assert.equal(pickPool(free, spent5h, 95), 'primary');
 // The threshold itself counts as spent.
 assert.equal(pickPool({session: 95, weekly: 0}, free, 95), 'secondary');
 assert.equal(pickPool({session: 94, weekly: 0}, free, 95), 'primary');
-// A missing secondary pool reads as 0% and keeps the primary.
+// A missing secondary pool is unavailable, not a pristine 0%-used fallback.
 assert.equal(pickPool(free, undefined, 95), 'primary');
+assert.equal(pickPool(spent5h, undefined, 95), 'primary');
+assert.equal(pickPool(undefined, free, 95), 'secondary');
+assert.deepEqual(selectPools(free, free, 'both', 95), ['primary', 'secondary']);
+assert.deepEqual(selectPools(free, undefined, 'both', 95), ['primary']);
+assert.deepEqual(selectPools(free, undefined, 'secondary', 95), ['primary']);
+assert.deepEqual(selectPools(undefined, free, 'primary', 95), ['secondary']);
+assert.deepEqual(selectPools(spent5h, free, 'auto', 95), ['secondary']);
+assert.deepEqual(selectPools(spent5h, undefined, 'auto', 95), ['primary']);
+assert.deepEqual(selectPools(undefined, undefined, 'auto', 95), []);
+const onlySession = {session: 10, weekly: null};
+const onlyWeekly = {session: null, weekly: 10};
+assert.deepEqual(selectPools(onlySession, onlyWeekly, 'both', 95,
+    {session: true, weekly: false}), ['primary']);
+assert.deepEqual(selectPools(onlySession, onlyWeekly, 'secondary', 95,
+    {session: true, weekly: false}), ['primary']);
+assert.deepEqual(selectPools(spent5h, onlyWeekly, 'auto', 95,
+    {session: true, weekly: false}), ['primary']);
 const values = {'{scoped_elapsed}': '27'};
 const framed = splitFormatOutput(formatFields.map(value => values[value] ?? value).join(';;') + ' ⏸');
 assert.equal(integer(framed[FIELD.scopedElapsed]), 27);

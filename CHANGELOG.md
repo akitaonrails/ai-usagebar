@@ -9,13 +9,6 @@ Each release is also published at
 
 ## [Unreleased]
 
-### Fixed
-
-- Bordered tooltips no longer ragged-edge on rows containing an escaped
-  character: `visible_width` counted `&amp;` as five glyphs instead of one, so
-  every such row stopped short of the right border. Affects any vendor whose
-  API-supplied labels contain `&`, `<` or `>`.
-
 ### Added
 
 - **Google Antigravity vendor.** Reports the four real quota windows — a 5-hour
@@ -28,32 +21,72 @@ Each release is also published at
   `config.toml`. Percentages are *consumed*, matching every other vendor — the
   Antigravity UI shows the inverse (what remains).
 
-  Quota is parsed strictly: a bucket without a finite `remainingFraction`, or a
-  cached payload missing a required window, is an error that triggers a refetch
-  rather than a confident "0% used". The cache fingerprints the signed-in
-  account, so switching Google accounts cannot show the previous account's
-  figures. A cached window whose reset has already passed is refused rather than
-  served as current — with nothing running the cache would otherwise be offered
-  for up to seven days, long past the five hours after which the session window
-  is guaranteed to have rolled over. When a fetch fails with nothing usable cached, the original error is
-  surfaced instead of a generic "no usable cache".
+  Quota and cached values are parsed strictly: malformed, out-of-range,
+  duplicate or missing required buckets trigger a refetch rather than a
+  confident bar. Response bodies are bounded on success and error paths. The
+  cache fingerprints the signed-in account, so switching Google accounts
+  cannot show the previous account's figures, and a window whose reset has
+  passed is refused rather than served as current. When a fetch fails with
+  nothing usable cached, the original actionable error is preserved.
 
 - **Two-pool support in the GNOME extension.** The dropdown groups Antigravity's
   four windows under `Session` and `Weekly` headings, one bar per pool. The new
   `Panel pools` preference draws both pools (default), either alone, or `auto`,
-  which falls back to the other pool once the shown one passes `Auto threshold`.
+  which falls back to an available other pool once the shown one reaches
+  `Auto threshold`.
   Pace markers are rendered for all four windows. The grouped layout is opted
   into by the data — a vendor naming its primary rows — so single-pool vendors
   are unaffected, and a binary predating the new placeholders keeps the flat
   four-row layout.
 
+### Changed
+
+- The GNOME extension supports GNOME Shell 45–50 (was 45–48).
+
+### Fixed
+
+- Bordered tooltips no longer ragged-edge on rows containing an escaped
+  character: `visible_width` counted `&amp;` as five glyphs instead of one, so
+  every such row stopped short of the right border. Affects any vendor whose
+  API-supplied labels contain `&`, `<` or `>`.
+
+## [0.15.0] — 2026-07-22
+
+### Added
+
 - The local Claude context monitor docks into the dashboard body instead of
   floating: `v` cycles `full` (its own screen) → `split` (beside the vendor
   panel) → `bottom`. `[context] layout` sets the one it opens with.
 
-### Changed
+### Fixed
 
-- The GNOME extension supports GNOME Shell 45–50 (was 45–48).
+- **Credit spend is no longer hidden on plans without a spending cap** (#30).
+  The usage endpoint sends `extra_usage.monthly_limit: null` for uncapped
+  plans (e.g. Claude Pro); the whole block was discarded, hiding genuine
+  `used_credits`. A null limit is semantic — "no cap" — not schema drift, so
+  `ExtraUsage.limit` is now optional: the spend renders on every surface, the
+  tooltip says `Limit: none reported` (stating the wire fact rather than
+  inferring a plan tier), the TUI shows the amount without a denominator, and
+  `{extra_limit}` expands to `—` (deliberately non-empty: GNOME and the macOS
+  menu bar hide the whole extra row on an empty limit).
+  The block is still dropped when `used_credits` itself is missing — without
+  the spend there is nothing truthful to show — and no percentage is invented
+  when there is no denominator.
+
+- **Extra usage renders in its own currency.** The block's `currency` and
+  `decimal_places` fields were ignored and every amount was formatted as `$`
+  with a hard-coded cent scale — the #30 reporter's R$ 141.57 would have shown
+  as "$141.57", a claim about the wrong currency. Known codes get their symbol
+  (`R$`, `€`, `£`, `¥`), unknown ones render as `AMOUNT CODE`, and an explicit
+  exponent is honored exactly, including zero- and three-decimal currencies.
+  If a currency is present but its exponent is absent, the raw value renders as
+  `N minor units CODE` rather than guessing and silently corrupting the amount;
+  payloads with neither field keep the historical `$`/cents behaviour. Both
+  new fields are gated at the parse boundary: `decimal_places` outside 0..=6 is
+  schema drift (integral floats are tolerated, since this endpoint floats its
+  numbers), and `currency` must be a three-letter ISO alpha code — the value is
+  embedded in Pango markup and the desktop `;;` protocol, so an arbitrary
+  string would be an injection vector besides being drift.
 
 ## [0.14.0] — 2026-07-20
 
@@ -810,7 +843,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/akitaonrails/ai-usagebar/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/akitaonrails/ai-usagebar/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/akitaonrails/ai-usagebar/releases/tag/v0.12.0

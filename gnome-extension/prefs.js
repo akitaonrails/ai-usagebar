@@ -12,7 +12,10 @@ import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Ex
 const VENDOR_AUTH = [
     {id: 'anthropic', name: 'Anthropic (Claude)', kind: 'oauth', cli: 'claude', login: 'claude', pkg: '@anthropic-ai/claude-code'},
     {id: 'openai', name: 'OpenAI (Codex)', kind: 'oauth', cli: 'codex', login: 'codex login', pkg: '@openai/codex'},
-    {id: 'antigravity', name: 'Google Antigravity', kind: 'oauth', cli: 'agy', login: 'agy'},
+    // Local-server vendor: there is no separate credential or npm-installable
+    // login helper. If `agy` exists we can open it; the app and IDE are equally
+    // valid sources and are managed outside this extension.
+    {id: 'antigravity', name: 'Google Antigravity', kind: 'local', cli: 'agy'},
     {id: 'zai', name: 'Z.AI (GLM)', kind: 'apikey', env: 'ZAI_API_KEY'},
     {id: 'openrouter', name: 'OpenRouter', kind: 'apikey', env: 'OPENROUTER_API_KEY'},
     {id: 'deepseek', name: 'DeepSeek', kind: 'apikey', env: 'DEEPSEEK_API_KEY'},
@@ -337,6 +340,23 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
             row.add_suffix(btn);
 
             const update = () => {
+                if (v.kind === 'local') {
+                    const productDetected = vendorConfigured(v);
+                    row.subtitle = _('verificando…');
+                    checkCliInstalled(v.cli, (installed) => {
+                        if (productDetected) {
+                            row.subtitle = _('✓ Antigravity detectado — mantenha o app, IDE ou agy aberto');
+                        } else if (installed) {
+                            row.subtitle = _('agy instalado — abra uma sessão para disponibilizar a quota');
+                        } else {
+                            row.subtitle = _('abra ou instale o app, a IDE ou o agy; não há login separado');
+                        }
+                        btn.label = installed ? _('Abrir agy') : _('Sem login separado');
+                        btn.sensitive = installed;
+                    });
+                    return;
+                }
+                btn.sensitive = true;
                 if (v.kind !== 'oauth') {
                     const ok = vendorConfigured(v);
                     row.subtitle = ok ? _('✓ Configurado') : `⚠ ${_('Sem API key')} — ${v.env}`;
@@ -362,6 +382,8 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
             btn.connect('clicked', () => {
                 if (v.kind === 'oauth') {
                     spawnInTerminal(oauthCommand(v));
+                } else if (v.kind === 'local') {
+                    spawnArgvInTerminal([v.cli]);
                 } else {
                     const tui = GLib.find_program_in_path('ai-usagebar-tui') ||
                         `${GLib.get_home_dir()}/.cargo/bin/ai-usagebar-tui`;

@@ -68,7 +68,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 | Refresh interval | 30 s | 5–3600 |
 | Vendor | `anthropic` | selectors: Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Antigravity (not Kimi). Anthropic, OpenAI, Z.AI and Antigravity expose generic session/weekly windows. |
 | Panel pools | `both` | two-pool vendors only: `both`, first pool, second pool, or `auto` |
-| Auto threshold | 95 % | `auto` switches pools once the shown one passes this usage |
+| Auto threshold | 95 % | `auto` switches pools once the shown one reaches this usage |
 | Binary path | auto | empty = `PATH` then `~/.cargo/bin` |
 | Panel area | `right` | `right` = next to network/clock; also `center`/`left` |
 | Panel index | 0 | order within the area (0 = leftmost) |
@@ -137,6 +137,8 @@ used, so they are never merged into one row.
 
 `Panel pools` selects which pools the panel draws: `both` (default, four
 segments), either pool alone, or `auto`, which shows the preferred pool and
-falls back to the other once **either** of its windows passes `Auto threshold`.
+falls back to the other once **either** of its windows reaches `Auto threshold`.
+An unavailable pool is omitted; selecting it explicitly falls back to the pool
+that has data instead of leaving the panel blank.
 It composes with the 5h/weekly toggles — turning the weekly bar off leaves two
 segments, one per pool, at the same width as a single-pool vendor.

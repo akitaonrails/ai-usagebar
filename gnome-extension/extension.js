@@ -18,7 +18,8 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {barMarkup, colorForPct, disambiguateTags, field, FIELD, FORMAT, hasUsageWindows, integer,
-    isGrouped, markerElapsed, pickPool, plainTextFromPango, splitFormatOutput} from './marker-logic.js';
+    isGrouped, markerElapsed, plainTextFromPango, selectPools,
+    splitFormatOutput} from './marker-logic.js';
 
 const ROLE = 'ai-usagebar';
 
@@ -347,14 +348,15 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                 if (scopedModel) {
                     const scopedPct = integer(f[FIELD.scopedPct]);
                     if (scopedPct != null && scopedPct >= 0 && scopedPct <= 100)
-                        return {pct: scopedPct, reset: field(f[FIELD.scopedReset]) || '—', label: scopedModel,
+                        return {pct: scopedPct, reset: field(f[FIELD.scopedReset]) || '—',
+                            model: scopedModel, label: scopedModel,
                             elapsed: markerElapsed(field(f[FIELD.scopedReset]), integer(f[FIELD.scopedElapsed]))};
                     // A scoped model with malformed data is unavailable; do
                     // not fall back to a potentially unrelated Sonnet window.
-                    return {pct: null, reset: '—', label: scopedModel, elapsed: null};
+                    return {pct: null, reset: '—', model: scopedModel, label: scopedModel, elapsed: null};
                 }
                 return {pct: integer(f[FIELD.sonnetPct]), reset: field(f[FIELD.sonnetReset]),
-                    label: 'Sonnet only', elapsed: null};
+                    model: '', label: 'Sonnet only', elapsed: null};
             })(),
             // A named extra window (model + reset) renders as a percentage bar;
             // without a name the slot stays a spent/limit money budget.
@@ -400,7 +402,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             // Two independent pools. panel-pools picks the pools, show-session /
             // show-weekly still pick the windows, so segments are pools ×
             // windows and "just the 5h of both" needs no mode of its own.
-            for (const pool of this._selectedPools(d)) {
+            for (const pool of this._selectedPools(d, showSession, showWeekly)) {
                 if (showSession && pool.session.pct != null) {
                     parts.push(seg(`${pool.tag} 5h`, pool.session.pct,
                         `${pool.session.pct}%`, pool.session.elapsed));
@@ -427,25 +429,23 @@ class AiUsageBarIndicator extends PanelMenu.Button {
     // The pools the panel should draw, tagged and in display order. Primary is
     // the generic session/weekly pair; secondary reuses the scoped and extra
     // slots, which for a grouped vendor hold the second pool's two windows.
-    _selectedPools(d) {
-        const [primaryTag, secondaryTag] = disambiguateTags(d.session.model, d.extra.model);
+    _selectedPools(d, showSession, showWeekly) {
+        // Either secondary window may be absent. Derive its tag from whichever
+        // model-bearing slot exists instead of assuming the weekly one does.
+        const secondaryModel = d.sonnet.model || d.extra.model;
+        const [primaryTag, secondaryTag] = disambiguateTags(d.session.model, secondaryModel);
         const primary = {tag: primaryTag, session: d.session, weekly: d.weekly};
         const secondary = {tag: secondaryTag, session: d.sonnet, weekly: d.extra};
-
-        switch (this._settings.get_string('panel-pools')) {
-        case 'primary':
-            return [primary];
-        case 'secondary':
-            return [secondary];
-        case 'auto': {
-            const pct = p => ({session: p.session.pct ?? 0, weekly: p.weekly.pct ?? 0});
-            const threshold = this._settings.get_int('panel-auto-threshold');
-            return pickPool(pct(primary), pct(secondary), threshold) === 'secondary'
-                ? [secondary] : [primary];
-        }
-        default:
-            return [primary, secondary];
-        }
+        const pct = pool => ({
+            session: pool.session.pct,
+            weekly: pool.weekly.pct,
+        });
+        const pools = {primary, secondary};
+        return selectPools(pct(primary), pct(secondary),
+            this._settings.get_string('panel-pools'),
+            this._settings.get_int('panel-auto-threshold'),
+            {session: showSession, weekly: showWeekly})
+            .map(name => pools[name]);
     }
 
     _renderDropdown(d, colors) {

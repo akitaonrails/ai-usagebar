@@ -68,28 +68,37 @@ export function hasUsageWindows(vendorShort) {
     return field(vendorShort) !== 'dsk';
 }
 
-// Short panel tag for a quota pool: the model group's initial. The panel is
-// width-constrained, so the full name only lives in the dropdown.
+function poolChars(model) {
+    return Array.from(field(model)).filter(ch => /[\p{L}\p{N}]/u.test(ch));
+}
+
+// Short panel tag for a quota pool: the model group's initial. Work in Unicode
+// code points rather than UTF-16 code units so a non-BMP letter is never split
+// into an invalid surrogate. The panel is width-constrained, so the full name
+// only lives in the dropdown.
 export function poolTag(model) {
-    const name = field(model).replace(/[^\p{L}\p{N}]/gu, '');
-    return name ? name[0].toUpperCase() : '';
+    const chars = poolChars(model);
+    return chars.length ? chars[0].toUpperCase() : '';
 }
 
 // Two pools whose names share an initial would produce identical tags, so widen
 // both until they differ. The names come from the binary and can change, which
 // is exactly when a silent collision would be hardest to notice.
 export function disambiguateTags(a, b) {
-    const clean = m => field(m).replace(/[^\p{L}\p{N}]/gu, '');
-    const [ca, cb] = [clean(a), clean(b)];
-    if (!ca || !cb)
+    const [ca, cb] = [poolChars(a), poolChars(b)];
+    if (!ca.length || !cb.length)
         return [poolTag(a), poolTag(b)];
     for (let n = 1; n <= Math.max(ca.length, cb.length); n++) {
-        const [ta, tb] = [ca.slice(0, n), cb.slice(0, n)];
-        if (ta.toUpperCase() !== tb.toUpperCase())
-            return [ta.toUpperCase(), tb.toUpperCase()];
+        const [ta, tb] = [ca.slice(0, n).join('').toUpperCase(), cb.slice(0, n).join('').toUpperCase()];
+        if (ta !== tb)
+            return [ta, tb];
     }
     // Identical names: nothing distinguishes them, so keep the plain initials.
     return [poolTag(a), poolTag(b)];
+}
+
+export function poolAvailable(pool) {
+    return Number.isFinite(pool?.session) || Number.isFinite(pool?.weekly);
 }
 
 // Which pool the panel shows in "auto" mode. A pool counts as spent when *any*
@@ -97,8 +106,43 @@ export function disambiguateTags(a, b) {
 // the user on a pool whose weekly is the one that ran out. Only switch if the
 // other pool still has room; with both spent, stay put rather than flapping.
 export function pickPool(primary, secondary, threshold) {
-    const spent = w => Math.max(w?.session ?? 0, w?.weekly ?? 0) >= threshold;
+    // An unavailable secondary is not a pristine 0%-used pool. Treating it as
+    // one would switch the panel to an empty label exactly when the primary
+    // reaches the warning threshold.
+    if (!poolAvailable(primary))
+        return poolAvailable(secondary) ? 'secondary' : 'primary';
+    if (!poolAvailable(secondary))
+        return 'primary';
+    const spent = w => Math.max(
+        Number.isFinite(w.session) ? w.session : 0,
+        Number.isFinite(w.weekly) ? w.weekly : 0) >= threshold;
     return spent(primary) && !spent(secondary) ? 'secondary' : 'primary';
+}
+
+// Resolve every panel-pools mode while filtering unavailable pools. Keeping
+// this policy pure makes the partial-payload cases testable outside GNOME.
+export function selectPools(primary, secondary, mode, threshold,
+    windows = {session: true, weekly: true}) {
+    const visible = pool => ({
+        session: windows.session ? pool?.session : null,
+        weekly: windows.weekly ? pool?.weekly : null,
+    });
+    const available = {
+        primary: poolAvailable(visible(primary)),
+        secondary: poolAvailable(visible(secondary)),
+    };
+    if (mode === 'primary')
+        return available.primary ? ['primary'] : (available.secondary ? ['secondary'] : []);
+    if (mode === 'secondary')
+        return available.secondary ? ['secondary'] : (available.primary ? ['primary'] : []);
+    if (mode === 'auto') {
+        const selected = pickPool(primary, secondary, threshold);
+        if (available[selected])
+            return [selected];
+        const fallback = selected === 'primary' ? 'secondary' : 'primary';
+        return available[fallback] ? [fallback] : [];
+    }
+    return ['primary', 'secondary'].filter(name => available[name]);
 }
 
 // Matches pacing::pace_severity: < -10 low, -10..=0 mid, 1..=9 high, >= 10 critical.

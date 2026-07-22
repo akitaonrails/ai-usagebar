@@ -100,7 +100,7 @@
       </choices>
       <default>'both'</default>
       <summary>Which quota pools the panel shows (vendors with two independent pools only)</summary>
-      <description>Combines with show-session/show-weekly: the panel draws one segment per selected pool per selected window. 'auto' shows the primary pool and falls back to the secondary once the primary is spent.</description>
+      <description>Combines with show-session/show-weekly: the panel draws one segment per selected pool per selected window. 'auto' shows the primary pool and falls back to an available secondary once the primary reaches the threshold.</description>
     </key>
 
     <key name="panel-auto-threshold" type="i">
