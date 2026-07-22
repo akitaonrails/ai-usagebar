@@ -91,5 +91,23 @@
       <summary>Color of the empty part of the bar</summary>
     </key>
 
+    <key name="panel-pools" type="s">
+      <choices>
+        <choice value="both"/>
+        <choice value="primary"/>
+        <choice value="secondary"/>
+        <choice value="auto"/>
+      </choices>
+      <default>'both'</default>
+      <summary>Which quota pools the panel shows (vendors with two independent pools only)</summary>
+      <description>Combines with show-session/show-weekly: the panel draws one segment per selected pool per selected window. 'auto' shows the primary pool and falls back to an available secondary once the primary reaches the threshold.</description>
+    </key>
+
+    <key name="panel-auto-threshold" type="i">
+      <default>95</default>
+      <range min="50" max="100"/>
+      <summary>Usage percentage at which the 'auto' pool mode switches to the other pool</summary>
+    </key>
+
   </schema>
 </schemalist>

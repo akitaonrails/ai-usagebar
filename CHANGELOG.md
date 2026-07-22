@@ -29,6 +29,20 @@ Each release is also published at
   passed is refused rather than served as current. When a fetch fails with
   nothing usable cached, the original actionable error is preserved.
 
+- **Two-pool support in the GNOME extension.** The dropdown groups Antigravity's
+  four windows under `Session` and `Weekly` headings, one bar per pool. The new
+  `Panel pools` preference draws both pools (default), either alone, or `auto`,
+  which falls back to an available other pool once the shown one reaches
+  `Auto threshold`.
+  Pace markers are rendered for all four windows. The grouped layout is opted
+  into by the data — a vendor naming its primary rows — so single-pool vendors
+  are unaffected, and a binary predating the new placeholders keeps the flat
+  four-row layout.
+
+### Changed
+
+- The GNOME extension supports GNOME Shell 45–50 (was 45–48).
+
 ### Fixed
 
 - Bordered tooltips no longer ragged-edge on rows containing an escaped
