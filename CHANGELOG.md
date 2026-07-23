@@ -9,15 +9,28 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Ring pace arc.** The overshoot arc previously restarted at 12 o'clock and
+  overpainted the start of the calm fill; it now spans from the elapsed marker
+  to the current percentage.
+- **Bare TOML `enabled` flag.** `configValueTOML` only accepted quoted values,
+  so `enabled = false` (a bare boolean) was ignored and opt-in vendors appeared
+  enabled by default. Bare booleans are now parsed, inline comments are stripped,
+  and omitted `[vendor].enabled` reproduces the Rust defaults (`src/config.rs`).
+
 ### Added
 
-- **Full vendor parity in the macOS menu bar app.** The Preferences vendor list
-  and picker, and the active-vendor selector, previously exposed only five
-  vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek); the binary supports
-  twelve. Added Kimi, Kilo, Novita, Moonshot, Grok (xAI), Anthropic (API), and
-  Google Antigravity. Antigravity is a local-server vendor with no credential:
-  its status detects the `~/.gemini/{antigravity,antigravity-cli,antigravity-ide}`
-  product directories and offers to open `agy` when the CLI is installed.
+- **Eleven-vendor parity in the macOS menu bar app.** The selector previously
+  exposed only five vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek).
+  Added Kimi, Kilo, Novita, Moonshot, Grok (xAI), and Anthropic (API). The
+  balance-only vendors (OpenRouter, DeepSeek, Kilo, Novita, Moonshot, Grok,
+  Anthropic API) now render their real balance/credits via per-vendor format
+  fields (`{or_balance}`, `{ds_balance}`, `{kilo_balance}`, `{nv_balance}`,
+  `{km_balance}`, `{grok_balance}`, `{aapi_headline}`) instead of fake 0%
+  session/weekly rows. Anthropic (API) shows a spend-vs-limit bar when a monthly
+  limit is configured. Google Antigravity remains unsupported on macOS: the
+  binary only discovers its local server on Linux.
 
 - **Quick vendor switch submenu in the macOS dropdown.** A "Trocar vendor"
   submenu between "Abrir TUI" and "Preferências…" lists only configured

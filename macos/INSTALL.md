@@ -47,7 +47,9 @@ claude        # authenticates; creds land in the login Keychain
 ```
 
 It appears in the menu bar next to the clock (no Dock icon). Click it for the
-per-window dropdown (Session / Weekly / Sonnet / Extra).
+dropdown: usage rows (Session / Weekly / Sonnet / Extra for rate-limit vendors,
+or a credit balance for balance-only vendors), a **"Trocar vendor"** submenu to
+switch vendors quickly, and Preferences.
 
 ### 6. Start automatically at login
 

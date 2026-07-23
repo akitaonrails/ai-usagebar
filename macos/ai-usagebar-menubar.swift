@@ -81,7 +81,9 @@ let POINT_CRITICAL_MIN = 10
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
              "{scoped_model};;{scoped_pct};;{scoped_reset};;" +
-             "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short};;{or_balance}"
+             "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short};;{or_balance};;" +
+             "{ds_balance};;{kilo_balance};;{nv_balance};;{km_balance};;{grok_balance};;" +
+             "{aapi_headline};;{aapi_pct};;{aapi_spent};;{aapi_limit}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -201,14 +203,15 @@ func ringImage(pct: Int, size: CGFloat, elapsed: Int?, appearance: NSAppearance)
 
     // Filled arc. With the meta on, the part behind the pace marker keeps the
     // calm absolute color and the overshoot turns warning; otherwise a single
-    // severity-colored sweep.
-    let drawArc = { (fraction: CGFloat, color: NSColor) in
-        guard fraction > 0 else { return }
+    // severity-colored sweep. The helper draws [from, to] so the overshoot can
+    // continue from the elapsed marker to pct instead of restarting at 12h.
+    let drawArc = { (fromFraction: CGFloat, toFraction: CGFloat, color: NSColor) in
+        guard toFraction > fromFraction else { return }
         let arc = NSBezierPath()
         arc.appendArc(withCenter: CGPoint(x: size / 2, y: size / 2),
                       radius: rect.width / 2,
-                      startAngle: start * 180 / .pi,
-                      endAngle: (start - 2 * .pi * fraction) * 180 / .pi,
+                      startAngle: (start - 2 * .pi * fromFraction) * 180 / .pi,
+                      endAngle: (start - 2 * .pi * toFraction) * 180 / .pi,
                       clockwise: true)
         arc.lineWidth = lw
         color.setStroke()
@@ -220,8 +223,9 @@ func ringImage(pct: Int, size: CGFloat, elapsed: Int?, appearance: NSAppearance)
         let base = colorForPct(pInt)
         let over = colorForDelta(pInt - e)
         let eFrac = CGFloat(e) / 100.0
-        drawArc(min(p, eFrac), base)
-        if p > eFrac { drawArc(p - eFrac, over) }
+        let boundary = min(p, eFrac)
+        drawArc(0, boundary, base)
+        if p > eFrac { drawArc(boundary, p, over) }
         // Pace tick at the elapsed position.
         let tickAngle = start - 2 * .pi * eFrac
         let c = CGPoint(x: size / 2, y: size / 2)
@@ -235,7 +239,7 @@ func ringImage(pct: Int, size: CGFloat, elapsed: Int?, appearance: NSAppearance)
         hexColor(COLOR_MARKER).setStroke()
         tick.stroke()
     } else {
-        drawArc(p, colorForPct(pInt))
+        drawArc(0, p, colorForPct(pInt))
     }
     img.unlockFocus()
     img.isTemplate = false
@@ -341,7 +345,7 @@ func stripMarkup(_ s: String) -> String {
         .replacingOccurrences(of: "&amp;", with: "&")
 }
 
-func parse(_ text: String) -> Snapshot? {
+func parse(_ text: String, vendor: String = VENDOR) -> Snapshot? {
     let f = stripMarkup(text).components(separatedBy: ";;")
     guard f.count >= 10 else { return nil }
     func unknownPlaceholder(_ s: String) -> Bool {
@@ -381,16 +385,47 @@ func parse(_ text: String) -> Snapshot? {
     let limit = t(9)
     let extra: (pct: Int, spent: String, limit: String)? =
         (spent.isEmpty || limit.isEmpty) ? nil : n(7).map { (pct: $0, spent: spent, limit: limit) }
-    let vendorShort = t(16)
-    let creditBalance = vendorShort == "opr" ? t(17) : ""
+    // Dispatch the balance by the SELECTED vendor, not by vendor_short: Kimi and
+    // Moonshot both report vendor_short = "kmi" in the Rust binary, so keying on
+    // vendor_short would collide and read the wrong field.
+    let balanceFieldIndex: Int?
+    switch vendor {
+    case "openrouter": balanceFieldIndex = 17
+    case "deepseek": balanceFieldIndex = 18
+    case "kilo": balanceFieldIndex = 19
+    case "novita": balanceFieldIndex = 20
+    case "moonshot": balanceFieldIndex = 21
+    case "grok": balanceFieldIndex = 22
+    case "anthropic_api": balanceFieldIndex = 23
+    default: balanceFieldIndex = nil
+    }
+    let balance = balanceFieldIndex.flatMap { t($0).isEmpty ? nil : t($0) }
+    // Vendors with no rate-limit windows show only a balance; suppress the fake
+    // 5h/7d 0% rows their session_pct/weekly_pct aliases would otherwise paint.
+    let balanceOnly = balanceFieldIndex != nil
+    // Anthropic API exposes spend-vs-limit instead of a balance, and reports the
+    // spend % through the session/weekly aliases. When a limit is configured it
+    // becomes an extra ($) bar; otherwise it is balance-only headline display.
+    // FORMAT tail: aapi_headline(23) aapi_pct(24) aapi_spent(25) aapi_limit(26).
+    let aapiLimit = t(26)
+    let aapiExtra: (pct: Int, spent: String, limit: String)?
+    if vendor == "anthropic_api", !aapiLimit.isEmpty, aapiLimit != "—",
+       let aapiPct = n(24), (0...100).contains(aapiPct), !t(25).isEmpty {
+        aapiExtra = (pct: aapiPct, spent: t(25), limit: aapiLimit)
+    } else {
+        aapiExtra = nil
+    }
+    // With a limit configured the spend-vs-limit bar replaces the headline, so
+    // avoid showing both the "cr" balance and the extra ($) row at once.
+    let displayBalance = aapiExtra == nil ? balance : nil
     return Snapshot(plan: t(0),
-                    hasUsageWindows: vendorShort != "dsk" && vendorShort != "opr",
-                    creditBalance: creditBalance.isEmpty ? nil : creditBalance,
+                    hasUsageWindows: !balanceOnly,
+                    creditBalance: displayBalance,
                     session: Window(pct: n(1) ?? 0, reset: t(2), elapsed: markerElapsed(reset: t(2), elapsed: n(13))),
                     weekly: Window(pct: n(3) ?? 0, reset: t(4), elapsed: markerElapsed(reset: t(4), elapsed: n(14))),
                     sonnet: sonnet,
                     sonnetLabel: sonnetLabel,
-                    extra: extra)
+                    extra: aapiExtra ?? extra)
 }
 
 // ─── Preferences UI (SwiftUI) ────────────────────────────────────────────
@@ -424,10 +459,6 @@ struct VendorAuth {
 let VENDOR_AUTH: [VendorAuth] = [
     VendorAuth(id: "anthropic", name: "Anthropic (Claude)", kind: "oauth", cli: "claude", login: "claude", pkg: "@anthropic-ai/claude-code", env: ""),
     VendorAuth(id: "openai", name: "OpenAI (Codex)", kind: "oauth", cli: "codex", login: "codex login", pkg: "@openai/codex", env: ""),
-    // Local-server vendor: there is no separate credential or npm-installable
-    // login helper. If `agy` exists we can open it; the app and IDE are equally
-    // valid sources and are managed outside this menu bar app.
-    VendorAuth(id: "antigravity", name: "Google Antigravity", kind: "local", cli: "agy", login: "", pkg: "", env: ""),
     VendorAuth(id: "zai", name: "Z.AI (GLM)", kind: "apikey", cli: "", login: "", pkg: "", env: "ZAI_API_KEY"),
     VendorAuth(id: "openrouter", name: "OpenRouter", kind: "apikey", cli: "", login: "", pkg: "", env: "OPENROUTER_API_KEY"),
     VendorAuth(id: "deepseek", name: "DeepSeek", kind: "apikey", cli: "", login: "", pkg: "", env: "DEEPSEEK_API_KEY"),
@@ -477,11 +508,21 @@ func configValueTOML(_ section: String, _ key: String) -> String? {
         guard inSection, !line.hasPrefix("#") else { continue }
         let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
         guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == key else { continue }
-        let value = parts[1].trimmingCharacters(in: .whitespaces)
-        guard let quote = value.first, quote == "\"" || quote == "'" else { continue }
-        let content = value.dropFirst()
-        guard let end = content.firstIndex(of: quote) else { continue }
-        return String(content[..<end])
+        // Strip an inline comment before evaluating the value: `enabled = false  # opt-in`
+        // is a bare boolean, not a string starting with '#'.
+        var value = parts[1].trimmingCharacters(in: .whitespaces)
+        if let hash = value.firstIndex(of: "#") {
+            value = String(value[..<hash]).trimmingCharacters(in: .whitespaces)
+        }
+        if let quote = value.first, quote == "\"" || quote == "'" {
+            let content = value.dropFirst()
+            guard let end = content.firstIndex(of: quote) else { continue }
+            return String(content[..<end])
+        }
+        // Bare tokens (booleans, numbers) reach here. Only `true`/`false` are
+        // meaningful for the keys this reader serves; everything else is left
+        // for the caller to ignore.
+        return value
     }
     return nil
 }
@@ -490,8 +531,20 @@ func apiKeyEnvironment(_ v: VendorAuth) -> String {
     configValueTOML(v.id, "api_key_env") ?? v.env
 }
 
+/// Rust defaults (`src/config.rs`): the OAuth/api-key vendors that ship enabled,
+/// versus the opt-in balance vendors that default to disabled. An omitted
+/// `[vendor].enabled` must reproduce these, not silently enable everything.
+func defaultEnabled(_ id: String) -> Bool {
+    switch id {
+    case "anthropic", "openai", "zai", "openrouter": return true
+    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api": return false
+    default: return true
+    }
+}
+
 func vendorEnabled(_ v: VendorAuth) -> Bool {
-    configEnabledTOML(v.id) != false
+    if let explicit = configEnabledTOML(v.id) { return explicit }
+    return defaultEnabled(v.id)
 }
 
 func keychainHasClaude() -> Bool {
@@ -512,16 +565,6 @@ func vendorConfigured(_ v: VendorAuth) -> Bool {
     }
     if v.id == "openai" {
         return fm.fileExists(atPath: "\(home)/.codex/auth.json")
-    }
-    // Antigravity 2.0, the `agy` CLI and the IDE are separate products sharing
-    // one quota, and any combination may be installed. Having any of their
-    // state directories is enough — the binary reads usage from whichever
-    // local server is running, so there is no credential file to look for.
-    if v.id == "antigravity" {
-        return ["antigravity", "antigravity-cli", "antigravity-ide"].contains {
-            var isDir: ObjCBool = false
-            return fm.fileExists(atPath: "\(home)/.gemini/\($0)", isDirectory: &isDir) && isDir.boolValue
-        }
     }
     if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
     return configHasApiKeyTOML(v.id)
@@ -599,7 +642,7 @@ struct VendorsSection: View {
                             Text(statusText(v)).font(.caption).foregroundColor(.secondary)
                         }
                         Spacer()
-                        Button(buttonLabel(v)) { action(v) }.disabled(buttonDisabled(v))
+                        Button(buttonLabel(v)) { action(v) }
                     }
                 }
                 if checking {
@@ -618,10 +661,9 @@ struct VendorsSection: View {
             var cli: [String: Bool] = [:]
             for v in VENDOR_AUTH {
                 conf[v.id] = vendorConfigured(v)
-                // OAuth vendors need their CLI to log in; the local Antigravity
-                // vendor needs `agy` to open a session (and otherwise has no
-                // actionable button). apikey vendors are configured via the TUI.
-                if v.kind == "oauth" || v.kind == "local" { cli[v.id] = cliInstalled(v.cli) }
+                // OAuth vendors need their CLI to log in; apikey vendors are
+                // configured via the TUI.
+                if v.kind == "oauth" { cli[v.id] = cliInstalled(v.cli) }
             }
             DispatchQueue.main.async {
                 self.configured = conf
@@ -632,11 +674,6 @@ struct VendorsSection: View {
     }
 
     private func statusText(_ v: VendorAuth) -> String {
-        if v.kind == "local" {
-            if configured[v.id] == true { return "✓ Antigravity detectado — mantenha o app, IDE ou agy aberto" }
-            if cliPresent[v.id] == true { return "agy instalado — abra uma sessão para disponibilizar a quota" }
-            return "abra ou instale o app, a IDE ou o agy; não há login separado"
-        }
         if configured[v.id] == true { return "✓ Configurado" }
         if v.kind == "oauth" {
             if cliPresent[v.id] == false { return "⚠ \(v.cli) não instalado" }
@@ -646,7 +683,6 @@ struct VendorsSection: View {
     }
 
     private func buttonLabel(_ v: VendorAuth) -> String {
-        if v.kind == "local" { return cliPresent[v.id] == true ? "Abrir agy" : "Sem login separado" }
         if v.kind == "oauth" {
             if configured[v.id] == true { return "Re-logar" }
             if cliPresent[v.id] == false { return "Instalar + logar" }
@@ -655,15 +691,8 @@ struct VendorsSection: View {
         return "Configurar (TUI)"
     }
 
-    private func buttonDisabled(_ v: VendorAuth) -> Bool {
-        // The local vendor only has an action when `agy` is installed; every
-        // other kind always offers either a login or the TUI config.
-        v.kind == "local" && cliPresent[v.id] != true
-    }
-
     private func action(_ v: VendorAuth) {
         if v.kind == "oauth" { runInTerminal(oauthScript(v)) }
-        else if v.kind == "local" { runInTerminal("\(v.cli)") }
         else { openTuiInTerminal() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { refresh() }
     }
@@ -687,11 +716,12 @@ struct SettingsView: View {
     @AppStorage("colorEmpty") private var colorEmpty = "#3e4451"
     @AppStorage("binaryPath") private var binaryPath = ""
 
-    private let vendors = [
-        "anthropic", "openai", "antigravity",
-        "zai", "openrouter", "deepseek",
-        "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api",
-    ]
+    // Only enabled vendors appear in the selector: Rust treats opt-in vendors
+    // (deepseek/kimi/kilo/novita/moonshot/grok/anthropic_api) as disabled when
+    // their `[vendor].enabled` is omitted, and so must this picker.
+    private var vendors: [String] {
+        VENDOR_AUTH.filter { vendorEnabled($0) }.map { $0.id }
+    }
 
     var body: some View {
         // A ScrollView (not a Form) so the pane reliably scrolls on every macOS
@@ -966,7 +996,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setError("saída inválida")
             return
         }
-        guard let snap = parse(text) else {
+        guard let snap = parse(text, vendor: VENDOR) else {
             lastSnapshot = nil
             let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
             statusItem.button?.attributedTitle = run(stripMarkup(text), menuBarTextColor(appearance))  // Loading… / ⚠
