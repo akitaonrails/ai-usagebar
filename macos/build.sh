@@ -10,7 +10,7 @@ command -v swiftc >/dev/null || {
 }
 
 echo "› Building (swiftc -O)…"
-swiftc -O "$DIR/ai-usagebar-menubar.swift" -o "$DIR/ai-usagebar-menubar"
+swiftc -O -parse-as-library "$DIR/ai-usagebar-menubar.swift" -o "$DIR/ai-usagebar-menubar"
 echo "✓ Built: $DIR/ai-usagebar-menubar"
 echo
 echo "Rodar agora:        $DIR/ai-usagebar-menubar &"

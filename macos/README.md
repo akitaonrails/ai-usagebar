@@ -45,6 +45,7 @@ quota source.
 ```bash
 cd macos
 ./build.sh                 # swiftc -O → ./ai-usagebar-menubar
+./run-tests.sh             # optional: pure-logic test harness
 ./ai-usagebar-menubar &    # appears in the menu bar (no Dock icon)
 ```
 

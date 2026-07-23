@@ -7,7 +7,7 @@
 //
 // Settings persist in UserDefaults (edit them in Preferences, no rebuild).
 //
-// Build:  swiftc -O ai-usagebar-menubar.swift -o ai-usagebar-menubar
+// Build:  swiftc -O -parse-as-library ai-usagebar-menubar.swift -o ai-usagebar-menubar
 //         (needs the Xcode command-line tools: `xcode-select --install`)
 // Run:    ./ai-usagebar-menubar &      (or ./install-agent.sh for login start)
 // macOS:  12+ (Monterey) for the Preferences window; menu bar works on 10.15+.
@@ -182,6 +182,16 @@ func barAttr(pct: Int, width: Int, elapsed: Int?) -> NSAttributedString {
 // far ahead of pace you are) shifts to the pace-warning color — the same idea
 // as the block bar, just radial. The image is rendered as an attachment so it
 // composes in an attributed string alongside the percentage text.
+/// Arc geometry for a ring segment, in degrees for `NSBezierPath.appendArc`.
+/// The ring starts at 12 o'clock (`startRad = -π/2`) and fills clockwise, so a
+/// segment [from, to] spans `[start - 2π·from, start - 2π·to]`. Pure and tested
+/// so the pace-arc regression (overshoot restarting at 12h) cannot return.
+func arcAngles(from fromFraction: CGFloat, to toFraction: CGFloat,
+               startRad: CGFloat = -.pi / 2) -> (startDeg: CGFloat, endDeg: CGFloat) {
+    ((startRad - 2 * .pi * fromFraction) * 180 / .pi,
+     (startRad - 2 * .pi * toFraction) * 180 / .pi)
+}
+
 func ringImage(pct: Int, size: CGFloat, elapsed: Int?, appearance: NSAppearance) -> NSImage {
     let p = CGFloat(max(0, min(100, pct))) / 100.0
     let img = NSImage(size: NSSize(width: size, height: size))
@@ -207,11 +217,12 @@ func ringImage(pct: Int, size: CGFloat, elapsed: Int?, appearance: NSAppearance)
     // continue from the elapsed marker to pct instead of restarting at 12h.
     let drawArc = { (fromFraction: CGFloat, toFraction: CGFloat, color: NSColor) in
         guard toFraction > fromFraction else { return }
+        let a = arcAngles(from: fromFraction, to: toFraction, startRad: start)
         let arc = NSBezierPath()
         arc.appendArc(withCenter: CGPoint(x: size / 2, y: size / 2),
                       radius: rect.width / 2,
-                      startAngle: (start - 2 * .pi * fromFraction) * 180 / .pi,
-                      endAngle: (start - 2 * .pi * toFraction) * 180 / .pi,
+                      startAngle: a.startDeg,
+                      endAngle: a.endDeg,
                       clockwise: true)
         arc.lineWidth = lw
         color.setStroke()
@@ -345,7 +356,7 @@ func stripMarkup(_ s: String) -> String {
         .replacingOccurrences(of: "&amp;", with: "&")
 }
 
-func parse(_ text: String, vendor: String = VENDOR) -> Snapshot? {
+func parse(_ text: String, vendor: String) -> Snapshot? {
     let f = stripMarkup(text).components(separatedBy: ";;")
     guard f.count >= 10 else { return nil }
     func unknownPlaceholder(_ s: String) -> Bool {
@@ -495,9 +506,10 @@ func configEnabledTOML(_ section: String) -> Bool? {
     }
 }
 
-func configValueTOML(_ section: String, _ key: String) -> String? {
-    let path = configPathTOML()
-    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+/// Read a single `key` under `[section]` from TOML text. Pure (no filesystem)
+/// so the enabled-flag and api_key_env parsing is testable. Handles quoted
+/// strings, bare booleans (`enabled = false`), inline comments, and `api_key_env`.
+func tomlValueInText(_ text: String, section: String, key: String) -> String? {
     var inSection = false
     for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
         let line = String(raw).trimmingCharacters(in: .whitespaces)
@@ -525,6 +537,12 @@ func configValueTOML(_ section: String, _ key: String) -> String? {
         return value
     }
     return nil
+}
+
+func configValueTOML(_ section: String, _ key: String) -> String? {
+    let path = configPathTOML()
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+    return tomlValueInText(text, section: section, key: key)
 }
 
 func apiKeyEnvironment(_ v: VendorAuth) -> String {
@@ -1109,9 +1127,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-DEF.register(defaults: SETTINGS_DEFAULTS)
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)   // menu-bar agent, no Dock icon
-app.run()
+#if !SWIFT_TEST_HARNESS
+@main
+struct AppMain {
+    static func main() {
+        DEF.register(defaults: SETTINGS_DEFAULTS)
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)   // menu-bar agent, no Dock icon
+        app.run()
+    }
+}
+#endif

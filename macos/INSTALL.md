@@ -37,7 +37,7 @@ claude        # authenticates; creds land in the login Keychain
 ### 4. Build the app
 
 ```bash
-./build.sh    # runs: swiftc -O ai-usagebar-menubar.swift -o ai-usagebar-menubar
+./build.sh    # runs: swiftc -O -parse-as-library ai-usagebar-menubar.swift -o ai-usagebar-menubar
 ```
 
 ### 5. Run it
