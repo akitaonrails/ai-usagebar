@@ -9,6 +9,60 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Full vendor parity in the macOS menu bar app.** The Preferences vendor list
+  and picker, and the active-vendor selector, previously exposed only five
+  vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek); the binary supports
+  twelve. Added Kimi, Kilo, Novita, Moonshot, Grok (xAI), Anthropic (API), and
+  Google Antigravity. Antigravity is a local-server vendor with no credential:
+  its status detects the `~/.gemini/{antigravity,antigravity-cli,antigravity-ide}`
+  product directories and offers to open `agy` when the CLI is installed.
+
+- **Quick vendor switch submenu in the macOS dropdown.** A "Trocar vendor"
+  submenu between "Abrir TUI" and "Preferências…" lists only configured
+  vendors, with a checkmark on the active one, so switching no longer requires
+  opening Preferences.
+
+- **Optional ring indicator layout in the macOS app.** A new "Estilo do
+  indicador" preference selects between the default block bars (`░█`) and a
+  Core Graphics ring. The ring paints the usage fraction as a severity-colored
+  arc over a faint track, and honors the pace marker the same way the block bar
+  does (calm fill up to a blue tick at the elapsed position, warning color on
+  the overshoot). Both the menu bar and the dropdown rows honor the choice. The
+  track adapts to the effective appearance — faint white on dark menu bars /
+  wallpapers (where the block bar's dark `COLOR_EMPTY` would be invisible),
+  `COLOR_EMPTY` on light ones.
+
+- **OpenRouter credit balance in the macOS menu bar.** OpenRouter is now
+  rendered as a credit balance (`cr <amount>`) in both the panel and dropdown
+  instead of showing synthetic session/weekly quota bars. Uses the new
+  `{or_balance}` format field added to the Rust binary.
+
+- **Dark and light appearance awareness.** Status text now resolves against
+  the effective status-bar appearance using the new `menuBarTextColor()`
+  helper, and the menu bar re-renders immediately when the system appearance
+  changes (e.g., switching wallpapers or dark/light mode) via KVO on
+  `effectiveAppearance`, without waiting for the usage refresh timer.
+
+- **Preferences window crash fix.** The SwiftUI preferences view is now hosted
+  through `contentViewController` instead of being installed directly as
+  `contentView`, avoiding an AppKit exclusivity crash during window
+  measurement on certain macOS versions.
+
+- **Vendor enabled/disabled configuration respect.** The macOS app now reads
+  the `[vendor].enabled` flag from `config.toml` for every vendor. Disabled
+  vendors are excluded from the vendor list, the "Trocar vendor" submenu, and
+  configuration detection.
+
+- **Generalized config.toml reader in the macOS app.** The config parser was
+  upgraded from a simple `api_key` presence check (`configHasApiKeyTOML`) to a
+  generic `configValueTOML()` that reads any key under any `[section]`. This
+  enables `apiKeyEnvironment()` to resolve the effective env var for every
+  vendor (respecting `api_key_env` in `config.toml`), and `configEnabledTOML()`
+  to read `[vendor].enabled` — so Preferences now reports the correct variable
+  name for each vendor instead of assuming a hardcoded one.
+
 ## [0.16.0] — 2026-07-22
 
 ### Added
