@@ -7,7 +7,7 @@
 //
 // Settings persist in UserDefaults (edit them in Preferences, no rebuild).
 //
-// Build:  swiftc -O ai-usagebar-menubar.swift -o ai-usagebar-menubar
+// Build:  swiftc -O -parse-as-library ai-usagebar-menubar.swift -o ai-usagebar-menubar
 //         (needs the Xcode command-line tools: `xcode-select --install`)
 // Run:    ./ai-usagebar-menubar &      (or ./install-agent.sh for login start)
 // macOS:  12+ (Monterey) for the Preferences window; menu bar works on 10.15+.
@@ -31,6 +31,7 @@ let SETTINGS_DEFAULTS: [String: Any] = [
     "showPercent": true,
     "showBars": true,
     "showMeta": true,
+    "barStyle": "block",
     "colorLow": "#98c379",
     "colorMid": "#e5c07b",
     "colorHigh": "#d19a66",
@@ -53,6 +54,9 @@ var SHOW_WEEKLY: Bool { DEF.bool(forKey: "showWeekly") }
 var SHOW_EXTRA: Bool { DEF.bool(forKey: "showExtra") }
 var SHOW_PERCENT: Bool { DEF.bool(forKey: "showPercent") }
 var SHOW_BARS: Bool { DEF.bool(forKey: "showBars") }
+// Layout of the progress indicator: "block" (default, text bars ░█) or "ring"
+// (a Core Graphics arc image). Both honor the meta marker the same way.
+var BAR_STYLE: String { DEF.string(forKey: "barStyle") ?? "block" }
 var COLOR_LOW: String { DEF.string(forKey: "colorLow") ?? "#98c379" }
 var COLOR_MID: String { DEF.string(forKey: "colorMid") ?? "#e5c07b" }
 var COLOR_HIGH: String { DEF.string(forKey: "colorHigh") ?? "#d19a66" }
@@ -71,12 +75,15 @@ let POINT_CRITICAL_MIN = 10
 // "Fable") from the API's `limits[]`; empty on older binaries → the row falls
 // back to the flat `{sonnet_*}` window and the "Sonnet only" label. The trailing
 // `*_elapsed` fields (13-15) carry the meta (pace) position; `vendor_short`
-// (16) lets balance-only vendors suppress meaningless quota rows. A final
-// literal sentinel absorbs the widget's stale suffix, preserving these fields.
+// (16) lets balance-only vendors suppress meaningless quota rows; the trailing
+// OpenRouter balance (17) is shown as credits. A final literal sentinel absorbs
+// the widget's stale suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
              "{scoped_model};;{scoped_pct};;{scoped_reset};;" +
-             "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short}"
+             "{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short};;{or_balance};;" +
+             "{ds_balance};;{kilo_balance};;{nv_balance};;{km_balance};;{grok_balance};;" +
+             "{aapi_headline};;{aapi_pct};;{aapi_spent};;{aapi_limit}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -104,6 +111,23 @@ func colorForDelta(_ delta: Int) -> NSColor {
     if delta > 0 { return hexColor(COLOR_HIGH) }
     if delta >= POINT_MID_MIN { return hexColor(COLOR_MID) }
     return hexColor(COLOR_LOW)
+}
+
+func menuBarTextColor(_ appearance: NSAppearance, secondary: Bool = false) -> NSColor {
+    let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    let color = isDark ? NSColor.white : NSColor.black
+    return secondary ? color.withAlphaComponent(0.72) : color
+}
+
+// The ring track needs to stay visible over both light and dark menu bars /
+// dropdowns. The user-configured COLOR_EMPTY is a dark charcoal meant for the
+// block bar's ░ glyphs on a light surface; on a dark wallpaper or dark menu bar
+// it vanishes. So the ring track uses a faint white in dark appearance (visible
+// against the dark background) and falls back to COLOR_EMPTY in light
+// appearance, keeping parity with the block bar there.
+func ringTrackColor(_ appearance: NSAppearance) -> NSColor {
+    let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    return isDark ? NSColor.white.withAlphaComponent(0.25) : hexColor(COLOR_EMPTY)
 }
 
 // A missing reset keeps its row visible but never has a meaningful pace marker.
@@ -152,6 +176,130 @@ func barAttr(pct: Int, width: Int, elapsed: Int?) -> NSAttributedString {
     return out
 }
 
+// Ring indicator (optional layout). A Core Graphics arc whose sweep is the
+// usage fraction, painted in the severity color, over a faint track. When the
+// meta is on, the elapsed position marks a blue tick and the arc beyond it (how
+// far ahead of pace you are) shifts to the pace-warning color — the same idea
+// as the block bar, just radial. The image is rendered as an attachment so it
+// composes in an attributed string alongside the percentage text.
+/// Arc geometry for a ring segment, in degrees for `NSBezierPath.appendArc`.
+/// The ring starts at 12 o'clock (`startRad = -π/2`) and fills clockwise, so a
+/// segment [from, to] spans `[start - 2π·from, start - 2π·to]`. Pure and tested
+/// so the pace-arc regression (overshoot restarting at 12h) cannot return.
+func arcAngles(from fromFraction: CGFloat, to toFraction: CGFloat,
+               startRad: CGFloat = -.pi / 2) -> (startDeg: CGFloat, endDeg: CGFloat) {
+    ((startRad - 2 * .pi * fromFraction) * 180 / .pi,
+     (startRad - 2 * .pi * toFraction) * 180 / .pi)
+}
+
+func ringImage(pct: Int, size: CGFloat, elapsed: Int?, appearance: NSAppearance) -> NSImage {
+    let p = CGFloat(max(0, min(100, pct))) / 100.0
+    let img = NSImage(size: NSSize(width: size, height: size))
+    img.lockFocus()
+
+    let box = NSRect(x: 0, y: 0, width: size, height: size)
+    let lw = max(1.6, size * 0.16)
+    let inset = lw / 2 + 0.5
+    let rect = box.insetBy(dx: inset, dy: inset)
+    let start: CGFloat = -.pi / 2
+
+    // Track (empty background ring).
+    let track = NSBezierPath()
+    track.appendArc(withCenter: CGPoint(x: size / 2, y: size / 2),
+                    radius: rect.width / 2, startAngle: 0, endAngle: 360)
+    track.lineWidth = lw
+    ringTrackColor(appearance).setStroke()
+    track.stroke()
+
+    // Filled arc. With the meta on, the part behind the pace marker keeps the
+    // calm absolute color and the overshoot turns warning; otherwise a single
+    // severity-colored sweep. The helper draws [from, to] so the overshoot can
+    // continue from the elapsed marker to pct instead of restarting at 12h.
+    let drawArc = { (fromFraction: CGFloat, toFraction: CGFloat, color: NSColor) in
+        guard toFraction > fromFraction else { return }
+        let a = arcAngles(from: fromFraction, to: toFraction, startRad: start)
+        let arc = NSBezierPath()
+        arc.appendArc(withCenter: CGPoint(x: size / 2, y: size / 2),
+                      radius: rect.width / 2,
+                      startAngle: a.startDeg,
+                      endAngle: a.endDeg,
+                      clockwise: true)
+        arc.lineWidth = lw
+        color.setStroke()
+        arc.stroke()
+    }
+    let pInt = max(0, min(100, pct))
+    if SHOW_META, let elapsedVal = elapsed {
+        let e = max(0, min(100, elapsedVal))
+        let base = colorForPct(pInt)
+        let over = colorForDelta(pInt - e)
+        let eFrac = CGFloat(e) / 100.0
+        let boundary = min(p, eFrac)
+        drawArc(0, boundary, base)
+        if p > eFrac { drawArc(boundary, p, over) }
+        // Pace tick at the elapsed position.
+        let tickAngle = start - 2 * .pi * eFrac
+        let c = CGPoint(x: size / 2, y: size / 2)
+        let r = rect.width / 2
+        let tick = NSBezierPath()
+        tick.move(to: CGPoint(x: c.x + (r - lw) * cos(tickAngle),
+                              y: c.y + (r - lw) * sin(tickAngle)))
+        tick.line(to: CGPoint(x: c.x + (r + lw) * cos(tickAngle),
+                              y: c.y + (r + lw) * sin(tickAngle)))
+        tick.lineWidth = max(1, lw * 0.5)
+        hexColor(COLOR_MARKER).setStroke()
+        tick.stroke()
+    } else {
+        drawArc(0, p, colorForPct(pInt))
+    }
+    img.unlockFocus()
+    img.isTemplate = false
+    return img
+}
+
+final class ColoredAttachmentCell: NSTextAttachmentCell {
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
+        guard let image else { return }
+        image.draw(in: cellFrame,
+                   from: .zero,
+                   operation: .sourceOver,
+                   fraction: 1.0,
+                   respectFlipped: true,
+                   hints: nil)
+    }
+}
+
+func ringAttr(pct: Int, size: CGFloat, elapsed: Int?, appearance: NSAppearance) -> NSAttributedString {
+    let out = NSMutableAttributedString()
+    let attachment = NSTextAttachment()
+    let image = ringImage(pct: pct, size: size, elapsed: elapsed, appearance: appearance)
+    attachment.image = image
+    attachment.attachmentCell = ColoredAttachmentCell(imageCell: image)
+    // Vertically center the ring on the text's cap height rather than sitting it
+    // on the baseline: without this the attachment grows upward only, so larger
+    // rings drift toward the top of the menu bar. The origin is baseline-relative,
+    // so offset by half the gap between the image and the cap height.
+    let cap = barFont.capHeight
+    let dy = (cap - size) / 2
+    attachment.bounds = NSRect(x: 0, y: dy, width: size, height: size)
+    out.append(NSAttributedString(attachment: attachment))
+    return out
+}
+
+// Dispatches to the block bar or the ring according to the selected layout, so
+// the panel and dropdown render with one call regardless of style. The ring has
+// its own fixed pixel sizes (it does not scale with the block `width`, which is
+// a character count); `menu` picks the larger ring used in dropdown rows. The
+// appearance is threaded through so the ring track can adapt to light/dark.
+func progressAttr(pct: Int, width: Int, elapsed: Int?, menu: Bool = false,
+                  appearance: NSAppearance) -> NSAttributedString {
+    if BAR_STYLE == "ring" {
+        let size: CGFloat = menu ? CGFloat(MENU_BAR_W) + 4 : CGFloat(BAR_WIDTH) + 6
+        return ringAttr(pct: pct, size: size, elapsed: elapsed, appearance: appearance)
+    }
+    return barAttr(pct: pct, width: width, elapsed: elapsed)
+}
+
 func resolveBinary(_ name: String) -> String? {
     let fm = FileManager.default
     if name == "ai-usagebar" {
@@ -185,6 +333,7 @@ struct Window { let pct: Int; let reset: String; let elapsed: Int? }
 struct Snapshot {
     let plan: String
     let hasUsageWindows: Bool
+    let creditBalance: String?
     let session: Window
     let weekly: Window
     /// The per-model weekly bar (model-scoped window, e.g. Fable, or the legacy
@@ -207,7 +356,7 @@ func stripMarkup(_ s: String) -> String {
         .replacingOccurrences(of: "&amp;", with: "&")
 }
 
-func parse(_ text: String) -> Snapshot? {
+func parse(_ text: String, vendor: String) -> Snapshot? {
     let f = stripMarkup(text).components(separatedBy: ";;")
     guard f.count >= 10 else { return nil }
     func unknownPlaceholder(_ s: String) -> Bool {
@@ -247,13 +396,47 @@ func parse(_ text: String) -> Snapshot? {
     let limit = t(9)
     let extra: (pct: Int, spent: String, limit: String)? =
         (spent.isEmpty || limit.isEmpty) ? nil : n(7).map { (pct: $0, spent: spent, limit: limit) }
+    // Dispatch the balance by the SELECTED vendor, not by vendor_short: Kimi and
+    // Moonshot both report vendor_short = "kmi" in the Rust binary, so keying on
+    // vendor_short would collide and read the wrong field.
+    let balanceFieldIndex: Int?
+    switch vendor {
+    case "openrouter": balanceFieldIndex = 17
+    case "deepseek": balanceFieldIndex = 18
+    case "kilo": balanceFieldIndex = 19
+    case "novita": balanceFieldIndex = 20
+    case "moonshot": balanceFieldIndex = 21
+    case "grok": balanceFieldIndex = 22
+    case "anthropic_api": balanceFieldIndex = 23
+    default: balanceFieldIndex = nil
+    }
+    let balance = balanceFieldIndex.flatMap { t($0).isEmpty ? nil : t($0) }
+    // Vendors with no rate-limit windows show only a balance; suppress the fake
+    // 5h/7d 0% rows their session_pct/weekly_pct aliases would otherwise paint.
+    let balanceOnly = balanceFieldIndex != nil
+    // Anthropic API exposes spend-vs-limit instead of a balance, and reports the
+    // spend % through the session/weekly aliases. When a limit is configured it
+    // becomes an extra ($) bar; otherwise it is balance-only headline display.
+    // FORMAT tail: aapi_headline(23) aapi_pct(24) aapi_spent(25) aapi_limit(26).
+    let aapiLimit = t(26)
+    let aapiExtra: (pct: Int, spent: String, limit: String)?
+    if vendor == "anthropic_api", !aapiLimit.isEmpty, aapiLimit != "—",
+       let aapiPct = n(24), (0...100).contains(aapiPct), !t(25).isEmpty {
+        aapiExtra = (pct: aapiPct, spent: t(25), limit: aapiLimit)
+    } else {
+        aapiExtra = nil
+    }
+    // With a limit configured the spend-vs-limit bar replaces the headline, so
+    // avoid showing both the "cr" balance and the extra ($) row at once.
+    let displayBalance = aapiExtra == nil ? balance : nil
     return Snapshot(plan: t(0),
-                    hasUsageWindows: t(16) != "dsk",
+                    hasUsageWindows: !balanceOnly,
+                    creditBalance: displayBalance,
                     session: Window(pct: n(1) ?? 0, reset: t(2), elapsed: markerElapsed(reset: t(2), elapsed: n(13))),
                     weekly: Window(pct: n(3) ?? 0, reset: t(4), elapsed: markerElapsed(reset: t(4), elapsed: n(14))),
                     sonnet: sonnet,
                     sonnetLabel: sonnetLabel,
-                    extra: extra)
+                    extra: aapiExtra ?? extra)
 }
 
 // ─── Preferences UI (SwiftUI) ────────────────────────────────────────────
@@ -290,6 +473,12 @@ let VENDOR_AUTH: [VendorAuth] = [
     VendorAuth(id: "zai", name: "Z.AI (GLM)", kind: "apikey", cli: "", login: "", pkg: "", env: "ZAI_API_KEY"),
     VendorAuth(id: "openrouter", name: "OpenRouter", kind: "apikey", cli: "", login: "", pkg: "", env: "OPENROUTER_API_KEY"),
     VendorAuth(id: "deepseek", name: "DeepSeek", kind: "apikey", cli: "", login: "", pkg: "", env: "DEEPSEEK_API_KEY"),
+    VendorAuth(id: "kimi", name: "Kimi", kind: "apikey", cli: "", login: "", pkg: "", env: "KIMI_API_KEY"),
+    VendorAuth(id: "kilo", name: "Kilo", kind: "apikey", cli: "", login: "", pkg: "", env: "KILO_API_KEY"),
+    VendorAuth(id: "novita", name: "Novita", kind: "apikey", cli: "", login: "", pkg: "", env: "NOVITA_API_KEY"),
+    VendorAuth(id: "moonshot", name: "Moonshot", kind: "apikey", cli: "", login: "", pkg: "", env: "MOONSHOT_API_KEY"),
+    VendorAuth(id: "grok", name: "Grok (xAI)", kind: "apikey", cli: "", login: "", pkg: "", env: "XAI_MANAGEMENT_KEY"),
+    VendorAuth(id: "anthropic_api", name: "Anthropic (API)", kind: "apikey", cli: "", login: "", pkg: "", env: "ANTHROPIC_ADMIN_KEY"),
 ]
 
 // The config file the Rust binary would actually read. On macOS
@@ -304,19 +493,76 @@ func configPathTOML() -> String {
 }
 
 func configHasApiKeyTOML(_ section: String) -> Bool {
-    let path = configPathTOML()
-    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return false }
+    guard let value = configValueTOML(section, "api_key") else { return false }
+    return !value.isEmpty
+}
+
+func configEnabledTOML(_ section: String) -> Bool? {
+    guard let value = configValueTOML(section, "enabled") else { return nil }
+    switch value.lowercased() {
+    case "true": return true
+    case "false": return false
+    default: return nil
+    }
+}
+
+/// Read a single `key` under `[section]` from TOML text. Pure (no filesystem)
+/// so the enabled-flag and api_key_env parsing is testable. Handles quoted
+/// strings, bare booleans (`enabled = false`), inline comments, and `api_key_env`.
+func tomlValueInText(_ text: String, section: String, key: String) -> String? {
     var inSection = false
     for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
         let line = String(raw).trimmingCharacters(in: .whitespaces)
         if line.hasPrefix("[") {
-            inSection = (line == "[\(section)]")
-        } else if inSection && !line.hasPrefix("#") &&
-                  line.range(of: "^api_key\\s*=\\s*[\"']\\S", options: .regularExpression) != nil {
-            return true
+            inSection = line == "[\(section)]"
+            continue
         }
+        guard inSection, !line.hasPrefix("#") else { continue }
+        let parts = line.split(separator: "=", maxSplits: 1).map(String.init)
+        guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == key else { continue }
+        // Strip an inline comment before evaluating the value: `enabled = false  # opt-in`
+        // is a bare boolean, not a string starting with '#'.
+        var value = parts[1].trimmingCharacters(in: .whitespaces)
+        if let hash = value.firstIndex(of: "#") {
+            value = String(value[..<hash]).trimmingCharacters(in: .whitespaces)
+        }
+        if let quote = value.first, quote == "\"" || quote == "'" {
+            let content = value.dropFirst()
+            guard let end = content.firstIndex(of: quote) else { continue }
+            return String(content[..<end])
+        }
+        // Bare tokens (booleans, numbers) reach here. Only `true`/`false` are
+        // meaningful for the keys this reader serves; everything else is left
+        // for the caller to ignore.
+        return value
     }
-    return false
+    return nil
+}
+
+func configValueTOML(_ section: String, _ key: String) -> String? {
+    let path = configPathTOML()
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+    return tomlValueInText(text, section: section, key: key)
+}
+
+func apiKeyEnvironment(_ v: VendorAuth) -> String {
+    configValueTOML(v.id, "api_key_env") ?? v.env
+}
+
+/// Rust defaults (`src/config.rs`): the OAuth/api-key vendors that ship enabled,
+/// versus the opt-in balance vendors that default to disabled. An omitted
+/// `[vendor].enabled` must reproduce these, not silently enable everything.
+func defaultEnabled(_ id: String) -> Bool {
+    switch id {
+    case "anthropic", "openai", "zai", "openrouter": return true
+    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api": return false
+    default: return true
+    }
+}
+
+func vendorEnabled(_ v: VendorAuth) -> Bool {
+    if let explicit = configEnabledTOML(v.id) { return explicit }
+    return defaultEnabled(v.id)
 }
 
 func keychainHasClaude() -> Bool {
@@ -329,6 +575,7 @@ func keychainHasClaude() -> Bool {
 }
 
 func vendorConfigured(_ v: VendorAuth) -> Bool {
+    guard vendorEnabled(v) else { return false }
     let home = NSHomeDirectory()
     let fm = FileManager.default
     if v.id == "anthropic" {
@@ -337,7 +584,7 @@ func vendorConfigured(_ v: VendorAuth) -> Bool {
     if v.id == "openai" {
         return fm.fileExists(atPath: "\(home)/.codex/auth.json")
     }
-    if let e = ProcessInfo.processInfo.environment[v.env], !e.isEmpty { return true }
+    if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
     return configHasApiKeyTOML(v.id)
 }
 
@@ -432,6 +679,8 @@ struct VendorsSection: View {
             var cli: [String: Bool] = [:]
             for v in VENDOR_AUTH {
                 conf[v.id] = vendorConfigured(v)
+                // OAuth vendors need their CLI to log in; apikey vendors are
+                // configured via the TUI.
                 if v.kind == "oauth" { cli[v.id] = cliInstalled(v.cli) }
             }
             DispatchQueue.main.async {
@@ -448,7 +697,7 @@ struct VendorsSection: View {
             if cliPresent[v.id] == false { return "⚠ \(v.cli) não instalado" }
             return "⚠ Não logado — \(v.login)"
         }
-        return "⚠ Sem API key — \(v.env)"
+        return "⚠ Sem API key — \(apiKeyEnvironment(v))"
     }
 
     private func buttonLabel(_ v: VendorAuth) -> String {
@@ -477,6 +726,7 @@ struct SettingsView: View {
     @AppStorage("showPercent") private var showPercent = true
     @AppStorage("showBars") private var showBars = true
     @AppStorage("showMeta") private var showMeta = true
+    @AppStorage("barStyle") private var barStyle = "block"
     @AppStorage("colorLow") private var colorLow = "#98c379"
     @AppStorage("colorMid") private var colorMid = "#e5c07b"
     @AppStorage("colorHigh") private var colorHigh = "#d19a66"
@@ -484,7 +734,12 @@ struct SettingsView: View {
     @AppStorage("colorEmpty") private var colorEmpty = "#3e4451"
     @AppStorage("binaryPath") private var binaryPath = ""
 
-    private let vendors = ["anthropic", "openai", "zai", "openrouter", "deepseek"]
+    // Only enabled vendors appear in the selector: Rust treats opt-in vendors
+    // (deepseek/kimi/kilo/novita/moonshot/grok/anthropic_api) as disabled when
+    // their `[vendor].enabled` is omitted, and so must this picker.
+    private var vendors: [String] {
+        VENDOR_AUTH.filter { vendorEnabled($0) }.map { $0.id }
+    }
 
     var body: some View {
         // A ScrollView (not a Form) so the pane reliably scrolls on every macOS
@@ -500,6 +755,10 @@ struct SettingsView: View {
                         Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
                         Toggle("Mostrar barras (off = só números)", isOn: $showBars)
                         Toggle("Mostrar referência da meta (linha de ritmo)", isOn: $showMeta)
+                        Picker("Estilo do indicador", selection: $barStyle) {
+                            Text("Barras (░█)").tag("block")
+                            Text("Anel (○)").tag("ring")
+                        }
                         Stepper("Largura da barra: \(barWidth)", value: $barWidth, in: 4...20)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -539,9 +798,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var timer: Timer?
     var prefsWindow: NSWindow?
-    // Keep the SwiftUI host alive while its view is installed directly in the
-    // window. This avoids NSHostingController's macOS-13-only sizing API.
-    var prefsHost: NSHostingController<SettingsView>?
+    var appearanceObservation: NSKeyValueObservation?
     var lastSnapshot: Snapshot?
     var pendingRefresh: DispatchWorkItem?
     /// Bumped on every refresh attempt. A result whose generation is no longer
@@ -557,11 +814,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var refreshQueued = false
     let headerItem = NSMenuItem()
     var rows: [String: NSMenuItem] = [:]
+    // Rebuilt on every render so only configured vendors show, and the active
+    // one is checked. Kept as a field so the menu owns it for its lifetime.
+    let vendorSubmenu = NSMenu()
+    let vendorSubmenuItem = NSMenuItem(title: "Trocar vendor", action: nil, keyEquivalent: "")
+    var vendorItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "5h …"
         buildMenu()
+        rebuildVendorSubmenu()
+        observeAppearanceChanges()
         refresh()
         restartTimer()
         NotificationCenter.default.addObserver(
@@ -583,6 +847,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         addAction(menu, "Atualizar agora", #selector(refreshAction), "r")
         addAction(menu, "Abrir TUI", #selector(openTui), "t")
+        vendorSubmenuItem.submenu = vendorSubmenu
+        menu.addItem(vendorSubmenuItem)
         addAction(menu, "Preferências…", #selector(openPrefs), ",")
         menu.addItem(.separator())
         addAction(menu, "Sair", #selector(quit), "q")
@@ -611,16 +877,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                              styleMask: [.titled, .closable, .resizable],
                              backing: .buffered,
                              defer: false)
-            w.contentView = host.view
+            w.contentViewController = host
             w.title = "AI Usage Bar — Preferências"
             // Resizable so the content can always be reached; a min size keeps
             // it usable, and the initial height is clamped to the visible screen
             // so the top never lands under the menu bar on short displays.
             w.contentMinSize = NSSize(width: 460, height: 360)
+            w.setContentSize(initialSize)
             w.isReleasedWhenClosed = false
             w.center()
             prefsWindow = w
-            prefsHost = host
         }
         NSApp.activate(ignoringOtherApps: true)
         prefsWindow?.makeKeyAndOrderFront(nil)
@@ -650,6 +916,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: INTERVAL, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+    }
+
+    func observeAppearanceChanges() {
+        guard let button = statusItem.button else { return }
+        appearanceObservation = button.observe(\NSStatusBarButton.effectiveAppearance,
+                                               options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.rerenderAppearance() }
+        }
+    }
+
+    func rerenderAppearance() {
+        guard let snapshot = lastSnapshot else { return }
+        renderPanel(snapshot)
     }
 
     func refresh() {
@@ -735,9 +1014,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setError("saída inválida")
             return
         }
-        guard let snap = parse(text) else {
+        guard let snap = parse(text, vendor: VENDOR) else {
             lastSnapshot = nil
-            statusItem.button?.attributedTitle = run(stripMarkup(text), .labelColor)  // Loading… / ⚠
+            let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
+            statusItem.button?.attributedTitle = run(stripMarkup(text), menuBarTextColor(appearance))  // Loading… / ⚠
             return
         }
         lastSnapshot = snap
@@ -747,24 +1027,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func renderPanel(_ s: Snapshot) {
         let title = NSMutableAttributedString()
+        let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
+        let primaryTextColor = menuBarTextColor(appearance)
+        let secondaryTextColor = menuBarTextColor(appearance, secondary: true)
         func seg(_ tag: String, _ pct: Int, _ value: String, _ elapsed: Int?) {
-            if title.length > 0 { title.append(run("   ", .secondaryLabelColor)) }
-            title.append(run("\(tag) ", .secondaryLabelColor))
+            if title.length > 0 { title.append(run("   ", secondaryTextColor)) }
+            title.append(run("\(tag) ", secondaryTextColor))
             if SHOW_PERCENT { title.append(run(value + (SHOW_BARS ? " " : ""), colorForPct(pct))) }
-            if SHOW_BARS { title.append(barAttr(pct: pct, width: BAR_WIDTH, elapsed: elapsed)) }
+            if SHOW_BARS { title.append(progressAttr(pct: pct, width: BAR_WIDTH, elapsed: elapsed, appearance: appearance)) }
             if !SHOW_PERCENT && !SHOW_BARS { title.append(run(value, colorForPct(pct))) }
         }
-        if s.hasUsageWindows && SHOW_SESSION {
+        if let creditBalance = s.creditBalance {
+            title.append(run("cr ", secondaryTextColor))
+            title.append(run(creditBalance, primaryTextColor))
+        } else if s.hasUsageWindows && SHOW_SESSION {
             seg("5h", s.session.pct, "\(s.session.pct)%", s.session.elapsed)
         }
-        if s.hasUsageWindows && SHOW_WEEKLY {
+        if s.creditBalance == nil && s.hasUsageWindows && SHOW_WEEKLY {
             seg("7d", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.elapsed)
         }
         if SHOW_EXTRA, let e = s.extra { seg("ex", e.pct, e.spent, nil) } // $ budget → no meta
-        statusItem.button?.attributedTitle = title.length > 0 ? title : run("ai", .secondaryLabelColor)
+        statusItem.button?.attributedTitle = title.length > 0 ? title : run("ai", secondaryTextColor)
     }
 
     func renderMenu(_ s: Snapshot) {
+        let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
         headerItem.attributedTitle = run(s.plan.isEmpty ? "AI Usage" : s.plan,
                                          .labelColor, NSFont.boldSystemFont(ofSize: 13))
 
@@ -776,12 +1063,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 ? name.padding(toLength: 12, withPad: " ", startingAt: 0)
                 : name
             a.append(run(label, .labelColor))
-            a.append(barAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed))
+            a.append(progressAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed, menu: true, appearance: appearance))
             a.append(run("  \(value)", colorForPct(pct)))
             if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }
             item.attributedTitle = a
         }
-        if s.hasUsageWindows {
+        if let creditBalance = s.creditBalance {
+            rows["session"]?.isHidden = false
+            rows["session"]?.attributedTitle = run("Credits      \(creditBalance)", .labelColor)
+            rows["weekly"]?.isHidden = true
+            rows["sonnet"]?.isHidden = true
+        } else if s.hasUsageWindows {
             row("session", "Session", s.session.pct, "\(s.session.pct)%", s.session.reset, s.session.elapsed)
             row("weekly", "Weekly", s.weekly.pct, "\(s.weekly.pct)%", s.weekly.reset, s.weekly.elapsed)
         } else {
@@ -792,19 +1084,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         else { rows["sonnet"]?.isHidden = true }
         if let e = s.extra { row("extra", "Extra usage", e.pct, "\(e.spent) / \(e.limit)", nil, nil) }
         else { rows["extra"]?.isHidden = true }
+        rebuildVendorSubmenu()
+    }
+
+    // Vendor switch submenu: lists only configured vendors, with a checkmark on
+    // the active one. Selecting one rewrites the `vendor` default and triggers a
+    // refresh via the shared settings-change observer.
+    func rebuildVendorSubmenu() {
+        vendorSubmenu.removeAllItems()
+        vendorItems = []
+        let active = VENDOR
+        let configured = VENDOR_AUTH.filter { vendorEnabled($0) && ($0.id == active || vendorConfigured($0)) }
+        if configured.isEmpty {
+            let none = NSMenuItem(title: "Nenhum configurado", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            vendorSubmenu.addItem(none)
+            vendorSubmenuItem.isHidden = false
+            return
+        }
+        for v in configured {
+            let it = NSMenuItem(title: v.name, action: #selector(switchVendor(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = v.id
+            it.state = (v.id == active) ? .on : .off
+            vendorSubmenu.addItem(it)
+            vendorItems.append(it)
+        }
+        vendorSubmenuItem.isHidden = false
+    }
+
+    @objc func switchVendor(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        DEF.set(id, forKey: "vendor")
     }
 
     func setError(_ msg: String) {
         lastSnapshot = nil
         statusItem.button?.attributedTitle = run("⚠ ai", hexColor(COLOR_CRITICAL))
-        headerItem.attributedTitle = run(msg, .labelColor)
+        let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
+        headerItem.attributedTitle = run(msg, menuBarTextColor(appearance))
         for (_, it) in rows { it.isHidden = true }
     }
 }
 
-DEF.register(defaults: SETTINGS_DEFAULTS)
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)   // menu-bar agent, no Dock icon
-app.run()
+#if !SWIFT_TEST_HARNESS
+@main
+struct AppMain {
+    static func main() {
+        DEF.register(defaults: SETTINGS_DEFAULTS)
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)   // menu-bar agent, no Dock icon
+        app.run()
+    }
+}
+#endif

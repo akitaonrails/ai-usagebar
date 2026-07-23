@@ -59,10 +59,14 @@ jobs:
       - name: Test
         run: cargo test --all-targets --locked
 
-      # The menu bar app is 700+ lines of Swift with no test harness; at least
-      # prove it still compiles, which nothing verified before.
+      # The menu bar app is a single Swift file with no Xcode project. Build it
+      # to prove it still compiles, then run the pure-logic test harness
+      # (arc geometry, TOML enabled parsing, vendor balance dispatch).
       - name: Build the menu bar app
-        run: swiftc -O -o /tmp/ai-usagebar-menubar macos/ai-usagebar-menubar.swift
+        run: swiftc -O -parse-as-library -o /tmp/ai-usagebar-menubar macos/ai-usagebar-menubar.swift
+
+      - name: Run the menu bar test harness
+        run: ./macos/run-tests.sh
 
   windows:
     name: test (windows-latest)

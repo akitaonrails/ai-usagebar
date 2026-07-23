@@ -12,7 +12,7 @@ This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar)
 - **Tabbed TUI** (`ai-usagebar-tui`) with Tab/h/l switching, per-tab refresh, and 60-second auto-refresh. Native ratatui widgets fill the available terminal width and keep the vendor tabs visually consistent.
 - **Optional local Claude Code context monitor** in the TUI, with a bounded,
   compaction-aware view of recent session input-context usage.
-- **Native desktop integrations** for GNOME Shell and the macOS menu bar, with selectors for Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek; the GNOME extension adds Google Antigravity.
+- **Native desktop integrations** for GNOME Shell and the macOS menu bar. The macOS app supports eleven vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok, Anthropic API); the GNOME extension adds Google Antigravity.
 - **Scroll-to-cycle on the bar**: wire `on-scroll-up` / `on-scroll-down`, and one bar item cycles through your enabled vendors.
 - **Config-driven primary vendor**: set `[ui] primary` once; the widget shows that vendor by default and the TUI opens on its tab.
 - **Local testing tools**: `--pretty` renders ANSI-colored terminal output (auto-detects TTY), and `--watch N` re-renders every N seconds.
@@ -261,7 +261,7 @@ The Waybar widget is optional. The TUI is the best way to see every enabled vend
 
 ## Native desktop integrations (v0.13)
 
-The [GNOME Shell extension](gnome-extension/README.md) and [macOS menu bar app](macos/README.md) support selectors for **Anthropic, OpenAI, Z.AI, OpenRouter, and DeepSeek**; the GNOME extension also supports **Google Antigravity**, whose two independent quota pools it renders as grouped rows. **Kimi is widget/TUI-only in v0.13**; do not select it in either native desktop integration yet. Desktop protocol and marker parity for Kimi is dedicated future work.
+The [macOS menu bar app](macos/README.md) supports eleven vendors — **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok (xAI), and Anthropic (API)**. The [GNOME Shell extension](gnome-extension/README.md) supports **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Google Antigravity**, whose two independent quota pools it renders as grouped rows. macOS does not support Antigravity: the binary only discovers its local server on Linux.
 
 ## Waybar config
 

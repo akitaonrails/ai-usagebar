@@ -37,7 +37,7 @@ claude        # authenticates; creds land in the login Keychain
 ### 4. Build the app
 
 ```bash
-./build.sh    # runs: swiftc -O ai-usagebar-menubar.swift -o ai-usagebar-menubar
+./build.sh    # runs: swiftc -O -parse-as-library ai-usagebar-menubar.swift -o ai-usagebar-menubar
 ```
 
 ### 5. Run it
@@ -47,7 +47,9 @@ claude        # authenticates; creds land in the login Keychain
 ```
 
 It appears in the menu bar next to the clock (no Dock icon). Click it for the
-per-window dropdown (Session / Weekly / Sonnet / Extra).
+dropdown: usage rows (Session / Weekly / Sonnet / Extra for rate-limit vendors,
+or a credit balance for balance-only vendors), a **"Trocar vendor"** submenu to
+switch vendors quickly, and Preferences.
 
 ### 6. Start automatically at login
 

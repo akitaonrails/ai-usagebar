@@ -9,6 +9,71 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Eleven-vendor parity in the macOS menu bar app.** The selector previously
+  exposed only five vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek);
+  it now covers all binary vendors except Antigravity (see below). Added Kimi,
+  Kilo, Novita, Moonshot, Grok (xAI), and Anthropic (API).
+  - **Real balances for every balance-only vendor.** OpenRouter, DeepSeek,
+    Kilo, Novita, Moonshot, Grok, and Anthropic (API) now render their actual
+    balance/credits via per-vendor format fields (`{or_balance}`,
+    `{ds_balance}`, `{kilo_balance}`, `{nv_balance}`, `{km_balance}`,
+    `{grok_balance}`, `{aapi_headline}`) instead of fake 0% session/weekly
+    rows. Anthropic (API) shows a spend-vs-limit bar when a monthly limit is
+    configured. The balance is dispatched by the selected vendor (not by
+    `vendor_short`, which collides between Kimi and Moonshot).
+  - **TOML `enabled` handling matches the Rust config.** Bare booleans
+    (`enabled = false`) and inline comments are parsed, and an omitted
+    `[vendor].enabled` reproduces the `src/config.rs` defaults. The Preferences
+    picker and the "Trocar vendor" submenu only offer enabled vendors.
+  - **Generalized `config.toml` reader.** Reads any key under any `[section]`,
+    so `api_key_env` is resolved per vendor instead of being hardcoded.
+
+- **Quick vendor switch submenu in the macOS dropdown.** A "Trocar vendor"
+  submenu between "Abrir TUI" and "Preferências…" lists only configured
+  vendors, with a checkmark on the active one, so switching no longer requires
+  opening Preferences.
+
+- **Optional ring indicator layout in the macOS app.** A new "Estilo do
+  indicador" preference selects between the default block bars (`░█`) and a
+  Core Graphics ring. The ring paints the usage fraction as a severity-colored
+  arc over a faint track, and honors the pace marker the same way the block bar
+  does (calm fill up to a blue tick at the elapsed position, warning color on
+  the overshoot). Both the menu bar and the dropdown rows honor the choice. The
+  track adapts to the effective appearance — faint white on dark menu bars /
+  wallpapers (where the block bar's dark `COLOR_EMPTY` would be invisible),
+  `COLOR_EMPTY` on light ones.
+
+- **Dark and light appearance awareness.** Status text now resolves against
+  the effective status-bar appearance using the new `menuBarTextColor()`
+  helper, and the menu bar re-renders immediately when the system appearance
+  changes (e.g., switching wallpapers or dark/light mode) via KVO on
+  `effectiveAppearance`, without waiting for the usage refresh timer.
+
+- **Pure-logic test harness for the menu bar app.** The single-file app has no
+  Xcode project, so it is compiled with `-D SWIFT_TEST_HARNESS` alongside a
+  test file that calls its helpers directly (`macos/run-tests.sh`). Covers arc
+  geometry, TOML `enabled` parsing, Rust defaults, and per-vendor balance
+  dispatch. The CI macOS job runs it.
+
+### Fixed
+
+- **Ring pace arc.** The overshoot arc previously restarted at 12 o'clock and
+  overpainted the start of the calm fill; it now spans from the elapsed marker
+  to the current percentage.
+- **Preferences window crash.** The SwiftUI preferences view is now hosted
+  through `contentViewController` instead of being installed directly as
+  `contentView`, avoiding an AppKit exclusivity crash during window
+  measurement on certain macOS versions.
+
+### Not supported
+
+- **Google Antigravity on macOS.** The binary only discovers its local language
+  server on Linux (via `/proc`); on macOS there is no reachable quota source,
+  so Antigravity is not offered in the macOS app. Safe macOS server discovery
+  is dedicated future work.
+
 ## [0.16.0] — 2026-07-22
 
 ### Added
