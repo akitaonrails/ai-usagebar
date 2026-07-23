@@ -9,28 +9,26 @@ Each release is also published at
 
 ## [Unreleased]
 
-### Fixed
-
-- **Ring pace arc.** The overshoot arc previously restarted at 12 o'clock and
-  overpainted the start of the calm fill; it now spans from the elapsed marker
-  to the current percentage.
-- **Bare TOML `enabled` flag.** `configValueTOML` only accepted quoted values,
-  so `enabled = false` (a bare boolean) was ignored and opt-in vendors appeared
-  enabled by default. Bare booleans are now parsed, inline comments are stripped,
-  and omitted `[vendor].enabled` reproduces the Rust defaults (`src/config.rs`).
-
 ### Added
 
 - **Eleven-vendor parity in the macOS menu bar app.** The selector previously
-  exposed only five vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek).
-  Added Kimi, Kilo, Novita, Moonshot, Grok (xAI), and Anthropic (API). The
-  balance-only vendors (OpenRouter, DeepSeek, Kilo, Novita, Moonshot, Grok,
-  Anthropic API) now render their real balance/credits via per-vendor format
-  fields (`{or_balance}`, `{ds_balance}`, `{kilo_balance}`, `{nv_balance}`,
-  `{km_balance}`, `{grok_balance}`, `{aapi_headline}`) instead of fake 0%
-  session/weekly rows. Anthropic (API) shows a spend-vs-limit bar when a monthly
-  limit is configured. Google Antigravity remains unsupported on macOS: the
-  binary only discovers its local server on Linux.
+  exposed only five vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek);
+  it now covers all binary vendors except Antigravity (see below). Added Kimi,
+  Kilo, Novita, Moonshot, Grok (xAI), and Anthropic (API).
+  - **Real balances for every balance-only vendor.** OpenRouter, DeepSeek,
+    Kilo, Novita, Moonshot, Grok, and Anthropic (API) now render their actual
+    balance/credits via per-vendor format fields (`{or_balance}`,
+    `{ds_balance}`, `{kilo_balance}`, `{nv_balance}`, `{km_balance}`,
+    `{grok_balance}`, `{aapi_headline}`) instead of fake 0% session/weekly
+    rows. Anthropic (API) shows a spend-vs-limit bar when a monthly limit is
+    configured. The balance is dispatched by the selected vendor (not by
+    `vendor_short`, which collides between Kimi and Moonshot).
+  - **TOML `enabled` handling matches the Rust config.** Bare booleans
+    (`enabled = false`) and inline comments are parsed, and an omitted
+    `[vendor].enabled` reproduces the `src/config.rs` defaults. The Preferences
+    picker and the "Trocar vendor" submenu only offer enabled vendors.
+  - **Generalized `config.toml` reader.** Reads any key under any `[section]`,
+    so `api_key_env` is resolved per vendor instead of being hardcoded.
 
 - **Quick vendor switch submenu in the macOS dropdown.** A "Trocar vendor"
   submenu between "Abrir TUI" and "Preferências…" lists only configured
@@ -47,34 +45,34 @@ Each release is also published at
   wallpapers (where the block bar's dark `COLOR_EMPTY` would be invisible),
   `COLOR_EMPTY` on light ones.
 
-- **OpenRouter credit balance in the macOS menu bar.** OpenRouter is now
-  rendered as a credit balance (`cr <amount>`) in both the panel and dropdown
-  instead of showing synthetic session/weekly quota bars. Uses the new
-  `{or_balance}` format field added to the Rust binary.
-
 - **Dark and light appearance awareness.** Status text now resolves against
   the effective status-bar appearance using the new `menuBarTextColor()`
   helper, and the menu bar re-renders immediately when the system appearance
   changes (e.g., switching wallpapers or dark/light mode) via KVO on
   `effectiveAppearance`, without waiting for the usage refresh timer.
 
-- **Preferences window crash fix.** The SwiftUI preferences view is now hosted
+- **Pure-logic test harness for the menu bar app.** The single-file app has no
+  Xcode project, so it is compiled with `-D SWIFT_TEST_HARNESS` alongside a
+  test file that calls its helpers directly (`macos/run-tests.sh`). Covers arc
+  geometry, TOML `enabled` parsing, Rust defaults, and per-vendor balance
+  dispatch. The CI macOS job runs it.
+
+### Fixed
+
+- **Ring pace arc.** The overshoot arc previously restarted at 12 o'clock and
+  overpainted the start of the calm fill; it now spans from the elapsed marker
+  to the current percentage.
+- **Preferences window crash.** The SwiftUI preferences view is now hosted
   through `contentViewController` instead of being installed directly as
   `contentView`, avoiding an AppKit exclusivity crash during window
   measurement on certain macOS versions.
 
-- **Vendor enabled/disabled configuration respect.** The macOS app now reads
-  the `[vendor].enabled` flag from `config.toml` for every vendor. Disabled
-  vendors are excluded from the vendor list, the "Trocar vendor" submenu, and
-  configuration detection.
+### Not supported
 
-- **Generalized config.toml reader in the macOS app.** The config parser was
-  upgraded from a simple `api_key` presence check (`configHasApiKeyTOML`) to a
-  generic `configValueTOML()` that reads any key under any `[section]`. This
-  enables `apiKeyEnvironment()` to resolve the effective env var for every
-  vendor (respecting `api_key_env` in `config.toml`), and `configEnabledTOML()`
-  to read `[vendor].enabled` — so Preferences now reports the correct variable
-  name for each vendor instead of assuming a hardcoded one.
+- **Google Antigravity on macOS.** The binary only discovers its local language
+  server on Linux (via `/proc`); on macOS there is no reachable quota source,
+  so Antigravity is not offered in the macOS app. Safe macOS server discovery
+  is dedicated future work.
 
 ## [0.16.0] — 2026-07-22
 
