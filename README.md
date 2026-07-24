@@ -452,7 +452,7 @@ Then `hyprctl reload` (no logout needed).
 | Vendor | Endpoint | What you see | Native desktop selector (v0.13) |
 |---|---|---|---|
 | **Anthropic** | `api.anthropic.com/api/oauth/usage` (undocumented) | Session (5h), Weekly (7d), model-scoped weekly (e.g. Fable), Extra usage $ | Yes |
-| **OpenAI** | `chatgpt.com/backend-api/wham/usage` (undocumented; used by official `codex` CLI) | Codex 5h, Codex weekly, Code-review weekly, Credits | Yes |
+| **OpenAI** | `chatgpt.com/backend-api/wham/usage` (undocumented; used by official `codex` CLI) | Codex 5h and/or weekly, Code-review weekly, Credits | Yes |
 | **Z.AI** | `api.z.ai/api/monitor/usage/quota/limit` (undocumented) | Session 5h, Weekly 7d, MCP tools monthly | Yes |
 | **OpenRouter** | `openrouter.ai/api/v1/{credits,key}` (documented) | Balance, today/week/month spend, free vs paid tier | Yes |
 | **DeepSeek** | `api.deepseek.com/user/balance` (documented) | Balance, granted, topped-up credits | Yes |
@@ -466,6 +466,12 @@ Then `hyprctl reload` (no logout needed).
 ### Endpoint stability
 
 Four of the six endpoints are undocumented. The Anthropic and OpenAI endpoints are used by their official CLIs (`claude` and `codex`), so removing them would break those tools too. That makes them less shaky than scraped web endpoints. Z.AI's monitor endpoint is reverse-engineered from a third-party plugin; treat it as the most fragile one. Kimi's `/coding/v1/usages` is community-confirmed and used by third-party quota tools; treat it as drift-prone.
+
+OpenAI's known 5-hour and 7-day windows are identified from each window's
+reported duration, not from `primary_window` / `secondary_window` position.
+This keeps both the normal 5-hour + 7-day response and the temporary
+[weekly-only Codex response](https://github.com/openai/codex/issues/32707)
+accurate without a config toggle.
 
 When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests, so the existing Anthropic, OpenAI, Z.AI, and OpenRouter smoke tests still require their respective OAuth credentials or API keys. Kimi alone is optional: its test skips with a diagnostic when `KIMI_API_KEY` is unset, or run it alone with `cargo test --test live kimi_live -- --ignored --nocapture`. The live API tests check the exact fields this project depends on and produce a precise failure pointing at what changed. Paste a failure back into Claude Code and the affected `types.rs` can usually be updated mechanically.
 
@@ -485,7 +491,7 @@ When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests,
 
 ### OpenAI (Codex OAuth)
 
-`{oai_plan}`, `{oai_session_pct}`, `{oai_session_reset}`, `{oai_session_elapsed}`, `{oai_session_pace}`, `{oai_session_pace_indicator}`, `{oai_weekly_*}` (same family), `{oai_code_review_pct}`, `{oai_credit_balance}`, `{oai_local_msgs}`, `{oai_cloud_msgs}`
+`{oai_plan}`, `{oai_session_pct}`, `{oai_session_reset}`, `{oai_session_elapsed}`, `{oai_session_pace}`, `{oai_session_pace_indicator}`, `{oai_weekly_*}` (same family), `{oai_code_review_pct}`, `{oai_credit_balance}`, `{oai_local_msgs}`, `{oai_cloud_msgs}`. Session or weekly families expand to empty strings when that window is not reported. The default widget format automatically uses weekly values for a weekly-only response.
 
 ### Z.AI
 
