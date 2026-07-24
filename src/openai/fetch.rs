@@ -211,7 +211,7 @@ fn handle_auth_failure(
 
 fn parse_payload(bytes: &[u8], plan_hint: Option<&str>) -> Result<OpenAiSnapshot> {
     let r: UsageResponse = serde_json::from_slice(bytes)?;
-    Ok(r.into_snapshot(plan_hint))
+    r.into_snapshot(plan_hint)
 }
 
 async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<Vec<u8>> {
@@ -233,8 +233,9 @@ async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<
             body,
         });
     }
-    let _: UsageResponse = serde_json::from_slice(&bytes)
+    let parsed: UsageResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("openai usage response: {e}")))?;
+    parsed.into_snapshot(None)?;
     Ok(bytes)
 }
 
@@ -308,8 +309,41 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(out.snapshot.plan, "ChatGPT Plus");
-        assert_eq!(out.snapshot.session.utilization_pct, 1);
+        assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 1);
         assert!(!out.stale);
+    }
+
+    #[tokio::test]
+    async fn weekly_only_primary_returns_weekly_snapshot() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/backend-api/wham/usage")
+            .with_status(200)
+            .with_body(
+                r#"{"plan_type":"prolite","rate_limit":{
+                "primary_window":{"used_percent":66,"limit_window_seconds":604800,"reset_at":1785261834},
+                "secondary_window":null
+            }}"#,
+            )
+            .create_async()
+            .await;
+        let (_td, cache) = cache_fixture();
+        let creds = future_creds();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &reqwest::Client::new(),
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+        assert!(out.snapshot.session.is_none());
+        assert_eq!(out.snapshot.weekly.unwrap().utilization_pct, 66);
     }
 
     #[tokio::test]
@@ -345,7 +379,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(out.snapshot.session.utilization_pct, 37);
+        assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 37);
         assert!(!out.stale);
     }
 
@@ -380,7 +414,7 @@ mod tests {
         .await
         .unwrap();
         assert!(out.stale);
-        assert_eq!(out.snapshot.session.utilization_pct, 50);
+        assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 50);
         assert_eq!(out.last_error.as_ref().map(|(c, _)| *c), Some(500));
     }
 }

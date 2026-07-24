@@ -1,8 +1,8 @@
 //! Canonical in-memory representation of "how much have I used my plan".
 //!
 //! Each vendor's snapshot lives in its own variant — this is deliberate.
-//! Anthropic exposes three windows + extra credits; OpenAI Codex exposes two
-//! windows + credit balance + message-count ranges; OpenRouter is a single
+//! Anthropic exposes three windows + extra credits; OpenAI Codex exposes up to
+//! two windows + credit balance + message-count ranges; OpenRouter is a single
 //! credit-balance number with daily/weekly/monthly totals; Z.AI is a list of
 //! token + MCP buckets; DeepSeek is a credit balance; Kimi is a weekly quota
 //! plus a 5h rolling rate-limit window. Forcing them into a shared shape would
@@ -373,14 +373,14 @@ pub struct GrokSnapshot {
 
 impl Eq for GrokSnapshot {}
 
-/// OpenAI Codex OAuth — mirrors Anthropic's two-window + extras pattern.
+/// OpenAI Codex OAuth — exposes whichever rolling windows the API reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAiSnapshot {
     pub plan: String,
-    /// 5h window (Codex `rate_limit.primary_window`).
-    pub session: UsageWindow,
-    /// 7d window (Codex `rate_limit.secondary_window`).
-    pub weekly: UsageWindow,
+    /// 5h window, identified by its duration rather than its wire position.
+    pub session: Option<UsageWindow>,
+    /// 7d window, identified by its duration rather than its wire position.
+    pub weekly: Option<UsageWindow>,
     /// Optional 7d code-review bucket.
     pub code_review: Option<UsageWindow>,
     /// Optional credit balance + approximate message-count ranges.
