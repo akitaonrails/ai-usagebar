@@ -19,6 +19,7 @@
 
 use serde::Deserialize;
 
+use crate::error::{AppError, Result as AppResult};
 use crate::usage::{OpenAiCredits, OpenAiSnapshot, OpenAiSource, UsageWindow};
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -176,13 +177,11 @@ where
 }
 
 impl UsageResponse {
-    pub fn into_snapshot(self, plan_hint: Option<&str>) -> OpenAiSnapshot {
+    pub fn into_snapshot(self, plan_hint: Option<&str>) -> AppResult<OpenAiSnapshot> {
         let plan_type = self.plan_type.as_deref().or(plan_hint).unwrap_or("Unknown");
         let plan = format!("ChatGPT {}", capitalize(plan_type));
 
-        let rl = self.rate_limit.unwrap_or_default();
-        let session = window_or_default(rl.primary_window, chrono::Duration::hours(5));
-        let weekly = window_or_default(rl.secondary_window, chrono::Duration::days(7));
+        let (session, weekly) = classify_rate_limit(self.rate_limit.unwrap_or_default())?;
         let code_review = self
             .code_review_rate_limit
             .and_then(|c| c.primary_window)
@@ -196,26 +195,103 @@ impl UsageResponse {
             approx_cloud_messages: range_from_vec(c.approx_cloud_messages),
         });
 
-        OpenAiSnapshot {
+        Ok(OpenAiSnapshot {
             plan,
             session,
             weekly,
             code_review,
             credits,
             source: OpenAiSource::CodexOauth,
-        }
+        })
     }
 }
 
-fn window_or_default(w: Option<Window>, default_dur: chrono::Duration) -> UsageWindow {
-    let Some(w) = w else {
-        return UsageWindow {
-            utilization_pct: 0,
-            resets_at: None,
-            window_duration: default_dur,
-        };
+#[derive(Clone, Copy, Debug)]
+enum WindowKind {
+    Session,
+    Weekly,
+}
+
+fn classify_rate_limit(
+    rate_limit: RateLimit,
+) -> AppResult<(Option<UsageWindow>, Option<UsageWindow>)> {
+    let mut session = None;
+    let mut weekly = None;
+    insert_window(
+        rate_limit.primary_window,
+        WindowKind::Session,
+        &mut session,
+        &mut weekly,
+    )?;
+    insert_window(
+        rate_limit.secondary_window,
+        WindowKind::Weekly,
+        &mut session,
+        &mut weekly,
+    )?;
+    Ok((session, weekly))
+}
+
+fn insert_window(
+    wire_window: Option<Window>,
+    fallback_kind: WindowKind,
+    session: &mut Option<UsageWindow>,
+    weekly: &mut Option<UsageWindow>,
+) -> AppResult<()> {
+    let Some(wire_window) = wire_window else {
+        return Ok(());
     };
-    to_window(&w, default_dur)
+    let kind = window_kind(&wire_window).unwrap_or(fallback_kind);
+    let default_duration = kind.default_duration();
+    let target = semantic_window_target(kind, session, weekly);
+    if target.is_some() {
+        return Err(duplicate_window_error(
+            kind,
+            wire_window.limit_window_seconds,
+        ));
+    }
+    *target = Some(to_window(&wire_window, default_duration));
+    Ok(())
+}
+
+fn semantic_window_target<'a>(
+    kind: WindowKind,
+    session: &'a mut Option<UsageWindow>,
+    weekly: &'a mut Option<UsageWindow>,
+) -> &'a mut Option<UsageWindow> {
+    match kind {
+        WindowKind::Session => session,
+        WindowKind::Weekly => weekly,
+    }
+}
+
+fn window_kind(window: &Window) -> Option<WindowKind> {
+    // OpenAI temporarily moved the 7d window into `primary_window` and omitted
+    // `secondary_window`; wire position is not semantic (openai/codex#32707).
+    match window.limit_window_seconds {
+        18_000 => Some(WindowKind::Session),
+        604_800 => Some(WindowKind::Weekly),
+        _ => None,
+    }
+}
+
+fn duplicate_window_error(kind: WindowKind, seconds: i64) -> AppError {
+    let label = match kind {
+        WindowKind::Session => "5h",
+        WindowKind::Weekly => "7d",
+    };
+    AppError::Schema(format!(
+        "duplicate OpenAI {label} window with limit_window_seconds={seconds}; expected at most one 5h and one 7d window"
+    ))
+}
+
+impl WindowKind {
+    fn default_duration(self) -> chrono::Duration {
+        match self {
+            Self::Session => chrono::Duration::hours(5),
+            Self::Weekly => chrono::Duration::days(7),
+        }
+    }
 }
 
 fn to_window(w: &Window, default_dur: chrono::Duration) -> UsageWindow {
@@ -281,25 +357,76 @@ mod tests {
     #[test]
     fn parses_real_shape() {
         let r: UsageResponse = serde_json::from_str(REAL).unwrap();
-        let s = r.into_snapshot(None);
+        let s = r.into_snapshot(None).unwrap();
         assert_eq!(s.plan, "ChatGPT Plus");
-        assert_eq!(s.session.utilization_pct, 1);
-        assert_eq!(s.weekly.utilization_pct, 0);
-        assert_eq!(s.session.window_duration, chrono::Duration::hours(5));
-        assert_eq!(s.weekly.window_duration, chrono::Duration::days(7));
-        assert!(s.session.resets_at.is_some());
+        assert_eq!(s.session.as_ref().unwrap().utilization_pct, 1);
+        assert_eq!(s.weekly.as_ref().unwrap().utilization_pct, 0);
+        assert_eq!(
+            s.session.as_ref().unwrap().window_duration,
+            chrono::Duration::hours(5)
+        );
+        assert_eq!(
+            s.weekly.as_ref().unwrap().window_duration,
+            chrono::Duration::days(7)
+        );
+        assert!(s.session.as_ref().unwrap().resets_at.is_some());
         assert!(s.code_review.is_none());
         assert!(s.credits.is_none());
         assert!(matches!(s.source, OpenAiSource::CodexOauth));
     }
 
     #[test]
-    fn missing_rate_limit_yields_neutral() {
+    fn missing_rate_limit_reports_no_windows() {
         let r: UsageResponse = serde_json::from_str(r#"{"plan_type":"pro"}"#).unwrap();
-        let s = r.into_snapshot(None);
+        let s = r.into_snapshot(None).unwrap();
         assert_eq!(s.plan, "ChatGPT Pro");
-        assert_eq!(s.session.utilization_pct, 0);
-        assert_eq!(s.weekly.utilization_pct, 0);
+        assert!(s.session.is_none());
+        assert!(s.weekly.is_none());
+    }
+
+    #[test]
+    fn weekly_only_primary_window_is_not_mislabeled_as_session() {
+        // Sanitized live response captured 2026-07-23 during OpenAI's
+        // temporary weekly-only rollout (openai/codex#32707).
+        let body = r#"{
+            "plan_type":"prolite",
+            "rate_limit":{
+                "primary_window":{
+                    "used_percent":66,
+                    "limit_window_seconds":604800,
+                    "reset_at":1785261834
+                },
+                "secondary_window":null
+            }
+        }"#;
+        let response: UsageResponse = serde_json::from_str(body).unwrap();
+        let snapshot = response.into_snapshot(None).unwrap();
+        assert!(snapshot.session.is_none());
+        assert_eq!(snapshot.weekly.unwrap().utilization_pct, 66);
+    }
+
+    #[test]
+    fn duration_classification_survives_reordered_wire_windows() {
+        let body = r#"{"rate_limit":{
+            "primary_window":{"used_percent":41,"limit_window_seconds":604800},
+            "secondary_window":{"used_percent":7,"limit_window_seconds":18000}
+        }}"#;
+        let response: UsageResponse = serde_json::from_str(body).unwrap();
+        let snapshot = response.into_snapshot(None).unwrap();
+        assert_eq!(snapshot.session.unwrap().utilization_pct, 7);
+        assert_eq!(snapshot.weekly.unwrap().utilization_pct, 41);
+    }
+
+    #[test]
+    fn duplicate_semantic_windows_are_schema_drift() {
+        let body = r#"{"rate_limit":{
+            "primary_window":{"used_percent":41,"limit_window_seconds":604800},
+            "secondary_window":{"used_percent":7,"limit_window_seconds":604800}
+        }}"#;
+        let response: UsageResponse = serde_json::from_str(body).unwrap();
+        let error = response.into_snapshot(None).unwrap_err().to_string();
+        assert!(error.contains("duplicate OpenAI 7d window"));
+        assert!(error.contains("limit_window_seconds=604800"));
     }
 
     #[test]
@@ -310,7 +437,7 @@ mod tests {
                 "approx_local_messages":[100,200],"approx_cloud_messages":[40,60]}
         }"#;
         let r: UsageResponse = serde_json::from_str(body).unwrap();
-        let s = r.into_snapshot(None);
+        let s = r.into_snapshot(None).unwrap();
         let c = s.credits.unwrap();
         assert_eq!(c.balance, "$2.50");
         assert!(c.has_credits);
@@ -322,7 +449,7 @@ mod tests {
     fn balance_as_number_formats_to_dollars() {
         let body = r#"{"credits":{"balance":1.5,"has_credits":true,"unlimited":false}}"#;
         let r: UsageResponse = serde_json::from_str(body).unwrap();
-        let s = r.into_snapshot(None);
+        let s = r.into_snapshot(None).unwrap();
         assert_eq!(s.credits.unwrap().balance, "$1.50");
     }
 
@@ -331,8 +458,8 @@ mod tests {
         let body =
             r#"{"rate_limit":{"primary_window":{"used_percent":100.6,"limit_window_seconds":1}}}"#;
         let r: UsageResponse = serde_json::from_str(body).unwrap();
-        let s = r.into_snapshot(None);
-        assert_eq!(s.session.utilization_pct, 100);
+        let s = r.into_snapshot(None).unwrap();
+        assert_eq!(s.session.unwrap().utilization_pct, 100);
     }
 
     #[test]
@@ -351,7 +478,7 @@ mod tests {
     #[test]
     fn plan_hint_used_when_response_omits_plan_type() {
         let r: UsageResponse = serde_json::from_str("{}").unwrap();
-        let s = r.into_snapshot(Some("team"));
+        let s = r.into_snapshot(Some("team")).unwrap();
         assert_eq!(s.plan, "ChatGPT Team");
     }
 
@@ -372,7 +499,14 @@ mod tests {
             r#"{"rate_limit":{"primary_window":{"used_percent":42.7,"limit_window_seconds":18000}}}"#,
         )
         .unwrap();
-        assert_eq!(r.into_snapshot(None).session.utilization_pct, 43);
+        assert_eq!(
+            r.into_snapshot(None)
+                .unwrap()
+                .session
+                .unwrap()
+                .utilization_pct,
+            43
+        );
     }
 
     #[test]
@@ -465,7 +599,15 @@ mod tests {
             r#"{"credits":{"balance":null,"has_credits":false,"unlimited":true}}"#,
         )
         .unwrap();
-        assert_eq!(response.into_snapshot(None).credits.unwrap().balance, "");
+        assert_eq!(
+            response
+                .into_snapshot(None)
+                .unwrap()
+                .credits
+                .unwrap()
+                .balance,
+            ""
+        );
     }
 
     #[test]
@@ -478,9 +620,10 @@ mod tests {
             "reset_after_seconds":9223372036854775807
         }}}"#;
         let r: UsageResponse = serde_json::from_str(body).unwrap();
-        let s = r.into_snapshot(None);
-        assert_eq!(s.session.window_duration, chrono::Duration::hours(5));
-        assert!(s.session.resets_at.is_none());
+        let s = r.into_snapshot(None).unwrap();
+        let session = s.session.unwrap();
+        assert_eq!(session.window_duration, chrono::Duration::hours(5));
+        assert!(session.resets_at.is_none());
     }
 
     #[test]
@@ -489,10 +632,10 @@ mod tests {
             "used_percent":50,"limit_window_seconds":1000,"reset_after_seconds":500
         }}}"#;
         let r: UsageResponse = serde_json::from_str(body).unwrap();
-        let s = r.into_snapshot(None);
+        let s = r.into_snapshot(None).unwrap();
         // The reset should be ~500s from now (within tolerance).
         let now = chrono::Utc::now();
-        let reset = s.session.resets_at.unwrap();
+        let reset = s.session.unwrap().resets_at.unwrap();
         let delta = reset.signed_duration_since(now).num_seconds();
         assert!((400..=600).contains(&delta), "got delta={delta}");
     }

@@ -236,8 +236,19 @@ fn openai_sections(s: &crate::usage::OpenAiSnapshot, now: DateTime<Utc>, tol: u3
         left: s.plan.clone(),
         right: None,
     }];
-    push_window(&mut v, "Codex 5h", &s.session, now, tol, true);
-    push_window(&mut v, "Codex weekly", &s.weekly, now, tol, true);
+    if let Some(session) = &s.session {
+        push_window(&mut v, "Codex 5h", session, now, tol, true);
+    }
+    if let Some(weekly) = &s.weekly {
+        push_window(&mut v, "Codex weekly", weekly, now, tol, true);
+    }
+    if s.session.is_none() && s.weekly.is_none() {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: "".into(),
+            value: "  no usage windows reported".into(),
+        });
+    }
     if let Some(cr) = &s.code_review {
         push_window(&mut v, "Code review", cr, now, tol, false);
     }
@@ -965,16 +976,16 @@ mod tests {
     fn openai_with_credits_renders_block() {
         let snap = OpenAiSnapshot {
             plan: "ChatGPT Plus".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 1,
                 resets_at: None,
                 window_duration: chrono::Duration::hours(5),
-            },
-            weekly: UsageWindow {
+            }),
+            weekly: Some(UsageWindow {
                 utilization_pct: 0,
                 resets_at: None,
                 window_duration: chrono::Duration::days(7),
-            },
+            }),
             code_review: None,
             credits: Some(OpenAiCredits {
                 balance: "$5.00".into(),
@@ -991,6 +1002,31 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s, Section::Block { label, .. } if label == "Credits"))
         );
+    }
+
+    #[test]
+    fn openai_weekly_only_omits_session_section() {
+        let snap = OpenAiSnapshot {
+            plan: "ChatGPT Prolite".into(),
+            session: None,
+            weekly: Some(UsageWindow {
+                utilization_pct: 66,
+                resets_at: None,
+                window_duration: chrono::Duration::days(7),
+            }),
+            code_review: None,
+            credits: None,
+            source: OpenAiSource::CodexOauth,
+        };
+        let sections = sections_for(&ready(VendorSnapshot::Openai(snap)), now(), 5);
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            Section::Metric { label, .. } if label == "Codex weekly"
+        )));
+        assert!(!sections.iter().any(|section| matches!(
+            section,
+            Section::Metric { label, .. } if label == "Codex 5h"
+        )));
     }
 
     #[test]

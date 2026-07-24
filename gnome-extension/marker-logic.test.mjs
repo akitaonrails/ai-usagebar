@@ -13,6 +13,7 @@ assert.equal(markerElapsed('—', 0), null);
 assert.equal(markerElapsed('1h', null), null);
 
 assert.equal(integer('27'), 27);
+assert.equal(integer(''), null);
 assert.equal(integer('27 ⏸'), null);
 assert.equal(integer('{scoped_elapsed}'), null);
 assert.equal(field('{scoped_model}'), '');
@@ -72,6 +73,7 @@ assert.deepEqual(disambiguateTags('Gemini Pro', 'Gemini Flash'), ['GEMINIP', 'GE
 assert.deepEqual(disambiguateTags('Gemini', ''), ['G', '']);
 
 assert.equal(poolAvailable({session: 0, weekly: null}), true);
+assert.equal(poolAvailable({session: null, weekly: 66}), true);
 assert.equal(poolAvailable({session: null, weekly: null}), false);
 assert.equal(poolAvailable(undefined), false);
 

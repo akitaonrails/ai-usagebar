@@ -334,10 +334,10 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             plan: field(f[FIELD.plan]),
             hasUsageWindows: hasUsageWindows(f[FIELD.vendorShort]),
             grouped: isGrouped(f[FIELD.sessionModel]),
-            session: {pct: integer(f[FIELD.sessionPct]) ?? 0, reset: field(f[FIELD.sessionReset]),
+            session: {pct: integer(f[FIELD.sessionPct]), reset: field(f[FIELD.sessionReset]),
                 model: field(f[FIELD.sessionModel]),
                 elapsed: markerElapsed(field(f[FIELD.sessionReset]), integer(f[FIELD.sessionElapsed]))},
-            weekly: {pct: integer(f[FIELD.weeklyPct]) ?? 0, reset: field(f[FIELD.weeklyReset]),
+            weekly: {pct: integer(f[FIELD.weeklyPct]), reset: field(f[FIELD.weeklyReset]),
                 model: field(f[FIELD.weeklyModel]),
                 elapsed: markerElapsed(field(f[FIELD.weeklyReset]), integer(f[FIELD.weeklyElapsed]))},
             // Per-model weekly bar: a non-empty scoped model is the presence
@@ -413,9 +413,9 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                 }
             }
         } else {
-            if (d.hasUsageWindows && showSession)
+            if (d.hasUsageWindows && showSession && d.session.pct != null)
                 parts.push(seg('5h', d.session.pct, `${d.session.pct}%`, d.session.elapsed));
-            if (d.hasUsageWindows && showWeekly)
+            if (d.hasUsageWindows && showWeekly && d.weekly.pct != null)
                 parts.push(seg('7d', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.elapsed));
             if (this._settings.get_boolean('show-extra') &&
                 d.extra.pct != null && d.extra.spent && d.extra.limit)
@@ -473,10 +473,10 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         // Under a group heading the row is named by its pool, not by the window.
         this._rows.session.nameL.text = d.session.model || 'Session';
         this._rows.weekly.nameL.text = d.weekly.model || 'Weekly';
-        upd('session', d.session.pct, `${d.session.pct}%`, d.session.reset,
-            d.hasUsageWindows, d.session.elapsed);
-        upd('weekly', d.weekly.pct, `${d.weekly.pct}%`, d.weekly.reset,
-            d.hasUsageWindows, d.weekly.elapsed);
+        upd('session', d.session.pct, `${d.session.pct ?? 0}%`, d.session.reset,
+            d.hasUsageWindows && d.session.pct != null, d.session.elapsed);
+        upd('weekly', d.weekly.pct, `${d.weekly.pct ?? 0}%`, d.weekly.reset,
+            d.hasUsageWindows && d.weekly.pct != null, d.weekly.elapsed);
         this._rows.sonnet.nameL.text = d.sonnet.label || 'Sonnet only';
         upd('sonnet', d.sonnet.pct, `${d.sonnet.pct ?? 0}%`, d.sonnet.reset, d.sonnet.pct != null, d.sonnet.elapsed);
         if (d.extra.model) {

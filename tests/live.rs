@@ -153,13 +153,27 @@ async fn openai_live() {
     .expect("openai fetch should succeed against the real API");
 
     assert!(!out.snapshot.plan.is_empty(), "openai plan label empty");
-    assert_pct("openai.session", out.snapshot.session.utilization_pct);
-    assert_pct("openai.weekly", out.snapshot.weekly.utilization_pct);
+    assert!(
+        out.snapshot.session.is_some() || out.snapshot.weekly.is_some(),
+        "openai returned no 5h or 7d usage window"
+    );
+    if let Some(session) = out.snapshot.session.as_ref() {
+        assert_pct("openai.session", session.utilization_pct);
+    }
+    if let Some(weekly) = out.snapshot.weekly.as_ref() {
+        assert_pct("openai.weekly", weekly.utilization_pct);
+    }
     println!(
-        "✅ openai — plan={}, session={}%, weekly={}%, credits={:?}",
+        "✅ openai — plan={}, session={:?}%, weekly={:?}%, credits={:?}",
         out.snapshot.plan,
-        out.snapshot.session.utilization_pct,
-        out.snapshot.weekly.utilization_pct,
+        out.snapshot
+            .session
+            .as_ref()
+            .map(|window| window.utilization_pct),
+        out.snapshot
+            .weekly
+            .as_ref()
+            .map(|window| window.utilization_pct),
         out.snapshot.credits.map(|c| c.balance),
     );
 }

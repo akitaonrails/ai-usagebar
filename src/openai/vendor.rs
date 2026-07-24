@@ -1,5 +1,5 @@
-//! OpenAI renderer — mirrors anthropic's layout closely since both expose the
-//! same primary+secondary window pattern.
+//! OpenAI renderer — mirrors Anthropic's rolling-window layout while omitting
+//! any 5h or weekly window the Codex endpoint does not report.
 
 use std::collections::HashMap;
 
@@ -11,33 +11,23 @@ use crate::pacing::{self, PaceSeverity};
 use crate::pango::{color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
 use crate::tooltip::{Line as TooltipLine, push_window, render_bordered};
-use crate::usage::{OpenAiSnapshot, OpenAiSource};
+use crate::usage::{OpenAiSnapshot, OpenAiSource, UsageWindow};
 use crate::vendor::{RenderOpts, VendorOutcome};
 use crate::waybar::{Class, WaybarOutput};
 
 use super::fetch::FetchOutcome;
 
 pub const DEFAULT_FORMAT: &str = "{oai_session_pct}% · {oai_session_reset}";
+const WEEKLY_ONLY_FORMAT: &str = "{oai_weekly_pct}% · {oai_weekly_reset}";
+const NO_WINDOWS_FORMAT: &str = "{oai_plan}";
 
 pub fn build_placeholders(
     snap: &OpenAiSnapshot,
     opts: &RenderOpts,
     now: DateTime<Utc>,
 ) -> HashMap<&'static str, String> {
-    let session_p = pacing::calc(
-        snap.session.utilization_pct,
-        snap.session.resets_at,
-        now,
-        snap.session.window_duration,
-        opts.pace_tolerance,
-    );
-    let weekly_p = pacing::calc(
-        snap.weekly.utilization_pct,
-        snap.weekly.resets_at,
-        now,
-        snap.weekly.window_duration,
-        opts.pace_tolerance,
-    );
+    let session = window_placeholders(snap.session.as_ref(), opts, now);
+    let weekly = window_placeholders(snap.weekly.as_ref(), opts, now);
     let cr_pct = snap
         .code_review
         .as_ref()
@@ -67,40 +57,22 @@ pub fn build_placeholders(
         // Cross-vendor aliases — same names work across all vendors so a
         // single `--format '{vendor_short} {session_pct}% · {session_reset}'`
         // renders correctly during scroll-cycle.
-        ("session_pct", snap.session.utilization_pct.to_string()),
-        (
-            "session_reset",
-            countdown::format(snap.session.resets_at, now),
-        ),
-        ("weekly_pct", snap.weekly.utilization_pct.to_string()),
-        (
-            "weekly_reset",
-            countdown::format(snap.weekly.resets_at, now),
-        ),
+        ("session_pct", session.pct.clone()),
+        ("session_reset", session.reset.clone()),
+        ("weekly_pct", weekly.pct.clone()),
+        ("weekly_reset", weekly.reset.clone()),
         ("plan", snap.plan.clone()),
         ("oai_plan", snap.plan.clone()),
-        ("oai_session_pct", snap.session.utilization_pct.to_string()),
-        (
-            "oai_session_reset",
-            countdown::format(snap.session.resets_at, now),
-        ),
-        ("oai_session_elapsed", session_p.elapsed_pct.to_string()),
-        ("oai_session_pace", session_p.ratio_pace.glyph().to_string()),
-        (
-            "oai_session_pace_indicator",
-            session_p.point_pace.glyph().to_string(),
-        ),
-        ("oai_weekly_pct", snap.weekly.utilization_pct.to_string()),
-        (
-            "oai_weekly_reset",
-            countdown::format(snap.weekly.resets_at, now),
-        ),
-        ("oai_weekly_elapsed", weekly_p.elapsed_pct.to_string()),
-        ("oai_weekly_pace", weekly_p.ratio_pace.glyph().to_string()),
-        (
-            "oai_weekly_pace_indicator",
-            weekly_p.point_pace.glyph().to_string(),
-        ),
+        ("oai_session_pct", session.pct),
+        ("oai_session_reset", session.reset),
+        ("oai_session_elapsed", session.elapsed),
+        ("oai_session_pace", session.ratio_pace),
+        ("oai_session_pace_indicator", session.point_pace),
+        ("oai_weekly_pct", weekly.pct),
+        ("oai_weekly_reset", weekly.reset),
+        ("oai_weekly_elapsed", weekly.elapsed),
+        ("oai_weekly_pace", weekly.ratio_pace),
+        ("oai_weekly_pace_indicator", weekly.point_pace),
         ("oai_code_review_pct", cr_pct.to_string()),
         ("oai_credit_balance", credit_balance),
         ("oai_local_msgs", local_msgs),
@@ -108,14 +80,66 @@ pub fn build_placeholders(
     ])
 }
 
-pub fn severity(snap: &OpenAiSnapshot) -> PaceSeverity {
-    let mut max = snap
-        .session
-        .utilization_pct
-        .max(snap.weekly.utilization_pct);
-    if let Some(c) = &snap.code_review {
-        max = max.max(c.utilization_pct);
+struct WindowPlaceholderValues {
+    pct: String,
+    reset: String,
+    elapsed: String,
+    ratio_pace: String,
+    point_pace: String,
+}
+
+fn window_placeholders(
+    window: Option<&UsageWindow>,
+    opts: &RenderOpts,
+    now: DateTime<Utc>,
+) -> WindowPlaceholderValues {
+    let Some(window) = window else {
+        return WindowPlaceholderValues::empty();
+    };
+    let pace = window_pacing(window, opts, now);
+    WindowPlaceholderValues {
+        pct: window.utilization_pct.to_string(),
+        reset: countdown::format(window.resets_at, now),
+        elapsed: pace.elapsed_pct.to_string(),
+        ratio_pace: pace.ratio_pace.glyph().to_string(),
+        point_pace: pace.point_pace.glyph().to_string(),
     }
+}
+
+fn window_pacing(window: &UsageWindow, opts: &RenderOpts, now: DateTime<Utc>) -> pacing::Pacing {
+    pacing::calc(
+        window.utilization_pct,
+        window.resets_at,
+        now,
+        window.window_duration,
+        opts.pace_tolerance,
+    )
+}
+
+impl WindowPlaceholderValues {
+    fn empty() -> Self {
+        Self {
+            pct: String::new(),
+            reset: String::new(),
+            elapsed: String::new(),
+            ratio_pace: String::new(),
+            point_pace: String::new(),
+        }
+    }
+}
+
+pub fn severity(snap: &OpenAiSnapshot) -> PaceSeverity {
+    let windows = [
+        snap.session.as_ref(),
+        snap.weekly.as_ref(),
+        snap.code_review.as_ref(),
+    ];
+    let max = windows
+        .into_iter()
+        .flatten()
+        .map(|window| window.utilization_pct)
+        .max()
+        .unwrap_or(0);
     severity_for(max)
 }
 
@@ -130,7 +154,7 @@ pub fn render(
     let format = opts
         .format
         .clone()
-        .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
+        .unwrap_or_else(|| default_format(snap).to_string());
     let values = build_placeholders(snap, opts, now);
 
     let mut text = substitute(&format, &values);
@@ -157,6 +181,16 @@ pub fn render(
     }
 }
 
+fn default_format(snap: &OpenAiSnapshot) -> &'static str {
+    if snap.session.is_some() {
+        return DEFAULT_FORMAT;
+    }
+    if snap.weekly.is_some() {
+        return WEEKLY_ONLY_FORMAT;
+    }
+    NO_WINDOWS_FORMAT
+}
+
 fn render_tooltip(
     outcome: &VendorOutcome,
     snap: &OpenAiSnapshot,
@@ -175,16 +209,20 @@ fn render_tooltip(
     lines.push(TooltipLine::Sep);
     lines.push(TooltipLine::Body("".into()));
 
-    push_window(&mut lines, "  󰔟  Codex 5h", &snap.session, theme, now, None);
-    lines.push(TooltipLine::Body("".into()));
-    push_window(
-        &mut lines,
-        "  󰃰  Codex weekly",
-        &snap.weekly,
-        theme,
-        now,
-        None,
-    );
+    if let Some(session) = snap.session.as_ref() {
+        push_window(&mut lines, "  󰔟  Codex 5h", session, theme, now, None);
+    }
+    if let Some(weekly) = snap.weekly.as_ref() {
+        if snap.session.is_some() {
+            lines.push(TooltipLine::Body("".into()));
+        }
+        push_window(&mut lines, "  󰃰  Codex weekly", weekly, theme, now, None);
+    }
+    if snap.session.is_none() && snap.weekly.is_none() {
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{dim}'>no usage windows reported</span>"
+        )));
+    }
 
     if let Some(cr) = snap.code_review.as_ref() {
         lines.push(TooltipLine::Body("".into()));
@@ -284,16 +322,16 @@ mod tests {
     fn sample() -> OpenAiSnapshot {
         OpenAiSnapshot {
             plan: "ChatGPT Plus".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 1,
                 resets_at: Some(Utc::now() + chrono::Duration::hours(5)),
                 window_duration: chrono::Duration::hours(5),
-            },
-            weekly: UsageWindow {
+            }),
+            weekly: Some(UsageWindow {
                 utilization_pct: 0,
                 resets_at: Some(Utc::now() + chrono::Duration::days(7)),
                 window_duration: chrono::Duration::days(7),
-            },
+            }),
             code_review: None,
             credits: None,
             source: OpenAiSource::CodexOauth,
@@ -328,6 +366,16 @@ mod tests {
     }
 
     #[test]
+    fn dual_window_placeholders_keep_existing_values() {
+        let s = sample();
+        let values = build_placeholders(&s, &opts(), Utc::now());
+        assert_eq!(values["oai_session_pct"], "1");
+        assert_eq!(values["oai_weekly_pct"], "0");
+        assert_eq!(values["session_pct"], "1");
+        assert_eq!(values["weekly_pct"], "0");
+    }
+
+    #[test]
     fn tooltip_has_both_windows() {
         let s = sample();
         let out = render(&oc(s.clone()), &s, &Theme::default(), &opts(), Utc::now());
@@ -335,6 +383,21 @@ mod tests {
         assert!(out.tooltip.contains("Codex weekly"));
         assert!(!out.tooltip.contains("Code review"));
         assert!(!out.tooltip.contains("Credits"));
+    }
+
+    #[test]
+    fn weekly_only_snapshot_uses_weekly_default_and_hides_session() {
+        let mut s = sample();
+        s.session = None;
+        s.weekly.as_mut().unwrap().utilization_pct = 66;
+        let out = render(&oc(s.clone()), &s, &Theme::default(), &opts(), Utc::now());
+        assert!(out.text.contains("66%"));
+        assert!(out.tooltip.contains("Codex weekly"));
+        assert!(!out.tooltip.contains("Codex 5h"));
+
+        let values = build_placeholders(&s, &opts(), Utc::now());
+        assert_eq!(values["oai_session_pct"], "");
+        assert_eq!(values["oai_weekly_pct"], "66");
     }
 
     #[test]
@@ -365,7 +428,7 @@ mod tests {
     #[test]
     fn severity_picks_worst_window() {
         let mut s = sample();
-        s.weekly.utilization_pct = 95;
+        s.weekly.as_mut().unwrap().utilization_pct = 95;
         assert_eq!(severity(&s), PaceSeverity::Critical);
     }
 }
