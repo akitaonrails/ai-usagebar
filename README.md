@@ -12,7 +12,7 @@ This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar)
 - **Tabbed TUI** (`ai-usagebar-tui`) with Tab/h/l switching, per-tab refresh, and 60-second auto-refresh. Native ratatui widgets fill the available terminal width and keep the vendor tabs visually consistent.
 - **Optional local Claude Code context monitor** in the TUI, with a bounded,
   compaction-aware view of recent session input-context usage.
-- **Native desktop integrations** for GNOME Shell and the macOS menu bar. The macOS app supports eleven vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok, Anthropic API); the GNOME extension adds Google Antigravity.
+- **Native desktop integrations** for GNOME Shell and the macOS menu bar. The macOS app supports twelve vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok, Anthropic API, Cursor); the GNOME extension covers Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Google Antigravity. (Antigravity is Linux-only; Cursor isn't in the GNOME extension yet.)
 - **Scroll-to-cycle on the bar**: wire `on-scroll-up` / `on-scroll-down`, and one bar item cycles through your enabled vendors.
 - **Config-driven primary vendor**: set `[ui] primary` once; the widget shows that vendor by default and the TUI opens on its tab.
 - **Local testing tools**: `--pretty` renders ANSI-colored terminal output (auto-detects TTY), and `--watch N` re-renders every N seconds.
@@ -89,6 +89,7 @@ Each vendor authenticates a little differently. Anthropic and OpenAI use OAuth c
 | Moonshot | API key (`MOONSHOT_API_KEY` env or `[moonshot] api_key` in config) | Set either. Opt-in. Set `[moonshot] region = "cn"` for `api.moonshot.cn` (balance in CNY); the default `"global"` uses `api.moonshot.ai` (USD). |
 | Grok (xAI) | **Management** key (`XAI_MANAGEMENT_KEY` env or `[grok] api_key` in config) | Set either. Opt-in. This is **not** the inference key — create it under xAI Console → Management keys. See the team note below. |
 | Google Antigravity | None — read from the local Antigravity server | Opt-in. Quota is served only while Antigravity 2.0, the Antigravity IDE, or an interactive `agy` session is running; all three share one account-wide quota. |
+| Cursor | None — read from Cursor's local `state.vscdb` | Opt-in. Sign in to the Cursor IDE at least once; ai-usagebar reads the session token it already wrote there. No key of your own to create. |
 
 #### Grok: team-scoped vs organization-scoped keys
 
@@ -109,7 +110,7 @@ rather than silently querying the wrong URL.
 ### Enabling a vendor
 
 `enabled = true` is what makes a vendor fetch. Anthropic (API), DeepSeek, Kimi,
-Kilo, Novita, Moonshot, Grok, and Antigravity all default to **disabled** so that existing
+Kilo, Novita, Moonshot, Grok, Antigravity, and Cursor all default to **disabled** so that existing
 installs are unaffected until you opt in. Two ways to do it:
 
 - **Via the TUI Settings overlay** (`ai-usagebar-tui`, then `s`): saving a
@@ -133,6 +134,7 @@ For each API-key vendor, ai-usagebar checks in this order:
 - If you put inline `api_key` values in config, `chmod 600 ~/.config/ai-usagebar/config.toml`. The default behavior reads only env vars, which is safer when your config might be world-readable.
 - Don't commit your config dir if you check it into dotfiles unless you've redacted `api_key` lines.
 - OAuth credential files (`~/.claude/.credentials.json`, `~/.codex/auth.json`) are managed by their respective CLIs and already chmod-protected.
+- Cursor's session token lives in its own `state.vscdb`, managed entirely by the Cursor IDE — ai-usagebar opens it read-only and never writes to it.
 
 #### macOS: Anthropic credentials in the Keychain
 
@@ -149,7 +151,7 @@ On macOS, recent Claude Code builds don't write `~/.claude/.credentials.json` �
 # Only a vendor that is enabled can be primary.
 # primary = "anthropic"   # anthropic | anthropic_api | openai | zai
 #                         # | openrouter | deepseek | kimi | kilo | novita
-#                         # | moonshot | grok
+#                         # | moonshot | grok | antigravity | cursor
 
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui
@@ -219,6 +221,12 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 # api_key = "..."          # used if XAI_MANAGEMENT_KEY is unset; chmod 600 the file!
 # Required for organization-scoped keys; auto-resolved for team-scoped ones.
 # team_id = "..."
+
+[cursor]
+enabled = true             # disabled by default; enable once you've signed in to Cursor
+# No API key: reads the session token the Cursor IDE already wrote to its own
+# state.vscdb after you signed in there.
+# db_path = "/home/you/.config/Cursor/User/globalStorage/state.vscdb"
 ```
 
 ## Quick start
@@ -261,7 +269,7 @@ The Waybar widget is optional. The TUI is the best way to see every enabled vend
 
 ## Native desktop integrations
 
-The [macOS menu bar app](macos/README.md) supports eleven vendors — **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok (xAI), and Anthropic (API)**. The [GNOME Shell extension](gnome-extension/README.md) supports **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Google Antigravity**, whose two independent quota pools it renders as grouped rows. macOS does not support Antigravity: the binary only discovers its local server on Linux.
+The [macOS menu bar app](macos/README.md) supports twelve vendors — **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok (xAI), Anthropic (API), and Cursor**. The [GNOME Shell extension](gnome-extension/README.md) supports **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Google Antigravity**, whose two independent quota pools it renders as grouped rows. macOS does not support Antigravity: the binary only discovers its local server on Linux. Cursor is not in the GNOME extension yet — use `ai-usagebar --vendor cursor` or the TUI there.
 
 ## Waybar config
 
@@ -284,7 +292,7 @@ Use one bar item and scroll through your vendors. The TUI on-click still shows t
 }
 ```
 
-The `{vendor_short}` placeholder always expands to a 3-letter vendor ID (`cld` / `gpt` / `zai` / `opr` / `dsk` / `kmi` / `klo` / `nvt` / `msh` / `grk` / `aac` / `agy`), so the bar text tells you which vendor is active. The other usage placeholders (`{session_pct}` for Anthropic, `{oai_session_pct}` for OpenAI, etc.) are vendor-specific. If you want one format string for every cycled vendor, prefer the generic aliases: `{session_pct}`, `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}` are implemented by all seven usage vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, and Antigravity; OpenRouter and DeepSeek use `0` / `—` for the windows they don't expose). Anthropic and OpenAI add `*_elapsed`, `*_pace`, and `*_bar` families; Antigravity adds `*_elapsed` for all four of its windows, plus `{session_model}` / `{weekly_model}` / `{scoped_model}` / `{extra_model}`, which name the model group each row belongs to (vendors with a single quota pool leave them empty). The established API-backed vendors also expose their own `{oai_*}` / `{zai_*}` / `{or_*}` / `{ds_*}` / `{kimi_*}` families, which expand to empty strings for vendors that don't define them.
+The `{vendor_short}` placeholder always expands to a 3-letter vendor ID (`cld` / `gpt` / `zai` / `opr` / `dsk` / `kmi` / `klo` / `nvt` / `msh` / `grk` / `aac` / `agy` / `cur`), so the bar text tells you which vendor is active. The other usage placeholders (`{session_pct}` for Anthropic, `{oai_session_pct}` for OpenAI, etc.) are vendor-specific. If you want one format string for every cycled vendor, prefer the generic aliases: `{session_pct}`, `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}` are implemented by all eight usage vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Antigravity, and Cursor; OpenRouter and DeepSeek use `0` / `—` for the windows they don't expose). Cursor has no time windows but two usage *pools*, so it maps them onto the two generic slots: `session_pct` = **Cursor Models** (Auto + Composer), `weekly_pct` = **Other Models** (named / API), both resetting on the billing cycle. Anthropic and OpenAI add `*_elapsed`, `*_pace`, and `*_bar` families; Antigravity adds `*_elapsed` for all four of its windows, plus `{session_model}` / `{weekly_model}` / `{scoped_model}` / `{extra_model}`, which name the model group each row belongs to (vendors with a single quota pool leave them empty). The established API-backed vendors also expose their own `{oai_*}` / `{zai_*}` / `{or_*}` / `{ds_*}` / `{kimi_*}` families, which expand to empty strings for vendors that don't define them.
 
 `signal: 13` lets the scroll-cycle commands refresh the bar instantly (via `SIGRTMIN+13`) instead of waiting for the next 300s interval.
 
@@ -462,10 +470,11 @@ Then `hyprctl reload` (no logout needed).
 | **Moonshot** | `api.moonshot.ai\|.cn/v1/users/me/balance` (documented) | Account balance ($ on `.ai`, ¥ on `.cn`) | No — widget/TUI only |
 | **Grok (xAI)** | `management-api.x.ai/v1/billing/teams/{team}/prepaid/balance` (Management API; documented) | Prepaid credit balance ($) | No — widget/TUI only |
 | **Anthropic (API)** | `api.anthropic.com/v1/organizations/cost_report` (Admin API; documented) | Month-to-date spend ($, excludes Priority Tier), optional spend-vs-limit % | No — widget/TUI only |
+| **Cursor** | `cursor.com/api/usage-summary` (undocumented; the dashboard's own frontend) | Two included-usage pools this billing cycle — Cursor Models (Auto/Composer) % and Other Models (named/API) % — plus plan, reset, on-demand | Yes |
 
 ### Endpoint stability
 
-Four of the six endpoints are undocumented. The Anthropic and OpenAI endpoints are used by their official CLIs (`claude` and `codex`), so removing them would break those tools too. That makes them less shaky than scraped web endpoints. Z.AI's monitor endpoint is reverse-engineered from a third-party plugin; treat it as the most fragile one. Kimi's `/coding/v1/usages` is community-confirmed and used by third-party quota tools; treat it as drift-prone.
+Four of the six endpoints are undocumented. The Anthropic and OpenAI endpoints are used by their official CLIs (`claude` and `codex`), so removing them would break those tools too. That makes them less shaky than scraped web endpoints. Z.AI's monitor endpoint is reverse-engineered from a third-party plugin; treat it as the most fragile one. Kimi's `/coding/v1/usages` is community-confirmed and used by third-party quota tools; treat it as drift-prone. Cursor's `/api/usage-summary` has no official docs and is the endpoint the dashboard's own frontend calls — treat it as drift-prone too (its shape tracks Cursor's pricing, which has changed before).
 
 OpenAI's known 5-hour and 7-day windows are identified from each window's
 reported duration, not from `primary_window` / `secondary_window` position.
@@ -530,6 +539,12 @@ When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests,
 `{aapi_headline}`, `{aapi_spent}`, `{aapi_limit}`, `{aapi_pct}` — month-to-date spend for the API/Console account from the Admin API `cost_report`. The headline is `$1.34 / $1000 · 0%` when a positive, finite `monthly_limit` is set in config, `$1.34/mo` otherwise. Generic aliases `{plan}`, `{session_pct}`, and `{weekly_pct}` are also available (the last two both map to the spend-vs-limit %).
 
 > **Two things this figure is not.** It is **spend**, not remaining credit — Anthropic exposes no API for the prepaid balance, which is visible only on the Console dashboard. And per the [Cost API docs](https://platform.claude.com/docs/en/manage-claude/usage-cost-api) it **omits Priority Tier costs**, so an organization on Priority Tier is seeing less than its true total spend.
+
+### Cursor
+
+`{cursor_plan}`, `{cursor_auto_pct}`, `{cursor_api_pct}`, `{cursor_total_pct}`, `{cursor_reset}`, `{cursor_on_demand}`, `{cursor_unlimited}` — this billing cycle's two included-usage pools from `cursor.com/api/usage-summary`: `cursor_auto_pct` is **Cursor Models** (Auto + Composer) and `cursor_api_pct` is **Other Models** (named / API), matching the two bars on the Cursor dashboard. `cursor_total_pct` is the overall included-usage headline; `cursor_on_demand` is `on`/`off`; `cursor_unlimited` is `yes`/`no`. A pool can read above 100% when it is over its included allowance. The default bar format is `{cursor_auto_pct}·{cursor_api_pct}%` (e.g. `98·100%`), colored by whichever pool is worst. Generic aliases: `{session_pct}` = Cursor Models, `{weekly_pct}` = Other Models, `{plan}` = `Cursor <Plan>`.
+
+> Cursor's dashboard also reports usage-based (overage) spend and, for team accounts, per-member spend. Neither is tracked here — this vendor mirrors the two included-usage bars the dashboard shows. Team accounts (whose usage lives under `teamUsage`) aren't parsed yet.
 
 ## Local development
 

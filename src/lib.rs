@@ -16,6 +16,7 @@ pub mod cache;
 pub mod config;
 pub mod context;
 pub mod countdown;
+pub mod cursor;
 pub mod deepseek;
 pub mod error;
 pub mod format;

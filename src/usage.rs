@@ -222,6 +222,47 @@ impl Default for DeepseekSnapshot {
     }
 }
 
+/// Cursor — the two included-usage pools the dashboard shows, from the
+/// undocumented `cursor.com/api/usage-summary` endpoint (the same one the
+/// dashboard's own frontend calls), authenticated with the session token the
+/// Cursor IDE wrote to its local `state.vscdb`.
+///
+/// Since Cursor's mid-2026 pricing, a plan's included compute is split into two
+/// quota pools, each shown as a percentage: **Cursor Models** (Auto + Composer,
+/// `autoPercentUsed`) and **Other Models** (named / third-party, `apiPercentUsed`).
+/// Overflow past either pool falls to on-demand spend. Percentages are integers
+/// (rounded from the wire floats) to match the dashboard and every other
+/// vendor's integer-percent convention; they can exceed 100 when a pool is over
+/// its included allowance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorSnapshot {
+    /// Membership label, title-cased from `membershipType` (e.g. "Ultra").
+    pub plan: String,
+    /// "Cursor Models" pool — Auto + Composer (`autoPercentUsed`, rounded).
+    pub auto_pct: i32,
+    /// "Other Models" pool — named / third-party (`apiPercentUsed`, rounded).
+    pub api_pct: i32,
+    /// Overall included usage (`totalPercentUsed`, rounded) — the dashboard's
+    /// "you've used N% of your included total usage" headline.
+    pub total_pct: i32,
+    /// `true` when the plan reports `isUnlimited` — the pools don't cap and the
+    /// percentages are not meaningful.
+    pub unlimited: bool,
+    /// Whether on-demand (overage) spend is turned on (`onDemand.enabled`).
+    pub on_demand_enabled: bool,
+    /// End of the current billing cycle (`billingCycleEnd`) — when the pools
+    /// reset.
+    pub reset_at: Option<DateTime<Utc>>,
+}
+
+impl CursorSnapshot {
+    /// The binding pool — whichever is closest to (or furthest past) its cap.
+    /// Drives the bar color and the single generic `session_pct` alias.
+    pub fn worst_pct(&self) -> i32 {
+        self.auto_pct.max(self.api_pct)
+    }
+}
+
 /// Kimi Code — weekly subscription quota plus a 5h rolling rate-limit window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KimiSnapshot {
@@ -276,6 +317,7 @@ pub enum VendorSnapshot {
     Grok(GrokSnapshot),
     AnthropicApi(AnthropicApiSnapshot),
     Antigravity(AntigravitySnapshot),
+    Cursor(CursorSnapshot),
 }
 
 /// Google Antigravity 2.0 / CLI snapshot. The API groups models into Gemini

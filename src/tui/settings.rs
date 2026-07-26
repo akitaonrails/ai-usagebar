@@ -744,6 +744,7 @@ fn vendor_label(v: VendorId) -> &'static str {
         VendorId::Moonshot => "Moonshot",
         VendorId::Grok => "Grok",
         VendorId::Antigravity => "Antigravity",
+        VendorId::Cursor => "Cursor",
     }
 }
 

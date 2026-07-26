@@ -9,6 +9,23 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Cursor vendor.** Shows this billing cycle's two included-usage pools —
+  **Cursor Models** (Auto + Composer) and **Other Models** (named / API) — as
+  percentages, from `GET cursor.com/api/usage-summary`, the same undocumented
+  endpoint the Cursor dashboard's own frontend calls. Also surfaces the plan
+  (`membershipType`), the billing-cycle reset, whether on-demand spend is on,
+  and unlimited plans. No API key: the session token is read **read-only** from
+  the local `state.vscdb` SQLite database the Cursor IDE already wrote after you
+  signed in there (the JWT's `sub` claim yields the user id; combined with the
+  raw token it forms the `WorkosCursorSessionToken` cookie the endpoint
+  expects). Opt-in (`[cursor] enabled = true`) and wired into the Waybar widget,
+  `--vendor cursor`, the TUI panel (a bar per pool), scroll-cycling, **the macOS
+  menu bar app** (its two pools relabel the session/weekly bars as "Cursor
+  Models" / "Other Models"), and the config-example/README docs. Adds a
+  `rusqlite` (bundled) dependency. Not wired into the GNOME extension yet.
+
 ### Fixed
 
 - **A failed terminal resize no longer exits the TUI.** A transient

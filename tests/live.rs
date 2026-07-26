@@ -39,11 +39,16 @@
 //!   window are optional, so the smoke test validates their public fields only
 //!   when present; the snapshot does not expose raw wire duration/unit.
 //!   `kimi_live` skips when optional `KIMI_API_KEY` is unset.
+//! - **Cursor**: reads the session token from the local `state.vscdb`, then
+//!   asserts `premium_pct` is 0..=100 and a future `premium_reset_at` was
+//!   derived from `startOfMonth`. `cursor_live` skips when there is no Cursor
+//!   install (no state DB and no `CURSOR_DB_PATH`).
 
 use std::time::Duration;
 
 use ai_usagebar::anthropic;
 use ai_usagebar::cache::Cache;
+use ai_usagebar::cursor;
 use ai_usagebar::error::AppError;
 use ai_usagebar::kimi;
 use ai_usagebar::openai;
@@ -308,5 +313,69 @@ async fn kimi_live() {
         out.snapshot.window_limit,
         out.snapshot.window_remaining,
         out.snapshot.window_reset_at,
+    );
+}
+
+#[tokio::test]
+#[ignore = "live API; run with --ignored"]
+async fn cursor_live() {
+    // Cursor has no API key — the credential is the session token the Cursor
+    // IDE wrote to its local state DB. So this test needs a real Cursor install
+    // (or `CURSOR_DB_PATH` pointing at a copied `state.vscdb`) and skips
+    // otherwise, the same way `kimi_live` skips without a key. Nothing to fetch
+    // on a CI box with no Cursor.
+    let db_path = match std::env::var("CURSOR_DB_PATH") {
+        Ok(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+        _ => cursor::db::default_db_path().expect("resolve platform config dir"),
+    };
+    if !db_path.exists() {
+        eprintln!(
+            "cursor_live: no Cursor state DB at {} — skipping (sign in to the Cursor IDE, or set CURSOR_DB_PATH)",
+            db_path.display()
+        );
+        return;
+    }
+
+    let cache = xdg_cache_for("cursor");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let endpoints = cursor::fetch::Endpoints::default();
+    let out = cursor::fetch_snapshot(
+        &client,
+        &db_path,
+        &cache,
+        &endpoints,
+        Duration::from_secs(0),
+    )
+    .await
+    .expect("cursor fetch should succeed against the real API");
+
+    // The fields the widget depends on: two pool percentages (>= 0; a pool can
+    // exceed 100 when over its included allowance, so only the low bound is
+    // asserted) and a future billing-cycle reset.
+    assert!(
+        out.snapshot.auto_pct >= 0 && out.snapshot.api_pct >= 0,
+        "cursor: negative pool percentage — shape changed? auto={} api={}",
+        out.snapshot.auto_pct,
+        out.snapshot.api_pct
+    );
+    assert!(!out.snapshot.plan.is_empty(), "cursor plan label empty");
+    assert!(
+        out.snapshot
+            .reset_at
+            .is_some_and(|r| r > chrono::Utc::now()),
+        "cursor: reset_at should be a future instant, got {:?}",
+        out.snapshot.reset_at
+    );
+    println!(
+        "✅ cursor — plan={}, Cursor Models {}%, Other Models {}%, total {}%, on-demand={}, reset {:?}",
+        out.snapshot.plan,
+        out.snapshot.auto_pct,
+        out.snapshot.api_pct,
+        out.snapshot.total_pct,
+        out.snapshot.on_demand_enabled,
+        out.snapshot.reset_at,
     );
 }

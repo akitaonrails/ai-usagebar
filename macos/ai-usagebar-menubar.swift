@@ -344,6 +344,15 @@ struct Snapshot {
     /// Label for that bar: the scoped model name ("Fable") or "Sonnet only".
     let sonnetLabel: String
     let extra: (pct: Int, spent: String, limit: String)?
+    /// Overridable labels for the session/weekly bars. Default to the
+    /// time-window names; a vendor whose two windows aren't time-based (Cursor:
+    /// "Cursor Models" / "Other Models") sets its own. Tags are the 2-char
+    /// prefixes shown on the compact status bar. Defaulted so every other
+    /// vendor's construction is unchanged.
+    var sessionTag: String = "5h"
+    var weeklyTag: String = "7d"
+    var sessionLabel: String = "Session"
+    var weeklyLabel: String = "Weekly"
 }
 
 func stripMarkup(_ s: String) -> String {
@@ -439,6 +448,11 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     // With a limit configured the spend-vs-limit bar replaces the headline, so
     // avoid showing both the "cr" balance and the extra ($) row at once.
     let displayBalance = aapiExtra == nil ? balance : nil
+    // Cursor carries its two included-usage pools on the session/weekly
+    // aliases (session = Cursor Models, weekly = Other Models — both real, not
+    // time windows), so relabel those bars rather than call them "Session"/
+    // "Weekly". Every other vendor keeps the default time-window labels.
+    let isCursor = vendor == "cursor"
     return Snapshot(plan: t(0),
                     hasUsageWindows: !balanceOnly,
                     creditBalance: displayBalance,
@@ -446,7 +460,11 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
                     weekly: quotaWindow(3, 4, 14),
                     sonnet: sonnet,
                     sonnetLabel: sonnetLabel,
-                    extra: aapiExtra ?? extra)
+                    extra: aapiExtra ?? extra,
+                    sessionTag: isCursor ? "auto" : "5h",
+                    weeklyTag: isCursor ? "premium" : "7d",
+                    sessionLabel: isCursor ? "Cursor Models" : "Session",
+                    weeklyLabel: isCursor ? "Other Models" : "Weekly")
 }
 
 // ─── Preferences UI (SwiftUI) ────────────────────────────────────────────
@@ -489,6 +507,11 @@ let VENDOR_AUTH: [VendorAuth] = [
     VendorAuth(id: "moonshot", name: "Moonshot", kind: "apikey", cli: "", login: "", pkg: "", env: "MOONSHOT_API_KEY"),
     VendorAuth(id: "grok", name: "Grok (xAI)", kind: "apikey", cli: "", login: "", pkg: "", env: "XAI_MANAGEMENT_KEY"),
     VendorAuth(id: "anthropic_api", name: "Anthropic (API)", kind: "apikey", cli: "", login: "", pkg: "", env: "ANTHROPIC_ADMIN_KEY"),
+    // Cursor has no API key: the binary reads the session token the Cursor IDE
+    // wrote to its own state.vscdb. `kind: "local"` marks the "configured =
+    // signed in to the app" case (like Antigravity in the GNOME extension),
+    // with no login CLI or env var of its own.
+    VendorAuth(id: "cursor", name: "Cursor", kind: "local", cli: "", login: "", pkg: "", env: ""),
 ]
 
 // The config file the Rust binary would actually read. On macOS
@@ -569,7 +592,7 @@ func apiKeyEnvironment(_ v: VendorAuth) -> String {
 func defaultEnabled(_ id: String) -> Bool {
     switch id {
     case "anthropic", "openai", "zai", "openrouter": return true
-    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api": return false
+    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor": return false
     default: return true
     }
 }
@@ -597,6 +620,13 @@ func vendorConfigured(_ v: VendorAuth) -> Bool {
     }
     if v.id == "openai" {
         return fm.fileExists(atPath: "\(home)/.codex/auth.json")
+    }
+    if v.id == "cursor" {
+        // Configured == signed in to the Cursor IDE, i.e. its state DB exists.
+        // Honor a [cursor] db_path override the same way the binary does.
+        let dbPath = configValueTOML("cursor", "db_path")
+            ?? "\(home)/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+        return fm.fileExists(atPath: dbPath)
     }
     if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
     return configHasApiKeyTOML(v.id)
@@ -659,6 +689,15 @@ func openTuiInTerminal() {
     runInTerminal("\"\(tui)\"\necho\nread -p \"Enter para fechar...\"")
 }
 
+// Launch a .app by name (e.g. "Cursor") via `open -a`, so a local-kind vendor's
+// button can bring the user to the app they need to sign into.
+func openApp(_ name: String) {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    p.arguments = ["-a", name]
+    try? p.run()
+}
+
 struct VendorsSection: View {
     @State private var configured: [String: Bool] = [:]
     @State private var cliPresent: [String: Bool] = [:]
@@ -711,6 +750,11 @@ struct VendorsSection: View {
             if cliPresent[v.id] == false { return "⚠ \(v.cli) não instalado" }
             return "⚠ Não logado — \(v.login)"
         }
+        // Local vendors (Cursor) have no key: "configured" means signed in to
+        // the app AND [cursor] enabled in config.
+        if v.kind == "local" {
+            return "⚠ Entre no app Cursor e ative [cursor] no config"
+        }
         return "⚠ Sem API key — \(apiKeyEnvironment(v))"
     }
 
@@ -720,11 +764,13 @@ struct VendorsSection: View {
             if cliPresent[v.id] == false { return "Instalar + logar" }
             return "Logar"
         }
+        if v.kind == "local" { return "Abrir Cursor" }
         return "Configurar (TUI)"
     }
 
     private func action(_ v: VendorAuth) {
         if v.kind == "oauth" { runInTerminal(oauthScript(v)) }
+        else if v.kind == "local" { openApp(v.name) }
         else { openTuiInTerminal() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { refresh() }
     }
@@ -1054,10 +1100,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             title.append(run("cr ", secondaryTextColor))
             title.append(run(creditBalance, primaryTextColor))
         } else if s.hasUsageWindows && SHOW_SESSION, let session = s.session {
-            seg("5h", session.pct, "\(session.pct)%", session.elapsed)
+            seg(s.sessionTag, session.pct, "\(session.pct)%", session.elapsed)
         }
         if s.creditBalance == nil && s.hasUsageWindows && SHOW_WEEKLY, let weekly = s.weekly {
-            seg("7d", weekly.pct, "\(weekly.pct)%", weekly.elapsed)
+            seg(s.weeklyTag, weekly.pct, "\(weekly.pct)%", weekly.elapsed)
         }
         if SHOW_EXTRA, let e = s.extra { seg("ex", e.pct, e.spent, nil) } // $ budget → no meta
         statusItem.button?.attributedTitle = title.length > 0 ? title : run("ai", secondaryTextColor)
@@ -1088,10 +1134,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             rows["sonnet"]?.isHidden = true
         } else {
             if s.hasUsageWindows, let session = s.session {
-                row("session", "Session", session.pct, "\(session.pct)%", session.reset, session.elapsed)
+                row("session", s.sessionLabel, session.pct, "\(session.pct)%", session.reset, session.elapsed)
             } else { rows["session"]?.isHidden = true }
             if s.hasUsageWindows, let weekly = s.weekly {
-                row("weekly", "Weekly", weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed)
+                row("weekly", s.weeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed)
             } else { rows["weekly"]?.isHidden = true }
         }
         if let sn = s.sonnet { row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset, sn.elapsed) }

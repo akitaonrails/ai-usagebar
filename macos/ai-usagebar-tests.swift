@@ -168,7 +168,7 @@ func testDefaultEnabled() {
     for id in ["anthropic", "openai", "zai", "openrouter"] {
         assertEqual(defaultEnabled(id), true, "\(id) defaults enabled")
     }
-    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api"] {
+    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor"] {
         assertEqual(defaultEnabled(id), false, "\(id) defaults disabled (opt-in)")
     }
 }
@@ -256,6 +256,26 @@ func testParserBalances() {
     assertEqual(cld?.hasUsageWindows, true, "anthropic shows windows")
     assertNil(cld?.creditBalance, "anthropic has no balance")
     assertEqual(cld?.session?.pct, 42, "anthropic session pct")
+
+    // Cursor: two included-usage pools carried on the session/weekly aliases
+    // (session = Cursor Models, weekly = Other Models), both real, no balance.
+    // The bars are relabeled away from the "Session"/"Weekly" time-window names.
+    let cur = snapshot(FORMAT, vendor: "cursor",
+                       fields: fields(through: 16, set: [
+                          0: "Cursor Ultra", 1: "98", 2: "8d", 3: "100", 4: "8d", 16: "cur"
+                       ]))
+    assertEqual(cur?.hasUsageWindows, true, "cursor shows windows")
+    assertNil(cur?.creditBalance, "cursor has no balance")
+    assertEqual(cur?.session?.pct, 98, "cursor Cursor Models pct")
+    assertEqual(cur?.weekly?.pct, 100, "cursor Other Models pct")
+    assertEqual(cur?.sessionLabel, "Cursor Models", "cursor relabels the session bar")
+    assertEqual(cur?.weeklyLabel, "Other Models", "cursor relabels the weekly bar")
+    assertEqual(cur?.sessionTag, "auto", "cursor session tag")
+    assertEqual(cur?.weeklyTag, "premium", "cursor weekly tag")
+
+    // A non-Cursor vendor keeps the default time-window labels.
+    assertEqual(cld?.sessionLabel, "Session", "anthropic keeps the Session label")
+    assertEqual(cld?.weeklyTag, "7d", "anthropic keeps the 7d tag")
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────────

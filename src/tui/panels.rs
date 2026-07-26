@@ -89,6 +89,7 @@ pub fn sections_for(tab: &TabState, now: DateTime<Utc>, pace_tolerance: u32) -> 
                 VendorSnapshot::Moonshot(s) => moonshot_sections(s),
                 VendorSnapshot::Grok(s) => grok_sections(s),
                 VendorSnapshot::Antigravity(s) => antigravity_sections(s, now),
+                VendorSnapshot::Cursor(s) => cursor_sections(s, now),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -366,6 +367,47 @@ fn antigravity_sections(s: &crate::usage::AntigravitySnapshot, now: DateTime<Utc
             push_window(&mut v, GROUP_THIRD_PARTY, w, now, 5, false);
         }
     }
+    v
+}
+
+fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Vec<Section> {
+    let mut v = vec![Section::Title {
+        left: format!("Cursor {}", s.plan),
+        right: None,
+    }];
+    if s.unlimited {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: "Plan".into(),
+            value: "Unlimited — pools don't cap".into(),
+        });
+    } else {
+        // Two included-usage pools, mirroring the dashboard's two bars.
+        v.push(Section::Spacer);
+        v.push(Section::Metric {
+            label: "Cursor Models".into(),
+            pct: s.auto_pct.clamp(0, 100) as u16,
+            severity: severity_for(s.auto_pct),
+            value_label: format!("{}%", s.auto_pct),
+            footnote: "Auto + Composer".into(),
+        });
+        v.push(Section::Spacer);
+        v.push(Section::Metric {
+            label: "Other Models".into(),
+            pct: s.api_pct.clamp(0, 100) as u16,
+            severity: severity_for(s.api_pct),
+            value_label: format!("{}%", s.api_pct),
+            footnote: format!(
+                "Named / API models · on-demand {}",
+                if s.on_demand_enabled { "on" } else { "off" }
+            ),
+        });
+    }
+    v.push(Section::Spacer);
+    v.push(Section::Text {
+        label: "Resets".into(),
+        value: countdown::format(s.reset_at, now),
+    });
     v
 }
 
@@ -1128,6 +1170,63 @@ mod tests {
             .filter(|s| matches!(s, Section::Metric { .. }))
             .count();
         assert_eq!(metric_count, 1);
+    }
+
+    fn cursor_snap() -> crate::usage::CursorSnapshot {
+        crate::usage::CursorSnapshot {
+            plan: "Ultra".into(),
+            auto_pct: 98,
+            api_pct: 100,
+            total_pct: 99,
+            unlimited: false,
+            on_demand_enabled: false,
+            reset_at: Some(now() + chrono::Duration::days(9)),
+        }
+    }
+
+    #[test]
+    fn cursor_sections_show_both_pools_and_reset() {
+        let sections = sections_for(&ready(VendorSnapshot::Cursor(cursor_snap())), now(), 5);
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter_map(|s| match s {
+                Section::Metric {
+                    label, value_label, ..
+                } => Some((label.clone(), value_label.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metrics.len(), 2, "two pools");
+        assert!(
+            metrics
+                .iter()
+                .any(|(l, v)| l == "Cursor Models" && v == "98%")
+        );
+        assert!(
+            metrics
+                .iter()
+                .any(|(l, v)| l == "Other Models" && v == "100%")
+        );
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { label, value } if label == "Resets" && value.contains("9d")
+        )));
+    }
+
+    #[test]
+    fn cursor_unlimited_plan_shows_no_pool_bars() {
+        let mut snap = cursor_snap();
+        snap.unlimited = true;
+        let sections = sections_for(&ready(VendorSnapshot::Cursor(snap)), now(), 5);
+        let metric_count = sections
+            .iter()
+            .filter(|s| matches!(s, Section::Metric { .. }))
+            .count();
+        assert_eq!(metric_count, 0);
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { value, .. } if value.contains("Unlimited")
+        )));
     }
 
     #[test]

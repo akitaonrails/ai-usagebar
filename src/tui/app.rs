@@ -429,6 +429,20 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
             let outcome = crate::antigravity::fetch_snapshot(client, &cache, DEFAULT_TTL).await?;
             Ok(outcome.into())
         }
+        VendorId::Cursor => {
+            let cache = crate::cache::Cache::for_vendor("cursor")?;
+            let db_path = config
+                .cursor
+                .db_path
+                .clone()
+                .map(Ok)
+                .unwrap_or_else(crate::cursor::db::default_db_path)?;
+            let endpoints = crate::cursor::fetch::Endpoints::default();
+            let outcome =
+                crate::cursor::fetch_snapshot(client, &db_path, &cache, &endpoints, DEFAULT_TTL)
+                    .await?;
+            Ok(outcome.into())
+        }
     }
 }
 

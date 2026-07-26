@@ -167,3 +167,22 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # "host:port" only if auto-discovery of that local server ever fails.
 [antigravity]
 enabled = false
+
+# Cursor. No API key: usage is read from the session token the Cursor IDE
+# already wrote to its own local state database after you signed in there —
+# no separate login step for ai-usagebar. Shows this billing cycle's two
+# included-usage pools — "Cursor Models" (Auto + Composer) and "Other Models"
+# (named / API) — from the undocumented cursor.com/api/usage-summary endpoint
+# (the same one the Cursor dashboard itself calls).
+[cursor]
+# Disabled by default — enable once you've signed in to the Cursor IDE at
+# least once (it needs no key from you, but it does need that one-time login
+# to exist).
+enabled = false
+# Override Cursor's local state database path. Leave commented out to use the
+# platform default:
+#   Linux:   ~/.config/Cursor/User/globalStorage/state.vscdb
+#   macOS:   ~/Library/Application Support/Cursor/User/globalStorage/state.vscdb
+#   Windows: %APPDATA%\Cursor\User\globalStorage\state.vscdb
+# Set this if you use a portable Cursor install or a renamed profile dir.
+# db_path = "/home/you/.config/Cursor/User/globalStorage/state.vscdb"

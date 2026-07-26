@@ -47,6 +47,7 @@ pub struct Config {
     pub moonshot: MoonshotConfig,
     pub grok: GrokConfig,
     pub antigravity: AntigravityConfig,
+    pub cursor: CursorConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -418,6 +419,25 @@ pub struct AntigravityConfig {
     pub enabled: bool,
 }
 
+/// Cursor reads its quota through a session token the Cursor IDE already
+/// wrote to its local `state.vscdb` — no API key, but (unlike Antigravity)
+/// there is a real on-disk path that can need overriding (e.g. a portable or
+/// non-default Cursor install), mirroring `openai.codex_auth_path`.
+///
+/// Opt-in like DeepSeek/Kilo/etc (`enabled` defaults to `false`, matching
+/// `bool::default()`): reads an undocumented endpoint via a session token
+/// scraped from a local IDE file, so it stays off until the user explicitly
+/// turns it on.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CursorConfig {
+    pub enabled: bool,
+    /// Override Cursor's local state database path (defaults to the
+    /// platform-standard `.../User/globalStorage/state.vscdb` — see
+    /// `cursor::db::default_db_path`).
+    pub db_path: Option<PathBuf>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AnthropicApiConfig {
@@ -513,6 +533,7 @@ impl Config {
         expand_tilde_opt(&mut self.context.projects_path);
         expand_tilde_opt(&mut self.anthropic.credentials_path);
         expand_tilde_opt(&mut self.openai.codex_auth_path);
+        expand_tilde_opt(&mut self.cursor.db_path);
         for account in &mut self.anthropic.accounts {
             account.credentials_path = expand_tilde(&account.credentials_path);
         }
@@ -532,6 +553,7 @@ impl Config {
             VendorId::Moonshot => self.moonshot.enabled,
             VendorId::Grok => self.grok.enabled,
             VendorId::Antigravity => self.antigravity.enabled,
+            VendorId::Cursor => self.cursor.enabled,
         }
     }
 
@@ -688,6 +710,7 @@ mod tests {
             VendorId::Novita,
             VendorId::Moonshot,
             VendorId::Grok,
+            VendorId::Cursor,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
@@ -1247,6 +1270,7 @@ enabled = false
         assert!(!c.is_enabled(VendorId::Novita));
         assert!(!c.is_enabled(VendorId::Moonshot));
         assert!(!c.is_enabled(VendorId::Grok));
+        assert!(!c.is_enabled(VendorId::Cursor));
     }
 
     #[test]
@@ -1314,5 +1338,32 @@ enabled = false
         assert!(!cfg.novita.enabled && cfg.novita.api_key.is_none());
         assert!(!cfg.moonshot.enabled && cfg.moonshot.api_key.is_none());
         assert!(!cfg.grok.enabled && cfg.grok.api_key.is_none());
+        assert!(!cfg.cursor.enabled && cfg.cursor.db_path.is_none());
+    }
+
+    #[test]
+    fn cursor_db_path_is_tilde_expanded() {
+        let f = write_toml(
+            r#"
+            [cursor]
+            db_path = "~/cursor-state.vscdb"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        let home = crate::cache::home_dir().unwrap();
+        assert_eq!(c.cursor.db_path, Some(home.join("cursor-state.vscdb")));
+    }
+
+    #[test]
+    fn cursor_appears_when_enabled() {
+        let f = write_toml(
+            r#"
+            [cursor]
+            enabled = true
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert!(c.is_enabled(VendorId::Cursor));
+        assert!(c.enabled_vendors().contains(&VendorId::Cursor));
     }
 }
