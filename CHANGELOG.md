@@ -25,6 +25,14 @@ Each release is also published at
   menu bar app** (its two pools relabel the session/weekly bars as "Cursor
   Models" / "Other Models"), and the config-example/README docs. Adds a
   `rusqlite` (bundled) dependency. Not wired into the GNOME extension yet.
+  **Team accounts** (`membershipType` with no `individualUsage.plan`) are now
+  parsed too, via the auto/named "You've used N% of your included … usage"
+  display-message strings the payload also carries — the only percentage
+  source Cursor exposes for those accounts, per an independent
+  reverse-engineering of the same endpoint. Unverified against a live team
+  account (labeled `"<Plan> (team)"` in the UI so it's visibly a best-effort
+  path); falls back to the existing schema error rather than a fabricated
+  0% if the display messages don't parse.
 
 ### Fixed
 

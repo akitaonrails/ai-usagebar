@@ -544,7 +544,7 @@ When an endpoint drifts, **run `make smoke`**. It runs all ignored vendor tests,
 
 `{cursor_plan}`, `{cursor_auto_pct}`, `{cursor_api_pct}`, `{cursor_total_pct}`, `{cursor_reset}`, `{cursor_on_demand}`, `{cursor_unlimited}` — this billing cycle's two included-usage pools from `cursor.com/api/usage-summary`: `cursor_auto_pct` is **Cursor Models** (Auto + Composer) and `cursor_api_pct` is **Other Models** (named / API), matching the two bars on the Cursor dashboard. `cursor_total_pct` is the overall included-usage headline; `cursor_on_demand` is `on`/`off`; `cursor_unlimited` is `yes`/`no`. A pool can read above 100% when it is over its included allowance. The default bar format is `{cursor_auto_pct}·{cursor_api_pct}%` (e.g. `98·100%`), colored by whichever pool is worst. Generic aliases: `{session_pct}` = Cursor Models, `{weekly_pct}` = Other Models, `{plan}` = `Cursor <Plan>`.
 
-> Cursor's dashboard also reports usage-based (overage) spend and, for team accounts, per-member spend. Neither is tracked here — this vendor mirrors the two included-usage bars the dashboard shows. Team accounts (whose usage lives under `teamUsage`) aren't parsed yet.
+> Cursor's dashboard also reports usage-based (overage) spend and, for team accounts, per-member spend. Neither is tracked here — this vendor mirrors the two included-usage bars the dashboard shows. Team accounts (which report no `individualUsage.plan`) are parsed too, falling back to the payload's "You've used N%…" display-message strings for the two pools — the plan label gets a `(team)` suffix so it's visibly a best-effort path, since this has not been verified against a live team account.
 
 ## Local development
 

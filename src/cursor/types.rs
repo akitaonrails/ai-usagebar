@@ -17,10 +17,32 @@
 //! }
 //! ```
 //!
-//! Team accounts report under `teamUsage` instead of `individualUsage`; that
-//! shape isn't modeled yet (a personal plan is the common case), so a payload
-//! with no `individualUsage.plan` is treated as schema drift rather than a
-//! fabricated zero.
+//! Team accounts (and personal token-based enterprise contracts) report no
+//! `individualUsage.plan` at all — there's no per-seat request quota for
+//! `pct()` to read.
+//!
+//! **Unverified against a live team account** — we don't have one to test
+//! against. The fallback below is inferred from an independent
+//! reverse-engineering of this same endpoint
+//! (`github.com/WoojinAhn/CursorMeter`'s `UsageModels.swift`, whose doc
+//! comments say it was confirmed against live token-based enterprise
+//! contracts): on those accounts, `teamUsage` itself carries no percentages
+//! (only an `onDemand` flag) and `individualUsage.overall.limit` — the
+//! numerator needed to turn `used` cents into a percentage — comes back
+//! `null`; Cursor doesn't put the per-seat limit on *this* endpoint for that
+//! account type at all. The **only** percentage this payload exposes for such
+//! accounts is the human-readable `autoModelSelectedDisplayMessage` /
+//! `namedModelSelectedDisplayMessage` strings (e.g. `"You've used 42% of your
+//! included total usage"`), and those line up with the auto/named pools
+//! respectively — the same two pools `individualUsage.plan.{autoPercentUsed,
+//! apiPercentUsed}` reports on personal accounts (confirmed by the `SAMPLE`
+//! fixture below, where both messages' percentages match the corresponding
+//! `plan` fields exactly). So when `individualUsage.plan` is missing,
+//! `to_snapshot` parses both display messages and only accepts them as a
+//! team/enterprise snapshot if **both** parse — a single stray message is
+//! unrecognized schema drift, not a half-guessed snapshot. A payload with
+//! neither `individualUsage.plan` nor two parseable display messages is
+//! schema drift, never a fabricated zero.
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -41,12 +63,38 @@ pub struct UsageSummary {
     pub billing_cycle_end: String,
     #[serde(rename = "individualUsage")]
     pub individual_usage: Option<IndividualUsage>,
+    /// Team-account usage. Present (possibly `{}`) whether or not the caller
+    /// is on a team; only its `onDemand` flag is modeled — see the module
+    /// doc for why the pool percentages come from the display-message
+    /// fallback below instead of from this object.
+    #[serde(rename = "teamUsage", default)]
+    pub team_usage: Option<TeamUsage>,
+    /// e.g. `"You've used 42% of your included total usage"` — the auto
+    /// (Cursor Models) pool's percentage in prose form. Redundant with
+    /// `individualUsage.plan.autoPercentUsed` on personal accounts; the only
+    /// source of that percentage on accounts with no `plan` object.
+    #[serde(rename = "autoModelSelectedDisplayMessage", default)]
+    pub auto_model_selected_display_message: Option<String>,
+    /// Same idea as above for the named/API pool, e.g. `"You've used 100% of
+    /// your included API usage"`.
+    #[serde(rename = "namedModelSelectedDisplayMessage", default)]
+    pub named_model_selected_display_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct IndividualUsage {
     pub plan: Option<PlanUsage>,
-    #[serde(default)]
+    // ponytail: pre-existing field lacked `rename = "onDemand"`, so this
+    // never actually deserialized (always None) — `on_demand_enabled` was
+    // silently always false. Fixed in passing since the new `TeamUsage` below
+    // needs the same field to actually work.
+    #[serde(rename = "onDemand", default)]
+    pub on_demand: Option<OnDemand>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TeamUsage {
+    #[serde(rename = "onDemand", default)]
     pub on_demand: Option<OnDemand>,
 }
 
@@ -111,34 +159,80 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
         });
     }
 
-    let plan_usage = resp
-        .individual_usage
-        .as_ref()
-        .and_then(|u| u.plan.as_ref())
-        .ok_or_else(|| {
-            AppError::Schema(
-                "cursor: response has no `individualUsage.plan` (team accounts are not \
-                 supported yet)"
-                    .into(),
-            )
-        })?;
-
+    // `onDemand` can live under either `individualUsage` (personal accounts)
+    // or `teamUsage` (per CursorMeter's `TeamUsage`, which models nothing
+    // else there) — check both rather than assuming one.
     let on_demand_enabled = resp
         .individual_usage
         .as_ref()
         .and_then(|u| u.on_demand.as_ref())
+        .or_else(|| resp.team_usage.as_ref().and_then(|t| t.on_demand.as_ref()))
         .map(|o| o.enabled)
         .unwrap_or(false);
 
-    Ok(CursorSnapshot {
-        plan,
-        auto_pct: pct("autoPercentUsed", plan_usage.auto_percent_used)?,
-        api_pct: pct("apiPercentUsed", plan_usage.api_percent_used)?,
-        total_pct: pct("totalPercentUsed", plan_usage.total_percent_used)?,
-        unlimited: false,
-        on_demand_enabled,
-        reset_at: Some(reset_at),
-    })
+    if let Some(plan_usage) = resp.individual_usage.as_ref().and_then(|u| u.plan.as_ref()) {
+        return Ok(CursorSnapshot {
+            plan,
+            auto_pct: pct("autoPercentUsed", plan_usage.auto_percent_used)?,
+            api_pct: pct("apiPercentUsed", plan_usage.api_percent_used)?,
+            total_pct: pct("totalPercentUsed", plan_usage.total_percent_used)?,
+            unlimited: false,
+            on_demand_enabled,
+            reset_at: Some(reset_at),
+        });
+    }
+
+    // No numeric `plan` object — the team/enterprise fallback described in
+    // the module doc. Both display messages must parse or this isn't the
+    // shape we think it is; see the module doc for why "both or neither".
+    let team_pcts = resp
+        .auto_model_selected_display_message
+        .as_deref()
+        .and_then(parse_percent_from_message)
+        .zip(
+            resp.named_model_selected_display_message
+                .as_deref()
+                .and_then(parse_percent_from_message),
+        );
+    if let Some((auto_raw, api_raw)) = team_pcts {
+        let auto_pct = pct("autoModelSelectedDisplayMessage", auto_raw)?;
+        let api_pct = pct("namedModelSelectedDisplayMessage", api_raw)?;
+        return Ok(CursorSnapshot {
+            // Flag this as the best-effort team path — distinct from the
+            // membership label alone, since the number came from prose, not
+            // the numeric `plan` object.
+            plan: format!("{plan} (team)"),
+            auto_pct,
+            api_pct,
+            // No distinct blended-total signal exists on this path (no
+            // `totalPercentUsed` equivalent message); the worse of the two
+            // pools is the best-effort stand-in.
+            total_pct: auto_pct.max(api_pct),
+            unlimited: false,
+            on_demand_enabled,
+            reset_at: Some(reset_at),
+        });
+    }
+
+    Err(AppError::Schema(
+        "cursor: response has no `individualUsage.plan` and no parseable team-usage \
+         display message (unrecognized team-account shape)"
+            .into(),
+    ))
+}
+
+/// Pulls the leading `N` or `N.N` out of a `"…N%…"` prose string, e.g.
+/// `"You've used 98% of your included total usage"` -> `Some(98.0)`. Returns
+/// `None` if there's no `%` or nothing number-shaped precedes it, so callers
+/// treat a reworded message as unparseable rather than misreading it.
+fn parse_percent_from_message(msg: &str) -> Option<f64> {
+    let pct_idx = msg.find('%')?;
+    let before = &msg[..pct_idx];
+    let start = before
+        .rfind(|c: char| !c.is_ascii_digit() && c != '.')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    before[start..].parse::<f64>().ok()
 }
 
 /// "ultra" -> "Ultra". Cursor's `membershipType` is lowercase; the dashboard
@@ -253,7 +347,69 @@ mod tests {
                 }),
                 on_demand: None,
             }),
+            team_usage: None,
+            auto_model_selected_display_message: None,
+            named_model_selected_display_message: None,
         };
         assert!(matches!(to_snapshot(resp), Err(AppError::Schema(_))));
+    }
+
+    /// The fixture backing the team-account fallback. **Unverified against a
+    /// live team account** — see the module doc for the reasoning: no
+    /// `individualUsage.plan`, `teamUsage` carries only `onDemand`, and the
+    /// two pool percentages come from the display-message strings instead.
+    const TEAM_SAMPLE: &str = r#"{
+        "billingCycleEnd": "2026-08-04T00:35:51.000Z",
+        "membershipType": "team",
+        "isUnlimited": false,
+        "autoModelSelectedDisplayMessage": "You've used 42% of your included total usage",
+        "namedModelSelectedDisplayMessage": "You've used 15% of your included API usage",
+        "teamUsage": { "onDemand": { "enabled": true } }
+    }"#;
+
+    #[test]
+    fn team_account_falls_back_to_display_message_percentages() {
+        let resp: UsageSummary = serde_json::from_str(TEAM_SAMPLE).unwrap();
+        let snap = to_snapshot(resp).unwrap();
+        assert_eq!(snap.plan, "Team (team)");
+        assert_eq!(snap.auto_pct, 42);
+        assert_eq!(snap.api_pct, 15);
+        assert_eq!(
+            snap.total_pct, 42,
+            "no blended-total signal exists; worst pool stands in"
+        );
+        assert!(!snap.unlimited);
+        assert!(
+            snap.on_demand_enabled,
+            "onDemand lives under teamUsage for a team account, not individualUsage"
+        );
+        assert_eq!(snap.worst_pct(), 42);
+    }
+
+    #[test]
+    fn team_account_with_only_one_parseable_message_is_still_schema_drift() {
+        // Guards the "both or neither" rule: a half-recognized shape must not
+        // silently render one real pool and one fabricated zero.
+        let raw = r#"{
+            "billingCycleEnd": "2026-08-04T00:00:00Z", "membershipType": "team",
+            "autoModelSelectedDisplayMessage": "You've used 42% of your included total usage",
+            "namedModelSelectedDisplayMessage": "unavailable"
+        }"#;
+        let err = to_snapshot(serde_json::from_str(raw).unwrap()).unwrap_err();
+        assert!(matches!(err, AppError::Schema(_)));
+    }
+
+    #[test]
+    fn parse_percent_from_message_reads_leading_number_before_percent_sign() {
+        assert_eq!(
+            parse_percent_from_message("You've used 98% of your included total usage"),
+            Some(98.0)
+        );
+        assert_eq!(
+            parse_percent_from_message("You've used 100% of your included API usage"),
+            Some(100.0)
+        );
+        assert_eq!(parse_percent_from_message("no percent here"), None);
+        assert_eq!(parse_percent_from_message("unavailable"), None);
     }
 }
