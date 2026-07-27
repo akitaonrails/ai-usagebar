@@ -121,6 +121,33 @@ pub struct Cli {
     /// `--creds-path` (they both name a credentials file).
     #[arg(long, value_name = "LABEL", conflicts_with = "creds_path")]
     pub account: Option<String>,
+
+    /// Subcommand (e.g. `account add <label>`). When omitted, ai-usagebar runs
+    /// as the usage widget with the flags above — unchanged behavior.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// Top-level subcommands. Absent for the default widget invocation.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum Command {
+    /// Manage extra Anthropic accounts for multi-account tracking (#14).
+    Account {
+        #[command(subcommand)]
+        action: AccountAction,
+    },
+}
+
+/// Actions under `ai-usagebar account`.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum AccountAction {
+    /// Capture the account currently logged into Claude Code and register it
+    /// under `[[anthropic.accounts]]` as <label>, so `--account <label>` and the
+    /// TUI's per-account tabs pick it up without hand-editing config.toml.
+    Add {
+        /// Stable name for the account (used with `--account <label>`).
+        label: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]

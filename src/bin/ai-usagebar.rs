@@ -1,12 +1,17 @@
 //! Waybar widget binary. The library does all the work — this is just the
 //! tokio bootstrap + clap parse.
 
-use ai_usagebar::widget::cli::Cli;
+use ai_usagebar::widget::cli::{Cli, Command};
 use ai_usagebar::widget::run::run;
 use clap::Parser;
 
 fn main() {
     let cli = Cli::parse();
+    // Subcommands (e.g. `account add`) are plain CLI tools, not the widget —
+    // handle them before the widget bootstrap and exit with their own code.
+    if let Some(Command::Account { action }) = &cli.command {
+        std::process::exit(ai_usagebar::account::run(action));
+    }
     let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
