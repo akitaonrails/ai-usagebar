@@ -10,13 +10,54 @@
 //! macOS-only crate (`security-framework`) — it keeps the dependency tree and
 //! the Linux build untouched, and mirrors the project's "read what the CLI
 //! already wrote" philosophy.
+//!
+//! A `CLAUDE_CONFIG_DIR`-scoped login (`CLAUDE_CONFIG_DIR=<dir> claude`, the
+//! mechanism `accounts_dir` documents) also lands in the Keychain rather than
+//! `<dir>/.credentials.json` — under a *different* service name, `Claude
+//! Code-credentials-<hash>`, where `<hash>` is the first 8 hex chars of the
+//! SHA-256 of the config dir's absolute path (verified empirically against a
+//! real install). [`read_raw_for`]/[`write_raw_for`] target that per-account
+//! item so named accounts can find it without ever reading the *default*
+//! item — a hash tied to the account's own directory can't collide with a
+//! different account's, which is what issue #15 needed the strict
+//! `Explicit`-only rule to avoid in the first place.
 
-use std::process::Command;
+use std::io::Write;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 use crate::error::{AppError, Result};
 
 /// Generic-password *service* name Claude Code uses for the credentials blob.
 const SERVICE: &str = "Claude Code-credentials";
+
+/// The per-account service name for a `CLAUDE_CONFIG_DIR`-scoped login. Shells
+/// out to `shasum(1)` rather than pulling in a `sha2` crate — same rationale
+/// as the rest of this module.
+fn service_name_for(config_dir: &Path) -> Result<String> {
+    let mut child = Command::new("/usr/bin/shasum")
+        .args(["-a", "256"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Other(format!("could not run `shasum`: {e}")))?;
+    child
+        .stdin
+        .take()
+        .expect("stdin was piped")
+        .write_all(config_dir.display().to_string().as_bytes())
+        .map_err(|e| AppError::Other(format!("could not run `shasum`: {e}")))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| AppError::Other(format!("could not run `shasum`: {e}")))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let hash = stdout
+        .split_whitespace()
+        .next()
+        .and_then(|h| h.get(..8))
+        .ok_or_else(|| AppError::Other("shasum produced unexpected output".into()))?;
+    Ok(format!("{SERVICE}-{hash}"))
+}
 
 /// The Keychain item's *account* is the macOS short username. We match on it
 /// when updating so we touch exactly the item Claude Code created.
@@ -40,8 +81,18 @@ const ERR_SEC_ITEM_NOT_FOUND: i32 = 44;
 /// same as "you are not logged in", and reporting it as such sent users off to
 /// re-authenticate when the credentials were there all along.
 pub fn read_raw() -> Result<Option<String>> {
+    read_raw_service(SERVICE)
+}
+
+/// Same as [`read_raw`], but for a named account's `CLAUDE_CONFIG_DIR`-scoped
+/// Keychain item instead of the default one.
+pub fn read_raw_for(config_dir: &Path) -> Result<Option<String>> {
+    read_raw_service(&service_name_for(config_dir)?)
+}
+
+fn read_raw_service(service: &str) -> Result<Option<String>> {
     let mut cmd = Command::new("/usr/bin/security");
-    cmd.args(["find-generic-password", "-s", SERVICE, "-w"]);
+    cmd.args(["find-generic-password", "-s", service, "-w"]);
     if let Some(acct) = account() {
         cmd.args(["-a", &acct]);
     }
@@ -89,8 +140,18 @@ pub fn read_raw() -> Result<Option<String>> {
 /// rare proactive token refresh, so we accept the local-only exposure of a
 /// secret that already lives in this user's Keychain.
 pub fn write_raw(json: &str) -> Result<()> {
+    write_raw_service(SERVICE, json)
+}
+
+/// Same as [`write_raw`], but for a named account's `CLAUDE_CONFIG_DIR`-scoped
+/// Keychain item instead of the default one.
+pub fn write_raw_for(config_dir: &Path, json: &str) -> Result<()> {
+    write_raw_service(&service_name_for(config_dir)?, json)
+}
+
+fn write_raw_service(service: &str, json: &str) -> Result<()> {
     let mut cmd = Command::new("/usr/bin/security");
-    cmd.args(["add-generic-password", "-U", "-s", SERVICE]);
+    cmd.args(["add-generic-password", "-U", "-s", service]);
     // Must mirror `read_raw`'s selection exactly, or an update can create a
     // second item the read will never find.
     if let Some(acct) = account() {

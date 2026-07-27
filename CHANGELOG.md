@@ -35,6 +35,24 @@ Each release is also published at
 
 ### Fixed
 
+- **Named/`accounts_dir` Anthropic accounts now find macOS Keychain-backed
+  logins.** `CLAUDE_CONFIG_DIR=<accounts_dir>/<label> claude` was documented
+  to make `<label>` "just work", but on macOS Claude Code stores the login in
+  the Keychain (service `Claude Code-credentials-<hash>`, hashed from the
+  config dir's absolute path) and never writes `<label>/.credentials.json` —
+  so a named account could look logged in via `claude` yet ai-usagebar kept
+  reporting "no usable cache" / stale file errors. Named accounts now prefer
+  the Keychain item hashed from their own directory, falling back to the file
+  (the Linux layout). Keychain-first matters: a `.credentials.json` copied by
+  hand shares its refresh-token lineage with the original, and dies with a
+  401 as soon as the real holder rotates it — reading the file first kept
+  resurrecting those dead snapshots over the live login sitting in the
+  Keychain. Token refreshes write back to the same scoped item, so
+  ai-usagebar and Claude Code keep sharing one source of truth per account.
+  A different account's item can never match (the hash is per-directory), so
+  this doesn't reopen the cross-account ambiguity the original file-only
+  rule (#15) was written to avoid.
+
 - **A failed terminal resize no longer exits the TUI.** A transient
   `terminal.resize` error (e.g. an ioctl failure) now just skips that resize
   instead of tearing down the whole UI; the next resize or redraw recovers.

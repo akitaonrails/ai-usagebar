@@ -823,14 +823,18 @@ mod tests {
 
     #[test]
     fn named_account_uses_its_creds_and_label_subdir() {
-        // A named account's file is Explicit: a missing/broken path must fail
-        // loudly, never silently read another account's Keychain item (#15).
+        // A named account's file is read strictly first; the Keychain fallback
+        // (if the file is missing/unusable) is scoped to its own directory, so
+        // it can never silently read a *different* account's item (#15).
         let config = config_with_account("work", "/creds/work.json");
         let cli = cli_with(Some("work"), None, Some("/tmp/cache"));
         let (creds, cache) = anthropic_target(&cli, &config).unwrap();
         assert_eq!(
             creds,
-            CredsTarget::Explicit(PathBuf::from("/creds/work.json"))
+            CredsTarget::Named {
+                path: PathBuf::from("/creds/work.json"),
+                config_dir: PathBuf::from("/creds"),
+            }
         );
         assert_eq!(
             cache.dir(),

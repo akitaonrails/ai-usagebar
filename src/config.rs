@@ -215,15 +215,27 @@ impl AnthropicConfig {
     }
 
     /// Resolve a named account to the credentials target + isolated cache it
-    /// fetches through: a strict [`CredsTarget::Explicit`] on the account's file
-    /// (never the Keychain — issue #15) and an `anthropic/<label>` cache subdir.
-    /// Shared by the widget (`--account`) and the TUI's per-account tab (#14,
-    /// #17) so both resolve accounts identically; the widget layers its
-    /// `--cache-dir` override on top of the cache returned here.
+    /// fetches through: [`CredsTarget::Named`], which on macOS prefers the
+    /// Keychain item scoped to the file's own directory (that is where
+    /// `CLAUDE_CONFIG_DIR=<dir> claude` actually writes) and falls back to
+    /// the file elsewhere — never a *different* account's item, since the
+    /// hash is per-directory, so issue #15's cross-account concern doesn't
+    /// apply. Plus an `anthropic/<label>` cache subdir. Shared by the widget
+    /// (`--account`) and the TUI's per-account tab (#14, #17) so both resolve
+    /// accounts identically; the widget layers its `--cache-dir` override on
+    /// top of the cache returned here.
     pub fn account_target(&self, label: &str) -> Result<(CredsTarget, Cache)> {
         let account = self.account(label)?;
+        let config_dir = account
+            .credentials_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| account.credentials_path.clone());
         Ok((
-            CredsTarget::Explicit(account.credentials_path),
+            CredsTarget::Named {
+                path: account.credentials_path,
+                config_dir,
+            },
             Cache::for_vendor_account("anthropic", label)?,
         ))
     }

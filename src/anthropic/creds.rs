@@ -131,15 +131,25 @@ pub enum CredsTarget {
     /// `~/.claude/.credentials.json` (or the Windows equivalent) — falls back
     /// to the macOS Keychain when the file is missing *or unusable* (#15).
     Default(PathBuf),
-    /// `--creds-path`, config `credentials_path`, or a named account's file —
-    /// never consults the Keychain.
+    /// `--creds-path` or config `credentials_path` with no `CLAUDE_CONFIG_DIR`
+    /// of its own — never consults the Keychain.
     Explicit(PathBuf),
+    /// A named account (`[[anthropic.accounts]]` or `accounts_dir`): prefers
+    /// the macOS Keychain item scoped to `config_dir` (`path`'s parent, the
+    /// account's own `CLAUDE_CONFIG_DIR`) because that is where
+    /// `CLAUDE_CONFIG_DIR=<dir> claude` actually writes on macOS; `path` is
+    /// the fallback for the Linux layout and hand-managed files (see
+    /// [`read_named_with`] for the full decision table). Safe unlike a shared
+    /// fallback would be: the Keychain item is hashed from `config_dir`, so
+    /// it can never resolve to a *different* account's credentials.
+    Named { path: PathBuf, config_dir: PathBuf },
 }
 
 impl CredsTarget {
     pub fn path(&self) -> &Path {
         match self {
             CredsTarget::Default(p) | CredsTarget::Explicit(p) => p,
+            CredsTarget::Named { path, .. } => path,
         }
     }
 }
@@ -153,6 +163,11 @@ pub enum CredsSource {
     /// Only produced on macOS in production (the login Keychain item
     /// `Claude Code-credentials`).
     Keychain,
+    /// Only produced on macOS in production: a named account's
+    /// `CLAUDE_CONFIG_DIR`-scoped Keychain item (`Claude
+    /// Code-credentials-<hash>`), keyed by the account's config dir so
+    /// write-backs land in the same per-account item they were read from.
+    NamedKeychain(PathBuf),
 }
 
 /// Credentials that can't possibly authenticate anything: no access token, no
@@ -176,6 +191,12 @@ pub fn resolve(target: &CredsTarget) -> Result<(CredentialsFile, CredsSource)> {
             return read_default_with(p, keychain::read_raw);
             #[cfg(not(target_os = "macos"))]
             read_default_with(p, || Ok(None))
+        }
+        CredsTarget::Named { path, config_dir } => {
+            #[cfg(target_os = "macos")]
+            return read_named_with(path, config_dir, keychain::read_raw_for);
+            #[cfg(not(target_os = "macos"))]
+            read_named_with(path, config_dir, |_| Ok(None))
         }
     }
 }
@@ -222,6 +243,42 @@ fn read_default_with(
     }
 }
 
+/// Named-account read: the account's `CLAUDE_CONFIG_DIR`-scoped Keychain item
+/// wins over the file. On macOS the `claude` CLI *always* writes logins to the
+/// Keychain — `CLAUDE_CONFIG_DIR=<dir> claude` lands in the dir-scoped item,
+/// never in `<dir>/.credentials.json` — so a file there is at best a hand-made
+/// snapshot. Snapshots die: their refresh-token lineage rotates away the next
+/// time the *real* holder refreshes, and the copy 401s within hours (observed
+/// in production; that failure is what motivated this order). Decision table:
+///
+/// | keychain item              | file             | outcome            |
+/// |----------------------------|------------------|--------------------|
+/// | usable                     | (not consulted)  | keychain           |
+/// | absent/unusable/unparsable | readable         | file               |
+/// | absent/unusable/unparsable | missing/broken   | the file's error   |
+/// | **unreadable** (locked/ACL)| any              | the Keychain error |
+///
+/// The unreadable row follows [`read_default_with`]'s reasoning: a locked
+/// Keychain is not "no credentials", and silently dropping to a stale file
+/// snapshot would produce exactly the confusing half-dead state this order
+/// exists to prevent. On non-macOS the injected reader returns `None`, so the
+/// file is simply read strictly — the Linux layout is file-only.
+fn read_named_with(
+    path: &Path,
+    config_dir: &Path,
+    keychain_read: impl Fn(&Path) -> Result<Option<String>>,
+) -> Result<(CredentialsFile, CredsSource)> {
+    // A present-but-unparsable/unusable item is no better than the file, so
+    // the whole chain failing falls through to the strict file read.
+    if let Some(raw) = keychain_read(config_dir)?
+        && let Ok(kc) = parse(&raw, "macOS Keychain (named account)")
+        && !is_unusable(&kc.claude_ai_oauth)
+    {
+        return Ok((kc, CredsSource::NamedKeychain(config_dir.to_path_buf())));
+    }
+    Ok((read_from(path)?, CredsSource::File(path.to_path_buf())))
+}
+
 /// Parse a credentials JSON blob from any source (`source` only labels errors).
 fn parse(raw: &str, source: &str) -> Result<CredentialsFile> {
     serde_json::from_str(raw).map_err(|e| {
@@ -266,6 +323,17 @@ pub fn write_back_to(source: &CredsSource, new_oauth: &OauthCreds) -> Result<()>
         }
         #[cfg(not(target_os = "macos"))]
         CredsSource::Keychain => Err(AppError::Other(
+            "Keychain credentials source is macOS-only".into(),
+        )),
+        #[cfg(target_os = "macos")]
+        CredsSource::NamedKeychain(config_dir) => {
+            let existing = keychain::read_raw_for(config_dir)?;
+            let doc = merge_oauth(existing.as_deref(), new_oauth)?;
+            let json = serde_json::to_string(&doc).map_err(AppError::Json)?;
+            keychain::write_raw_for(config_dir, &json)
+        }
+        #[cfg(not(target_os = "macos"))]
+        CredsSource::NamedKeychain(_) => Err(AppError::Other(
             "Keychain credentials source is macOS-only".into(),
         )),
     }
@@ -489,6 +557,68 @@ mod tests {
         // Without a keychain rescue, the original parse error surfaces.
         let err = read_default_with(&path, || Ok(None)).unwrap_err();
         assert!(matches!(err, AppError::Credentials(_)));
+    }
+
+    // --- named accounts: config-dir-scoped Keychain wins over the file ------
+    // `read_named_with` takes the keychain reader as a closure, so these run
+    // hermetically on any platform — no real Keychain, no real $HOME.
+
+    #[test]
+    fn named_read_prefers_keychain_over_a_live_looking_file() {
+        // The production failure this order exists for: the file is a stale
+        // hand-made snapshot that still *looks* usable (tokens present) but
+        // whose refresh lineage has rotated away; the scoped Keychain item is
+        // what `claude` actually keeps alive.
+        let (_dir, path) = write_creds_closed(USABLE);
+        let cfg_dir = path.parent().unwrap().to_path_buf();
+        let (creds, source) =
+            read_named_with(&path, &cfg_dir, |_| Ok(Some(KEYCHAIN_USABLE.into()))).unwrap();
+        assert_eq!(creds.claude_ai_oauth.access_token, "kc-token");
+        assert_eq!(source, CredsSource::NamedKeychain(cfg_dir));
+    }
+
+    #[test]
+    fn named_read_falls_back_to_file_when_keychain_absent() {
+        // Linux layout / hand-managed file: no scoped Keychain item exists.
+        let (_dir, path) = write_creds_closed(USABLE);
+        let cfg_dir = path.parent().unwrap().to_path_buf();
+        let (creds, source) = read_named_with(&path, &cfg_dir, |_| Ok(None)).unwrap();
+        assert_eq!(creds.claude_ai_oauth.access_token, "live-token");
+        assert_eq!(source, CredsSource::File(path));
+    }
+
+    #[test]
+    fn named_read_unusable_keychain_falls_back_to_file() {
+        let (_dir, path) = write_creds_closed(USABLE);
+        let cfg_dir = path.parent().unwrap().to_path_buf();
+        let (_, source) = read_named_with(&path, &cfg_dir, |_| Ok(Some(UNUSABLE.into()))).unwrap();
+        assert_eq!(source, CredsSource::File(path.clone()));
+        // Unparsable Keychain blob — same fallback.
+        let (_, source) =
+            read_named_with(&path, &cfg_dir, |_| Ok(Some("not json".into()))).unwrap();
+        assert_eq!(source, CredsSource::File(path));
+    }
+
+    #[test]
+    fn named_read_both_missing_surfaces_the_file_error() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("missing.json");
+        let err = read_named_with(&path, dir.path(), |_| Ok(None)).unwrap_err();
+        assert!(matches!(err, AppError::Io { .. }));
+    }
+
+    #[test]
+    fn named_read_locked_keychain_error_surfaces_not_the_stale_file() {
+        // Same reasoning as the default account: a locked Keychain is not
+        // "no credentials", and silently reading a stale snapshot instead
+        // recreates exactly the half-dead fork this order prevents.
+        let (_dir, path) = write_creds_closed(USABLE);
+        let cfg_dir = path.parent().unwrap();
+        let err = read_named_with(&path, cfg_dir, |_| {
+            Err(AppError::Credentials("the Keychain is locked".into()))
+        })
+        .unwrap_err();
+        assert!(matches!(err, AppError::Credentials(ref m) if m.contains("locked")));
     }
 
     #[test]
