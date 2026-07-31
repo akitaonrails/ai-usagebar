@@ -140,7 +140,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             .map(tab_label)
             .unwrap_or_else(|| "no vendor".to_string())
     };
-    let line = Line::from(vec![
+    let mut spans = vec![
         theme.accent("  Usage dashboard"),
         theme.muted(" · "),
         theme.span(format!("{} tabs", app.tabs_meta.len())),
@@ -148,8 +148,13 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         theme.span(format!("active {active}")),
         theme.muted(" · "),
         theme.muted(header_refresh_text(app)),
-    ]);
-    f.render_widget(Paragraph::new(line), inner);
+    ];
+    if app.is_refreshing() {
+        // Keep the marker after the timestamp so refresh activity does not
+        // shift the stable header text left or right.
+        spans.push(theme.muted("  ↻"));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 /// The header's refresh stamp, read from the ACTIVE tab's own `fetched_at`.
@@ -478,6 +483,19 @@ mod tests {
         // passing off "now" as a response time.
         let app = app_with(vec![ready_at(None), TabState::Loading]);
         assert_eq!(header_refresh_text(&app), "last refresh —");
+    }
+
+    #[test]
+    fn header_adds_refresh_marker_after_the_timestamp() {
+        let tab = TabId::vendor(VendorId::Anthropic);
+        let at = Utc.with_ymd_and_hms(2026, 5, 23, 12, 0, 0).unwrap();
+        let mut app = app_with(vec![ready_at(Some(at))]);
+        app.tabs_meta[0] = tab.clone();
+        app.begin_refresh(&tab);
+
+        let out = body_text(&app);
+        let stamp = format!("last refresh {}  ↻", local_time_hms(at));
+        assert!(out.contains(&stamp), "{out}");
     }
 
     fn app_with_context(layout: crate::config::ContextLayout) -> App {

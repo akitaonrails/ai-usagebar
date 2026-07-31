@@ -450,9 +450,7 @@ fn spawn_one(
     let client = client.clone();
     let cfg = config.clone();
     let generation = app.tab_generation;
-    if let Some(index) = app.tabs_meta.iter().position(|current| current == &tab) {
-        app.tabs[index] = TabState::Loading;
-    }
+    app.begin_refresh(&tab);
     tokio::spawn(async move {
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;

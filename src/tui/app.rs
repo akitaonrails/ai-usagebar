@@ -1,5 +1,6 @@
 //! TUI app state — vendors, tab selection, per-vendor snapshot cache.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -38,7 +39,7 @@ pub struct ReadyTab {
 /// Identity of one TUI tab. Usually a whole vendor; for Anthropic it can also
 /// name a specific configured account (issues #14 / #17). `account: None` is a
 /// plain vendor tab — the default Claude account, or any non-Anthropic vendor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TabId {
     pub vendor: VendorId,
     pub account: Option<String>,
@@ -93,6 +94,9 @@ pub struct App {
     pub tabs_meta: Vec<TabId>,
     pub active: usize,
     pub tabs: Vec<TabState>,
+    /// Number of in-flight requests for each tab. Keeping this separate from
+    /// `TabState` lets a refresh retain an already-rendered snapshot.
+    refreshing: HashMap<TabId, u32>,
     /// Monotonically increasing identity for a complete tab-set replacement.
     /// Background fetches carry this with their tab identity so results from a
     /// previous Settings reload cannot land in a new tab at the old index.
@@ -136,6 +140,7 @@ impl App {
             tabs_meta,
             active: 0,
             tabs: vec![TabState::Loading; n],
+            refreshing: HashMap::new(),
             tab_generation: 0,
             overview: false,
             overview_vendors: None,
@@ -187,7 +192,25 @@ impl App {
             .and_then(|tab| tabs_meta.iter().position(|candidate| candidate == tab))
             .unwrap_or(fallback);
         self.tabs = vec![TabState::Loading; tabs_meta.len()];
+        self.refreshing.clear();
         self.tabs_meta = tabs_meta;
+    }
+
+    /// Begin a refresh without replacing a previously successful snapshot.
+    /// Initial loads retain the `Loading` state because there is nothing useful
+    /// to show yet.
+    pub fn begin_refresh(&mut self, tab: &TabId) {
+        let Some(index) = self.tabs_meta.iter().position(|current| current == tab) else {
+            return;
+        };
+        if !matches!(self.tabs[index], TabState::Ready(_)) {
+            self.tabs[index] = TabState::Loading;
+        }
+        *self.refreshing.entry(tab.clone()).or_default() += 1;
+    }
+
+    pub fn is_refreshing(&self) -> bool {
+        !self.refreshing.is_empty()
     }
 
     /// Apply an asynchronous refresh only when it still belongs to this tab
@@ -201,7 +224,20 @@ impl App {
         let Some(index) = self.tabs_meta.iter().position(|current| current == tab) else {
             return false;
         };
-        self.tabs[index] = state;
+        if let Some(count) = self.refreshing.get_mut(tab) {
+            *count -= 1;
+            if *count == 0 {
+                self.refreshing.remove(tab);
+            }
+        }
+
+        match (state, &mut self.tabs[index]) {
+            // A failed refresh must not erase a useful snapshot. `stale` keeps
+            // the existing pause marker as the quiet signal that its freshness
+            // could not be confirmed.
+            (TabState::Error(_), TabState::Ready(ready)) => ready.stale = true,
+            (state, _) => self.tabs[index] = state,
+        }
         true
     }
 
@@ -828,6 +864,24 @@ mod tests {
             TabState::Error("wrong tab".into()),
         ));
         assert!(matches!(app.tabs[0], TabState::Loading));
+    }
+
+    #[test]
+    fn refresh_keeps_ready_data_visible_and_marks_it_stale_on_error() {
+        let tab = TabId::vendor(VendorId::Openrouter);
+        let mut app = App::with_theme(vec![tab.clone()], Theme::default());
+        app.tabs[0] = ready_at(Utc::now());
+
+        app.begin_refresh(&tab);
+        assert!(matches!(app.tabs[0], TabState::Ready(_)));
+        assert!(app.is_refreshing());
+
+        assert!(app.apply_refresh(app.tab_generation, &tab, TabState::Error("timeout".into())));
+        let TabState::Ready(ready) = &app.tabs[0] else {
+            panic!("a failed refresh must retain the previous snapshot");
+        };
+        assert!(ready.stale);
+        assert!(!app.is_refreshing());
     }
 
     #[test]
