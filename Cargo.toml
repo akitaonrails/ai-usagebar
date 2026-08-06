@@ -65,7 +65,7 @@ base64 = "0.23"
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
-sha1 = "0.10"
+sha1 = "0.11"
 ratatui = "0.30.1"
 ratatui-bubbletea-components = "0.2"
 ratatui-bubbletea-theme = "0.2"
