@@ -11,6 +11,31 @@ Each release is also published at
 
 ### Added
 
+- **KDE Plasma 6 plasmoid** (`kde-plasmoid/`). A native panel widget, the KDE
+  counterpart to the GNOME extension: Waybar cannot dock into a Plasma panel, so
+  this shells out to the same binary and draws with Plasma/Kirigami components.
+  Covers the same vendors as the GNOME extension, including Antigravity's two
+  quota pools, which the popup groups under Session/Weekly headings.
+
+  Unlike the Waybar module it keeps **per-instance** vendor state: it always
+  passes `--vendor` explicitly and never reads
+  `~/.cache/ai-usagebar/active_vendor`, so two panel instances can track two
+  vendors and scrolling one never moves the other — or a Waybar module running
+  alongside. Scroll cycles a ring you pick in the settings, where each vendor is
+  listed with its live status from `ai-usagebar usage --json`, so a vendor you
+  have no subscription for is visible as such before you add it.
+
+  Colours follow the Plasma colour scheme by default and re-render on a theme
+  switch; turning that off exposes the same five One Dark colours and severity
+  bands the other frontends use. The pace marker keeps its fixed `#61afef`
+  either way. A second settings page ports the GNOME vendor login flow verbatim
+  — same table, status wording, and `Logar` / `Instalar + logar` /
+  `Configurar (TUI)` / `Abrir agy` actions.
+
+  `package/contents/code/marker-logic.mjs` is a byte-identical copy of the
+  canonical `gnome-extension/marker-logic.js`, enforced by a test.
+
+
 - **SuperGrok subscription vendor** (`--vendor supergrok`, `[supergrok]`,
   opt-in). Shows the current weekly or monthly included-credit usage, reset,
   tier, and prepaid balance from the official Grok Build CLI's `x.ai/billing`
