@@ -72,6 +72,31 @@ assert.deepEqual(disambiguateTags('Gemini Pro', 'Gemini Flash'), ['GEMINIP', 'GE
 // Nothing to disambiguate against.
 assert.deepEqual(disambiguateTags('Gemini', ''), ['G', '']);
 
+// NON_TAG_CHAR is an ASCII exclusion class standing in for /[\p{L}\p{N}]/u,
+// which QML's V4 engine evaluates to false silently. Node evaluates it
+// correctly, so the property version works as an oracle right here: assert the
+// shipped class agrees with it on real labels, and pin the inputs where it
+// deliberately does not, so a future edit cannot widen the gap unnoticed.
+// Mirrors poolChars() exactly apart from the character class, field() included:
+// without it an unexpanded {session_model} placeholder would score as a name.
+const oracleTag = value => {
+    const chars = Array.from(field(value)).filter(ch => /[\p{L}\p{N}]/u.test(ch));
+    return chars.length ? chars[0].toUpperCase() : '';
+};
+for (const label of ['Gemini', 'Claude & GPT OSS', '  &claude', '𐐨elta', 'GPT-5', '5h',
+    '中文模型', 'עברית', 'Ελληνικά', 'Кириллица', '{session_model}', '', undefined])
+    assert.equal(poolTag(label), oracleTag(label),
+        `poolTag must agree with the \\p{L}\\p{N} oracle for ${JSON.stringify(label)}`);
+
+// Pinned divergences: the property version dropped non-ASCII symbols, this
+// class keeps them. Both produce a usable tag, so this is accepted, not a bug.
+assert.equal(poolTag('— weekly'), '—');
+assert.equal(oracleTag('— weekly'), 'W');
+assert.equal(poolTag('≈flash'), '≈');
+assert.equal(oracleTag('≈flash'), 'F');
+// An em dash inside a name also survives into a widened tag.
+assert.deepEqual(disambiguateTags('Gemini — Pro', 'Gemini — Flash'), ['GEMINI—P', 'GEMINI—F']);
+
 assert.equal(poolAvailable({session: 0, weekly: null}), true);
 assert.equal(poolAvailable({session: null, weekly: 66}), true);
 assert.equal(poolAvailable({session: null, weekly: null}), false);

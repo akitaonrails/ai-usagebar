@@ -12,7 +12,7 @@ This started as a Rust port of [`claudebar`](https://github.com/mryll/claudebar)
 - **Tabbed TUI** (`ai-usagebar-tui`) with Tab/h/l switching, per-tab refresh, and 60-second auto-refresh. Native ratatui widgets fill the available terminal width and keep the vendor tabs visually consistent. Opens on an **Overview** tab summarizing every vendor at once (one compact row each); `[ui] overview_vendors` picks which vendors it lists, while `[ui] vendor_box = "sidebar" | "navbar" | "none"` controls the navigation layout.
 - **Optional local Claude Code context monitor** in the TUI, with a bounded,
   compaction-aware view of recent session input-context usage.
-- **Native desktop integrations** for GNOME Shell and the macOS menu bar. The macOS app supports thirteen vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok, Anthropic API, Cursor, Google Antigravity); the GNOME extension covers Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Google Antigravity. (Cursor isn't in the GNOME extension yet.)
+- **Native desktop integrations** for GNOME Shell, KDE Plasma 6 and the macOS menu bar. The macOS app supports thirteen vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok, Anthropic API, Cursor, Google Antigravity); the GNOME extension and the KDE plasmoid cover Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Google Antigravity. (Cursor isn't in the GNOME extension or the plasmoid yet.)
 - **Scroll-to-cycle on the bar**: wire `on-scroll-up` / `on-scroll-down`, and one bar item cycles through your enabled vendors.
 - **Config-driven primary vendor**: set `[ui] primary` once; the widget shows that vendor by default and the TUI opens on its tab.
 - **Local testing tools**: `--pretty` renders ANSI-colored terminal output (auto-detects TTY), and `--watch N` re-renders every N seconds.
@@ -311,6 +311,8 @@ The Waybar widget is optional. The TUI is the best way to see every enabled vend
 
 The [macOS menu bar app](macos/README.md) supports thirteen vendors — **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok (xAI), Anthropic (API), Cursor, and Google Antigravity**. The [GNOME Shell extension](gnome-extension/README.md) supports **Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, and Google Antigravity**, whose two independent quota pools it renders as grouped rows. Cursor is not in the GNOME extension yet — use `ai-usagebar --vendor cursor` or the TUI there.
 
+The [KDE Plasma 6 plasmoid](kde-plasmoid/README.md) covers the same vendors as the GNOME extension, including Antigravity's two pools. Unlike the Waybar module, it keeps its vendor selection **per panel instance**: it always passes `--vendor` explicitly and never reads `~/.cache/ai-usagebar/active_vendor`, so two plasmoid instances can show two vendors, and scrolling one never moves the other or a Waybar module running alongside it.
+
 ## Waybar config
 
 ### Single module, scroll-to-cycle (recommended)
@@ -335,6 +337,8 @@ Use one bar item and scroll through your vendors. The TUI on-click still shows t
 The `{vendor_short}` placeholder always expands to a 3-letter vendor ID (`cld` / `gpt` / `zai` / `opr` / `dsk` / `kmi` / `klo` / `nvt` / `msh` / `grk` / `sgk` / `aac` / `agy` / `cur` / `mmx` / `kir`), so the bar text tells you which vendor is active. The other usage placeholders (`{session_pct}` for Anthropic, `{oai_session_pct}` for OpenAI, etc.) are vendor-specific. If you want one format string for every cycled vendor, prefer the generic aliases: `{session_pct}`, `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}` are implemented by all eleven usage vendors (Anthropic, OpenAI, Z.AI, OpenRouter, DeepSeek, Kimi, Antigravity, Cursor, MiniMax, Kiro CLI, and SuperGrok; OpenRouter and DeepSeek use `0` / `—` for the windows they don't expose). Cursor has no time windows but two usage *pools*, so it maps them onto the two generic slots: `session_pct` = **Cursor Models** (Auto + Composer), `weekly_pct` = **Other Models** (named / API), both resetting on the billing cycle. Kiro CLI has a single pool, so both generic slots map to `kiro_pct`. Anthropic and OpenAI add `*_elapsed`, `*_pace`, and `*_bar` families; Antigravity adds `*_elapsed` for all four of its windows, plus `{session_model}` / `{weekly_model}` / `{scoped_model}` / `{extra_model}`, which name the model group each row belongs to (vendors with a single quota pool leave them empty). The established API-backed vendors also expose their own `{oai_*}` / `{zai_*}` / `{or_*}` / `{ds_*}` / `{kimi_*}` / `{minimax_*}` families, which expand to empty strings for vendors that don't define them.
 
 `signal: 13` lets the scroll-cycle commands refresh the bar instantly (via `SIGRTMIN+13`) instead of waiting for the next 300s interval.
+
+The [KDE plasmoid](kde-plasmoid/README.md) offers the same scroll gesture from its own configuration and does not use `--cycle-next`, so it neither reads nor writes the state file this section relies on.
 
 If your Waybar theme puts a tray expander immediately after `custom/aibar`, such as Omarchy's `group/tray-expander` with `custom/expand-icon`, the usage text can sit very close to the expand icon. Add right padding for the module in your Waybar CSS if you want extra spacing:
 

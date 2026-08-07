@@ -110,6 +110,9 @@ jobs:
       - name: Test GNOME marker logic
         run: node gnome-extension/marker-logic.test.mjs
 
+      - name: Test KDE plasmoid logic
+        run: node kde-plasmoid/plasmoid-logic.test.mjs
+
       - name: Install nasm (x86_64 native build; ring assembles its primitives)
         if: matrix.builder == 'cargo'
         run: sudo apt-get update && sudo apt-get install -y nasm

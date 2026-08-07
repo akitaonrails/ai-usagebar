@@ -29,10 +29,15 @@ When cutting a new version (patch, minor, or major):
    The committed files keep `sha256sums = SKIP`; CI pins the real hashes later.
 6. **Run gate before tagging**:
    ```
-   cargo test                                  # 200+ tests must pass
+   make test                                   # cargo test + the desktop JS gate
    cargo clippy --all-targets -- -D warnings   # clean
    cargo machete                               # no unused deps
    ```
+   `make test` rather than `cargo test`: the desktop gate is what enforces the
+   byte-identity of `marker-logic.js` and its `kde-plasmoid` copy. Tagging after
+   a bare `cargo test` ships the drift. If `kde-plasmoid/` changed, also bump
+   `KPlugin.Version` in `kde-plasmoid/package/metadata.json` — it is versioned
+   independently of `Cargo.toml`, like the GNOME `metadata.json`.
 7. **Commit, tag, push**:
    ```
    git commit -m "vX.Y.Z — …"
@@ -178,6 +183,20 @@ vendor's response shape drifts:
 - `src/widget/` — Waybar widget shell (CLI, render, pretty, run)
 - `src/tooltip.rs` — shared Pango bordered-box renderer (used by
   every vendor's tooltip)
+- `gnome-extension/marker-logic.js` — **canonical** pure format-contract
+  helpers. `kde-plasmoid/package/contents/code/marker-logic.mjs` is a
+  byte-identical copy (neither dir can symlink the other: GNOME ships as a zip
+  to extensions.gnome.org, KPackage needs the file under `contents/`). Edit the
+  canonical file, then re-copy; `kde-plasmoid/plasmoid-logic.test.mjs` fails the
+  build if they diverge. Two QML-engine rules apply to both files and are
+  asserted there: no ES2019 optional catch binding (V4 rejects it) and no
+  Unicode property escapes (V4 evaluates `\p{L}` to *false* silently).
+- `kde-plasmoid/` — KDE Plasma 6 plasmoid (KPackage). Vendor selection is
+  per applet instance via KConfigXT; it always passes `--vendor` explicitly and
+  deliberately does **not** read `~/.cache/ai-usagebar/active_vendor`, which
+  belongs to Waybar's `--cycle-next`. Popup work must be tested with
+  `plasmawindowed`, not `plasmoidviewer` — the latter never instantiates the
+  full representation.
 - `packaging/aur/PKGBUILD` — source-build AUR pkg
 - `packaging/aur/PKGBUILD-bin` — prebuilt-binary AUR pkg (multi-arch)
 - `.github/workflows/release.yml` — tag-driven release (x86_64 + aarch64)

@@ -8,6 +8,8 @@ pkgbase = ai-usagebar-bin
 	license = MIT
 	depends = gcc-libs
 	optdepends = waybar: status bar that hosts the widget
+	optdepends = plasma-desktop: KDE Plasma 6 panel that hosts the plasmoid
+	optdepends = plasma5support: QML executable data engine the plasmoid runs the binary through
 	optdepends = libnotify: desktop notifications on hard auth failures
 	provides = ai-usagebar=0.22.0
 	conflicts = ai-usagebar

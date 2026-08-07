@@ -1,0 +1,23 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "io.github.akitaonrails.ai-usagebar.probe",
+        "Name": "AI Usage Bar — engine probe",
+        "Description": "Dev-only: asserts the shared .mjs modules parse and behave the same under QML's V4 engine as under Node. Not installed.",
+        "Icon": "utilities-terminal",
+        "Category": "System Information",
+        "License": "MIT",
+        "Version": "0.1.0",
+        "Authors": [
+            {
+                "Name": "AkitaOnRails",
+                "Email": "anrry.petrin@hotmail.com"
+            }
+        ],
+        "EnabledByDefault": false,
+        "FormFactors": [
+            "desktop"
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

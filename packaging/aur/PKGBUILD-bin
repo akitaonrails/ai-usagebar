@@ -11,6 +11,8 @@ license=('MIT')
 depends=('gcc-libs')
 optdepends=(
     'waybar: status bar that hosts the widget'
+    'plasma-desktop: KDE Plasma 6 panel that hosts the plasmoid'
+    'plasma5support: QML executable data engine the plasmoid runs the binary through'
     'libnotify: desktop notifications on hard auth failures'
 )
 provides=("$_pkgname=$pkgver")
