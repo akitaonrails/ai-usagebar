@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+
+  <!-- Empty name is correct for a plasmoid: it routes storage into this
+       applet instance's own section of plasma-org.kde.plasma.desktop-appletsrc,
+       which is what makes two panel instances independent. -->
+  <kcfgfile name=""/>
+
+  <group name="General">
+    <!-- The vendor shown right now. This applet always passes the vendor
+         explicitly on the command line and never reads
+         ~/.cache/ai-usagebar/active_vendor, so scrolling one instance cannot
+         move another (or a running Waybar).
+         NB: an XML comment may not contain a double hyphen, so option names
+         are written without their leading dashes throughout this file. -->
+    <entry name="vendor" type="String">
+      <default>anthropic</default>
+    </entry>
+
+    <!-- Ring the mouse wheel cycles through. Deliberately just one vendor by
+         default: cycling into a vendor you have no subscription for only ever
+         shows a credentials error, so the config page lets you tick the ones you
+         actually have (with their live status) instead of guessing here. -->
+    <entry name="vendorRing" type="StringList">
+      <default>anthropic</default>
+    </entry>
+
+    <!-- 30s matches the GNOME extension and the macOS app. The binary caches
+         for 60s, so most ticks are served from cache rather than the network. -->
+    <entry name="interval" type="Int">
+      <default>30</default>
+      <min>5</min>
+      <max>3600</max>
+    </entry>
+
+    <!-- Display toggles, names and defaults shared with the GNOME extension
+         and the macOS app so the three panels can be configured alike. -->
+    <entry name="showSession" type="Bool">
+      <default>true</default>
+    </entry>
+
+    <entry name="showWeekly" type="Bool">
+      <default>true</default>
+    </entry>
+
+    <entry name="showExtra" type="Bool">
+      <default>false</default>
+    </entry>
+
+    <entry name="showPercent" type="Bool">
+      <default>true</default>
+    </entry>
+
+    <!-- Vendors with two independent quota pools (Antigravity). both | primary
+         | secondary | auto -->
+    <entry name="panelPools" type="String">
+      <default>both</default>
+    </entry>
+
+    <entry name="panelAutoThreshold" type="Int">
+      <default>95</default>
+      <min>50</min>
+      <max>100</max>
+    </entry>
+
+    <!-- plasmashell's PATH is the session's, not your interactive shell's, so
+         ~/.cargo/bin is typically absent. Empty means "search PATH". -->
+    <entry name="binaryPath" type="String">
+      <default></default>
+    </entry>
+
+    <!-- Read back as the integer index, not the choice name. -->
+    <entry name="leftClickAction" type="Enum">
+      <choices>
+        <choice name="ExpandPopup"/>
+        <choice name="LaunchTui"/>
+      </choices>
+      <default>ExpandPopup</default>
+    </entry>
+
+    <entry name="terminalCommand" type="String">
+      <default></default>
+    </entry>
+
+    <entry name="useThemeColors" type="Bool">
+      <default>true</default>
+    </entry>
+
+    <!-- Used when useThemeColors is off. Same five keys, same One Dark
+         defaults, and the same severity bands as the GNOME extension and the
+         macOS app, so turning the theme off reproduces their look exactly. -->
+    <entry name="colorLow" type="String">
+      <default>#98c379</default>
+    </entry>
+
+    <entry name="colorMid" type="String">
+      <default>#e5c07b</default>
+    </entry>
+
+    <entry name="colorHigh" type="String">
+      <default>#d19a66</default>
+    </entry>
+
+    <entry name="colorCritical" type="String">
+      <default>#e06c75</default>
+    </entry>
+
+    <entry name="colorEmpty" type="String">
+      <default>#3e4451</default>
+    </entry>
+
+    <entry name="showBars" type="Bool">
+      <default>true</default>
+    </entry>
+
+    <entry name="barWidth" type="Int">
+      <default>8</default>
+      <min>4</min>
+      <max>20</max>
+    </entry>
+  </group>
+</kcfg>

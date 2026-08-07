@@ -1,0 +1,25 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "io.github.akitaonrails.ai-usagebar",
+        "Name": "AI Usage Bar",
+        "Description": "AI plan usage (Claude, OpenAI, Z.AI, OpenRouter, DeepSeek, Antigravity) in the Plasma panel",
+        "Icon": "utilities-system-monitor",
+        "Category": "System Information",
+        "License": "MIT",
+        "Version": "0.1.0",
+        "Authors": [
+            {
+                "Name": "AkitaOnRails",
+                "Email": "anrry.petrin@hotmail.com"
+            }
+        ],
+        "Website": "https://github.com/akitaonrails/ai-usagebar",
+        "BugReportUrl": "https://github.com/akitaonrails/ai-usagebar/issues",
+        "EnabledByDefault": true,
+        "FormFactors": [
+            "desktop"
+        ]
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
