@@ -1,4 +1,11 @@
 // Pure marker helpers shared by the GNOME indicator and its Node table tests.
+//
+// CANONICAL COPY. kde-plasmoid/package/contents/code/marker-logic.mjs is a
+// byte-identical duplicate (KPackage needs the file under contents/, and this
+// directory ships as a zip to extensions.gnome.org, so neither can symlink the
+// other). Edit here, then:
+//   cp gnome-extension/marker-logic.js kde-plasmoid/package/contents/code/marker-logic.mjs
+// kde-plasmoid/plasmoid-logic.test.mjs fails the build if the two diverge.
 export const MARKER = '#61afef';
 export const POINT_MID_MIN = -10;
 export const POINT_CRITICAL_MIN = 10;
@@ -68,8 +75,28 @@ export function hasUsageWindows(vendorShort) {
     return field(vendorShort) !== 'dsk';
 }
 
+// ASCII whitespace + punctuation. This deliberately does NOT use a Unicode
+// property escape (`/[\p{L}\p{N}]/u`): QML's V4 engine evaluates \p{...} to
+// false instead of throwing, so that version silently produced an empty tag for
+// every pool in the Plasma panel while working fine under GJS and Node. Testing
+// for "not space or punctuation" instead keeps letters and digits of every
+// script — including the non-BMP case Array.from() already guards — and parses
+// identically on all three engines.
+//
+// It is not an exact substitute, and the difference is deliberate rather than
+// unnoticed. The property version also dropped non-ASCII symbols and dashes,
+// which this class keeps: a pool named "— weekly" tags as "—" where it used to
+// tag as "W", and an em dash inside a name survives into a widened tag
+// ("GEMINI—P" rather than "GEMINIP"). Both are still usable panel tags, and
+// reproducing \p{L}\p{N} exactly without property escapes is not achievable —
+// any hand-written range list either misses a script or swallows the letters and
+// digits that live inside the symbol blocks (ª, ², Ⅵ, ℘). So the divergence is
+// accepted, and marker-logic.test.mjs pins it against the property version as an
+// oracle, which Node evaluates correctly: widening it takes a deliberate edit.
+const NON_TAG_CHAR = /[\s!-\/:-@[-`{-~]/;
+
 function poolChars(model) {
-    return Array.from(field(model)).filter(ch => /[\p{L}\p{N}]/u.test(ch));
+    return Array.from(field(model)).filter(ch => !NON_TAG_CHAR.test(ch));
 }
 
 // Short panel tag for a quota pool: the model group's initial. Work in Unicode
