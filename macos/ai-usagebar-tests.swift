@@ -287,6 +287,17 @@ func testParserBalances() {
     assertNil(cld?.creditBalance, "anthropic has no balance")
     assertEqual(cld?.session?.pct, 42, "anthropic session pct")
 
+    let oaiWeekly = snapshot(FORMAT, vendor: "openai",
+                             fields: fields(through: 16, set: [
+                                0: "ChatGPT Pro", 3: "66", 4: "5d 12h", 14: "23", 16: "gpt"
+                             ]))
+    assertEqual(oaiWeekly?.hasUsageWindows, true, "openai weekly-only shows windows")
+    assertNil(oaiWeekly?.creditBalance, "openai weekly-only has no balance")
+    assertNil(oaiWeekly?.session, "openai weekly-only suppresses absent 5h session")
+    assertEqual(oaiWeekly?.weekly?.pct, 66, "openai weekly-only reports 7d pct")
+    assertEqual(oaiWeekly?.weekly?.reset, "5d 12h", "openai weekly-only reports 7d reset")
+    assertEqual(oaiWeekly?.weekly?.elapsed, 23, "openai weekly-only reports 7d pace elapsed")
+
     // Cursor: two included-usage pools carried on the session/weekly aliases
     // (session = Cursor Models, weekly = Other Models), both real, no balance.
     // The bars are relabeled away from the "Session"/"Weekly" time-window names.
