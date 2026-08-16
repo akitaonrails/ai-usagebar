@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <entry name="binaryPath" type="String">
+      <default></default>
+    </entry>
+    <entry name="interval" type="Int">
+      <default>60</default>
+    </entry>
+    <entry name="vendor" type="String">
+      <default></default>
+    </entry>
+    <entry name="extraArgs" type="String">
+      <default></default>
+    </entry>
+    <entry name="scrollCycles" type="Bool">
+      <default>true</default>
+    </entry>
+    <entry name="hideUnconfigured" type="Bool">
+      <default>true</default>
+    </entry>
+    <!-- Provider cycled by the wheel/buttons. Applet state, not shown in the
+         configuration dialog. -->
+    <entry name="activeVendor" type="String">
+      <default></default>
+    </entry>
+  </group>
+</kcfg>

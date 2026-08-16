@@ -34,6 +34,7 @@ When cutting a new version (patch, minor, or major):
    cargo clippy --all-targets -- -D warnings   # clean
    cargo machete                               # no unused deps
    node omarchy/model.test.mjs                 # Quattro report/UI model
+   node plasma/model.test.mjs                  # Plasma applet report/package model
    omarchy plugin validate .                   # plugin manifest + entry points
    ```
 7. **Commit, tag, push**:
@@ -188,6 +189,11 @@ vendor's response shape drifts:
 - `src/widget/` — Waybar widget shell (CLI, render, pretty, run)
 - `manifest.json`, `omarchy/` — Omarchy 4 / Quattro plugin manifest, native
   Quickshell panel, pure report model, and Node contract tests
+- `plasma/` — KDE Plasma 6 applet (KPackage). `plasma/package/` is the
+  installable widget, `plasma/package/contents/ui/Model.js` its pure report
+  model, and `plasma/model.test.mjs` the Node contract tests. The applet owns
+  its displayed provider in the widget's own config instead of calling
+  `--cycle-next`, so a Waybar/TUI scroll-cycle state is left alone.
 - `src/tooltip.rs` — shared Pango bordered-box renderer (used by
   every vendor's tooltip)
 - `packaging/aur/PKGBUILD` — source-build AUR pkg

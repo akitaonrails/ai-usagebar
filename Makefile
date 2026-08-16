@@ -1,6 +1,6 @@
 PREFIX ?= /usr/local
 
-.PHONY: build install uninstall test desktop-test plugin-test smoke clippy fmt clean
+.PHONY: build install uninstall test desktop-test plugin-test plasma-test smoke clippy fmt clean
 
 build:
 	cargo build --release
@@ -26,9 +26,13 @@ test:
 desktop-test:
 	node gnome-extension/marker-logic.test.mjs
 	$(MAKE) plugin-test
+	$(MAKE) plasma-test
 
 plugin-test:
 	node omarchy/model.test.mjs
+
+plasma-test:
+	node plasma/model.test.mjs
 
 smoke:
 	@echo "Running live API smoke tests (requires creds in shell env)..."

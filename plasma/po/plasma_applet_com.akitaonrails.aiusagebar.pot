@@ -1,0 +1,215 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR Marcelo <Marcelo7889@gmail.com>
+# This file is distributed under the same license as the AI Usage Bar package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: AI Usage Bar\n"
+"Report-Msgid-Bugs-To: https://github.com/Marcelo7889/plasma-ai-usagebar/"
+"issues\n"
+"POT-Creation-Date: 2026-08-16 13:25-0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: package/contents/config/config.qml:6
+msgctxt "@title configuration page"
+msgid "General"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:18
+msgctxt "@label:textbox"
+msgid "Binary path:"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:19
+msgctxt "@info:placeholder"
+msgid "ai-usagebar (looked up in PATH)"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:25
+msgctxt "@label:spinbox"
+msgid "Interval (seconds):"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:33
+msgctxt "@label:listbox"
+msgid "Provider:"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:38
+msgctxt "@item:inlistbox no provider pinned"
+msgid "(cycled / config.toml)"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:64
+msgctxt "@label:textbox"
+msgid "Extra arguments:"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:75
+msgctxt "@label:checkbox"
+msgid "Mouse wheel:"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:76
+msgctxt "@option:check"
+msgid "switches provider"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:81
+msgctxt "@label:checkbox providers without an API key"
+msgid "Without credentials:"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:82
+msgctxt "@option:check"
+msgid "hide in the popup and skip when switching"
+msgstr ""
+
+#: package/contents/ui/configGeneral.qml:91
+msgctxt "@info:usagetip"
+msgid ""
+"Switching to a provider without a key would only show a warning in the "
+"panel; with this option the wheel and the buttons pass over it."
+msgstr ""
+
+#: package/contents/ui/main.qml:113
+msgctxt "@info:status %1 is the process exit code"
+msgid "No output (exit code %1). Is the ai-usagebar binary installed?"
+msgstr ""
+
+#: package/contents/ui/main.qml:125
+msgctxt "@info:status %1 is the raw command output"
+msgid "Unexpected answer: %1"
+msgstr ""
+
+#: package/contents/ui/main.qml:143
+msgctxt "@info:status %1 is the process exit code"
+msgid "`ai-usagebar usage --json` produced no output (exit code %1)."
+msgstr ""
+
+#: package/contents/ui/main.qml:159
+msgctxt "@info:status"
+msgid "The usage command returned invalid JSON."
+msgstr ""
+
+#: package/contents/ui/main.qml:161
+msgctxt "@info:status"
+msgid "The usage command returned an unsupported report."
+msgstr ""
+
+#: package/contents/ui/main.qml:163
+msgctxt "@info:status"
+msgid "The usage report contained no valid provider entry."
+msgstr ""
+
+#: package/contents/ui/main.qml:351 package/contents/ui/main.qml:495
+msgctxt "@info:status"
+msgid "Loading…"
+msgstr ""
+
+#: package/contents/ui/main.qml:389
+msgctxt "@title popup header"
+msgid "AI usage"
+msgstr ""
+
+#: package/contents/ui/main.qml:395
+msgctxt "@action:button"
+msgid "Previous provider"
+msgstr ""
+
+#: package/contents/ui/main.qml:405
+msgctxt "@action:button"
+msgid "Next provider"
+msgstr ""
+
+#: package/contents/ui/main.qml:415
+msgctxt "@action:button"
+msgid "Refresh"
+msgstr ""
+
+#: package/contents/ui/main.qml:474
+msgctxt "@info:status %1 is a number of providers"
+msgid "%1 provider without credentials is hidden"
+msgid_plural "%1 providers without credentials are hidden"
+msgstr[0] ""
+msgstr[1] ""
+
+#: package/contents/ui/main.qml:484
+msgctxt "@info:placeholder"
+msgid "Could not read the usage report"
+msgstr ""
+
+#: package/contents/ui/main.qml:509
+msgctxt "@action"
+msgid "Refresh now"
+msgstr ""
+
+#: package/contents/ui/main.qml:517
+msgctxt "@action"
+msgid "Next provider"
+msgstr ""
+
+#: package/contents/ui/main.qml:522
+msgctxt "@action"
+msgid "Previous provider"
+msgstr ""
+
+#: package/contents/ui/MetricSection.qml:28
+msgctxt "@label time until the quota window resets"
+msgid "Resets in %1"
+msgstr ""
+
+#: package/contents/ui/MetricSection.qml:29
+msgctxt "@label the quota window is past its reset time"
+msgid "Reset due"
+msgstr ""
+
+#: package/contents/ui/MetricSection.qml:36
+#, javascript-format
+msgctxt "@label share of the quota window that has passed"
+msgid "%1% elapsed"
+msgstr ""
+
+#: package/contents/ui/MetricSection.qml:39
+msgctxt "@label usage matches the elapsed time"
+msgid "on pace"
+msgstr ""
+
+#: package/contents/ui/MetricSection.qml:43
+msgctxt "@label using quota faster than the clock, in percentage points"
+msgid "%1 pts ahead"
+msgstr ""
+
+#: package/contents/ui/MetricSection.qml:45
+msgctxt "@label using quota slower than the clock, in percentage points"
+msgid "%1 pts under"
+msgstr ""
+
+#: package/contents/ui/VendorCard.qml:34
+msgctxt "@info the reading was taken seconds ago"
+msgid "Updated just now"
+msgstr ""
+
+#: package/contents/ui/VendorCard.qml:35
+msgctxt "@info how long ago the reading was taken"
+msgid "Updated %1 ago"
+msgstr ""
+
+#: package/contents/ui/VendorCard.qml:119
+msgctxt "@info the provider answered from a stale cache"
+msgid "cached"
+msgstr ""
+
+#: package/contents/ui/VendorCard.qml:143
+msgctxt "@info provider without an API key or login"
+msgid "No credentials configured"
+msgstr ""

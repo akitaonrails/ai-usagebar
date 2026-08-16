@@ -1,0 +1,22 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "Marcelo7889@gmail.com",
+                "Name": "Marcelo"
+            }
+        ],
+        "BugReportUrl": "https://github.com/akitaonrails/ai-usagebar/issues",
+        "Category": "System Information",
+        "Description": "Shows AI subscription quota (Claude, Codex, Z.AI, OpenRouter and more) in the panel, via ai-usagebar",
+        "Description[pt_BR]": "Mostra a cota de uso das IAs (Claude, Codex, Z.AI, OpenRouter e outras) no painel, via ai-usagebar",
+        "Icon": "utilities-system-monitor",
+        "Id": "com.akitaonrails.aiusagebar",
+        "License": "MIT",
+        "Name": "AI Usage Bar",
+        "Version": "1.0.0",
+        "Website": "https://github.com/akitaonrails/ai-usagebar"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
