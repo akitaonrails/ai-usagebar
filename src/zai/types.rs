@@ -24,7 +24,7 @@
 //! ```
 //!
 //! The `unit`/`number` codes have no documented mapping, but `unit` is the one
-//! field that tells the two TOKENS_LIMIT buckets apart independently of where
+//! field that tells the two usage buckets apart independently of where
 //! they sit in the array: the 5h window carries `unit:3`, the 7d one `unit:6`.
 //! So the session/weekly split keys off `unit`, not off position — Z.AI is free
 //! to reorder `limits` or insert a bucket, and a positional split would silently
@@ -93,29 +93,37 @@ impl Envelope {
     }
 }
 
-/// `unit` codes of the two TOKENS_LIMIT buckets in the captured response. The
+/// `unit` codes of the two usage buckets in the captured response. The
 /// enum behind them is undocumented — `number` (5 and 1) is consistent with
 /// "5 hours" / "1 week", but we don't lean on that, so the window durations
 /// stay hardcoded and only the *identity* of each bucket comes from `unit`.
 const UNIT_SESSION: i64 = 3;
 const UNIT_WEEKLY: i64 = 6;
 
+/// The API renamed the bucket type from `TOKENS_LIMIT` to `CREDIT_LIMIT`;
+/// both spellings denote the same session/weekly windows, so either is
+/// accepted and they must never be counted as strangers of each other.
+fn is_usage_bucket(kind: &str) -> bool {
+    kind == "TOKENS_LIMIT" || kind == "CREDIT_LIMIT"
+}
+
 type TokenBuckets<'a> = (Option<&'a LimitEntry>, Option<&'a LimitEntry>);
 
-/// Match the TOKENS_LIMIT entries to the (session, weekly) windows by `unit`.
+/// Match the TOKENS_LIMIT/CREDIT_LIMIT entries to the (session, weekly)
+/// windows by `unit`.
 ///
 /// Buckets carrying an unknown `unit` are dropped rather than shown under a
 /// label we can't justify, so Z.AI adding a third window is inert here. A
 /// non-empty set with no discriminator is drift, not a backwards-compatibility
 /// case: caches retain the raw `unit` field, so position would still be a guess.
 fn classify_token_buckets(limits: &[LimitEntry]) -> Result<TokenBuckets<'_>, String> {
-    let tokens: Vec<&LimitEntry> = limits.iter().filter(|l| l.kind == "TOKENS_LIMIT").collect();
+    let tokens: Vec<&LimitEntry> = limits.iter().filter(|l| is_usage_bucket(&l.kind)).collect();
 
     if tokens.is_empty() {
         return Ok((None, None));
     }
     if tokens.iter().all(|l| l.unit.is_none()) {
-        return Err("TOKENS_LIMIT buckets carry no unit discriminator".into());
+        return Err("usage buckets carry no unit discriminator".into());
     }
 
     let session = unique_by_unit(&tokens, UNIT_SESSION)?;
@@ -127,7 +135,7 @@ fn classify_token_buckets(limits: &[LimitEntry]) -> Result<TokenBuckets<'_>, Str
             .map(|u| u.to_string())
             .collect();
         return Err(format!(
-            "no TOKENS_LIMIT bucket carries a known unit code (saw {})",
+            "no usage bucket carries a known unit code (saw {})",
             seen.join(", ")
         ));
     }
@@ -150,7 +158,7 @@ fn unique_by_unit<'a>(
     let mut matching = tokens.iter().filter(|l| l.unit == Some(code));
     let first = matching.next().copied();
     if matching.next().is_some() {
-        return Err(format!("two TOKENS_LIMIT buckets carry unit {code}"));
+        return Err(format!("two usage buckets carry unit {code}"));
     }
     Ok(first)
 }
@@ -501,5 +509,52 @@ mod tests {
         let env: Envelope = serde_json::from_str(body).unwrap();
         let snap = env.into_snapshot(None);
         assert!(snap.session.as_ref().unwrap().resets_at.is_none());
+    }
+
+    /// The API renamed TOKENS_LIMIT to CREDIT_LIMIT; both spellings must map
+    /// to the same session/weekly windows, keyed by `unit` as before.
+    #[test]
+    fn credit_limit_buckets_fill_session_and_weekly() {
+        let body = r#"{"data":{"limits":[
+            {"type":"CREDIT_LIMIT","unit":3,"number":5,"percentage":42},
+            {"type":"CREDIT_LIMIT","unit":6,"number":1,"percentage":15,"nextResetTime":1779792169974}
+        ],"level":"pro"},"success":true}"#;
+        let env: Envelope = serde_json::from_str(body).unwrap();
+        env.check_ok().unwrap();
+        let snap = env.into_snapshot(None);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 42);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 15);
+        assert!(snap.weekly.as_ref().unwrap().resets_at.is_some());
+    }
+
+    /// A rename mid-rollout means one window may still arrive under the old
+    /// spelling while the other already uses the new one; both must be read.
+    #[test]
+    fn mixed_token_and_credit_buckets_are_both_kept() {
+        let body = r#"{"data":{"limits":[
+            {"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":42},
+            {"type":"CREDIT_LIMIT","unit":6,"number":1,"percentage":15}
+        ],"level":"pro"},"success":true}"#;
+        let env: Envelope = serde_json::from_str(body).unwrap();
+        env.check_ok().unwrap();
+        let snap = env.into_snapshot(None);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 42);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 15);
+    }
+
+    /// Two spellings naming the *same* window are duplicates, not aliases to
+    /// be reconciled by kind — same rule as two TOKENS_LIMIT entries.
+    #[test]
+    fn token_and_credit_sharing_a_unit_is_still_a_duplicate() {
+        let body = r#"{"data":{"limits":[
+            {"type":"TOKENS_LIMIT","unit":3,"percentage":42},
+            {"type":"CREDIT_LIMIT","unit":3,"percentage":15}
+        ],"level":"pro"},"success":true}"#;
+        let env: Envelope = serde_json::from_str(body).unwrap();
+        let err = env.check_ok().unwrap_err().to_string();
+        assert!(err.contains("two usage buckets carry unit 3"), "{err}");
+        let snap = env.into_snapshot(None);
+        assert!(snap.session.is_none());
+        assert!(snap.weekly.is_none());
     }
 }
