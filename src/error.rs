@@ -13,7 +13,17 @@ pub const AUTH_FAILURE_MESSAGE: &str =
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     /// Local I/O failed (cache write, credentials read, theme file, etc.).
-    #[error("io error at {path}: {source}")]
+    ///
+    /// The path is rendered through the crate's sanitizer rather than through
+    /// `Path`'s `Display`, which escapes nothing. Since Phase 5 a path here can
+    /// be built component-by-component out of a manifest a hostile remote
+    /// wrote, and this error reaches stderr from a dozen places — so the escape
+    /// belongs in the one `Display` every one of them goes through, not in each
+    /// print site that happened to remember (F-3).
+    #[error(
+        "io error at {}: {source}",
+        crate::display::sanitize_untrusted_path(path)
+    )]
     Io {
         path: PathBuf,
         #[source]

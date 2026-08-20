@@ -39,6 +39,18 @@ layout = "full"
 # [context.model_context_window_tokens]
 # "claude-opus-4-6" = 1000000
 
+# Encrypted sync: what gets carried to another machine. This section is itself
+# part of the `config` category, so the second machine inherits the same
+# selection instead of quietly differing from this one.
+[sync]
+# Transcripts is deliberately NOT in this list: it is the only category big
+# enough to change what "fast, light sync" means. Add "transcripts" to opt in.
+categories = ["config", "credentials", "routines", "chat_index"]
+# Bounds applied to transcripts when you do opt in — newest-first, both
+# applied, whichever binds first wins. A file is taken whole or not at all.
+transcript_days = 30
+transcript_max_bytes = 2147483648   # 2 GiB
+
 [anthropic]
 enabled = true
 # Path to the Claude CLI OAuth credentials. Leave commented out to use

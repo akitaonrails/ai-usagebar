@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Modifier;
@@ -23,7 +24,7 @@ use ratatui_bubbletea_theme::BubbleTheme;
 use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, value};
 
-use crate::config::Config;
+use crate::config::{Config, SyncCategory};
 use crate::error::{AppError, Result};
 use crate::theme::Theme;
 use crate::tui::style::bubble_theme;
@@ -140,11 +141,13 @@ fn config_inline_key<'a>(cfg: &'a Config, section: &str) -> Option<&'a str> {
     }
 }
 
-/// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`].
+/// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`];
+/// `SyncCategory(i)` indexes into [`SyncCategory::ALL`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Primary,
     Key(usize),
+    SyncCategory(usize),
     Save,
 }
 
@@ -153,7 +156,9 @@ impl Focus {
         match self {
             Focus::Primary => Focus::Key(0),
             Focus::Key(i) if i + 1 < KEY_VENDORS.len() => Focus::Key(i + 1),
-            Focus::Key(_) => Focus::Save,
+            Focus::Key(_) => Focus::SyncCategory(0),
+            Focus::SyncCategory(i) if i + 1 < SyncCategory::ALL.len() => Focus::SyncCategory(i + 1),
+            Focus::SyncCategory(_) => Focus::Save,
             Focus::Save => Focus::Primary,
         }
     }
@@ -162,7 +167,9 @@ impl Focus {
             Focus::Primary => Focus::Save,
             Focus::Key(0) => Focus::Primary,
             Focus::Key(i) => Focus::Key(i - 1),
-            Focus::Save => Focus::Key(KEY_VENDORS.len() - 1),
+            Focus::SyncCategory(0) => Focus::Key(KEY_VENDORS.len() - 1),
+            Focus::SyncCategory(i) => Focus::SyncCategory(i - 1),
+            Focus::Save => Focus::SyncCategory(SyncCategory::ALL.len() - 1),
         }
     }
 }
@@ -271,12 +278,36 @@ pub struct SettingsState {
     pub primary: VendorId,
     /// One input per [`KEY_VENDORS`] entry, same order.
     pub keys: Vec<KeyInput>,
+    /// What encrypted sync collects — one row per [`SyncCategory::ALL`] entry,
+    /// in that order. This is a projection of [`crate::config::SyncConfig::categories`],
+    /// not a parallel truth: it round-trips through the same TOML key.
+    pub sync_categories: Vec<(SyncCategory, bool)>,
+    /// When sync last completed, as the local index reports it. `None` is the
+    /// normal never-synced answer *and* the answer when the index could not be
+    /// read — the same conflation `ai-usagebar sync status` already makes.
+    ///
+    /// It arrives on the state rather than being read here: the overlay must
+    /// not open a database (nor walk a transcript tree) to draw itself.
+    pub sync_last_sync: Option<DateTime<Utc>>,
+    /// True once the user has toggled a row. Only then does save write
+    /// `[sync] categories` — an untouched save must not turn "never chose"
+    /// into a persisted choice, the same discipline the primary selector and
+    /// the key fields already follow.
+    pub sync_dirty: bool,
     /// One-line status displayed in the footer ("saved …", "save failed …").
     pub status: String,
 }
 
 impl SettingsState {
+    /// Pure: config in, state out. No filesystem, no clock, no `$HOME`.
+    /// Last-sync is unknown here; see [`SettingsState::from_config_with_sync`].
     pub fn from_config(cfg: &Config) -> Self {
+        Self::from_config_with_sync(cfg, None)
+    }
+
+    /// Same, plus the last-sync instant the caller already had. The caller
+    /// owns that read because it is the one that may touch the index file.
+    pub fn from_config_with_sync(cfg: &Config, last_sync: Option<DateTime<Utc>>) -> Self {
         let keys = KEY_VENDORS
             .iter()
             .map(|kv| KeyInput::from_config(config_inline_key(cfg, kv.section)))
@@ -291,11 +322,18 @@ impl SettingsState {
             .filter(|vendor| primary_choices.contains(vendor))
             .or_else(|| primary_choices.first().copied())
             .unwrap_or_else(|| cfg.ui.primary.unwrap_or(VendorId::Anthropic));
+        let sync_categories = SyncCategory::ALL
+            .iter()
+            .map(|cat| (*cat, cfg.sync.includes(*cat)))
+            .collect();
         Self {
             focus: Focus::Primary,
             primary_choices,
             primary,
             keys,
+            sync_categories,
+            sync_last_sync: last_sync,
+            sync_dirty: false,
             status: String::new(),
         }
     }
@@ -392,6 +430,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
                 handle_input(input, code);
             }
         }
+        Focus::SyncCategory(i) => toggle_sync_category(state, i, code),
         Focus::Save => {
             if matches!(code, KeyCode::Enter) {
                 return try_save(state);
@@ -399,6 +438,20 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
         }
     }
     Action::Continue
+}
+
+/// Space or Enter flips exactly one row. Deliberately **not** Left/Right:
+/// those mean "cycle a choice" on the Primary row, and a mis-aimed arrow must
+/// not be able to change which credentials are eligible to leave the machine
+/// (T-6-20). Modifier chords were already swallowed above.
+fn toggle_sync_category(state: &mut SettingsState, index: usize, code: KeyCode) {
+    if !matches!(code, KeyCode::Char(' ') | KeyCode::Enter) {
+        return;
+    }
+    if let Some(row) = state.sync_categories.get_mut(index) {
+        row.1 = !row.1;
+        state.sync_dirty = true;
+    }
 }
 
 fn try_save(state: &mut SettingsState) -> Action {
@@ -483,6 +536,8 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
         update_key(&mut doc, kv.section, input)?;
     }
 
+    update_sync_categories(&mut doc, state)?;
+
     let bytes = doc.to_string();
     crate::cache::atomic_write(path, bytes.as_bytes())?;
 
@@ -514,6 +569,42 @@ fn update_key(doc: &mut DocumentMut, section: &str, input: &KeyInput) -> Result<
     }
     set_string(doc, section, "api_key", &input.buf)?;
     set_bool(doc, section, "enabled", true)
+}
+
+/// Write `[sync] categories` from the overlay's rows.
+///
+/// Untouched rows write nothing: opening Settings to paste one API key must
+/// not also commit the user to a sync selection they never made, and a missing
+/// key means "the default" while an empty array means "nothing" — two
+/// different statements (T-6-22). An empty selection is therefore written
+/// explicitly and never elided.
+///
+/// The labels come from [`SyncCategory::label`], the same spelling the config
+/// parser reads, so there is one place the token is spelled.
+fn update_sync_categories(doc: &mut DocumentMut, state: &SettingsState) -> Result<()> {
+    if !state.sync_dirty {
+        return Ok(());
+    }
+    let mut array = toml_edit::Array::new();
+    for (cat, _) in state.sync_categories.iter().filter(|(_, on)| *on) {
+        array.push(cat.label());
+    }
+
+    let table = doc
+        .entry("sync")
+        .or_insert_with(toml_edit::table)
+        .as_table_mut()
+        .ok_or_else(|| AppError::Other("config.toml: [sync] is not a table".into()))?;
+
+    if let Some(item) = table.get_mut("categories")
+        && let Some(v) = item.as_value_mut()
+    {
+        *v = toml_edit::Value::Array(array);
+        v.decor_mut().set_prefix(" ");
+        return Ok(());
+    }
+    table.insert("categories", value(array));
+    Ok(())
 }
 
 /// Set or update a string field in a TOML section, preserving comments and
@@ -808,7 +899,11 @@ pub fn run_cli(action: &crate::widget::cli::SettingsAction) -> i32 {
 
 /// Render the modal overlay over `area`.
 pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
-    let modal = centered_rect(74, 88, area);
+    // 96 rather than 88: the Sync block added nine lines, and a modal whose
+    // Save row falls off the bottom of a short terminal is worse than a thin
+    // margin. Below roughly 30 rows the Paragraph still truncates — it does
+    // not scroll, and it does not panic.
+    let modal = centered_rect(74, 96, area);
     f.render_widget(Clear, modal);
 
     let bubble = bubble_theme(theme);
@@ -833,13 +928,31 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             &bubble,
         ),
     ];
+    // Which body line the focused control sits on, so a terminal too short to
+    // hold the whole form scrolls to it rather than hiding it. Recorded while
+    // building rather than derived from a second layout table, which would
+    // drift the moment a row moves.
+    let mut focus_line = 1; // the primary row
     for (i, kv) in KEY_VENDORS.iter().enumerate() {
         let focused = state.focus == Focus::Key(i);
+        if focused {
+            focus_line = lines.len();
+        }
         lines.push(key_row(kv, &state.keys[i], focused, &bubble));
     }
     lines.push(Line::from(""));
 
+    // — Sync —
+    if let Focus::SyncCategory(i) = state.focus {
+        focus_line = lines.len() + SYNC_PREAMBLE_LINES + i;
+    }
+    lines.extend(sync_lines(state, &bubble));
+    lines.push(Line::from(""));
+
     // — Save + status —
+    if state.focus == Focus::Save {
+        focus_line = lines.len();
+    }
     lines.push(save_line(state.focus == Focus::Save, &bubble));
     if !state.status.is_empty() {
         let ok = state.status.starts_with("saved");
@@ -851,7 +964,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
         ]));
     }
 
-    f.render_widget(Paragraph::new(lines), chunks[0]);
+    // Scroll only far enough to keep the focused row on screen. Tab can reach
+    // rows a short terminal cannot show, and a control the user is editing
+    // blind is worse than one that is merely off-screen.
+    let visible = chunks[0].height as usize;
+    let scroll = focus_line.saturating_sub(visible.saturating_sub(1)) as u16;
+    f.render_widget(Paragraph::new(lines).scroll((scroll, 0)), chunks[0]);
 
     // Context-aware hint footer.
     let hint = match state.focus {
@@ -865,6 +983,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             ("↑↓/tab", "move"),
             ("type", "edit key"),
             ("^V", "reveal"),
+            ("^S", "save"),
+            ("esc", "close"),
+        ]),
+        Focus::SyncCategory(_) => bubble.help_line([
+            ("↑↓/tab", "move"),
+            ("space/enter", "toggle"),
             ("^S", "save"),
             ("esc", "close"),
         ]),
@@ -973,6 +1097,96 @@ fn value_text(input: &KeyInput, focused: bool) -> String {
     chars.into_iter().collect()
 }
 
+/// Lines [`sync_lines`] emits before the first toggle row: the section header,
+/// last-sync, and the pointer at `sync status`. `render` needs it to know
+/// which body line a focused row lands on.
+const SYNC_PREAMBLE_LINES: usize = 3;
+
+/// The Sync block — a pure function of the state and theme.
+///
+/// No filesystem read, no clock read, no index open: the last-sync value
+/// arrives on the state. A status panel that stat-walked a multi-gigabyte
+/// transcript tree on every keypress would freeze the render loop (T-6-23),
+/// so the per-category counts are *pointed at* rather than computed.
+fn sync_lines(state: &SettingsState, theme: &BubbleTheme) -> Vec<Line<'static>> {
+    debug_assert_eq!(SYNC_PREAMBLE_LINES, 3);
+    let mut lines = vec![
+        section_header(
+            "Sync",
+            "what encrypted sync carries — space/enter toggles a row",
+            theme,
+        ),
+        Line::from(vec![
+            theme.span("     "),
+            theme.muted(format!("last sync: {}", last_sync_text(state))),
+        ]),
+        Line::from(vec![
+            theme.span("     "),
+            theme.muted("file counts and sizes: ai-usagebar sync status"),
+        ]),
+    ];
+    for (i, (cat, on)) in state.sync_categories.iter().enumerate() {
+        lines.push(sync_row(
+            *cat,
+            *on,
+            state.focus == Focus::SyncCategory(i),
+            theme,
+        ));
+    }
+    lines
+}
+
+/// `never` is both the never-synced answer and the could-not-read-the-index
+/// answer — the same conflation `ai-usagebar sync status` already prints.
+fn last_sync_text(state: &SettingsState) -> String {
+    state
+        .sync_last_sync
+        .map_or_else(|| "never".to_string(), |at| at.to_rfc3339())
+}
+
+/// What each category costs or carries, in the user's terms. Transcripts is
+/// called out because it is the one toggle that turns a ~30 MB bundle into a
+/// multi-gigabyte one; it must not look like every other row.
+fn sync_note(cat: SyncCategory) -> &'static str {
+    match cat {
+        SyncCategory::Config => "this file, inline keys included",
+        SyncCategory::Credentials => "saved logins — encrypted before anything leaves",
+        SyncCategory::Routines => "scheduled tasks",
+        SyncCategory::ChatIndex => "Claude Desktop session index",
+        SyncCategory::Transcripts => "opt-in · large — gigabytes of local JSONL",
+    }
+}
+
+fn sync_row(cat: SyncCategory, on: bool, focused: bool, theme: &BubbleTheme) -> Line<'static> {
+    let mark = if on { "[x]" } else { "[ ]" };
+    let label = format!("{:<12}", cat.label());
+    let note = format!("  {}", sync_note(cat));
+    if focused {
+        Line::from(vec![
+            theme.span("  "),
+            Span::styled("▸ ", theme.accent.add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" {mark} "),
+                theme
+                    .selected
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            ),
+            Span::styled(label, theme.title.add_modifier(Modifier::BOLD)),
+            theme.muted(note),
+        ])
+    } else {
+        Line::from(vec![
+            theme.span("     "),
+            Span::styled(
+                format!("{mark} "),
+                if on { theme.accent } else { theme.muted },
+            ),
+            Span::styled(label, theme.text),
+            theme.muted(note),
+        ])
+    }
+}
+
 fn save_line(focused: bool, theme: &BubbleTheme) -> Line<'static> {
     let style = if focused {
         theme
@@ -1023,9 +1237,39 @@ mod tests {
             primary_choices: VendorId::all().to_vec(),
             primary,
             keys: KEY_VENDORS.iter().map(|_| KeyInput::default()).collect(),
+            sync_categories: default_sync_rows(),
+            sync_last_sync: None,
+            sync_dirty: false,
             status: String::new(),
         }
     }
+
+    /// The sync rows a default `Config` produces — the shape every state
+    /// literal in these tests starts from.
+    fn default_sync_rows() -> Vec<(SyncCategory, bool)> {
+        let cfg = Config::default();
+        SyncCategory::ALL
+            .iter()
+            .map(|cat| (*cat, cfg.sync.includes(*cat)))
+            .collect()
+    }
+
+    fn sync_row_state(focus_index: usize) -> SettingsState {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.focus = Focus::SyncCategory(focus_index);
+        s
+    }
+
+    fn on(state: &SettingsState, cat: SyncCategory) -> bool {
+        state
+            .sync_categories
+            .iter()
+            .find(|(c, _)| *c == cat)
+            .map(|(_, flag)| *flag)
+            .unwrap()
+    }
+
+    const TRANSCRIPTS: usize = 4;
 
     /// State with a Z.AI key and an OpenRouter key, both marked dirty.
     fn state_with(zai: &str, opr: &str, primary: VendorId) -> SettingsState {
@@ -1041,8 +1285,8 @@ mod tests {
     fn focus_cycles_through_primary_all_keys_and_save() {
         let mut f = Focus::Primary;
         let mut seen = vec![f];
-        // Full cycle = Primary + N key rows + Save.
-        for _ in 0..(KEY_VENDORS.len() + 2) {
+        // Full cycle = Primary + N key rows + 5 sync rows + Save.
+        for _ in 0..(KEY_VENDORS.len() + SyncCategory::ALL.len() + 2) {
             f = f.next();
             seen.push(f);
         }
@@ -1630,5 +1874,499 @@ enabled = true
             .unwrap_err()
             .to_string();
         assert!(error.contains("exceeds"));
+    }
+
+    // ─── Sync section ──────────────────────────────────────────────────────
+
+    #[test]
+    fn sync_rows_follow_the_canonical_category_order() {
+        let cfg = Config::default();
+        let s = SettingsState::from_config(&cfg);
+        assert_eq!(
+            s.sync_categories
+                .iter()
+                .map(|(cat, _)| *cat)
+                .collect::<Vec<_>>(),
+            SyncCategory::ALL.to_vec(),
+            "the overlay must list what `sync status` lists, in the same order"
+        );
+    }
+
+    #[test]
+    fn sync_rows_mirror_the_configs_own_selection() {
+        let cfg = Config::default();
+        let s = SettingsState::from_config(&cfg);
+        for (cat, flag) in &s.sync_categories {
+            assert_eq!(*flag, cfg.sync.includes(*cat), "{cat:?}");
+        }
+        // The default is the four cheap categories; transcripts is opt-in.
+        assert_eq!(s.sync_categories.iter().filter(|(_, f)| *f).count(), 4);
+        assert!(!on(&s, SyncCategory::Transcripts));
+        assert!(on(&s, SyncCategory::Credentials));
+    }
+
+    #[test]
+    fn an_empty_category_list_is_every_row_off_not_the_default_set() {
+        // "sync nothing" is a legal choice and must survive a round trip
+        // through the overlay rather than being silently re-defaulted.
+        let mut cfg = Config::default();
+        cfg.sync.categories.clear();
+        let s = SettingsState::from_config(&cfg);
+        assert_eq!(s.sync_categories.len(), SyncCategory::ALL.len());
+        assert!(s.sync_categories.iter().all(|(_, flag)| !flag));
+    }
+
+    #[test]
+    fn from_config_leaves_last_sync_unknown_and_the_sync_seam_carries_it() {
+        // `from_config` stays pure — no index, no clock, no $HOME.
+        let cfg = Config::default();
+        assert!(SettingsState::from_config(&cfg).sync_last_sync.is_none());
+
+        let at = chrono::DateTime::parse_from_rfc3339("2026-08-19T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let s = SettingsState::from_config_with_sync(&cfg, Some(at));
+        assert_eq!(s.sync_last_sync, Some(at));
+        // The seam changes nothing else about the state.
+        assert_eq!(
+            s.sync_categories,
+            SettingsState::from_config(&cfg).sync_categories
+        );
+    }
+
+    #[test]
+    fn the_focus_walk_reaches_every_sync_row_and_stays_a_closed_cycle() {
+        let last_key = Focus::Key(KEY_VENDORS.len() - 1);
+        assert_eq!(last_key.next(), Focus::SyncCategory(0));
+        assert_eq!(Focus::SyncCategory(0).prev(), last_key);
+
+        let last_sync = Focus::SyncCategory(SyncCategory::ALL.len() - 1);
+        assert_eq!(last_sync.next(), Focus::Save);
+        assert_eq!(Focus::Save.prev(), last_sync);
+
+        // Every sync row is reachable, and next/prev are inverses on each.
+        for i in 0..SyncCategory::ALL.len() {
+            let f = Focus::SyncCategory(i);
+            assert_eq!(f.next().prev(), f, "row {i} is a trap going forward");
+            assert_eq!(f.prev().next(), f, "row {i} is a trap going backward");
+        }
+    }
+
+    #[test]
+    fn space_and_enter_toggle_exactly_the_focused_sync_row() {
+        for key in [KeyCode::Char(' '), KeyCode::Enter] {
+            let mut s = sync_row_state(TRANSCRIPTS);
+            let before = s.sync_categories.clone();
+            assert_eq!(
+                handle_key(&mut s, key, KeyModifiers::NONE),
+                Action::Continue
+            );
+            assert!(on(&s, SyncCategory::Transcripts), "{key:?} did not toggle");
+            assert!(s.sync_dirty, "{key:?} left the row unmarked as edited");
+            // Every other row is untouched.
+            for (i, (cat, flag)) in s.sync_categories.iter().enumerate() {
+                if i != TRANSCRIPTS {
+                    assert_eq!((*cat, *flag), before[i], "row {i} moved");
+                }
+            }
+            // And it flips back.
+            handle_key(&mut s, key, KeyModifiers::NONE);
+            assert!(!on(&s, SyncCategory::Transcripts));
+        }
+    }
+
+    #[test]
+    fn arrows_never_flip_a_sync_row() {
+        // Left/Right mean "cycle a choice" on the Primary row. A mis-aimed
+        // arrow must not change which credentials are eligible to leave.
+        for key in [KeyCode::Left, KeyCode::Right] {
+            let mut s = sync_row_state(TRANSCRIPTS);
+            handle_key(&mut s, key, KeyModifiers::NONE);
+            assert!(!on(&s, SyncCategory::Transcripts), "{key:?} flipped a row");
+            assert!(!s.sync_dirty);
+            assert_eq!(s.focus, Focus::SyncCategory(TRANSCRIPTS));
+        }
+    }
+
+    #[test]
+    fn a_modifier_chord_on_a_sync_row_is_a_no_op() {
+        for mods in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::ALT,
+            KeyModifiers::SUPER,
+        ] {
+            let mut s = sync_row_state(TRANSCRIPTS);
+            handle_key(&mut s, KeyCode::Char(' '), mods);
+            assert!(!on(&s, SyncCategory::Transcripts), "{mods:?} flipped a row");
+            assert!(!s.sync_dirty);
+        }
+    }
+
+    #[test]
+    fn esc_and_ctrl_c_keep_their_meaning_on_a_sync_row() {
+        let mut s = sync_row_state(0);
+        assert_eq!(
+            handle_key(&mut s, KeyCode::Esc, KeyModifiers::NONE),
+            Action::Close
+        );
+        let mut s = sync_row_state(0);
+        assert_eq!(
+            handle_key(&mut s, KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Action::Quit
+        );
+        assert!(!s.sync_dirty);
+    }
+
+    #[test]
+    fn tab_still_moves_off_a_sync_row_in_both_directions() {
+        let mut s = sync_row_state(0);
+        handle_key(&mut s, KeyCode::Tab, KeyModifiers::NONE);
+        assert_eq!(s.focus, Focus::SyncCategory(1));
+        handle_key(&mut s, KeyCode::BackTab, KeyModifiers::NONE);
+        assert_eq!(s.focus, Focus::SyncCategory(0));
+        assert!(!s.sync_dirty, "moving focus is not an edit");
+    }
+
+    // ─── Sync section: persistence ─────────────────────────────────────────
+
+    /// A state whose sync rows have been edited, so the writer engages.
+    fn toggled_sync_state(cfg: &Config, flip: SyncCategory) -> SettingsState {
+        let mut s = SettingsState::from_config(cfg);
+        s.primary_choices = VendorId::all().to_vec();
+        let i = SyncCategory::ALL.iter().position(|c| *c == flip).unwrap();
+        s.focus = Focus::SyncCategory(i);
+        handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::NONE);
+        s
+    }
+
+    fn written_categories(path: &Path) -> Vec<SyncCategory> {
+        Config::load_from(path).unwrap().sync.categories
+    }
+
+    #[test]
+    fn toggling_transcripts_on_writes_all_five_labels_and_off_writes_four() {
+        let cfg = Config::default();
+        let (_dir, path) = temp_config(Some("[sync]\ncategories = [\"config\"]\n"));
+
+        let on = toggled_sync_state(&cfg, SyncCategory::Transcripts);
+        save_to_path(&on, &path).unwrap();
+        assert_eq!(written_categories(&path), SyncCategory::ALL.to_vec());
+        // The labels are the enum's own spelling, not re-typed in the writer.
+        let text = std::fs::read_to_string(&path).unwrap();
+        for cat in SyncCategory::ALL {
+            assert!(text.contains(cat.label()), "{cat:?} missing from {text}");
+        }
+
+        // The overlay reopened on the file it just wrote, and flipped back.
+        let reopened = Config::load_from(&path).unwrap();
+        let off = toggled_sync_state(&reopened, SyncCategory::Transcripts);
+        save_to_path(&off, &path).unwrap();
+        assert_eq!(written_categories(&path).len(), 4);
+        assert!(
+            !Config::load_from(&path)
+                .unwrap()
+                .sync
+                .includes(SyncCategory::Transcripts)
+        );
+    }
+
+    #[test]
+    fn the_sync_write_inherits_the_overlays_chmod() {
+        // The point of extending `save_to_path` instead of adding a writer:
+        // mode 0600 and the waybar signal come with it. This pins the mode;
+        // `save_to_config_default` is the only thing that signals, and it
+        // still calls straight through here.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let cfg = Config::default();
+            let (_dir, path) = temp_config(Some("[sync]\ncategories = [\"config\"]\n"));
+            let s = toggled_sync_state(&cfg, SyncCategory::Transcripts);
+            save_to_path(&s, &path).unwrap();
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn every_category_off_writes_an_empty_array_that_reloads_as_syncing_nothing() {
+        // "sync nothing" must stay distinguishable from "never chose" (T-6-22).
+        let mut cfg = Config::default();
+        cfg.sync.categories.clear();
+        let mut s = SettingsState::from_config(&cfg);
+        s.sync_dirty = true;
+
+        let (_dir, path) = temp_config(Some("[sync]\ncategories = [\"config\"]\n"));
+        save_to_path(&s, &path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("categories = []"), "{text}");
+        let reloaded = Config::load_from(&path).unwrap();
+        assert!(reloaded.sync.categories.is_empty());
+        for cat in SyncCategory::ALL {
+            assert!(!reloaded.sync.includes(cat), "{cat:?} came back");
+        }
+    }
+
+    #[test]
+    fn save_preserves_a_hand_written_commented_sync_section() {
+        // A comment beside the sync keys may carry anything the user put
+        // there; toml_edit must not relocate it (T-6-24).
+        let original = "\
+# how much leaves this machine
+[sync]
+# transcripts are gigabytes — left off on purpose
+categories = [\"config\"]
+transcript_days = 7        # two weeks was too much
+keep_snapshots = 3
+repo = \"me/private-backup\"
+";
+        let (_dir, path) = temp_config(Some(original));
+        let cfg = Config::load_from(&path).unwrap();
+        let s = toggled_sync_state(&cfg, SyncCategory::Credentials);
+        save_to_path(&s, &path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        for kept in [
+            "# how much leaves this machine",
+            "# transcripts are gigabytes — left off on purpose",
+            "transcript_days = 7",
+            "# two weeks was too much",
+            "keep_snapshots = 3",
+            "repo = \"me/private-backup\"",
+        ] {
+            assert!(text.contains(kept), "lost {kept:?} from:\n{text}");
+        }
+        let reloaded = Config::load_from(&path).unwrap();
+        assert_eq!(reloaded.sync.keep_snapshots, 3);
+        assert_eq!(reloaded.sync.repo.as_deref(), Some("me/private-backup"));
+        assert!(reloaded.sync.includes(SyncCategory::Credentials));
+    }
+
+    #[test]
+    fn save_creates_a_sync_section_when_the_file_has_none() {
+        let (_dir, path) = temp_config(Some("[zai]\nenabled = true\n"));
+        let cfg = Config::default();
+        let s = toggled_sync_state(&cfg, SyncCategory::Transcripts);
+        save_to_path(&s, &path).unwrap();
+
+        assert_eq!(written_categories(&path), SyncCategory::ALL.to_vec());
+        // and the section it did not own is still there.
+        assert!(std::fs::read_to_string(&path).unwrap().contains("[zai]"));
+    }
+
+    #[test]
+    fn a_section_the_overlay_does_not_own_survives_byte_for_byte() {
+        // `[context]` belongs to the context monitor, not to this overlay.
+        // (The plan named `[ui]`; the overlay does own `ui.primary`, so the
+        // honest fixture is a section it has no key in at all.)
+        let original = "\
+[context]
+enabled = true
+layout = \"split\"   # trailing comment
+
+[sync]
+categories = [\"config\"]
+";
+        let (_dir, path) = temp_config(Some(original));
+        let cfg = Config::load_from(&path).unwrap();
+        let s = toggled_sync_state(&cfg, SyncCategory::Routines);
+        save_to_path(&s, &path).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let context_block = "[context]\nenabled = true\nlayout = \"split\"   # trailing comment\n";
+        assert!(
+            text.contains(context_block),
+            "[context] was rewritten:\n{text}"
+        );
+    }
+
+    #[test]
+    fn an_untouched_save_never_invents_a_sync_section() {
+        // Opening Settings to paste one API key must not also commit the user
+        // to a persisted sync selection they never made.
+        let (_dir, path) = temp_config(Some("[zai]\nenabled = true\n"));
+        let s = state_with("zk", "ok", VendorId::Zai);
+        assert!(!s.sync_dirty);
+        save_to_path(&s, &path).unwrap();
+        assert!(
+            !std::fs::read_to_string(&path).unwrap().contains("[sync]"),
+            "an untouched save wrote a sync section"
+        );
+    }
+
+    #[test]
+    fn re_saving_the_same_state_leaves_the_file_byte_identical() {
+        let (_dir, path) = temp_config(Some(
+            "[sync]\ncategories = [\"config\"]\nkeep_snapshots = 3\n",
+        ));
+        let cfg = Config::load_from(&path).unwrap();
+        let s = toggled_sync_state(&cfg, SyncCategory::Transcripts);
+
+        save_to_path(&s, &path).unwrap();
+        let first = std::fs::read(&path).unwrap();
+        save_to_path(&s, &path).unwrap();
+        assert_eq!(
+            first,
+            std::fs::read(&path).unwrap(),
+            "save is not idempotent"
+        );
+    }
+
+    // ─── Sync section: rendering ───────────────────────────────────────────
+
+    fn rendered(state: &SettingsState) -> Vec<String> {
+        // Theme::default() is pure — no Omarchy file, no $XDG read.
+        let theme = bubble_theme(&Theme::default());
+        sync_lines(state, &theme)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_block_shows_one_row_per_category_in_canonical_order() {
+        let s = SettingsState::from_config(&Config::default());
+        let lines = rendered(&s);
+        // header + last-sync + the pointer + one row each.
+        assert_eq!(lines.len(), 3 + SyncCategory::ALL.len());
+        for (i, cat) in SyncCategory::ALL.iter().enumerate() {
+            assert!(
+                lines[3 + i].contains(cat.label()),
+                "row {i} is not {cat:?}: {}",
+                lines[3 + i]
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_shows_its_own_on_off_state() {
+        let mut s = SettingsState::from_config(&Config::default());
+        assert!(rendered(&s)[3 + TRANSCRIPTS].contains("[ ]"));
+        s.focus = Focus::SyncCategory(TRANSCRIPTS);
+        handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::NONE);
+        assert!(rendered(&s)[3 + TRANSCRIPTS].contains("[x]"));
+        // Flipping one row did not flip the drawing of another.
+        assert!(rendered(&s)[3].contains("[x]"), "config is on by default");
+    }
+
+    #[test]
+    fn transcripts_is_flagged_as_the_expensive_opt_in() {
+        let s = SettingsState::from_config(&Config::default());
+        let row = &rendered(&s)[3 + TRANSCRIPTS];
+        assert!(row.contains("opt-in"), "{row}");
+        assert!(row.contains("large"), "{row}");
+        // and it is the only row carrying that flag.
+        assert_eq!(
+            rendered(&s).iter().filter(|l| l.contains("opt-in")).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_focused_row_is_the_only_one_marked() {
+        let mut s = SettingsState::from_config(&Config::default());
+        s.focus = Focus::SyncCategory(1);
+        let marked: Vec<usize> = rendered(&s)
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.contains('▸'))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(marked, vec![3 + 1]);
+    }
+
+    #[test]
+    fn last_sync_reads_never_until_the_caller_supplies_one() {
+        let cfg = Config::default();
+        let s = SettingsState::from_config(&cfg);
+        assert!(rendered(&s)[1].contains("last sync: never"));
+
+        let at = chrono::DateTime::parse_from_rfc3339("2026-08-19T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let s = SettingsState::from_config_with_sync(&cfg, Some(at));
+        assert!(
+            rendered(&s)[1].contains(&at.to_rfc3339()),
+            "{}",
+            rendered(&s)[1]
+        );
+    }
+
+    #[test]
+    fn the_counts_the_block_does_not_compute_are_named_not_left_blank() {
+        // A user who sees no numbers and is told nothing assumes it is broken.
+        let s = SettingsState::from_config(&Config::default());
+        assert!(rendered(&s)[2].contains("ai-usagebar sync status"));
+    }
+
+    /// Draw the whole overlay onto a fixed-size test backend and read it back.
+    fn drawn(state: &SettingsState, width: u16, height: u16) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let theme = Theme::default();
+        terminal
+            .draw(|frame| render(frame, frame.area(), state, &theme))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    #[test]
+    fn the_overlay_draws_the_sync_section_and_still_reaches_save() {
+        let s = SettingsState::from_config(&Config::default());
+        let painted = drawn(&s, 120, 44);
+        for cat in SyncCategory::ALL {
+            assert!(painted.contains(cat.label()), "{cat:?} not drawn");
+        }
+        assert!(painted.contains("last sync: never"));
+        assert!(painted.contains("ai-usagebar sync status"));
+        assert!(painted.contains("Save"), "the Save row fell off the modal");
+    }
+
+    #[test]
+    fn a_short_terminal_truncates_the_overlay_instead_of_panicking() {
+        // The modal is a percentage of the frame and the body is a Paragraph:
+        // a window too short to hold every row clips, it does not overflow the
+        // buffer. Both the floor and a one-row frame are drawn here because a
+        // panic inside `draw` takes the whole TUI down.
+        let s = SettingsState::from_config(&Config::default());
+        for (w, h) in [(80, 24), (40, 10), (20, 3), (1, 1)] {
+            let _ = drawn(&s, w, h);
+        }
+    }
+
+    #[test]
+    fn a_short_terminal_scrolls_to_the_focused_row_instead_of_hiding_it() {
+        // 80x24 is the default Terminal.app window and cannot hold the whole
+        // form. Every row Tab can reach must still be visible when it has
+        // focus — toggling what leaves the machine blind is not acceptable.
+        let mut s = SettingsState::from_config(&Config::default());
+        for i in 0..SyncCategory::ALL.len() {
+            s.focus = Focus::SyncCategory(i);
+            let painted = drawn(&s, 80, 24);
+            let label = SyncCategory::ALL[i].label();
+            assert!(
+                painted.contains(label),
+                "{label} is off-screen when focused"
+            );
+            assert!(painted.contains('▸'), "{label} lost its focus marker");
+        }
+        s.focus = Focus::Save;
+        assert!(drawn(&s, 80, 24).contains("Save"));
+        s.focus = Focus::Primary;
+        assert!(drawn(&s, 80, 24).contains("Primary vendor"));
     }
 }

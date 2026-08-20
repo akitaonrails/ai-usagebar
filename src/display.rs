@@ -30,6 +30,53 @@ pub fn sanitize_untrusted_field(value: &str) -> String {
         .collect()
 }
 
+/// One line of untrusted text on its way to a terminal or a log.
+///
+/// [`sanitize_untrusted_field`] keeps newlines, which is right for a multi-line
+/// diagnostic in a UI cell and wrong for anything that shares a line-oriented
+/// stream with a report the user is reading: one embedded newline forges a
+/// report line. Collapsing them is what `sync::restore::report` has always
+/// done; this is that rule, shared rather than restated.
+pub fn sanitize_untrusted_line(value: &str) -> String {
+    sanitize_untrusted_field(value).replace('\n', " ")
+}
+
+/// A filesystem path on its way to the same place.
+///
+/// Every component of a restore destination comes from a manifest a hostile
+/// remote wrote, and [`std::path::Display`](std::path::Display) escapes
+/// nothing. This is what [`crate::error::AppError::Io`] renders its path
+/// through, so an attacker-chosen path cannot carry a terminal escape out of
+/// *any* error site rather than only the ones that remembered.
+pub fn sanitize_untrusted_path(path: &std::path::Path) -> String {
+    sanitize_untrusted_line(&path.to_string_lossy())
+}
+
+/// Whether ANSI styling may be written to a stream — a terminal, and `NO_COLOR`
+/// unset.
+///
+/// **This lives here rather than beside the renderer that wants it.** The
+/// palette and every styled string belong to `sync::report::Style`, but that
+/// module is under `src/sync/`, and `passphrase`'s structural guard walks the
+/// whole of that subtree refusing `std::env` in production code — because every
+/// password input path lives in it and argv and the environment are readable by
+/// any local user. The one legitimate environment read for colour therefore
+/// lives outside the guarded tree, and the *fact* is injected inward, exactly
+/// as `progress::reporter` already takes `is_terminal` rather than asking.
+///
+/// `NO_COLOR` disables colour when it is **present**, whatever its value —
+/// <https://no-color.org>.
+pub fn color_enabled(is_terminal: bool) -> bool {
+    color_enabled_with(is_terminal, std::env::var_os("NO_COLOR").is_some())
+}
+
+/// [`color_enabled`] over an injected environment, so the rule is testable
+/// without mutating a process-wide variable other tests are reading in
+/// parallel.
+pub fn color_enabled_with(is_terminal: bool, no_color_set: bool) -> bool {
+    is_terminal && !no_color_set
+}
+
 fn is_bidi_control(ch: char) -> bool {
     matches!(
         ch,
@@ -48,6 +95,17 @@ mod tests {
             sanitize_untrusted_field(input),
             "before]52;c;Y2xpcGJvYXJkafter\nnext column returnspoof"
         );
+    }
+
+    #[test]
+    fn colour_needs_a_terminal_and_an_unset_no_color() {
+        assert!(color_enabled_with(true, false));
+        assert!(
+            !color_enabled_with(false, false),
+            "a pipe is never coloured"
+        );
+        assert!(!color_enabled_with(true, true), "NO_COLOR wins over a tty");
+        assert!(!color_enabled_with(false, true));
     }
 
     #[test]

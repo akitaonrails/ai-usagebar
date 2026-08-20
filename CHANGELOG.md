@@ -9,6 +9,164 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Encrypted sync to a private GitHub repository** — `ai-usagebar sync`. Your
+  configuration, credentials, routines and chat index (and, opt-in, your Claude
+  Code transcripts) are compressed, encrypted on this machine, and stored as
+  content-addressed packs in a repository only you can read. One password, held
+  only by you, unwraps a master key that never leaves the machine. The remote
+  holds ciphertext, sizes and timings, and nothing else. Six subcommands:
+
+  - `sync setup` — a guided five-step pairing that uploads nothing: choose the
+    categories (`credentials` explicitly, never by implication), verify the
+    repository is private and yours, set the sync password — press Enter to take
+    a generated 20-character passphrase — see what a first push would send, and
+    confirm. Nothing is written to disk until that last step, so declining
+    leaves the machine exactly as it was.
+  - `sync status` — what would be sent per category, when sync last ran, and the
+    state of the pairing. `--json` prints the same facts as one machine-readable
+    object, without building a plan or contacting the network.
+  - `sync push` — uploads only what changed, verifies every pack is retrievable,
+    and only then flips the snapshot pointer, so an interruption leaves the
+    previous snapshot exactly as it was. `--dry-run` measures a push without
+    sending a byte.
+  - `sync pull` — restores this machine. **A dry run by default**: nothing is
+    written without `--apply`. An item whose local copy is newer is skipped and
+    named, never silently replaced; a locally-newer credential needs `--force`
+    **and** `--force-credentials` together. Everything about to be overwritten is
+    archived first, and the exact command that puts it back is printed at the
+    end.
+  - `sync prune` — deletes remote data no kept snapshot still references. Runs
+    automatically after every successful push.
+  - `sync rekey` — changes the sync password by rewrapping the master key. Not
+    one pack byte moves, and it is **not** revocation.
+
+  The repository must be private, and that is re-checked immediately before
+  every push rather than once at setup, because a repository can be made public
+  from the web interface at any moment. The token you create holds
+  `Contents: Read and write` and `Metadata: Read` and nothing else — without
+  `Administration: write` the tool structurally cannot create a repository,
+  public or private.
+
+  Primitives are Argon2id (RFC 9106), XChaCha20-Poly1305, BLAKE3 and zstd,
+  adding six dependencies (`argon2`, `chacha20poly1305`, `blake3`, `zstd`,
+  `zeroize`, `getrandom`). All are pure Rust or vendor their C, so the AUR
+  source build needs no system library and stays hermetic.
+
+- **macOS menu bar: a Sync row and a Sync submenu.** The row shows when sync
+  last ran and how much is not in the backup yet. The submenu lists every
+  category with whether it is switched on — a category switched *off* is shown
+  as off rather than omitted — plus a state refresh and two actions, push and
+  restore.
+
+- **TUI: a Sync section in the Settings overlay** (press `s`). One focusable row
+  per category with an on/off marker, and the last-sync time. Space or Enter
+  toggles a row; Ctrl-S saves through the overlay's existing writer, so comments
+  and key order survive and the file stays mode 0600. Turning every category off
+  writes `categories = []` — "sync nothing" — which is deliberately distinct
+  from a missing key, which still means "the defaults".
+
+- **Documentation.** An `Encrypted sync` section in the README with the
+  fine-grained token recipe, both surfaces, and the honest limits;
+  `docs/sync-github.md` for setup, retention and the acceptable-use note;
+  `docs/sync-format.md` as the on-the-wire specification; and
+  `docs/sync-calibration.md` for the measured sizes and timings. The README
+  states plainly that there is no password recovery, and that changing the
+  password is not revocation.
+
+### Changed
+
+- `config.toml` gained an optional `[sync]` section. Unknown keys inside it are
+  ignored rather than rejected, so a configuration restored from a newer build
+  onto an older one still loads, keeps the values that build understands, and
+  renders normally. A misspelled *section* is still an error.
+
+### Fixed
+
+- The TUI Settings overlay scrolls to keep the focused control on screen, and
+  the modal uses more of the window's height. On an 80×24 terminal — Terminal.app's
+  default — the **Save** row could otherwise sit below the fold while Tab still
+  moved focus into rows you could not see.
+
+### Security
+
+The encrypted-sync feature is new in this release, so none of the following was
+ever present in a shipped build. They are recorded because they were real
+defects, each found by this milestone's own audits, each closed with a
+regression test that was watched to fail first — and because a backup tool that
+is quiet about what it got wrong is not one worth trusting with a credential.
+
+- **Two machines could silently drop one machine's backup.** When two machines
+  published at the same time, both could claim the same snapshot number. The
+  rollback defence reads an equal number as "already seen", so one machine's
+  snapshot — genuinely different data — registered as something you had already
+  recovered. Snapshot numbering is now derived at the point the race is
+  resolved, so a machine that loses a simultaneous publish re-publishes *above*
+  the winner instead of beside it.
+
+- **The rollback defence was documented but never consulted, and an automatic
+  prune could then delete the orphaned data for good.** The design named a local
+  counter as the thing that would notice a remote rolled back to an older,
+  genuinely-signed snapshot — but nothing on the push path ever read it. Anyone
+  with write access to the backup repository could restore an authentic older
+  pointer; the next honest push would carry it forward and launder it into a
+  legitimately-written one, and the prune that runs after every push would then
+  delete the packs that rollback had orphaned. Those packs are older than the
+  24-hour grace period, so nothing held them back. The counter is now read on
+  all three paths that can launder a rollback — push, prune and rekey — and only
+  `sync push --allow-rollback` overrides it. That flag now exists; the refusal
+  message had been naming it for a phase before it did.
+
+- **A password change could be quietly undone by a machine that missed it.**
+  After `sync rekey`, a machine still holding the old keyfile would re-upload it
+  on its next push, restoring the wrapper the rekey had just destroyed and
+  verified gone. The old password kept working and the change was cosmetic. Such
+  a push is now refused before a single byte is packed, and tells you to copy
+  the new keyfile across first. Nothing that machine already pushed is affected:
+  a rekey re-encrypts no data.
+
+- **One capital letter defeated the credential confirmation.** Restoring a
+  credential over a newer local one is meant to require `--force` and
+  `--force-credentials` together. The check compared file names byte-exactly
+  while macOS folds case, so a backup naming `.Credentials.json` resolved to your
+  live `.credentials.json` on disk yet was classified as "not a credential" —
+  the second consent was never asked, and `--force` alone could revert a live
+  OAuth token and sign you out. The same byte-exact comparison also admitted the
+  device-identity files the exclusion list exists to keep off your machine
+  (`Bridge-State.json`, `Ant-Device-Registry.json`, `Backups/`,
+  `Local-Agent-Mode-Sessions/`) with no consent of any kind. File names are now
+  compared through a type that folds case and that will not compile a byte-exact
+  comparison, so the next instance is a build failure rather than a shipped hole.
+
+- **A hostile backup could rewrite what you saw on your terminal.** A path
+  chosen by whoever controls the repository was printed into a failure message
+  verbatim, so control characters and bidirectional overrides in it landed on
+  your terminal — immediately after the report you had just consented to. The
+  path had no size limit either, so that message could be made arbitrarily long
+  on demand. Paths taken from a backup are now escaped in the single `Display`
+  every restore error passes through, rather than at each print site that
+  remembered to, and are bounded (1024 bytes, 32 path components, 255 bytes per
+  name) by a check that runs first and never echoes its input.
+
+- **Sync cannot take your status bar down.** The widget render path exits 0 with
+  a `⚠` payload no matter what the configuration on disk looks like — including
+  the half-written TOML an interrupted restore leaves behind — because Waybar
+  hides a module that does not. That is now asserted through the shipped render
+  path rather than assumed, and a structural test proves that path holds no
+  reference into the encrypted-backup module at all.
+
+- **The menu bar never runs a sync itself, and never holds your password.** Its
+  push and restore actions confirm, show you the exact command, and open it in
+  Terminal.app, so a restore's two separate confirmations are answered where
+  they were designed to be. The alternative — a background process passing the
+  flags that skip those questions — would have made a menu click an easier route
+  to an irreversible write than the command line offers. No sync password is
+  ever read from a command-line argument or an environment variable, on any
+  surface; the GitHub token is stored in the macOS Keychain or in a mode-0600
+  file beside `config.toml`, never in `config.toml` itself.
+
+
 ## [1.3.1] — 2026-08-19
 
 ### Fixed

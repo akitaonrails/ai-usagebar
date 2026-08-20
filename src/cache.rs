@@ -290,7 +290,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn xdg_cache_dir() -> Result<PathBuf> {
+pub(crate) fn xdg_cache_dir() -> Result<PathBuf> {
     directories::BaseDirs::new()
         .map(|b| b.cache_dir().to_path_buf())
         .ok_or_else(|| AppError::Other("could not resolve XDG cache dir (no HOME?)".into()))

@@ -39,6 +39,9 @@ codebase.
 - [Claude accounts](docs/claude-accounts.md)
 - [Format placeholders](docs/format-placeholders.md)
 - [Provider endpoints and live tests](docs/vendor-endpoints.md)
+- [Encrypted sync](#encrypted-sync) — setup, daily use, and the honest limits
+- [GitHub sync setup](docs/sync-github.md)
+- [Encrypted sync bundle format](docs/sync-format.md)
 - [KDE Plasma 6 plasmoid](kde-plasmoid/README.md)
 
 ## Install
@@ -250,6 +253,177 @@ enabled = true
 
 See the [configuration reference](docs/configuration.md) for every provider,
 display option, account path, region, and API-key setting.
+
+## Encrypted sync
+
+Optional. An encrypted backup of your configuration, credentials, and usage
+history in a **private** GitHub repository, under a password only you hold.
+Everything is encrypted before it leaves the machine: the remote holds
+ciphertext, sizes, and timings, and nothing else.
+
+[GitHub sync setup](docs/sync-github.md) is the full guide and
+[bundle format](docs/sync-format.md) is the specification. This section is how
+you use it, and what it does not promise.
+
+### Setup
+
+You create the repository. **The tool never creates one, and it cannot** — the
+token it uses is configured without `Administration: write`, so creating a
+repository is not a permission it holds. That is what makes a push to a public
+repository structurally impossible rather than merely discouraged.
+
+1. Create the repository yourself, and make it **private**:
+
+   ```bash
+   gh repo create owner/name --private
+   ```
+
+2. Create a fine-grained personal access token for that one repository, under
+   **Settings → Developer settings → Personal access tokens → Fine-grained
+   tokens**:
+
+   - **Repository access:** **Only select repositories**, then pick your backup
+     repository — not "All repositories"
+   - **Contents: Read and write**
+   - **Metadata: Read** (checked by default and cannot be removed)
+   - Nothing else. Leave **Administration** unchecked; that unchecked box is
+     the whole enforcement described above
+
+3. Name the repository in `~/.config/ai-usagebar/config.toml`:
+
+   ```toml
+   [sync]
+   repo = "owner/name"
+   ```
+
+4. Run the guided setup:
+
+   ```bash
+   ai-usagebar sync setup
+   ```
+
+   Five steps: choose which categories to back up (`credentials` is explicit,
+   not implied), verify the repository is private and yours, set the sync
+   password — press Enter to take a generated 20-character passphrase — see
+   what a first push would actually send, and confirm. It uploads nothing, and
+   nothing is written to disk until the last step, so declining leaves the
+   machine exactly as it was and the command can simply be re-run.
+
+The token is stored in the macOS Keychain, or in a mode-0600 `sync-token` file
+beside `config.toml`, or taken from `AI_USAGEBAR_SYNC_TOKEN` or `gh auth token`
+if you prefer to manage it yourself. It is never written into `config.toml`.
+
+### Day to day
+
+| Command | What it does |
+|---|---|
+| `ai-usagebar sync status` | what would be sent, when sync last ran, and the state of the pairing. `--json` prints the same facts as one machine-readable object |
+| `ai-usagebar sync push` | upload the encrypted bundle. `--dry-run` measures one without sending it |
+| `ai-usagebar sync pull` | restore this machine from the remote. **A dry run by default** — see below |
+| `ai-usagebar sync prune` | delete remote data no kept snapshot still references. This also runs automatically after every successful push |
+| `ai-usagebar sync rekey` | change the sync password, which is **not** revocation |
+
+**`sync pull` writes nothing without `--apply`.** `--dry-run` is the explicit
+spelling of that default, not a different mode. An item whose local copy is
+newer is skipped and named, never silently replaced. A locally-newer
+**credential** needs `--force` **and** `--force-credentials` together:
+`--force` alone does not grant it, because reverting a live OAuth token is a
+second, separate consent. Everything about to be overwritten is archived first,
+and the exact `tar` command that puts it back is printed at the end.
+
+**Exit codes, and the one exception.** Every `sync` subcommand exits non-zero
+on failure, so a script can trust it. The Waybar render path — the same
+`ai-usagebar` binary invoked with **no** subcommand — has the opposite
+contract: it always exits 0, printing a `⚠` fallback payload, because Waybar
+hides a module that does not. One binary with `sync` as a subcommand, two
+deliberately opposite contracts, so a broken sync or a half-written config can
+never take your status bar down with it.
+
+### Surfaces
+
+**macOS menu bar.** A Sync row shows when sync last ran and how much is not in
+the backup yet. Its **Sync** submenu lists every category with whether it is
+switched on, a state refresh, and two actions — push and restore. Both
+**confirm, show you the exact command, and open it in Terminal.app**; the menu
+never runs a sync itself.
+
+**TUI.** Press `s` for the Settings overlay, which now has a Sync section: one
+row per category, an on/off marker, and when sync last ran. Space or Enter
+toggles a row, Ctrl-S saves. The overlay offers no sync action.
+
+Neither surface can prompt, and there is no "unlocked for this session" state
+anywhere in the tool: every push, pull, prune and rekey reads the sync password
+fresh, from the terminal or from standard input, never from an argument or an
+environment variable. So an operation needing that password — or needing a
+confirmation a menu cannot carry faithfully — is handed to a terminal rather
+than approximated with the flags that would skip the questions. When a surface
+tells you to run something in a terminal, that is the design working.
+
+### What has no sync surface
+
+The GNOME extension, the KDE Plasma plasmoid, and the Omarchy Quattro panel
+have **no** sync surface. That is a recorded decision, not an oversight: each is
+an independent frontend with its own contract suite, and putting sync in all
+three triples the surface for no additional proof that the feature works. On
+those desktops the CLI is the path — the same CLI the macOS menu bar hands its
+own work to.
+
+### The honest limits
+
+Read these before you rely on it. Each is a property of the design, not a bug
+waiting to be fixed.
+
+**There is no password recovery.** No reset link, no support address, no escrow
+copy, no back door. Lose the password and the bundle is permanently unreadable
+and its contents are gone. That is the only way a backup can be safe to hand to
+a server you do not control, and every surface that sets a password says so
+before it sets one.
+
+**Changing the password is not revocation.** `sync rekey` unwraps the master
+key with the old password and rewraps *the same* master key with the new one;
+the data keys never change. Anyone who already holds a copy of the old keyfile
+can still open the bundle with the old password — **including data written
+after the change**. Deleting the remote keyfile removes the copy this tool
+published; it cannot reach one somebody already took. Real revocation means a
+new master key and a re-encrypted bundle, which is exactly the whole-bundle
+re-upload `sync rekey` exists to avoid.
+
+**Some metadata leaks even when everything works.** Encryption hides contents,
+not the shape of the traffic. Anyone who can see the repository learns the
+**total bundle size**, **when each sync happened**, and **how much changed each
+time** — a day of heavy work and a day of none look different. File names, the
+directory structure, and the account and session ids inside them stay hidden;
+chunk ids are keyed, so nobody can confirm a guessed file is present. Hiding the
+rest would take constant-rate cover traffic, which is absurd for a usage
+monitor's state backup, so it is accepted rather than papered over. The full
+list is in [what this format does not
+hide](docs/sync-format.md#8-what-this-format-does-not-hide).
+
+**GitHub can throttle you.** A private repository used for backups is not
+prohibited and nothing here is a warning that you are misusing the service —
+but [§9 of GitHub's Acceptable Use
+Policies](https://docs.github.com/en/site-policy/acceptable-use-policies/github-acceptable-use-policies#9-excessive-bandwidth-use)
+reserves the right to act on bandwidth or storage use significantly out of line
+with comparable users, and the profile that draws attention is a specific one:
+a multi-gigabyte bundle rewritten frequently. Two mitigations are built in and
+need no configuration — packs are content-addressed, so an unchanged file is
+never re-uploaded, and prune deletes superseded generations after every
+successful push. `sync push --dry-run` is the number to watch before you spend
+it.
+
+**"Sync nothing" is a real setting, and it is kept.** Turning every category
+off writes an empty array rather than dropping the key:
+
+```toml
+[sync]
+categories = []
+```
+
+A **missing** `categories` key means "the defaults"; `categories = []` means
+"sync nothing". Those are different statements and the config writer keeps them
+apart, so a machine you deliberately switched off does not quietly start
+backing itself up again later. Your comments and key order survive the write,
+and the file stays mode 0600.
 
 ## Quick start
 

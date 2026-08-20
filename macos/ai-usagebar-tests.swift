@@ -677,6 +677,234 @@ func testDesktopAccounts() {
                 "OpenRouter accounts use generic report ids")
 }
 
+// ─── 6-01: `sync status --json`, the menu bar's read ──────────────────────
+//
+// Every field is optional and a non-object parses to nil, which is what makes
+// the older-binary path safe: a build that does not know `--json` prints an
+// error, the parse fails, and the row stays hidden instead of crashing.
+func testSyncStatus() {
+    print("sync status")
+    func data(_ s: String) -> Data { Data(s.utf8) }
+
+    // Every key `report::status_json` freezes, plus one it does not know.
+    let full = data("""
+    {"last_sync":"2026-08-19T12:00:00+00:00","pending":true,"pending_files":3,
+     "pending_bytes":4096,"total_files":9,"total_bytes":8192,
+     "index":"/nowhere/index.sqlite3","warnings":[],"repo":"o/n",
+     "categories":[{"category":"config","enabled":true,"files":2,"bytes":4096,"capped":false},
+                   {"category":"transcripts","enabled":false,"files":0,"bytes":0,"capped":false}]}
+    """)
+    guard let s = parseSyncStatus(full) else {
+        assertNotNil(nil, "a full object parses")
+        return
+    }
+    assertEqual(s.pending, true, "pending is true")
+    assertEqual(s.pendingFiles, 3, "pending files")
+    assertEqual(s.pendingBytes, 4096, "pending bytes")
+    assertNotNil(s.lastSync, "an RFC 3339 last_sync decodes")
+    assertEqual(s.categories.count, 2, "one entry per category")
+    assertEqual(s.categories.first,
+                SyncCategoryLine(category: "config", enabled: true, files: 2, bytes: 4096),
+                "the first category line")
+    // An unknown key is ignored, not rejected — that is what lets 6-02 add one
+    // without breaking a menu bar already in someone's status bar.
+    assertEqual(s.warnings, [], "no warnings")
+
+    // chrono's to_rfc3339 carries nanoseconds; the row says "há 2 h", so the
+    // fraction is dropped rather than allowed to fail the parse.
+    assertNotNil(parseSyncStatus(data(#"{"last_sync":"2026-08-19T12:00:00.123456789+00:00"}"#))?
+                    .lastSync,
+                 "a nanosecond timestamp still decodes")
+
+    // nil and false are different answers and must stay different.
+    guard let sparse = parseSyncStatus(data(#"{"last_sync":null}"#)) else {
+        assertNotNil(nil, "a one-key object still parses")
+        return
+    }
+    assertNil(sparse.pending, "an absent pending is unknown, not false")
+    assertNil(sparse.lastSync, "an explicit null last_sync is nil")
+
+    // The older-binary path: none of these may crash, all yield nil.
+    assertNil(parseSyncStatus(Data()), "empty output parses to nil")
+    assertNil(parseSyncStatus(data("error: unrecognized subcommand 'sync'")),
+              "an older binary's error is not a status")
+    assertNil(parseSyncStatus(data("[1,2,3]")), "a non-object is not a status")
+
+    // ── the one dim row ──────────────────────────────────────────────────
+    let base = Date(timeIntervalSince1970: 1_760_000_000)
+    assertEqual(syncSummaryLine(nil), "", "a nil status hides the row")
+
+    var never = SyncStatus()
+    never.pending = false
+    assertEqual(syncSummaryLine(never, now: base), "Sync: nunca",
+                "no last sync reads as nunca, never a formatted garbage date")
+
+    // A last_sync that is not RFC 3339 yields no date, and therefore the same
+    // honest wording rather than a date built out of nothing.
+    guard let junk = parseSyncStatus(data(#"{"last_sync":"ontem","pending":false}"#)) else {
+        assertNotNil(nil, "a junk timestamp still parses the object")
+        return
+    }
+    assertNil(junk.lastSync, "an unparseable timestamp is nil")
+    assertEqual(syncSummaryLine(junk, now: base), "Sync: nunca", "…and reads as nunca")
+
+    var recent = SyncStatus()
+    recent.lastSync = base.addingTimeInterval(-7200)
+    recent.pending = true
+    let pendingLine = syncSummaryLine(recent, now: base)
+    assertEqual(pendingLine.hasPrefix("Sync: "), true, "the row names the surface")
+    assertEqual(pendingLine.contains("nunca"), false, "a decoded date is not nunca")
+    assertEqual(pendingLine.contains("pendente"), true, "pending changes are marked")
+
+    // How much is waiting, when the binary said — the half of D-04 a bare
+    // marker leaves out. A count it did not send degrades to the bare marker.
+    recent.pendingFiles = 3
+    recent.pendingBytes = 104_857_600
+    let counted = syncSummaryLine(recent, now: base)
+    assertEqual(counted.contains("3 pendentes"), true, "the pending count is shown")
+    assertEqual(counted.contains("MB"), true, "…and how much it is")
+    recent.pendingFiles = 1
+    recent.pendingBytes = nil
+    assertEqual(syncSummaryLine(recent, now: base).contains("1 pendente"), true,
+                "one file is singular, and a missing byte count is simply absent")
+    recent.pendingFiles = nil
+
+    recent.pending = false
+    assertEqual(syncSummaryLine(recent, now: base).contains("pendente"), false,
+                "nothing pending, nothing said")
+
+    // D-04's third state. Unknown is not "up to date", and the reason comes
+    // from a subprocess, so it is stripped before it reaches an NSMenuItem.
+    recent.pending = nil
+    recent.warnings = ["<b>o índice</b> não está disponível"]
+    let unknown = syncSummaryLine(recent, now: base)
+    assertEqual(unknown.contains("<b>"), false,
+                "binary text is stripped before it reaches a menu item")
+    assertEqual(unknown.contains("o índice não está disponível"), true,
+                "unknown is surfaced, not silently rendered as up-to-date")
+}
+
+
+// ─── 6-02: the two sync actions, and what they may not become ─────────────
+//
+// The dangerous property here is negative — that a menu click cannot reach an
+// irreversible write more easily than the CLI does — so most of these are
+// assertions that something is *absent*. The forbidden spellings are built from
+// fragments so an assertion can never be satisfied by its own source text, and
+// the last two read the app file itself, because "no call site does X" is not a
+// thing a harness that cannot click a menu can otherwise check.
+func testSyncActions() {
+    print("sync actions")
+    let bin = "/opt/homebrew/bin/ai-usagebar"
+
+    assertEqual(syncCommand(.push), ["sync", "push"], "push names the push subcommand")
+    assertEqual(syncCommand(.pull), ["sync", "pull"], "pull names the pull subcommand")
+    assertEqual(syncCommandLine(binary: bin, .push), "'\(bin)' sync push",
+                "the command line is the binary and the subcommand, nothing else")
+
+    // A path with a quote in it cannot break out of the generated script.
+    assertEqual(syncCommandLine(binary: "/tmp/it's here/ai-usagebar", .pull),
+                "'/tmp/it'\\''s here/ai-usagebar' sync pull",
+                "a quote in the path is escaped, not passed through")
+
+    // The script really does run the command — without this the absence
+    // assertions below would pass against an empty string.
+    let pushScript = syncTerminalScript(binary: bin, .push)
+    assertEqual(pushScript.contains("'\(bin)' sync push"), true, "the script runs the command")
+    assertEqual(pushScript.hasPrefix("#!/usr/bin/env bash\n"), true, "…as a bash script")
+    assertEqual(pushScript.contains("fechar"), true, "…and holds the window open to be read")
+
+    // ── the four spellings that turn a report into a write, and the ones
+    //    that would carry a secret. None may appear in anything a click makes.
+    let d = "-"
+    let forbidden = [d + d + "apply", d + d + "yes", d + d + "force",
+                     d + d + "force" + d + "credentials", " " + d + "y",
+                     d + d + "password", d + d + "password" + d + "file",
+                     d + d + "passphrase", d + d + "non" + d + "interactive"]
+    for action in SyncAction.allCases {
+        let produced = syncCommandLine(binary: bin, action)
+            + "\n" + syncTerminalScript(binary: bin, action)
+            + "\n" + syncCommand(action).joined(separator: " ")
+        for needle in forbidden {
+            assertEqual(produced.contains(needle), false,
+                        "no menu-produced command carries \(needle)")
+        }
+    }
+
+    // ── what the confirmations say ───────────────────────────────────────
+    let push = syncPrompt(.push)
+    assertEqual(push.body.contains("não se desfaz"), true,
+                "push states that a publication is irreversible")
+    assertEqual(push.body.contains("senha do sync"), true,
+                "…and that the password is asked for in the terminal, not here")
+    let pull = syncPrompt(.pull)
+    assertEqual(pull.body.contains("nada é escrito"), true,
+                "pull states that the bare command writes nothing")
+    assertEqual(pull.body.contains("--apply"), true,
+                "…and names the flag that would, so it is the user who types it")
+    for prompt in [push, pull] {
+        assertEqual(prompt.title.isEmpty, false, "every prompt has a title")
+        assertEqual(prompt.go.isEmpty, false, "…and a labelled confirm button")
+    }
+
+    // ── the category rows: 6-01 parsed these and rendered none of them ───
+    assertEqual(syncCategoryRows(nil), [], "no status, no rows")
+
+    var status = SyncStatus()
+    status.categories = [
+        SyncCategoryLine(category: "config", enabled: true, files: 2, bytes: 4096),
+        SyncCategoryLine(category: "credentials", enabled: true, files: 1, bytes: 700),
+        SyncCategoryLine(category: "routines", enabled: true, files: 0, bytes: 0),
+        SyncCategoryLine(category: "transcripts", enabled: false, files: 0, bytes: 0),
+        SyncCategoryLine(category: "<b>novidade</b>", enabled: true, files: 3, bytes: 0),
+    ]
+    let rows = syncCategoryRows(status)
+    assertEqual(rows.count, 5, "one row per category the binary sent")
+    assertEqual(rows[0].hasPrefix("Configuração: 2 arquivos ("), true, "count and size")
+    assertEqual(rows[1].hasPrefix("Credenciais: 1 arquivo ("), true, "one file is singular")
+    assertEqual(rows[2], "Rotinas: vazio", "an enabled but empty category says so")
+    assertEqual(rows[3], "Transcrições: desativado",
+                "a category that is off is shown as off, never omitted")
+    // The label crossed a process boundary, so it is stripped like every other
+    // binary-supplied string that reaches an NSMenuItem.
+    assertEqual(rows[4].contains("<b>"), false, "an unknown label is stripped, not rendered")
+    assertEqual(rows[4].hasPrefix("novidade: 3 arquivos"), true, "…and still shown")
+
+    // ── the structural guard ─────────────────────────────────────────────
+    //
+    // `syncCommand` produces an argument vector, and the one thing that must
+    // never happen to it is reaching a `Process`. A menu bar that runs `sync
+    // push` in the background has no terminal for the password and no way to
+    // answer `sync pull`'s two gates, so it could only get through by adding
+    // the flags asserted absent above. Checked at the source level because a UI
+    // closure is not reachable from this harness.
+    let appSource = (try? String(contentsOfFile: menubarSourcePath(), encoding: .utf8)) ?? ""
+    assertEqual(appSource.contains("func syncCommand("), true,
+                "the app source was found and read")
+
+    let lines = appSource.split(separator: "\n", omittingEmptySubsequences: false)
+    let argLines = lines.filter { $0.contains("p.arguments =") }
+    assertEqual(argLines.count >= 3, true, "…and its Process call sites were located")
+    let syncArgLines = argLines.filter { $0.contains("\"sync\"") }
+    // Exactly one, so this is an assertion rather than an empty loop.
+    assertEqual(syncArgLines.count, 1, "the app builds exactly one sync argument vector")
+    assertEqual(syncArgLines.first?.contains("\"status\""), true,
+                "…and it is the read-only one")
+    let piped = lines.filter {
+        $0.contains("syncCommand(") && ($0.contains("arguments") || $0.contains("Process"))
+    }
+    assertEqual(piped.count, 0, "syncCommand never reaches a Process argument vector")
+    let handed = lines.filter { $0.contains("syncTerminalScript(") && !$0.contains("///") }
+    assertEqual(handed.contains { $0.contains("runInTerminal(") }, true,
+                "the script is handed to Terminal.app, which is the whole point")
+}
+
+/// The app file beside this one. `#filePath` is absolute because run-tests.sh
+/// compiles both by absolute path, so the harness finds it from any cwd.
+private func menubarSourcePath(_ here: String = #filePath) -> String {
+    (here as NSString).deletingLastPathComponent + "/ai-usagebar-menubar.swift"
+}
+
 @main
 struct TestRunner {
     static func main() {
@@ -692,6 +920,8 @@ struct TestRunner {
         testShortReset()
         testOverviewProviderToggle()
         testAccountStatus()
+        testSyncStatus()
+        testSyncActions()
         testSystemIntegrations()
         if failures > 0 {
             print("\n\(failures) test(s) FAILED")

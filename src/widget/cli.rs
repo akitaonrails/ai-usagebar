@@ -156,10 +156,155 @@ pub enum Command {
         action: SettingsAction,
     },
 
+    /// Encrypted sync of local Claude state to a private remote.
+    Sync {
+        #[command(subcommand)]
+        action: SyncAction,
+    },
+
     /// Authenticate a provider without starting the widget.
     Auth {
         #[command(subcommand)]
         provider: AuthProvider,
+    },
+}
+
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum SyncAction {
+    /// What sync would carry: per-category file counts and raw bytes, plus
+    /// when it last ran. Reads only — nothing is uploaded or written.
+    Status {
+        /// Machine-readable output, consumed by the macOS menu bar.
+        ///
+        /// Answers from the stat sweep alone: it builds no plan and contacts no
+        /// network, so it never wants a password and never blocks on one.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Pair this machine with the private GitHub repository named in
+    /// `[sync] repo`.
+    ///
+    /// Resolves a token, asks GitHub what the repository is, and refuses unless
+    /// it reports itself private. **Nothing is uploaded** — this command has no
+    /// way to send a request body at all.
+    Setup,
+
+    /// Send the encrypted bundle to the private remote.
+    ///
+    /// Re-checks that the repository is private before the first byte and again
+    /// before publishing, uploads the packs, verifies each one is retrievable,
+    /// and only then flips the snapshot pointer. An interruption before that
+    /// flip leaves the previous snapshot exactly as it was.
+    ///
+    /// With `--dry-run` it measures a push — per category, file count, raw
+    /// bytes, and the bytes that would really upload — and contacts no network.
+    Push {
+        /// Measure only. Prints what a push would send, uploads nothing, and
+        /// contacts no network.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Push onto a bundle whose snapshot counter went **backwards**.
+        ///
+        /// An older snapshot is authentic data replayed to hide a newer one, so
+        /// it is refused by default. Pass this only when you know why the remote
+        /// went back — you rebuilt the bundle from scratch, or you deliberately
+        /// restored an older one.
+        #[arg(long)]
+        allow_rollback: bool,
+
+        /// Throw away the local change-detection index and start it empty.
+        ///
+        /// The index is a cache under `~/.cache`, never part of the bundle.
+        /// Discarding it costs one slow sync and changes nothing about what is
+        /// uploaded.
+        #[arg(long)]
+        rebuild_index: bool,
+
+        /// Ignore every cached hash for this run: open and re-read every file.
+        ///
+        /// Suppresses cache *reads* and deletes nothing — the rows are rewritten
+        /// with what this run actually found, so the next run is fast again.
+        #[arg(long)]
+        force_rehash: bool,
+    },
+
+    /// Delete remote data no kept snapshot still references.
+    ///
+    /// A push prunes automatically; this runs the same pass on demand. Only
+    /// packs that no surviving snapshot names and that are more than a day old
+    /// are removed — the age floor is what keeps this from deleting a pack
+    /// another machine has uploaded but not yet published.
+    Prune,
+
+    /// Change the sync password.
+    ///
+    /// Rewraps the master key and republishes the keyfile; not one pack byte
+    /// moves. **This is not revocation.** The data keys do not change, so
+    /// anyone who already holds a copy of the old keyfile can still open it
+    /// with the old password, forever. It stops future readers of the
+    /// repository, not past ones.
+    Rekey,
+
+    /// Restore this machine from the snapshot on the private remote.
+    ///
+    /// **A dry run by default.** It reads the remote, works out what would
+    /// change here, prints it per item, and writes nothing at all. `--apply` —
+    /// or answering the confirmation on a terminal — is the only way a byte
+    /// reaches this disk.
+    ///
+    /// An item whose local copy is newer than the snapshot is *skipped* and
+    /// named, never silently replaced. Before the first write, everything the
+    /// restore is about to overwrite is archived, and the one command that puts
+    /// it all back is printed when the run ends.
+    Pull {
+        /// Write. Without it, and without an answered confirmation, nothing is
+        /// written.
+        #[arg(long)]
+        apply: bool,
+
+        /// Plan and report only — which is already the default. Accepted for
+        /// symmetry with `push --dry-run`, and refused alongside `--apply` so a
+        /// run that passes both is an error rather than a guess.
+        #[arg(long, conflicts_with = "apply")]
+        dry_run: bool,
+
+        /// Overwrite items whose local copy is newer than the snapshot.
+        ///
+        /// It prints what it is about to lose. It does **not** cover
+        /// credentials — those need `--force-credentials` as well.
+        #[arg(long)]
+        force: bool,
+
+        /// The second, separate consent for a locally-newer **credential**.
+        ///
+        /// Requires `--force`, and `--force` alone never grants it: restoring an
+        /// older token over a live one silently signs this machine out until you
+        /// log in again.
+        #[arg(long, requires = "force")]
+        force_credentials: bool,
+
+        /// Accept a snapshot older than the one this machine has already seen.
+        ///
+        /// Never waives the bundle-identity check: a counter borrowed from a
+        /// *different* bundle is refused with this flag exactly as without it.
+        #[arg(long)]
+        allow_rollback: bool,
+
+        /// Answer the confirmation affirmatively. It does **not** answer the
+        /// credential question, which has its own flag.
+        #[arg(short = 'y', long)]
+        yes: bool,
+
+        /// Throw away the local change-detection index and start it empty.
+        ///
+        /// Push-side recovery, offered here because a machine that just lost
+        /// everything is running `pull`. It changes nothing about what this
+        /// restore writes — the restore hashes what is on disk and never asks
+        /// the index.
+        #[arg(long)]
+        rebuild_index: bool,
     },
 }
 
@@ -437,7 +582,7 @@ fn is_stdout_tty() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::{Parser, error::ErrorKind};
+    use clap::{CommandFactory, Parser, error::ErrorKind};
 
     #[test]
     fn version_flags_report_the_crate_version() {
@@ -455,6 +600,91 @@ mod tests {
     fn usage_subcommand_parses_machine_readable_mode() {
         let cli = Cli::parse_from(["ai-usagebar", "usage", "--json"]);
         assert!(matches!(cli.command, Some(Command::Usage { json: true })));
+    }
+
+    #[test]
+    fn sync_subcommands_parse_and_the_dry_run_flag_is_opt_in() {
+        let status = Cli::parse_from(["ai-usagebar", "sync", "status"]);
+        assert!(matches!(
+            status.command,
+            Some(Command::Sync {
+                action: SyncAction::Status { json: false }
+            })
+        ));
+
+        // 6-01: opt-in, and only on this variant — the macOS menu bar's read.
+        let machine = Cli::parse_from(["ai-usagebar", "sync", "status", "--json"]);
+        assert!(matches!(
+            machine.command,
+            Some(Command::Sync {
+                action: SyncAction::Status { json: true }
+            })
+        ));
+
+        let setup = Cli::parse_from(["ai-usagebar", "sync", "setup"]);
+        assert!(matches!(
+            setup.command,
+            Some(Command::Sync {
+                action: SyncAction::Setup
+            })
+        ));
+
+        let dry = Cli::parse_from(["ai-usagebar", "sync", "push", "--dry-run"]);
+        assert!(matches!(
+            dry.command,
+            Some(Command::Sync {
+                action: SyncAction::Push {
+                    dry_run: true,
+                    allow_rollback: false,
+                    rebuild_index: false,
+                    force_rehash: false
+                }
+            })
+        ));
+
+        // Bare `push` now performs a push; `--dry-run` measures one.
+        let bare = Cli::parse_from(["ai-usagebar", "sync", "push"]);
+        assert!(matches!(
+            bare.command,
+            Some(Command::Sync {
+                action: SyncAction::Push {
+                    dry_run: false,
+                    allow_rollback: false,
+                    rebuild_index: false,
+                    force_rehash: false
+                }
+            })
+        ));
+
+        let prune = Cli::parse_from(["ai-usagebar", "sync", "prune"]);
+        assert!(matches!(
+            prune.command,
+            Some(Command::Sync {
+                action: SyncAction::Prune
+            })
+        ));
+
+        let rekey = Cli::parse_from(["ai-usagebar", "sync", "rekey"]);
+        assert!(matches!(
+            rekey.command,
+            Some(Command::Sync {
+                action: SyncAction::Rekey
+            })
+        ));
+    }
+
+    /// The password-change help must say what it is not, because "changed the
+    /// password" reads as revocation and is not.
+    #[test]
+    fn the_rekey_help_states_that_a_password_change_is_not_revocation() {
+        let help = Cli::command()
+            .find_subcommand("sync")
+            .and_then(|sync| sync.clone().find_subcommand("rekey").cloned())
+            .expect("`sync rekey` must exist")
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("not revocation"), "{help}");
+        assert!(help.contains("old password"), "{help}");
     }
 
     #[test]

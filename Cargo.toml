@@ -75,6 +75,29 @@ ratatui-bubbletea-theme = "0.2"
 # links SQLite via cc, so no system libsqlite3-dev is required — keeping the
 # AUR source build's hermeticity (see CLAUDE.md's release checklist).
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+# --- encrypted sync (src/sync/) ----------------------------------------------
+# All six are pure Rust or vendor their C (zstd), so the AUR source build stays
+# hermetic — no system libargon2/libsodium/libzstd, nothing to detect at
+# configure time. `src/sync/crypto.rs` is the only module allowed to import
+# argon2 or chacha20poly1305; a test in that file enforces it.
+#
+# Argon2id password KDF. `default-features = false` drops the PHC-string
+# machinery (`password-hash`) deliberately: the format stores KDF *parameters*
+# but never a verifier, because the AEAD tag is the verifier. Storing a hash
+# next to the data would hand an offline attacker a plaintext-equivalent oracle.
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc", "zeroize"] }
+# XChaCha20-Poly1305. The 192-bit nonce removes all nonce-budget accounting, so
+# chunk nonces can be derived from the chunk id and the snapshot root can use a
+# fresh random one with no counter to track.
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
+# Keyed hashing (chunk addressing) + `derive_key` (subkey derivation).
+blake3 = { version = "1.8", default-features = false, features = ["std"] }
+# Compression happens before encryption, so ciphertext stays incompressible.
+zstd = "0.13"
+zeroize = "1.9"
+# The OS CSPRNG directly: 16 salt bytes, 24 nonce bytes, 32 master-key bytes.
+# No `rand`, no ThreadRng, no reseeding.
+getrandom = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }

@@ -13,6 +13,15 @@ fn main() {
     if let Some(Command::Settings { action }) = &cli.command {
         std::process::exit(ai_usagebar::tui::settings::run_cli(action));
     }
+    // Dispatched before the runtime exists. `push --dry-run` is local
+    // filesystem scanning only, and so is `status` on a machine with no
+    // `[sync] repo`. `sync setup` — and `status` once a repository is named —
+    // makes exactly one request and builds its own current-thread runtime,
+    // rather than making the local-only paths pay for one they never use.
+    if let Some(Command::Sync { action }) = &cli.command {
+        std::process::exit(ai_usagebar::sync::cli::run(action));
+    }
+
     if let Some(Command::Auth { provider }) = &cli.command {
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()

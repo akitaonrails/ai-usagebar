@@ -24,10 +24,18 @@ const ROUNDS: u32 = 1003;
 const KEY_LEN: usize = 16;
 const IV: [u8; 16] = [b' '; 16];
 const PREFIX: &[u8] = b"v10";
+/// [`PREFIX`] as it appears at the front of the base64 value: three bytes
+/// encode to exactly four characters, so every safeStorage value starts with
+/// these and — the point of [`looks_like_value`] — nothing else does.
+const PREFIX_B64: &str = "djEw";
 
 /// Login-Keychain generic-password service holding Claude Desktop's secret.
 #[cfg(target_os = "macos")]
 pub const SERVICE: &str = "Claude Safe Storage";
+
+/// The derived AES key. Sixteen bytes and nothing else; naming it keeps the
+/// callers that only pass one around from spelling the width out.
+pub type Key = [u8; KEY_LEN];
 
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
@@ -37,6 +45,15 @@ pub fn derive_key(secret: &[u8]) -> [u8; KEY_LEN] {
     let mut key = [0u8; KEY_LEN];
     pbkdf2::pbkdf2_hmac::<sha1::Sha1>(secret, SALT, ROUNDS, &mut key);
     key
+}
+
+/// Is this a safeStorage value at all, whoever's key sealed it?
+///
+/// Key-free and cheap, and it separates *"not this format"* from *"this
+/// format, another machine's key"* — a distinction [`decrypt`]'s single `Err`
+/// cannot make, and one the restore side needs before it refuses a file.
+pub fn looks_like_value(value: &str) -> bool {
+    value.trim_start().starts_with(PREFIX_B64)
 }
 
 /// Decrypt a base64 `v10…` safeStorage value into its plaintext bytes.
@@ -127,6 +144,20 @@ mod tests {
         let k = key();
         assert_eq!(encrypt(&k, b"same"), "djEwykc2I53A+doQo9OF96du2A==");
         assert_eq!(encrypt(&k, b"same"), encrypt(&k, b"same"));
+    }
+
+    #[test]
+    fn the_base64_marker_is_the_v10_prefix_and_cannot_drift_from_it() {
+        assert!(
+            base64::engine::general_purpose::STANDARD
+                .encode(PREFIX)
+                .starts_with(PREFIX_B64)
+        );
+        assert!(looks_like_value(&encrypt(&key(), b"anything")));
+        assert!(!looks_like_value(
+            &base64::engine::general_purpose::STANDARD.encode(b"not-v10-data")
+        ));
+        assert!(!looks_like_value(r#"{"token":"plain json"}"#));
     }
 
     #[test]

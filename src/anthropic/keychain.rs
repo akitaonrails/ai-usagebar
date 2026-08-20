@@ -21,6 +21,12 @@
 //! item — a hash tied to the account's own directory can't collide with a
 //! different account's, which is what issue #15 needed the strict
 //! `Explicit`-only rule to avoid in the first place.
+//!
+//! The `*_service` workers are `pub(crate)` because the sync token
+//! ([`crate::sync::github::keychain`]) stores itself through these same three
+//! under its own service name. The read/write account-selector agreement below
+//! is a rule with one copy in this crate, not two — a second implementation is
+//! a second place for it to drift back apart.
 
 use std::io::Write;
 use std::path::Path;
@@ -90,9 +96,37 @@ pub fn read_raw_for(config_dir: &Path) -> Result<Option<String>> {
     read_raw_service(&service_name_for(config_dir)?)
 }
 
-fn read_raw_service(service: &str) -> Result<Option<String>> {
+pub(crate) fn read_raw_service(service: &str) -> Result<Option<String>> {
+    find_generic_password(service, true)
+}
+
+/// Is the item there — without asking for what it holds?
+///
+/// `find-generic-password` **without `-w`** returns the item's attributes and
+/// never its data, so macOS does not consult the item's ACL and cannot raise
+/// the "ai-usagebar wants to use your confidential information" prompt. That is
+/// what makes an existence check payable by `ai-usagebar sync status`, which
+/// the macOS menu bar runs on every menu open, when a value read is not.
+///
+/// ponytail: an item that exists but holds an empty value answers `true`
+/// here and is skipped by the planner, which reads values. Establishing that
+/// difference costs the value, and therefore the prompt.
+pub fn has_raw() -> Result<bool> {
+    find_generic_password(SERVICE, false).map(|found| found.is_some())
+}
+
+/// `security find-generic-password`, selecting exactly the item the write path
+/// updates. `with_value` adds `-w` — the flag that asks for the secret, and
+/// therefore the only reason macOS consults the item's ACL.
+///
+/// `Ok(None)` is `errSecItemNotFound` and nothing else; every other failure is
+/// an `Err` so a locked Keychain never reads as "not logged in".
+fn find_generic_password(service: &str, with_value: bool) -> Result<Option<String>> {
     let mut cmd = Command::new("/usr/bin/security");
-    cmd.args(["find-generic-password", "-s", service, "-w"]);
+    cmd.args(["find-generic-password", "-s", service]);
+    if with_value {
+        cmd.arg("-w");
+    }
     if let Some(acct) = account() {
         cmd.args(["-a", &acct]);
     }
@@ -160,7 +194,7 @@ pub fn delete_raw_for(config_dir: &Path) -> Result<()> {
     delete_raw_service(&service_name_for(config_dir)?)
 }
 
-fn write_raw_service(service: &str, json: &str) -> Result<()> {
+pub(crate) fn write_raw_service(service: &str, json: &str) -> Result<()> {
     // Must mirror `read_raw`'s selection exactly, or an update can create a
     // second item the read will never find. The native API updates by this
     // exact (service, account) pair without exposing the secret in argv.
@@ -183,7 +217,7 @@ fn write_raw_service(service: &str, json: &str) -> Result<()> {
     ))
 }
 
-fn delete_raw_service(service: &str) -> Result<()> {
+pub(crate) fn delete_raw_service(service: &str) -> Result<()> {
     let mut cmd = Command::new("/usr/bin/security");
     cmd.args(["delete-generic-password", "-s", service]);
     if let Some(acct) = account() {

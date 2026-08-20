@@ -33,6 +33,23 @@ use ratatui::layout::Rect;
 use reqwest::Client;
 use tokio::sync::mpsc;
 
+/// When sync last completed, for the Settings overlay's Sync section.
+///
+/// Read here rather than inside the overlay so `SettingsState::from_config`
+/// stays pure and every settings test stays hermetic. The index is opened only
+/// when it already exists — pressing `s` must not create a sync index for a
+/// user who has never synced. A failed open reads as `never`, which is exactly
+/// what `ai-usagebar sync status` prints for the same state.
+fn last_sync() -> Option<chrono::DateTime<chrono::Utc>> {
+    let path = ai_usagebar::sync::index::default_path().ok()?;
+    if !path.exists() {
+        return None;
+    }
+    ai_usagebar::sync::index::Index::at(&path)
+        .ok()
+        .and_then(|index| index.last_sync())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(e) = run().await {
@@ -342,7 +359,10 @@ where
                         let cfg = ai_usagebar::config::Config::load()
                             .unwrap_or_else(|_| config.clone());
                         app.settings = Some(
-                            ai_usagebar::tui::settings::SettingsState::from_config(&cfg),
+                            ai_usagebar::tui::settings::SettingsState::from_config_with_sync(
+                                &cfg,
+                                last_sync(),
+                            ),
                         );
                         continue;
                     }

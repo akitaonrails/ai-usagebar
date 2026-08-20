@@ -3,6 +3,7 @@
 //! into a fallback `⚠` JSON / pretty line so Waybar never hides the module.
 
 use std::io::Write;
+use std::path::Path;
 use std::time::Duration;
 
 use chrono::Utc;
@@ -45,8 +46,7 @@ pub async fn run(cli: Cli) -> i32 {
     if let Some(secs) = cli.watch {
         return run_watch(cli, secs).await;
     }
-    run_once(&cli, &mut std::io::stdout()).await;
-    0
+    run_once(&cli, &mut std::io::stdout(), None).await
 }
 
 /// Cycle to the next/prev enabled vendor and signal waybar to refresh.
@@ -103,7 +103,7 @@ async fn run_watch(cli: Cli, secs: u64) -> i32 {
             print!("\x1b[2J\x1b[H");
         }
         let _ = std::io::stdout().flush();
-        run_once(&cli, &mut std::io::stdout()).await;
+        run_once(&cli, &mut std::io::stdout(), None).await;
         println!();
         eprintln!("(re-rendering every {secs}s — press Ctrl-C to exit)");
         tokio::select! {
@@ -113,8 +113,12 @@ async fn run_watch(cli: Cli, secs: u64) -> i32 {
     }
 }
 
-async fn run_once(cli: &Cli, out: &mut impl Write) {
-    let output = match build_output(cli).await {
+/// Renders and returns the process exit code. The code is the point: Waybar
+/// hides a module whose exec exits non-zero, so returning the constant 0 from
+/// the function under test is what lets a test fail if anyone ever makes it
+/// conditional.
+async fn run_once(cli: &Cli, out: &mut impl Write, config_path: Option<&Path>) -> i32 {
+    let output = match build_output(cli, config_path).await {
         Ok(o) => o,
         Err(e) => fallback(&e, cli),
     };
@@ -125,13 +129,17 @@ async fn run_once(cli: &Cli, out: &mut impl Write) {
         let _ = print_pretty(out, &output);
     }
     let _ = out.flush();
+    0
 }
 
-async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
+async fn build_output(cli: &Cli, config_path: Option<&Path>) -> Result<WaybarOutput> {
     // A broken config is reported through the `⚠` fallback (still exit 0)
     // rather than silently reverting to the default vendor set — otherwise a
     // typo'd section shows another account's usage with no diagnostic.
-    let config = Config::load()?;
+    let config = match config_path {
+        Some(path) => Config::load_from(path)?,
+        None => Config::load()?,
+    };
     let vendor = cli.resolved_vendor(&config);
     validate_vendor_options(cli, vendor)?;
     if !dispatch_is_eligible(cli, &config, vendor) {
@@ -1122,6 +1130,245 @@ mod tests {
         use clap::Parser;
         let res = Cli::try_parse_from(["ai-usagebar", "--account", "work", "--creds-path", "/x"]);
         assert!(res.is_err(), "--account and --creds-path must conflict");
+    }
+
+    // --- UX-06: a broken [sync] section must never take the status bar down --
+    //
+    // Every assertion here drives the real `run_once` writer seam with an
+    // injected config path, not the private `fallback` helper: a panic or an
+    // early return *before* the fallback would still hide the module, and only
+    // the seam catches that. Hermetic — config, cache and credentials all live
+    // under a TempDir, no case opens a socket or reaches the macOS Keychain.
+
+    async fn render_config_at(cfg: &std::path::Path, cache: &std::path::Path) -> (i32, String) {
+        use clap::Parser;
+        let cli = Cli::parse_from([
+            "ai-usagebar",
+            "--json",
+            "--cache-dir",
+            cache.to_str().unwrap(),
+        ]);
+        let mut out = Vec::new();
+        let code = run_once(&cli, &mut out, Some(cfg)).await;
+        (code, String::from_utf8(out).unwrap())
+    }
+
+    /// Render a `--json` widget with `body` as its entire config file.
+    async fn render_config(body: &str) -> (i32, String) {
+        let td = tempfile::TempDir::new().unwrap();
+        let cfg = td.path().join("config.toml");
+        std::fs::write(&cfg, body).unwrap();
+        render_config_at(&cfg, &td.path().join("cache")).await
+    }
+
+    /// The Waybar contract on a failing render: exit 0, exactly one line, valid
+    /// JSON, `⚠`. Returns the tooltip for the caller's own assertions.
+    fn assert_fallback_line(code: i32, stdout: &str) -> String {
+        assert_eq!(code, 0, "Waybar hides modules that exit non-zero");
+        assert_eq!(stdout.lines().count(), 1, "one line for Waybar: {stdout:?}");
+        assert!(stdout.ends_with('\n'), "Waybar splits on the newline");
+        let json: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+        assert_eq!(json["text"], "⚠");
+        assert!(json["class"].is_string(), "Waybar needs a class: {json}");
+        json["tooltip"].as_str().unwrap().to_string()
+    }
+
+    /// Shapes that must never reach a rendered tooltip. Assembled from
+    /// fragments so this file carries none of them as a literal — otherwise a
+    /// later `grep` for a token prefix hits the test that guards against one,
+    /// and the assertion could match its own source.
+    fn secret_shaped_fragments() -> [String; 3] {
+        [
+            format!("{}{}", "http", "s://"),
+            format!("{}{}", "ghp", "_"),
+            format!("{}{}", "github", "_pat_"),
+        ]
+    }
+
+    fn assert_carries_no_secret_shaped_text(tooltip: &str) {
+        for fragment in secret_shaped_fragments() {
+            assert!(
+                !tooltip.contains(&fragment),
+                "tooltip leaked {fragment:?}: {tooltip}"
+            );
+        }
+    }
+
+    /// What a `sync pull` from a machine on a newer build leaves behind: a
+    /// `[sync]` key this build has never heard of, whose value is deliberately
+    /// shaped like the two things that must never be rendered. The synthetic
+    /// token is all zeroes — no real credential belongs in a fixture.
+    /// `credentials_path` points at a file that does not exist, so the run
+    /// fails *after* the config parsed, offline and away from the Keychain.
+    fn a_newer_builds_config(dir: &std::path::Path) -> String {
+        let url = format!("{}{}", "http", "s://sync.example.test/owner/name.git");
+        let token = format!("{}{}", "ghp", "_000000000000000000000000000000000000");
+        format!(
+            "[sync]\nrepo = \"owner/name\"\nremote_url = \"{url}\"\nupload_token = \"{token}\"\n\n\
+             [anthropic]\ncredentials_path = \"{}\"\n",
+            missing_creds(dir)
+        )
+    }
+
+    /// A path that does not exist, spelled so TOML reads it verbatim on every
+    /// platform (a Windows `\` would be a string escape).
+    fn missing_creds(dir: &std::path::Path) -> String {
+        dir.join("missing-credentials.json")
+            .display()
+            .to_string()
+            .replace('\\', "/")
+    }
+
+    #[tokio::test]
+    async fn a_wrongly_typed_sync_value_still_exits_0_with_the_warning_payload() {
+        let (code, stdout) = render_config("[sync]\nkeep_snapshots = \"ten\"\n").await;
+        let tooltip = assert_fallback_line(code, &stdout);
+        assert!(tooltip.contains("TOML error"), "{tooltip}");
+        assert_carries_no_secret_shaped_text(&tooltip);
+    }
+
+    #[tokio::test]
+    async fn a_half_written_config_still_exits_0_with_the_warning_payload() {
+        // What an interrupted restore leaves on disk.
+        let (code, stdout) = render_config("[sync\nrepo = \"owner/name\"\n").await;
+        let tooltip = assert_fallback_line(code, &stdout);
+        assert!(tooltip.contains("TOML error"), "{tooltip}");
+        assert_carries_no_secret_shaped_text(&tooltip);
+    }
+
+    #[tokio::test]
+    async fn a_refused_keep_snapshots_still_exits_0_with_the_warning_payload() {
+        // 0 is refused at load — the flip that publishes a snapshot would also
+        // drop it. "Refused" has to mean `⚠`, never a module that vanishes.
+        let (code, stdout) = render_config("[sync]\nkeep_snapshots = 0\n").await;
+        let tooltip = assert_fallback_line(code, &stdout);
+        assert!(tooltip.contains("keep_snapshots"), "{tooltip}");
+        assert_carries_no_secret_shaped_text(&tooltip);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_unreadable_config_still_exits_0_with_the_warning_payload() {
+        use std::os::unix::fs::PermissionsExt;
+        let td = tempfile::TempDir::new().unwrap();
+        let cfg = td.path().join("config.toml");
+        std::fs::write(&cfg, "[sync]\nkeep_snapshots = 3\n").unwrap();
+        std::fs::set_permissions(&cfg, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Running as root, mode 000 is not a read barrier and there is no
+        // failure to assert on. Skip rather than assert something untrue.
+        if std::fs::read_to_string(&cfg).is_ok() {
+            return;
+        }
+        let (code, stdout) = render_config_at(&cfg, &td.path().join("cache")).await;
+        let tooltip = assert_fallback_line(code, &stdout);
+        assert!(tooltip.contains("I/O error"), "{tooltip}");
+        assert_carries_no_secret_shaped_text(&tooltip);
+    }
+
+    #[test]
+    fn an_unknown_sync_key_round_trips_without_disturbing_the_known_ones() {
+        // A newer build's key must not fail the load: refusing it would turn a
+        // *successful* sync into a broken status bar, the exact failure UX-06
+        // forbids. This is the round trip that decides whether the sync config
+        // types need extra tolerance.
+        let td = tempfile::TempDir::new().unwrap();
+        let cfg = td.path().join("config.toml");
+        std::fs::write(&cfg, a_newer_builds_config(td.path())).unwrap();
+        let config = Config::load_from(&cfg).expect("an unknown [sync] key must still load");
+        assert_eq!(config.sync.repo.as_deref(), Some("owner/name"));
+        assert_eq!(
+            config.sync.keep_snapshots,
+            Config::default().sync.keep_snapshots
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_sync_key_from_a_newer_build_does_not_break_the_widget() {
+        let td = tempfile::TempDir::new().unwrap();
+        let cfg = td.path().join("config.toml");
+        std::fs::write(&cfg, a_newer_builds_config(td.path())).unwrap();
+        let (code, stdout) = render_config_at(&cfg, &td.path().join("cache")).await;
+        let tooltip = assert_fallback_line(code, &stdout);
+        // The config parsed: the run got all the way to the credentials it was
+        // told to read. A TOML error here would mean an older machine bricked
+        // by a restore from a newer one.
+        assert!(!tooltip.contains("TOML error"), "{tooltip}");
+        assert!(tooltip.contains("missing-credentials.json"), "{tooltip}");
+        // And neither the unknown key's URL nor its token-shaped value came
+        // along for the ride.
+        assert_carries_no_secret_shaped_text(&tooltip);
+    }
+
+    #[tokio::test]
+    async fn a_fetch_that_fails_for_a_non_config_reason_lands_in_the_same_fallback() {
+        // The ROADMAP asks for an injected failing transport. An absent
+        // credential fails the fetch before a socket is opened, reaching the
+        // same shipped path end to end with no network — see the SUMMARY for
+        // why no client seam was added to reach an outcome this produces.
+        let td = tempfile::TempDir::new().unwrap();
+        let cfg = td.path().join("config.toml");
+        std::fs::write(
+            &cfg,
+            format!(
+                "[sync]\nrepo = \"owner/name\"\n\n[anthropic]\ncredentials_path = \"{}\"\n",
+                missing_creds(td.path())
+            ),
+        )
+        .unwrap();
+        let (code, stdout) = render_config_at(&cfg, &td.path().join("cache")).await;
+        let tooltip = assert_fallback_line(code, &stdout);
+        assert!(tooltip.contains("missing-credentials.json"), "{tooltip}");
+        // The repository the config names is not the widget's business to show.
+        assert!(!tooltip.contains("owner/name"), "{tooltip}");
+        assert_carries_no_secret_shaped_text(&tooltip);
+    }
+
+    /// UX-06's real mitigation, and the strongest form of it: the widget's
+    /// render path does not recover well from a backup failure — it cannot
+    /// reach one at all. The claim is scoped to the render path, not to the
+    /// binary: `ai-usagebar` is a single binary carrying both the backup
+    /// subcommand and this path, so "the binary does not link it" would be
+    /// false. What the two genuinely share is the config file on disk, and
+    /// that is what the fixtures above cover.
+    ///
+    /// **These three files are the whole render path.** `run_once` calls
+    /// `print_pretty` on every non-JSON render, so `pretty.rs` counts as much
+    /// as `run.rs` and `render.rs` do. A refactor that adds a fourth file has
+    /// to add it here too.
+    #[test]
+    fn the_render_path_holds_no_reference_to_the_encrypted_backup_module() {
+        // Assembled at runtime rather than written as literals, so this file
+        // cannot contain the very text it forbids — a literal here would trip
+        // the gate on the test guarding it. Do not "simplify" these back.
+        // Ceiling: this catches `crate::sync…` and `sync::…`, the two spellings
+        // reachable from a direct or a grouped `use`. A rename of the module
+        // has to be reflected here.
+        let forbidden = [format!("crate{}{}", "::", "sync"), format!("{}::", "sync")];
+        for (file, source) in [
+            ("run.rs", include_str!("run.rs")),
+            ("render.rs", include_str!("render.rs")),
+            ("pretty.rs", include_str!("pretty.rs")),
+        ] {
+            let code = source
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            // Without this the gate passes just as happily against an empty
+            // string, which is how a structural check rots into decoration.
+            assert!(
+                code.contains("WaybarOutput"),
+                "{file} did not read back as the file this gate is meant to check"
+            );
+            for path in &forbidden {
+                assert!(
+                    !code.contains(path.as_str()),
+                    "{file} references {path:?}: the widget render path must not be \
+                     able to reach the encrypted-backup module, because a failure \
+                     there would then be able to take the status bar down"
+                );
+            }
+        }
     }
 
     #[test]

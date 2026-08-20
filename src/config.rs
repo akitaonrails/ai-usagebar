@@ -38,6 +38,7 @@ use crate::vendor::VendorId;
 pub struct Config {
     pub ui: UiConfig,
     pub context: ContextConfig,
+    pub sync: SyncConfig,
     pub anthropic: AnthropicConfig,
     pub anthropic_api: AnthropicApiConfig,
     pub openai: OpenAiConfig,
@@ -123,6 +124,110 @@ impl ContextLayout {
             ContextLayout::Split => "split",
             ContextLayout::Bottom => "bottom",
         }
+    }
+}
+
+/// One collectable class of local state. The variants are the D1 mapping and
+/// their order here is the canonical display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncCategory {
+    /// This file, plus `accounts/*/.credentials.json` beside it.
+    Config,
+    /// The claude-acc profile store — the saved Desktop logins.
+    Credentials,
+    /// `~/.claude/scheduled-tasks/**` and the per-account registries.
+    Routines,
+    /// Claude Desktop's `claude-code-sessions/<account>/<org>/local_*.json`.
+    ChatIndex,
+    /// `~/.claude/projects/**/*.jsonl`. Large, and off by default.
+    Transcripts,
+}
+
+impl SyncCategory {
+    /// Canonical D1 order — what `sync status` lists and what any later
+    /// per-category loop iterates.
+    pub const ALL: [SyncCategory; 5] = [
+        SyncCategory::Config,
+        SyncCategory::Credentials,
+        SyncCategory::Routines,
+        SyncCategory::ChatIndex,
+        SyncCategory::Transcripts,
+    ];
+
+    /// The snake_case token, identical to what the TOML carries — one spelling
+    /// for config, display, and any future machine-readable output.
+    pub fn label(self) -> &'static str {
+        match self {
+            SyncCategory::Config => "config",
+            SyncCategory::Credentials => "credentials",
+            SyncCategory::Routines => "routines",
+            SyncCategory::ChatIndex => "chat_index",
+            SyncCategory::Transcripts => "transcripts",
+        }
+    }
+}
+
+/// What the encrypted sync bundles, and the bounds on the one category big
+/// enough to need them.
+///
+/// This section is itself inside the `config` category, so a second machine
+/// inherits the same selection rather than silently differing (SCOPE-05).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct SyncConfig {
+    /// Categories to collect. Transcripts is deliberately absent from the
+    /// default: 4 GB of JSONL is not what "fast, light sync" means.
+    pub categories: Vec<SyncCategory>,
+    /// Newest-first age bound on transcripts, in days. Applied with
+    /// [`transcript_max_bytes`](SyncConfig::transcript_max_bytes); whichever
+    /// binds first wins.
+    pub transcript_days: u32,
+    /// Byte backstop on transcripts, so a heavy month cannot balloon silently.
+    pub transcript_max_bytes: u64,
+    /// The private GitHub repository the bundle is pushed to, as `owner/name`.
+    ///
+    /// **Named by the user; there is no default and nothing is derived** (D-01).
+    /// The sync token deliberately holds no permission that could create a
+    /// repository, so a guessed name could only ever produce a confusing 404.
+    ///
+    /// No token field lives here. A `Contents: write` token is a different class
+    /// of secret from the read-only provider API keys `config.toml` is allowed
+    /// to hold inline; it lives in the Keychain or a mode-0600 file.
+    pub repo: Option<String>,
+    /// How many snapshots the remote pointer keeps (D1).
+    ///
+    /// Ten, because old snapshots share chunks: the realistic recovery need is
+    /// "undo the last few syncs", not archival history, and ten costs little
+    /// more than three while covering roughly a week of daily syncs. Config
+    /// rather than a constant, deliberately — a user syncing hourly wants a
+    /// different number than one syncing weekly.
+    ///
+    /// **Zero is refused at load.** It would mean the flip that publishes a
+    /// snapshot also drops it.
+    pub keep_snapshots: u32,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            categories: vec![
+                SyncCategory::Config,
+                SyncCategory::Credentials,
+                SyncCategory::Routines,
+                SyncCategory::ChatIndex,
+            ],
+            transcript_days: 30,
+            transcript_max_bytes: 2 * 1024 * 1024 * 1024,
+            repo: None,
+            keep_snapshots: 10,
+        }
+    }
+}
+
+impl SyncConfig {
+    pub fn includes(&self, cat: SyncCategory) -> bool {
+        self.categories.contains(&cat)
     }
 }
 
@@ -1091,6 +1196,22 @@ impl Config {
                 "[supergrok] grok_binary must not be empty".into(),
             ));
         }
+        // A malformed repository name fails here, at load, rather than at the
+        // first request: the value is interpolated into a URL path, and a config
+        // error should not need a network round trip to surface.
+        if let Some(repo) = &self.sync.repo {
+            crate::sync::github::RepoRef::parse(repo)
+                .map_err(|e| AppError::Other(format!("[sync] repo — {e}")))?;
+        }
+        // Zero would mean the flip that publishes a snapshot also drops it, so
+        // every push would leave the remote with nothing to restore from.
+        if self.sync.keep_snapshots == 0 {
+            return Err(AppError::Other(
+                "[sync] keep_snapshots must be at least 1 — at 0 the flip that publishes a \
+                 snapshot would also drop it, leaving nothing to restore"
+                    .into(),
+            ));
+        }
         let mut labels = HashSet::new();
         for account in &self.anthropic.accounts {
             validate_account_label(&account.label)?;
@@ -1232,6 +1353,107 @@ mod tests {
         f.write_all(s.as_bytes()).unwrap();
         f.flush().unwrap();
         f
+    }
+
+    // --- [sync] ------------------------------------------------------------
+
+    #[test]
+    fn sync_defaults_are_the_four_d6_categories_with_transcripts_off() {
+        let c = SyncConfig::default();
+        assert_eq!(
+            c.categories,
+            vec![
+                SyncCategory::Config,
+                SyncCategory::Credentials,
+                SyncCategory::Routines,
+                SyncCategory::ChatIndex,
+            ]
+        );
+        assert!(!c.includes(SyncCategory::Transcripts));
+        assert_eq!(c.transcript_days, 30);
+        assert_eq!(c.transcript_max_bytes, 2 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn config_without_a_sync_section_still_loads_and_gets_the_defaults() {
+        let f = write_toml("[anthropic]\nenabled = true\n");
+        let c = Config::load_from(f.path()).unwrap();
+        assert_eq!(c.sync.categories.len(), 4);
+        assert!(!c.sync.includes(SyncCategory::Transcripts));
+        assert_eq!(c.sync.transcript_days, 30);
+    }
+
+    #[test]
+    fn sync_section_round_trips_all_three_keys() {
+        let f = write_toml(
+            "[sync]\ncategories = [\"config\", \"transcripts\"]\n\
+             transcript_days = 7\ntranscript_max_bytes = 1024\n",
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert_eq!(
+            c.sync.categories,
+            vec![SyncCategory::Config, SyncCategory::Transcripts]
+        );
+        assert!(c.sync.includes(SyncCategory::Transcripts));
+        assert!(!c.sync.includes(SyncCategory::Credentials));
+        assert_eq!(c.sync.transcript_days, 7);
+        assert_eq!(c.sync.transcript_max_bytes, 1024);
+        // D-01: absent unless the user names it. There is no default.
+        assert_eq!(c.sync.repo, None);
+    }
+
+    /// D1: ten, because old snapshots share chunks. Config rather than a
+    /// constant — and zero is refused, because at zero the flip that publishes a
+    /// snapshot also drops it.
+    #[test]
+    fn keep_snapshots_defaults_to_ten_round_trips_and_refuses_zero() {
+        let f = write_toml("[sync]\nrepo = \"o/n\"\n");
+        assert_eq!(Config::load_from(f.path()).unwrap().sync.keep_snapshots, 10);
+
+        let f = write_toml("[sync]\nkeep_snapshots = 3\n");
+        assert_eq!(Config::load_from(f.path()).unwrap().sync.keep_snapshots, 3);
+
+        let f = write_toml("[sync]\nkeep_snapshots = 0\n");
+        let err = Config::load_from(f.path()).expect_err("zero drops what it publishes");
+        assert!(err.to_string().contains("keep_snapshots"), "{err}");
+    }
+
+    #[test]
+    fn sync_repo_round_trips_and_is_absent_when_unnamed() {
+        let f = write_toml("[sync]\nrepo = \"octocat/ai-usagebar-sync\"\n");
+        let c = Config::load_from(f.path()).unwrap();
+        assert_eq!(c.sync.repo.as_deref(), Some("octocat/ai-usagebar-sync"));
+
+        let f = write_toml("[sync]\ntranscript_days = 7\n");
+        assert_eq!(Config::load_from(f.path()).unwrap().sync.repo, None);
+    }
+
+    /// The value is interpolated into a URL path, so a malformed one fails at
+    /// load rather than at the first request.
+    #[test]
+    fn a_malformed_sync_repo_fails_at_load_naming_the_expected_shape() {
+        for bad in ["\"just-a-name\"", "\"a/b/c\"", "\"own er/name\"", "\"\""] {
+            let f = write_toml(&format!("[sync]\nrepo = {bad}\n"));
+            let err = Config::load_from(f.path()).expect_err("{bad} is not owner/name");
+            let text = err.to_string();
+            assert!(text.contains("[sync] repo"), "{bad}: {text}");
+            assert!(text.contains("owner/name"), "{bad}: {text}");
+        }
+    }
+
+    #[test]
+    fn sync_category_labels_match_the_toml_spelling() {
+        let toml = format!(
+            "[sync]\ncategories = [{}]\n",
+            SyncCategory::ALL
+                .iter()
+                .map(|c| format!("{:?}", c.label()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let f = write_toml(&toml);
+        let c = Config::load_from(f.path()).unwrap();
+        assert_eq!(c.sync.categories, SyncCategory::ALL.to_vec());
     }
 
     #[test]
