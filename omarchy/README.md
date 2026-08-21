@@ -44,6 +44,9 @@ omarchy plugin remove akitaonrails.ai-usagebar
   in the widget's inline `shell.json` settings and restored after shell reloads
   and sleep/unlock cycles. Right-click is not the settings shortcut.
 - Panel: click the gear or press `s` to open the native QML settings page.
+  Its **Show usage value in the top bar** toggle switches between the normal
+  icon-and-value label and a compact icon-only label without hiding panel or
+  tooltip details.
   `h`/`l` or Left/Right switches provider, `j`/`k` or Up/Down scrolls, `r`,
   Enter, or Space refreshes, Tab moves to the neighboring bar panel, and Esc
   closes.
@@ -85,11 +88,15 @@ omarchy bar set akitaonrails.ai-usagebar provider ''
 
 # Numeric values need --json so shell.json stores a number.
 omarchy bar set akitaonrails.ai-usagebar refreshIntervalSec 300 --json
+
+# Booleans also need --json. The default is true for drop-in compatibility.
+omarchy bar set akitaonrails.ai-usagebar showValue false --json
 ```
 
 The refresh interval is clamped to 30–3600 seconds. The `provider` setting
 prefers an exact entry id; if there is no exact match, a base id such as
-`anthropic` selects all accounts for that provider.
+`anthropic` selects all accounts for that provider. `showValue` changes only
+the top-bar label; it never hides report details or changes provider fetching.
 
 ## Development checks
 
@@ -97,9 +104,11 @@ On an Omarchy 4 machine:
 
 ```bash
 omarchy plugin validate .
-qmllint -U -I /usr/share/omarchy/shell omarchy/BarWidget.qml omarchy/Panel.qml omarchy/SettingsView.qml
 node omarchy/model.test.mjs
 ```
+
+`qmllint` cannot resolve the `qs.*` modules that Omarchy injects at shell
+runtime, so it is not a reliable standalone check for plugin entry points.
 
 Saving files under an installed user plugin triggers Quattro's plugin hot
 reload. In a source checkout, rerun `omarchy plugin validate .` after changing

@@ -9,6 +9,12 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- Omarchy can hide the selected provider's percentage or balance for an
+  icon-only top-bar entry while keeping full details in the panel and tooltip
+  (#104). The established right-click TUI shortcut is unchanged.
+
 ### Fixed
 
 - Z.AI usage parsing accepts both `CREDIT_LIMIT` and the legacy

@@ -26,7 +26,8 @@
     "defaultSection": "right",
     "defaults": {
       "provider": "",
-      "refreshIntervalSec": 300
+      "refreshIntervalSec": 300,
+      "showValue": true
     },
     "schema": [
       {
@@ -44,6 +45,13 @@
         "max": 3600,
         "step": 30,
         "defaultValue": 300
+      },
+      {
+        "key": "showValue",
+        "type": "boolean",
+        "label": "Show usage value",
+        "description": "Show the selected provider's percentage or balance next to the icon in the top bar.",
+        "defaultValue": true
       }
     ]
   }

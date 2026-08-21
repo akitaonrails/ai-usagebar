@@ -42,6 +42,7 @@ Panel {
     Number(setting("refreshIntervalSec", 300)) || 300))
   readonly property string configuredProvider: String(setting("provider", "") || "").trim()
   readonly property string rememberedEntryId: String(setting("lastSelectedEntryId", "") || "").trim()
+  readonly property bool showValue: Model.booleanSetting(setting("showValue", true), true)
   readonly property var visibleEntries: Model.filteredEntries(entries, configuredProvider)
   readonly property int entryIndex: Model.selectedIndex(visibleEntries, selectedEntryId)
   readonly property var entry: entryIndex >= 0 ? visibleEntries[entryIndex] : null
@@ -77,21 +78,31 @@ Panel {
     selectedEntryId = Model.preferredEntryId(visibleEntries, primaryProvider, rememberedEntryId)
   }
 
-  function persistSelection(entryId) {
-    if (String(entryId || "").trim() === rememberedEntryId) return
-
+  function persistWidgetSettings(values) {
     // Quattro persists inline widget settings in shell.json and pushes them
     // live to every monitor. Keep every existing setting, including settings
-    // introduced by future versions, and add only the selected report id.
-    var entry = Model.settingsWithSelectedEntry(root.settings, root.moduleName, entryId)
-    if (!entry) return
+    // introduced by future versions, and apply only the requested overrides.
+    var entry = Model.settingsWithOverrides(root.settings, root.moduleName, values)
+    if (!entry) return false
 
-    // Apply locally first so selection remains responsive. Older compatible
-    // hosts without updateEntryInline still retain the choice for this session.
+    // Apply locally first so controls remain responsive. Older compatible hosts
+    // without updateEntryInline still retain the choice for this session.
     root.settings = entry
     if (hostWidget && "settings" in hostWidget) hostWidget.settings = entry
     if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function")
       bar.shell.updateEntryInline(root.moduleName, entry)
+    return true
+  }
+
+  function persistSelection(entryId) {
+    if (String(entryId || "").trim() === rememberedEntryId) return
+    persistWidgetSettings({ lastSelectedEntryId: entryId })
+  }
+
+  function setShowValue(enabled) {
+    var next = enabled === true
+    if (next === showValue) return
+    persistWidgetSettings({ showValue: next })
   }
 
   function selectEntry(index) {
@@ -189,10 +200,8 @@ Panel {
   }
 
   function barText() {
-    if (vertical) return alarming ? "󰅙" : "󰚩"
-    if (loading && entries.length === 0) return "󰚩  …"
-    if (!entry) return alarming ? "󰅙" : "󰚩"
-    return "󰚩  " + Model.autoTextSafe(summary.text)
+    return Model.barLabel(alarming, vertical, showValue, loading,
+      entry !== null, summary.text)
   }
 
   function tooltipText() {
@@ -313,7 +322,7 @@ Panel {
             width: parent.width
             title: root.settingsOpen ? "Settings"
               : (root.entry ? Model.providerName(root.entry) : "AI usage")
-            meta: root.settingsOpen ? "Primary provider & API keys" : root.heroMeta()
+            meta: root.settingsOpen ? "Display, provider & API keys" : root.heroMeta()
             detail: root.settingsOpen
               ? "Existing configuration stays in place until you save."
               : (root.entry && root.summary.text !== "Ready" ? Model.autoTextSafe(root.summary.text) : "")
@@ -361,7 +370,9 @@ Panel {
             foreground: root.foreground
             urgent: root.urgent
             fontFamily: root.fontFamily
+            showValue: root.showValue
             onSaved: root.startRefresh()
+            onShowValueRequested: function(enabled) { root.setShowValue(enabled) }
             onFallbackRequested: root.openTerminalSettings()
             onNousLoginRequested: root.openNousLogin()
             onCloseRequested: root.closeSettings()

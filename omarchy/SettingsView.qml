@@ -14,6 +14,7 @@ Column {
   property color foreground: Color.foreground
   property color urgent: Color.urgent
   property string fontFamily: Style.font.family
+  property bool showValue: true
   readonly property color dim: Qt.darker(foreground, 1.45)
 
   property var snapshot: ({ primary_choices: [], keys: [] })
@@ -35,6 +36,7 @@ Column {
   signal saved()
   signal fallbackRequested()
   signal nousLoginRequested()
+  signal showValueRequested(bool enabled)
   signal closeRequested()
 
   spacing: Style.space(12)
@@ -197,6 +199,28 @@ Column {
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
       horizontalAlignment: Text.AlignHCenter
+    }
+  }
+
+  Column {
+    visible: !root.loading
+    width: parent.width
+    spacing: Style.space(8)
+
+    PanelSectionHeader {
+      text: "DISPLAY"
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+    Toggle {
+      width: parent.width
+      label: "Show usage value in the top bar"
+      description: "Turn this off for an icon-only bar entry. The panel and tooltip still show full usage details. Applies immediately."
+      checked: root.showValue
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      enabled: !root.saving
+      onClicked: root.showValueRequested(!root.showValue)
     }
   }
 

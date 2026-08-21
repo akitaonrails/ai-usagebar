@@ -65,7 +65,8 @@ Once enabled, **left-click the AI Usage widget** to open the native Quattro
 usage panel. From that panel, click the **gear** or press `s` to open the native
 QML settings page. **Right-click intentionally opens `ai-usagebar-tui` in a
 terminal**; it is not the settings shortcut. Middle-click or use the mouse
-wheel to switch providers.
+wheel to switch providers. In QML settings, turn off **Show usage value in the
+top bar** for an icon-only widget; the panel and tooltip keep the full details.
 
 The source-built `ai-usagebar` AUR package can replace `ai-usagebar-bin` in
 the first command.
@@ -323,6 +324,8 @@ The widget reads the providers and accounts already enabled in
 
 - Left-click opens the native panel.
 - The gear or `s` opens QML settings.
+- QML settings can hide the bar's percentage or balance for an icon-only
+  widget; this applies immediately and preserves the full panel and tooltip.
 - Right-click launches the TUI.
 - Middle-click or the mouse wheel switches providers.
 - The selected provider or named account is remembered across shell reloads

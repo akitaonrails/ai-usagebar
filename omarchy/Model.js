@@ -154,11 +154,12 @@ function preferredEntryId(entries, primaryProvider, rememberedEntryId) {
   return list[0].id
 }
 
-function settingsWithSelectedEntry(settings, moduleName, entryId) {
-  var selected = cleanText(entryId, 180).trim()
-  if (selected === "") return null
+function settingsWithOverrides(settings, moduleName, overrides) {
+  var moduleId = cleanText(moduleName, 180).trim()
+  if (moduleId === "" || !overrides || typeof overrides !== "object" || Array.isArray(overrides))
+    return null
 
-  var next = { id: cleanText(moduleName, 180).trim() }
+  var next = { id: moduleId }
   var current = settings && typeof settings === "object" && !Array.isArray(settings)
     ? settings : {}
   for (var key in current) {
@@ -166,8 +167,36 @@ function settingsWithSelectedEntry(settings, moduleName, entryId) {
       continue
     next[key] = current[key]
   }
-  next.lastSelectedEntryId = selected
+  for (var overrideKey in overrides) {
+    if (overrideKey === "id" || overrideKey === "__proto__" || overrideKey === "constructor"
+        || overrideKey === "prototype") continue
+    next[overrideKey] = overrides[overrideKey]
+  }
   return next
+}
+
+function settingsWithSelectedEntry(settings, moduleName, entryId) {
+  var selected = cleanText(entryId, 180).trim()
+  if (selected === "") return null
+  return settingsWithOverrides(settings, moduleName, { lastSelectedEntryId: selected })
+}
+
+function booleanSetting(value, fallback) {
+  if (value === true || value === false) return value
+  var normalized = String(value === undefined || value === null ? "" : value).trim().toLowerCase()
+  if (["true", "1", "yes", "on"].indexOf(normalized) >= 0) return true
+  if (["false", "0", "no", "off"].indexOf(normalized) >= 0) return false
+  return fallback === true
+}
+
+function barLabel(alarming, vertical, showValue, loading, hasEntry, summaryText) {
+  var icon = "󰚩"
+  if (vertical) return alarming ? "󰅙" : icon
+  if (loading && !hasEntry) return icon + "  …"
+  if (!hasEntry) return alarming ? "󰅙" : icon
+  if (!showValue) return icon
+  var summary = autoTextSafe(summaryText).trim()
+  return summary === "" ? icon : icon + "  " + summary
 }
 
 function headline(entry) {

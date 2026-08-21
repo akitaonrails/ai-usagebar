@@ -13,6 +13,10 @@ vm.runInContext(source, model, {filename: 'Model.js'});
 const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
 assert.deepEqual(manifest.kinds, ['bar-widget']);
 assert.equal(manifest.entryPoints.barWidget, 'omarchy/BarWidget.qml');
+assert.equal(manifest.barWidget.defaults.showValue, true);
+const showValueSchema = manifest.barWidget.schema.find(row => row.key === 'showValue');
+assert.equal(showValueSchema.type, 'boolean');
+assert.equal(showValueSchema.defaultValue, true);
 
 const barWidgetSource = fs.readFileSync(new URL('./BarWidget.qml', import.meta.url), 'utf8');
 assert.match(barWidgetSource, /^BarWidget\s*\{/m);
@@ -21,6 +25,7 @@ for (const method of ['open', 'close', 'toggle', 'closeForPopoutSwitch'])
 assert.match(barWidgetSource, /source:\s*Qt\.resolvedUrl\("Panel\.qml"\)/);
 assert.match(barWidgetSource, /target\.anchorItem\s*=\s*button/);
 assert.match(barWidgetSource, /target\.hostWidget\s*=\s*root/);
+assert.match(barWidgetSource, /buttonCode\s*===\s*Qt\.RightButton\)\s*root\.launchDashboard\(\)/);
 assert.doesNotMatch(barWidgetSource, /\bIpcHandler\s*\{/);
 
 const panelSource = fs.readFileSync(new URL('./Panel.qml', import.meta.url), 'utf8');
@@ -30,10 +35,12 @@ assert.match(panelSource, /property\s+var\s+hostWidget:\s*null/);
 assert.match(panelSource, /SettingsView\s*\{/);
 assert.match(panelSource, /function\s+openSettings\s*\(/);
 assert.match(panelSource, /setting\("lastSelectedEntryId",\s*""\)/);
+assert.match(panelSource, /setting\("showValue",\s*true\)/);
 assert.match(panelSource, /function\s+persistSelection\s*\(/);
-assert.match(panelSource, /Model\.settingsWithSelectedEntry\(root\.settings,\s*root\.moduleName,\s*entryId\)/);
+assert.match(panelSource, /Model\.settingsWithOverrides\(root\.settings,\s*root\.moduleName,\s*values\)/);
 assert.match(panelSource, /bar\.shell\.updateEntryInline\(root\.moduleName,\s*entry\)/);
 assert.match(panelSource, /persistSelection\(selectedEntryId\)/);
+assert.match(panelSource, /Model\.barLabel\(/);
 
 const settingsViewSource = fs.readFileSync(new URL('./SettingsView.qml', import.meta.url), 'utf8');
 assert.match(settingsViewSource, /command:\s*\["ai-usagebar",\s*"settings",\s*"show"\]/);
@@ -41,6 +48,8 @@ assert.match(settingsViewSource, /command:\s*\["ai-usagebar",\s*"settings",\s*"a
 assert.match(settingsViewSource, /stdinEnabled:\s*true/);
 assert.match(settingsViewSource, /write\(root\.pendingPayload\s*\+\s*"\\n"\)/);
 assert.match(settingsViewSource, /signal\s+nousLoginRequested\(\)/);
+assert.match(settingsViewSource, /signal\s+showValueRequested\(bool\s+enabled\)/);
+assert.match(settingsViewSource, /label:\s*"Show usage value in the top bar"/);
 assert.match(settingsViewSource, /Log in with Nous Research/);
 assert.match(settingsViewSource, /Leave the terminal open until login completes/);
 assert.match(settingsViewSource, /model:\s*root\.snapshot\.keys/);
@@ -123,6 +132,31 @@ assert.deepEqual(JSON.parse(JSON.stringify(selectedWidgetSettings)), {
 });
 assert.equal(priorWidgetSettings.lastSelectedEntryId, undefined);
 assert.equal(model.settingsWithSelectedEntry({}, 'akitaonrails.ai-usagebar', ''), null);
+const hiddenValueSettings = model.settingsWithOverrides(
+  selectedWidgetSettings, 'akitaonrails.ai-usagebar', {showValue: false});
+assert.equal(hiddenValueSettings.showValue, false);
+assert.equal(hiddenValueSettings.lastSelectedEntryId, 'openrouter@personal');
+assert.equal(selectedWidgetSettings.showValue, undefined);
+const protectedSettings = model.settingsWithOverrides({}, 'akitaonrails.ai-usagebar', {
+  id: 'wrong-id', constructor: 'ignored', prototype: 'ignored', showValue: false
+});
+assert.equal(protectedSettings.id, 'akitaonrails.ai-usagebar');
+assert.notEqual(protectedSettings.constructor, 'ignored');
+assert.equal(protectedSettings.prototype, undefined);
+assert.equal(model.booleanSetting(undefined, true), true);
+assert.equal(model.booleanSetting(false, true), false);
+assert.equal(model.booleanSetting('false', true), false);
+assert.equal(model.booleanSetting('true', false), true);
+assert.equal(model.booleanSetting('invalid', true), true);
+
+assert.equal(model.barLabel(false, false, true, false, true, '29%'), '󰚩  29%');
+assert.equal(model.barLabel(false, false, false, false, true, '29%'), '󰚩');
+assert.equal(model.barLabel(true, false, true, false, true, '95%'), '󰚩  95%');
+assert.equal(model.barLabel(true, false, false, false, true, '95%'), '󰚩');
+assert.equal(model.barLabel(true, false, true, false, false, ''), '󰅙');
+assert.equal(model.barLabel(false, true, true, false, true, '29%'), '󰚩');
+assert.equal(model.barLabel(true, true, true, false, true, '95%'), '󰅙');
+assert.equal(model.barLabel(false, false, true, true, false, ''), '󰚩  …');
 
 assert.equal(model.headline(parsed.entries[0]).text, '29%');
 assert.equal(model.headline(parsed.entries[1]).severity, 'critical');
