@@ -82,6 +82,9 @@ rustix = { version = "1", features = ["process"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_Diagnostics_ToolHelp"] }
+
 [dev-dependencies]
 mockito = "1"
 insta = { version = "1", features = ["json"] }

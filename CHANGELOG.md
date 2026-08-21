@@ -13,6 +13,9 @@ Each release is also published at
 
 - Z.AI usage parsing accepts both `CREDIT_LIMIT` and the legacy
   `TOKENS_LIMIT` bucket names, including mixed responses during rollout.
+- Google Antigravity now discovers its dynamically assigned local server on
+  Windows through native process and TCP-table APIs, so CLI, TUI, and JSON
+  consumers no longer need to update `ANTIGRAVITY_LS_ADDRESS` after restarts.
 
 ## [1.3.1] — 2026-08-19
 

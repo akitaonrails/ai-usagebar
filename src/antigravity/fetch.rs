@@ -420,11 +420,13 @@ fn normalize_base(addr: &str) -> String {
 /// truncated to 15 bytes by the kernel, which `language_server` exactly fills.
 fn is_antigravity_process(comm: &str, exe: Option<&str>) -> bool {
     let comm = comm.trim().to_lowercase();
+    let comm = comm.strip_suffix(".exe").unwrap_or(&comm);
     if comm.contains("language_server") || comm == "agy" || comm == "antigravity" {
         return true;
     }
     exe.is_some_and(|p| {
-        let p = p.to_lowercase();
+        let p = p.to_lowercase().replace('\\', "/");
+        let p = p.strip_suffix(".exe").unwrap_or(&p);
         p.contains("antigravity") || p.ends_with("/agy")
     })
 }
@@ -535,7 +537,214 @@ fn parse_lsof_pcn(output: &str) -> Vec<u16> {
     ports
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(any(test, target_os = "windows"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WindowsTcpRow {
+    local_addr: [u8; 4],
+    local_port: u32,
+    pid: u32,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn decode_windows_process_name(raw: &[u16]) -> String {
+    let end = raw.iter().position(|&unit| unit == 0).unwrap_or(raw.len());
+    String::from_utf16_lossy(&raw[..end])
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn matching_windows_process_ids(processes: &[(u32, String)]) -> std::collections::HashSet<u32> {
+    processes
+        .iter()
+        .filter(|(_, name)| is_antigravity_process(name, None))
+        .map(|(pid, _)| *pid)
+        .collect()
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn matching_windows_ports(
+    pids: &std::collections::HashSet<u32>,
+    rows: &[WindowsTcpRow],
+) -> Vec<u16> {
+    rows.iter()
+        .filter(|row| pids.contains(&row.pid) && row.local_addr == [127, 0, 0, 1])
+        .filter_map(|row| {
+            let port = u16::from_be((row.local_port & u32::from(u16::MAX)) as u16);
+            (port != 0).then_some(port)
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn checked_windows_row_count(
+    buffer_len: usize,
+    rows_offset: usize,
+    row_size: usize,
+    declared: usize,
+) -> Option<usize> {
+    let rows_len = row_size.checked_mul(declared)?;
+    let end = rows_offset.checked_add(rows_len)?;
+    (row_size != 0 && end <= buffer_len).then_some(declared)
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsHandle(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsHandle {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_processes() -> Vec<(u32, String)> {
+    use std::mem::size_of;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let handle = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if handle == INVALID_HANDLE_VALUE {
+        return Vec::new();
+    }
+    let snapshot = WindowsHandle(handle);
+    let mut entry = PROCESSENTRY32W::default();
+    let Ok(entry_size) = u32::try_from(size_of::<PROCESSENTRY32W>()) else {
+        return Vec::new();
+    };
+    entry.dwSize = entry_size;
+    if unsafe { Process32FirstW(snapshot.0, &mut entry) } == 0 {
+        return Vec::new();
+    }
+
+    let mut processes = Vec::new();
+    loop {
+        processes.push((
+            entry.th32ProcessID,
+            decode_windows_process_name(&entry.szExeFile),
+        ));
+        if unsafe { Process32NextW(snapshot.0, &mut entry) } == 0 {
+            break;
+        }
+    }
+    processes
+}
+
+#[cfg(target_os = "windows")]
+fn parse_windows_tcp_rows(buffer: &[u32], used_bytes: usize) -> Vec<WindowsTcpRow> {
+    use std::mem::{offset_of, size_of, size_of_val};
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
+    };
+
+    let available = used_bytes.min(size_of_val(buffer));
+    let rows_offset = offset_of!(MIB_TCPTABLE_OWNER_PID, table);
+    if available < size_of::<u32>() || available < rows_offset {
+        return Vec::new();
+    }
+    let base = buffer.as_ptr().cast::<u8>();
+    let declared = unsafe { base.cast::<u32>().read_unaligned() } as usize;
+    if checked_windows_row_count(
+        available,
+        rows_offset,
+        size_of::<MIB_TCPROW_OWNER_PID>(),
+        declared,
+    )
+    .is_none()
+    {
+        return Vec::new();
+    }
+
+    let rows = unsafe { base.add(rows_offset).cast::<MIB_TCPROW_OWNER_PID>() };
+    (0..declared)
+        .map(|index| unsafe { rows.add(index).read_unaligned() })
+        .map(|row| WindowsTcpRow {
+            local_addr: row.dwLocalAddr.to_ne_bytes(),
+            local_port: row.dwLocalPort,
+            pid: row.dwOwningPid,
+        })
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn windows_tcp_rows() -> Vec<WindowsTcpRow> {
+    use std::mem::size_of;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, TCP_TABLE_OWNER_PID_LISTENER,
+    };
+    use windows_sys::Win32::Networking::WinSock::AF_INET;
+
+    let mut size = 0u32;
+    let status = unsafe {
+        GetExtendedTcpTable(
+            null_mut(),
+            &mut size,
+            0,
+            u32::from(AF_INET),
+            TCP_TABLE_OWNER_PID_LISTENER,
+            0,
+        )
+    };
+    if status != ERROR_INSUFFICIENT_BUFFER {
+        return Vec::new();
+    }
+
+    for _ in 0..3 {
+        let Some(words) = (size as usize)
+            .checked_add(size_of::<u32>() - 1)
+            .map(|bytes| bytes / size_of::<u32>())
+        else {
+            return Vec::new();
+        };
+        if words == 0 {
+            return Vec::new();
+        }
+        let mut buffer = Vec::<u32>::new();
+        if buffer.try_reserve_exact(words).is_err() {
+            return Vec::new();
+        }
+        buffer.resize(words, 0);
+        let mut used = size;
+        let status = unsafe {
+            GetExtendedTcpTable(
+                buffer.as_mut_ptr().cast(),
+                &mut used,
+                0,
+                u32::from(AF_INET),
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            )
+        };
+        if status == ERROR_INSUFFICIENT_BUFFER {
+            size = used;
+            continue;
+        }
+        if status != 0 {
+            return Vec::new();
+        }
+        return parse_windows_tcp_rows(&buffer, used as usize);
+    }
+    Vec::new()
+}
+
+#[cfg(target_os = "windows")]
+fn discover_ls_ports() -> Vec<u16> {
+    let pids = matching_windows_process_ids(&windows_processes());
+    if pids.is_empty() {
+        return Vec::new();
+    }
+    matching_windows_ports(&pids, &windows_tcp_rows())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn discover_ls_ports() -> Vec<u16> {
     Vec::new()
 }
@@ -1162,6 +1371,17 @@ mod tests {
             Some("/opt/antigravity/bin/helper")
         ));
         assert!(is_antigravity_process("antigravity", None));
+        assert!(is_antigravity_process("agy.exe", None));
+        assert!(is_antigravity_process("Antigravity.exe", None));
+        assert!(is_antigravity_process("language_server.exe", None));
+        assert!(is_antigravity_process(
+            "language_server_windows_x64.exe",
+            None
+        ));
+        assert!(is_antigravity_process(
+            "node.exe",
+            Some(r"C:\Users\u\AppData\Local\agy.exe")
+        ));
     }
 
     #[test]
@@ -1170,7 +1390,132 @@ mod tests {
         assert!(!is_antigravity_process("node", Some("/usr/bin/node")));
         // "legacy" ends in a substring of "/agy" but is not the CLI.
         assert!(!is_antigravity_process("legacy", Some("/usr/bin/legacy")));
+        assert!(!is_antigravity_process("legacy.exe", None));
+        assert!(!is_antigravity_process("not-agy.exe", None));
         assert!(!is_antigravity_process("", None));
+    }
+
+    #[test]
+    fn windows_process_names_decode_until_nul_and_tolerate_invalid_utf16() {
+        let mut raw: Vec<u16> = "agy.exe".encode_utf16().collect();
+        raw.extend([0, b'x' as u16]);
+        assert_eq!(decode_windows_process_name(&raw), "agy.exe");
+        assert_eq!(decode_windows_process_name(&[0xd800]), "�");
+        assert_eq!(decode_windows_process_name(&[]), "");
+    }
+
+    #[test]
+    fn windows_process_filter_keeps_only_antigravity_pids() {
+        let processes = vec![
+            (10, "agy.exe".to_string()),
+            (20, "language_server_windows_x64.exe".to_string()),
+            (30, "sshd.exe".to_string()),
+        ];
+        let pids = matching_windows_process_ids(&processes);
+        assert_eq!(pids, std::collections::HashSet::from([10, 20]));
+    }
+
+    #[test]
+    fn windows_listener_filter_joins_pid_loopback_and_port() {
+        let pids = std::collections::HashSet::from([10]);
+        let rows = [
+            WindowsTcpRow {
+                local_addr: [127, 0, 0, 1],
+                local_port: u32::from(59870u16.to_be()),
+                pid: 10,
+            },
+            WindowsTcpRow {
+                local_addr: [127, 0, 0, 1],
+                local_port: u32::from(59868u16.to_be()),
+                pid: 10,
+            },
+            WindowsTcpRow {
+                local_addr: [127, 0, 0, 1],
+                local_port: u32::from(59870u16.to_be()),
+                pid: 10,
+            },
+            WindowsTcpRow {
+                local_addr: [0, 0, 0, 0],
+                local_port: u32::from(50000u16.to_be()),
+                pid: 10,
+            },
+            WindowsTcpRow {
+                local_addr: [127, 0, 0, 1],
+                local_port: u32::from(50001u16.to_be()),
+                pid: 99,
+            },
+            WindowsTcpRow {
+                local_addr: [127, 0, 0, 1],
+                local_port: 0,
+                pid: 10,
+            },
+        ];
+        assert_eq!(matching_windows_ports(&pids, &rows), vec![59868, 59870]);
+    }
+
+    #[test]
+    fn windows_table_bounds_reject_truncation_and_overflow() {
+        assert_eq!(checked_windows_row_count(52, 4, 24, 2), Some(2));
+        assert_eq!(checked_windows_row_count(51, 4, 24, 2), None);
+        assert_eq!(checked_windows_row_count(4, 4, 24, 0), Some(0));
+        assert_eq!(checked_windows_row_count(52, 4, 0, 2), None);
+        assert_eq!(
+            checked_windows_row_count(usize::MAX, 4, 24, usize::MAX),
+            None
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_tcp_table_parser_copies_complete_rows_only() {
+        use std::mem::{offset_of, size_of};
+        use windows_sys::Win32::NetworkManagement::IpHelper::{
+            MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID,
+        };
+
+        let offset = offset_of!(MIB_TCPTABLE_OWNER_PID, table);
+        let used = offset + 2 * size_of::<MIB_TCPROW_OWNER_PID>();
+        let words = used.div_ceil(size_of::<u32>());
+        let mut buffer = vec![0u32; words];
+        let first = MIB_TCPROW_OWNER_PID {
+            dwLocalAddr: u32::from_ne_bytes([127, 0, 0, 1]),
+            dwLocalPort: u32::from(59868u16.to_be()),
+            dwOwningPid: 10,
+            ..Default::default()
+        };
+        let second = MIB_TCPROW_OWNER_PID {
+            dwLocalAddr: u32::from_ne_bytes([127, 0, 0, 1]),
+            dwLocalPort: u32::from(59870u16.to_be()),
+            dwOwningPid: 10,
+            ..Default::default()
+        };
+        unsafe {
+            buffer.as_mut_ptr().write_unaligned(2);
+            let rows = buffer
+                .as_mut_ptr()
+                .cast::<u8>()
+                .add(offset)
+                .cast::<MIB_TCPROW_OWNER_PID>();
+            rows.write_unaligned(first);
+            rows.add(1).write_unaligned(second);
+        }
+
+        assert_eq!(
+            parse_windows_tcp_rows(&buffer, used),
+            vec![
+                WindowsTcpRow {
+                    local_addr: [127, 0, 0, 1],
+                    local_port: u32::from(59868u16.to_be()),
+                    pid: 10,
+                },
+                WindowsTcpRow {
+                    local_addr: [127, 0, 0, 1],
+                    local_port: u32::from(59870u16.to_be()),
+                    pid: 10,
+                },
+            ]
+        );
+        assert!(parse_windows_tcp_rows(&buffer, used - 1).is_empty());
     }
 
     #[cfg(target_os = "macos")]
