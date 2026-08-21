@@ -9,6 +9,11 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- Z.AI usage parsing accepts both `CREDIT_LIMIT` and the legacy
+  `TOKENS_LIMIT` bucket names, including mixed responses during rollout.
+
 ## [1.3.1] — 2026-08-19
 
 ### Fixed
