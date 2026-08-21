@@ -16,7 +16,8 @@ metrics expand to an empty string unless noted otherwise.
 | Moonshot | `msh` | Grok | `grk` |
 | SuperGrok | `sgk` | Anthropic API | `aac` |
 | Antigravity | `agy` | Cursor | `cur` |
-| MiniMax | `mmx` | Kiro CLI | `kir` |
+| GitHub Copilot | `ghc` | MiniMax | `mmx` |
+| Kiro CLI | `kir` |  |  |
 
 Use `{session_pct}`, `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}`
 when one format must work across providers. Providers without matching time
@@ -165,6 +166,24 @@ Cursor's dashboard also reports overage and per-member team spend; ai-usagebar
 does not. Team payloads without `individualUsage.plan` fall back to the
 dashboard's display messages and add `(team)` to the inferred plan. This path
 has not been verified against a live team account.
+
+## GitHub Copilot
+
+`{copilot_headline}`, `{copilot_login}`, `{copilot_plan}`, `{copilot_reset}`,
+`{copilot_primary_pct}`, `{copilot_chat_state}`, `{copilot_chat_pct}`,
+`{copilot_chat_remaining}`, `{copilot_chat_entitlement}`,
+`{copilot_completions_state}`, `{copilot_completions_pct}`,
+`{copilot_completions_remaining}`, `{copilot_completions_entitlement}`,
+`{copilot_premium_state}`, `{copilot_premium_pct}`,
+`{copilot_premium_remaining}`, `{copilot_premium_entitlement}`
+
+- `{copilot_premium_*}` is the Premium Requests pool when the account has one.
+- A pool whose state is `n/a` is not part of that plan (`has_quota = false`);
+  it is not the same as `unlimited`.
+- The default bar format is `{copilot_headline}`. It shows Premium Requests
+  when present, otherwise falls back to chat/completions.
+- `{plan}` aliases `Copilot <Plan>`. `{session_pct}` aliases the primary pool
+  percentage, and `{weekly_pct}` the next-most-useful secondary pool.
 
 ## Kiro CLI
 

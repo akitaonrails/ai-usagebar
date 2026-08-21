@@ -10,7 +10,7 @@
 # is selected when the TUI opens. Comment out to default to Anthropic.
 # Valid: anthropic | anthropic_api | openai | zai | openrouter | deepseek
 #        | kimi | kilo | novita | moonshot | grok | supergrok | antigravity
-#        | cursor | minimax | kiro | nous | opencode-go
+#        | cursor | copilot | minimax | kiro | nous | opencode-go
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
 # open directly on a vendor's tab instead.
 # primary = "anthropic"
@@ -240,6 +240,43 @@ enabled = false
 #   macOS:   ~/Library/Application Support/cursor/auth.json
 #   Windows: %APPDATA%\cursor\auth.json
 # agent_auth_path = "/home/you/.config/cursor/auth.json"
+
+# GitHub Copilot — same live quota endpoint the official Copilot clients poll.
+# Prefer the already-authenticated `gh` CLI path; an explicit GitHub token/PAT is
+# optional for headless or custom setups. Supports multiple accounts (personal,
+# work, etc.) via `[[copilot.accounts]]` array entries.
+[copilot]
+# Disabled by default — enable once you've run `gh auth login`, or once you set
+# a token below/in the environment.
+enabled = false
+# Preferred explicit token env var. `GH_TOKEN` is also checked automatically
+# before falling back to the `gh` CLI login.
+token_env = "GITHUB_TOKEN"
+# token = "github_pat_..."           # optional inline fallback; chmod 600 the file if you use it
+# api_key = "github_pat_..."         # compatibility alias for `token`
+# Trusted GitHub CLI binary. Leave commented out to use `gh` from PATH.
+# Note: some shell tool-version managers (mise, asdf, etc.) install `gh` as a
+# shim that prints a banner line to stdout before delegating — that breaks
+# JSON parsing here. If you see a "copilot gh response: expected value at
+# line 1 column 1" error, point this at the real binary, e.g. `which -a gh`
+# and pick the ELF one (often /usr/bin/gh), not the shim.
+# gh_binary = "/usr/bin/gh"
+# GitHub Enterprise hostname — set this if you use GitHub Enterprise Cloud
+# with data residency (a "<tenant>.ghe.com" host) or an on-prem GitHub
+# Enterprise Server. Leave unset for public github.com. When set, the `gh`
+# CLI path runs `gh api --hostname <hostname> ...` (requires
+# `gh auth login --hostname <hostname>` once); the explicit-token HTTP path
+# resolves the matching enterprise API host itself.
+# Ignored if `accounts` is non-empty (accounts take precedence).
+# hostname = "acme.ghe.com"
+# Multiple GitHub accounts — each appears as a separate TUI tab / panel entry.
+# Leave empty or omit to use the single-account mode above (hostname + token).
+# [[copilot.accounts]]
+# label = "personal"
+# hostname = "github.com"  # or omit for default
+# [[copilot.accounts]]
+# label = "work"
+# hostname = "work.ghe.com"
 
 [minimax]
 # Disabled by default — enable once you've set a key (env var or inline).

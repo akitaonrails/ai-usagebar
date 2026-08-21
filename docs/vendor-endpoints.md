@@ -21,6 +21,7 @@ defensive and includes opt-in live tests for catching response changes.
 | **SuperGrok** | Official Grok Build `x.ai/billing` ACP extension | Current weekly/monthly included-credit %, prepaid API balance, reset | No — widget/TUI only |
 | **Anthropic API** | `api.anthropic.com/v1/organizations/cost_report` (Admin API; documented) | Month-to-date spend ($, excludes Priority Tier), optional spend-vs-limit % | No — widget/TUI only |
 | **Cursor** | `cursor.com/api/usage-summary` (undocumented; the dashboard's own frontend) | Two included-usage pools this billing cycle — Cursor Models (Auto/Composer) % and Other Models (named/API) % — plus plan, reset, on-demand | Yes |
+| **GitHub Copilot** | `api.github.com/copilot_internal/user` on github.com, or the matching enterprise API host (`api.<tenant>.ghe.com` for GitHub Enterprise Cloud with data residency, `<host>/api/v3` for on-prem GHES) via `[copilot] hostname` (undocumented; same endpoint the official Copilot clients poll) | Premium Requests, Chat, and Completions pools with plan and reset; unlimited and not-applicable pools stay distinct | Yes |
 | **Kiro CLI** | `codewhisperer.<region>.amazonaws.com` `GetUsageLimits` (undocumented; the same call kiro-cli's own `/usage` slash command makes) | Single credit pool this cycle — used/limit/%, plan, reset | No — widget/TUI only |
 | **Nous Research** | `portal.nousresearch.com/api/oauth/account` (OAuth-authenticated Portal account response) | Subscription usage %, subscription credits, top-up/purchased credits, total usable credits, renewal | Yes |
 | **OpenCode Go** | `opencode.ai/zen/go/v1/usage` | Rolling, weekly, and monthly `percent` windows with absolute reset timestamps | Yes |
@@ -35,6 +36,7 @@ defensive and includes opt-in live tests for catching response changes.
 | Z.AI | Reverse-engineered from a third-party plugin. Treat this as the most fragile integration. |
 | Kimi | Community-confirmed `/coding/v1/usages` route used by third-party quota tools. Drift is possible. |
 | Cursor | Undocumented endpoint called by Cursor's dashboard. Its shape may change with Cursor pricing. |
+| GitHub Copilot | Undocumented endpoint used by GitHub's own Copilot clients. It has been stable enough for community tools, but drift is still possible. |
 | MiniMax | The Token Plan route is official, but no formal response schema is published. |
 | Kiro CLI | `GetUsageLimits` is the same undocumented CodeWhisperer operation used by kiro-cli's `/usage` command. AWS SSO OIDC `CreateToken`, used for refresh, is documented. |
 

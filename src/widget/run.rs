@@ -13,6 +13,7 @@ use crate::anthropic_api;
 use crate::antigravity;
 use crate::cache::{Cache, DEFAULT_TTL};
 use crate::config::Config;
+use crate::copilot;
 use crate::cursor;
 use crate::deepseek;
 use crate::error::{AppError, Result};
@@ -155,6 +156,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Supergrok => supergrok_output(cli, &config).await,
         Vendor::Antigravity => antigravity_output(cli, &config).await,
         Vendor::Cursor => cursor_output(cli, &config).await,
+        Vendor::Copilot => copilot_output(cli, &config).await,
         Vendor::Minimax => minimax_output(cli, &config).await,
         Vendor::Kiro => kiro_output(cli, &config).await,
         Vendor::NousResearch => nous_output(cli).await,
@@ -289,6 +291,32 @@ async fn cursor_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let vendor_outcome: VendorOutcome = outcome.into();
     let opts = RenderOpts::from_cli(cli);
     Ok(cursor::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn copilot_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "copilot")?;
+    let endpoints = copilot::fetch::Endpoints::from_config(&config.copilot);
+    let outcome =
+        match copilot::fetch_snapshot(&client, &config.copilot, &cache, &endpoints, DEFAULT_TTL)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(copilot::vendor::render(
         &vendor_outcome,
         &snap,
         &theme,

@@ -13,7 +13,7 @@ settings.
 # primary = "anthropic"   # anthropic | anthropic_api | openai | zai
 #                         # | openrouter | deepseek | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | antigravity | cursor
-#                         # | minimax | kiro
+#                         # | copilot | minimax | kiro
 
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui
@@ -108,6 +108,15 @@ enabled = true             # disabled by default; enable once you've signed in t
 # fallback when the IDE database is absent.
 # db_path = "/home/you/.config/Cursor/User/globalStorage/state.vscdb"
 # agent_auth_path = "/home/you/.config/cursor/auth.json"
+
+[copilot]
+enabled = true             # disabled by default; enable once `gh auth login` or a token is set
+# Same live quota endpoint the official Copilot clients poll.
+token_env = "GITHUB_TOKEN" # `GH_TOKEN` is also checked automatically
+# token = "github_pat_..." # optional inline fallback; chmod 600 the file if inline
+# api_key = "github_pat_..." # compatibility alias for `token`
+# gh_binary = "/usr/bin/gh" # optional trusted GitHub CLI path override
+# hostname = "acme.ghe.com" # GitHub Enterprise Cloud (data residency) or GHES hostname; unset = public github.com
 
 [kiro]
 enabled = true             # disabled by default; enable once you've run `kiro-cli login`

@@ -52,6 +52,7 @@ pub struct Config {
     pub supergrok: SuperGrokConfig,
     pub antigravity: AntigravityConfig,
     pub cursor: CursorConfig,
+    pub copilot: CopilotConfig,
     pub minimax: MinimaxConfig,
     pub kiro: KiroConfig,
     pub nous: NousConfig,
@@ -760,6 +761,69 @@ pub struct CursorConfig {
     pub agent_auth_path: Option<PathBuf>,
 }
 
+/// GitHub Copilot reads its quota either with an explicit GitHub token or
+/// GitHub Copilot — single account (legacy) or multiple accounts via
+/// `[[copilot.accounts]]` array entries. Through the already-authenticated `gh`
+/// CLI. Opt-in like Cursor/Kiro: the endpoint is undocumented and should never
+/// affect existing installs until the user enables it explicitly.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CopilotConfig {
+    pub enabled: bool,
+    /// Preferred explicit token env var; `GH_TOKEN` and `GITHUB_TOKEN` are also
+    /// checked as built-in fallbacks before the `gh` CLI path is used.
+    pub token_env: String,
+    /// Inline GitHub token / PAT fallback.
+    pub token: Option<String>,
+    /// Compatibility alias for the same inline token.
+    pub api_key: Option<String>,
+    /// Trusted `gh` executable. Defaults to `gh` on PATH.
+    pub gh_binary: Option<PathBuf>,
+    /// GitHub Enterprise hostname (e.g. `acme.ghe.com` for a GitHub Enterprise
+    /// Cloud tenant with data residency, or an on-prem GHES hostname). Left
+    /// unset (or `"github.com"`), quota is read from the public
+    /// `api.github.com`. When set, the `gh` CLI path is invoked with
+    /// `--hostname <hostname>` (requires `gh auth login --hostname
+    /// <hostname>` once), and the explicit-token HTTP path resolves the
+    /// matching enterprise API host itself.
+    /// Ignored if `accounts` is non-empty (accounts array takes precedence).
+    pub hostname: Option<String>,
+    /// Multiple GitHub accounts (personal, work, etc.), each with their own
+    /// hostname and optional token. Merged with the explicit settings above
+    /// (explicit account entries take precedence). Each account appears as a
+    /// separate tab in the TUI and Omarchy panel.
+    pub accounts: Vec<CopilotAccountConfig>,
+}
+
+impl Default for CopilotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            token_env: "GITHUB_TOKEN".to_string(),
+            token: None,
+            api_key: None,
+            gh_binary: None,
+            hostname: None,
+            accounts: Vec::new(),
+        }
+    }
+}
+
+/// A single GitHub account for Copilot (personal, work, etc.).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CopilotAccountConfig {
+    /// Display label for this account (shown as a TUI tab / panel entry).
+    pub label: String,
+    /// GitHub hostname (github.com for personal, acme.ghe.com for enterprise).
+    /// Defaults to "github.com" if omitted.
+    pub hostname: Option<String>,
+    /// Optional token env var override for this account.
+    /// Falls back to the parent CopilotConfig's token_env if not set.
+    pub token_env: Option<String>,
+    /// Optional inline token fallback for this account.
+    pub token: Option<String>,
+}
+
 /// Kiro CLI reads its quota through the AWS SSO OIDC session kiro-cli already
 /// wrote to its own local `data.sqlite3` — no API key, but (like Cursor) a
 /// real on-disk path that can need overriding.
@@ -882,6 +946,7 @@ impl Config {
         expand_tilde_opt(&mut self.openai.codex_auth_path);
         expand_tilde_opt(&mut self.cursor.db_path);
         expand_tilde_opt(&mut self.cursor.agent_auth_path);
+        expand_tilde_opt(&mut self.copilot.gh_binary);
         expand_tilde_opt(&mut self.kiro.db_path);
         self.supergrok.grok_binary = expand_tilde(&self.supergrok.grok_binary);
         expand_tilde_opt(&mut self.supergrok.auth_path);
@@ -906,6 +971,8 @@ impl Config {
             self.moonshot.api_key.as_deref(),
             self.grok.api_key.as_deref(),
             self.anthropic_api.api_key.as_deref(),
+            self.copilot.token.as_deref(),
+            self.copilot.api_key.as_deref(),
             self.opencode_go.api_key.as_deref(),
         ]
         .into_iter()
@@ -951,6 +1018,7 @@ impl Config {
             VendorId::Supergrok => self.supergrok.enabled,
             VendorId::Antigravity => self.antigravity.enabled,
             VendorId::Cursor => self.cursor.enabled,
+            VendorId::Copilot => self.copilot.enabled,
             VendorId::Minimax => self.minimax.enabled,
             VendorId::Kiro => self.kiro.enabled,
             VendorId::NousResearch => self.nous.enabled,
@@ -1007,6 +1075,16 @@ impl Config {
         if self.supergrok.grok_binary.as_os_str().is_empty() {
             return Err(AppError::Other(
                 "[supergrok] grok_binary must not be empty".into(),
+            ));
+        }
+        if self
+            .copilot
+            .gh_binary
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(AppError::Other(
+                "[copilot] gh_binary must not be empty".into(),
             ));
         }
         let mut labels = HashSet::new();
@@ -2247,5 +2325,45 @@ credentials_path = "~/w/.credentials.json"
             default_account_credentials_path(cfg, "work"),
             Path::new("/home/u/.config/ai-usagebar/accounts/work/.credentials.json"),
         );
+    }
+
+    #[test]
+    fn copilot_multi_account_config_parses_correctly() {
+        let f = write_toml(
+            r#"
+            [copilot]
+            enabled = true
+            
+            [[copilot.accounts]]
+            label = "personal"
+            hostname = "github.com"
+            
+            [[copilot.accounts]]
+            label = "work"
+            hostname = "work.ghe.com"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert!(c.is_enabled(VendorId::Copilot));
+        assert_eq!(c.copilot.accounts.len(), 2);
+        assert_eq!(c.copilot.accounts[0].label, "personal");
+        assert_eq!(c.copilot.accounts[0].hostname, Some("github.com".to_string()));
+        assert_eq!(c.copilot.accounts[1].label, "work");
+        assert_eq!(c.copilot.accounts[1].hostname, Some("work.ghe.com".to_string()));
+    }
+
+    #[test]
+    fn copilot_single_account_legacy_mode_remains_compatible() {
+        let f = write_toml(
+            r#"
+            [copilot]
+            enabled = true
+            hostname = "github.com"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        assert!(c.is_enabled(VendorId::Copilot));
+        assert_eq!(c.copilot.hostname, Some("github.com".to_string()));
+        assert!(c.copilot.accounts.is_empty(), "legacy single-account mode has no accounts array");
     }
 }

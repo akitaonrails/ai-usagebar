@@ -1,6 +1,6 @@
 # ai-usagebar
 
-Native Omarchy Quattro panel, Waybar widget, and tabbed TUI for AI plan usage across **Claude**, **Codex/ChatGPT**, **Z.AI (GLM)**, **OpenRouter**, **DeepSeek**, **Kimi**, **Nous Research**, **OpenCode Go**, and other supported AI coding services.
+Native Omarchy Quattro panel, Waybar widget, and tabbed TUI for AI plan usage across **Claude**, **Codex/ChatGPT**, **GitHub Copilot**, **Z.AI (GLM)**, **OpenRouter**, **DeepSeek**, **Kimi**, **Nous Research**, **OpenCode Go**, and other supported AI coding services.
 
 ai-usagebar began as a Rust port of
 [`claudebar`](https://github.com/mryll/claudebar) and remains drop-in
@@ -132,6 +132,7 @@ come from environment variables or `config.toml`.
 | OpenRouter | API key (`OPENROUTER_API_KEY` env or `[openrouter] api_key` in config) | Set either. |
 | DeepSeek | API key (`DEEPSEEK_API_KEY` or config) | Set either and opt in. |
 | Kimi | API key (`KIMI_API_KEY` or config) | Set either and opt in. |
+| GitHub Copilot | `gh` CLI login or GitHub token (`GITHUB_TOKEN` / `GH_TOKEN` / config) | Run `gh auth login` once, or set a token; opt-in. Supports GitHub Enterprise Cloud (data residency, `<tenant>.ghe.com`) and on-prem GHES via `[copilot] hostname`. |
 | Kilo | API key (`KILO_API_KEY` env or `[kilo] api_key` in config) | Set either. Opt-in. For a team balance, also set `[kilo] organization_id`; omit it for the personal balance. |
 | Novita | API key (`NOVITA_API_KEY` env or `[novita] api_key` in config) | Set either. Opt-in. |
 | Moonshot | API key (`MOONSHOT_API_KEY` or config) | Opt in. Set region `cn` for CNY; `global` uses USD. |
@@ -185,7 +186,7 @@ rather than silently querying the wrong URL.
 ### Enabling a vendor
 
 `enabled = true` is what makes a vendor fetch. Anthropic API, DeepSeek, Kimi,
-Kilo, Novita, Moonshot, Grok, SuperGrok, Antigravity, Cursor, MiniMax, and Kiro CLI all default to **disabled** so that existing
+GitHub Copilot, Kilo, Novita, Moonshot, Grok, SuperGrok, Antigravity, Cursor, MiniMax, and Kiro CLI all default to **disabled** so that existing
 installs are unaffected until you opt in. Use either method:
 
 - Use the gear or `s` in the Omarchy panel, or run

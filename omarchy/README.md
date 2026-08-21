@@ -36,6 +36,33 @@ omarchy plugin update akitaonrails.ai-usagebar
 omarchy plugin remove akitaonrails.ai-usagebar
 ```
 
+## Copilot Setup
+
+To display GitHub Copilot quota in the Omarchy bar and panel:
+
+1. **Authenticate with GitHub CLI:**
+   - For github.com: `gh auth login`
+   - For GitHub Enterprise Cloud (GHE): `gh auth login --hostname <your-ghe-host>`
+
+2. **Enable Copilot in config:**
+   Add to `~/.config/ai-usagebar/config.toml`:
+   ```toml
+   [copilot]
+   enabled = true
+   # For github.com (omit if using public GitHub):
+   # hostname = "your-ghe-host.ghe.com"
+   # If using mise or another shim that pollutes stdout, point to the real binary:
+   # gh_binary = "/usr/bin/gh"
+   ```
+
+3. **Provider switching:**
+   The Copilot vendor appears in the Omarchy panel provider list (middle-click the
+   bar button to cycle, or `h`/`l` in the panel). Select it to view your current
+   Copilot quota and reset date.
+
+See the main [`config.example.toml`](../config.example.toml) for all available
+Copilot options (multiple accounts, custom API tokens, etc.).
+
 ## Controls
 
 - Bar: left-click opens the native Quattro usage panel; right-click

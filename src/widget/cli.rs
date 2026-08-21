@@ -293,6 +293,7 @@ pub enum Vendor {
     Supergrok,
     Antigravity,
     Cursor,
+    Copilot,
     Minimax,
     Kiro,
     #[value(name = "nous")]
@@ -318,6 +319,7 @@ impl Vendor {
             Vendor::Supergrok => crate::vendor::VendorId::Supergrok,
             Vendor::Antigravity => crate::vendor::VendorId::Antigravity,
             Vendor::Cursor => crate::vendor::VendorId::Cursor,
+            Vendor::Copilot => crate::vendor::VendorId::Copilot,
             Vendor::Minimax => crate::vendor::VendorId::Minimax,
             Vendor::Kiro => crate::vendor::VendorId::Kiro,
             Vendor::NousResearch => crate::vendor::VendorId::NousResearch,
@@ -408,6 +410,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Supergrok => Vendor::Supergrok,
         crate::vendor::VendorId::Antigravity => Vendor::Antigravity,
         crate::vendor::VendorId::Cursor => Vendor::Cursor,
+        crate::vendor::VendorId::Copilot => Vendor::Copilot,
         crate::vendor::VendorId::Minimax => Vendor::Minimax,
         crate::vendor::VendorId::Kiro => Vendor::Kiro,
         crate::vendor::VendorId::NousResearch => Vendor::NousResearch,

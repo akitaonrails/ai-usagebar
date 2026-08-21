@@ -263,6 +263,71 @@ impl CursorSnapshot {
     }
 }
 
+/// GitHub Copilot — quota from `api.github.com/copilot_internal/user`, the same
+/// live account endpoint GitHub's own Copilot clients poll. One account can
+/// expose up to three pools: chat, completions, and premium interactions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopilotSnapshot {
+    /// GitHub login the quota belongs to. Used for cache isolation and shown in
+    /// the tooltip; never used as an authentication secret.
+    pub login: String,
+    /// Human-facing plan label, title-cased from `copilot_plan`.
+    pub plan: String,
+    pub chat: CopilotPool,
+    pub completions: CopilotPool,
+    pub premium_interactions: CopilotPool,
+    /// Quota reset time (`quota_reset_date_utc`).
+    pub reset_at: Option<DateTime<Utc>>,
+}
+
+impl CopilotSnapshot {
+    /// Copilot's user-facing headline pool is premium interactions when present;
+    /// plans with no premium pool fall back to the most-exhausted applicable
+    /// chat/completions pool.
+    pub fn primary_pct(&self) -> Option<i32> {
+        self.premium_interactions.percent_used().or_else(|| {
+            [
+                self.chat.percent_used(),
+                self.completions.percent_used(),
+                self.premium_interactions.percent_used(),
+            ]
+            .into_iter()
+            .flatten()
+            .max()
+        })
+    }
+
+    pub fn secondary_pct(&self) -> Option<i32> {
+        self.chat
+            .percent_used()
+            .or_else(|| self.completions.percent_used())
+            .or_else(|| self.premium_interactions.percent_used())
+    }
+}
+
+/// One Copilot quota pool. `NotApplicable` is distinct from `Unlimited`: the
+/// former means this account simply has no such pool (`has_quota: false`), while
+/// the latter means the product is uncapped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CopilotPool {
+    Metered {
+        entitlement: u64,
+        remaining: u64,
+        percent_used: i32,
+    },
+    Unlimited,
+    NotApplicable,
+}
+
+impl CopilotPool {
+    pub fn percent_used(&self) -> Option<i32> {
+        match self {
+            Self::Metered { percent_used, .. } => Some(*percent_used),
+            Self::Unlimited | Self::NotApplicable => None,
+        }
+    }
+}
+
 /// Kiro CLI (AWS CodeWhisperer / Q Developer backend) — a single credit pool
 /// from `AmazonCodeWhispererService.GetUsageLimits`, the same call kiro-cli's
 /// own `/usage` slash command makes. Authenticated with the AWS SSO OIDC
@@ -352,6 +417,7 @@ pub enum VendorSnapshot {
     AnthropicApi(AnthropicApiSnapshot),
     Antigravity(AntigravitySnapshot),
     Cursor(CursorSnapshot),
+    Copilot(CopilotSnapshot),
     Minimax(MinimaxSnapshot),
     Kiro(KiroSnapshot),
     NousResearch(crate::nous::types::AccountSnapshot),

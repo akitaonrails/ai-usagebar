@@ -13,6 +13,11 @@ Each release is also published at
 
 - Added Nous Research subscription usage through its OAuth device flow and
   OpenCode Go rolling, weekly, and monthly usage through its API key.
+- **Multi-account GitHub Copilot support.** Configure multiple GitHub Copilot
+  accounts (personal and work/enterprise) in `[[copilot.accounts]]`, each with
+  a separate hostname. Each account appears as a distinct vendor tab in the TUI,
+  Omarchy panel, and JSON output with independent quota tracking and caching.
+  Backward compatible with single-account `[copilot] hostname` mode.
 
 ### Fixed
 

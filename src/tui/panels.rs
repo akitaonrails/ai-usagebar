@@ -180,6 +180,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             s.plan.clone(),
             vec![pct("auto", s.auto_pct), pct("premium", s.api_pct)],
         ),
+        VendorSnapshot::Copilot(s) => (
+            s.plan.clone(),
+            copilot_compact_cells(s)
+                .into_iter()
+                .map(|(label, pct_value)| pct(label, pct_value))
+                .collect(),
+        ),
         VendorSnapshot::Minimax(s) => (
             s.plan.clone(),
             vec![
@@ -250,6 +257,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
             Some(s.session.utilization_pct.max(s.weekly.utilization_pct))
         }
         VendorSnapshot::Cursor(s) => (!s.unlimited).then_some(s.total_pct),
+        VendorSnapshot::Copilot(s) => s.primary_pct(),
         VendorSnapshot::Minimax(s) => Some(s.session.utilization_pct.max(s.weekly.utilization_pct)),
         VendorSnapshot::Kiro(s) => Some(s.pct()),
         VendorSnapshot::NousResearch(s) => s
@@ -332,6 +340,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::SuperGrok(s) => supergrok_sections(s, now),
                 VendorSnapshot::Antigravity(s) => antigravity_sections(s, now),
                 VendorSnapshot::Cursor(s) => cursor_sections(s, now),
+                VendorSnapshot::Copilot(s) => copilot_sections(s, now),
                 VendorSnapshot::Minimax(s) => minimax_sections(s, now, pace_tolerance),
                 VendorSnapshot::Kiro(s) => kiro_sections(s, now),
                 VendorSnapshot::NousResearch(s) => nous_sections(s, now),
@@ -722,6 +731,83 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
         value: countdown::format(s.reset_at, now),
     });
     v
+}
+
+fn copilot_compact_cells(s: &crate::usage::CopilotSnapshot) -> Vec<(&'static str, i32)> {
+    let mut cells = Vec::new();
+    if let Some(pct) = s.premium_interactions.percent_used() {
+        cells.push(("premium", pct));
+    }
+    if let Some(pct) = s.chat.percent_used() {
+        cells.push(("chat", pct));
+    }
+    if let Some(pct) = s.completions.percent_used() {
+        cells.push(("cmp", pct));
+    }
+    if cells.is_empty() {
+        cells.push(("—", 0));
+    }
+    cells
+}
+
+fn copilot_sections(s: &crate::usage::CopilotSnapshot, now: DateTime<Utc>) -> SectionBuilder {
+    let mut sections = SectionBuilder::new(vec![Section::Title {
+        left: format!("GitHub Copilot {}", s.plan),
+        right: None,
+    }]);
+    sections.push(Section::Spacer);
+    copilot_pool_section(
+        &mut sections,
+        "Premium requests",
+        &s.premium_interactions,
+        s.reset_at,
+    );
+    sections.push(Section::Spacer);
+    copilot_pool_section(&mut sections, "Chat", &s.chat, s.reset_at);
+    sections.push(Section::Spacer);
+    copilot_pool_section(&mut sections, "Completions", &s.completions, s.reset_at);
+    sections.push(Section::Spacer);
+    sections.push(Section::Text {
+        label: "Account".into(),
+        value: s.login.clone(),
+    });
+    sections.push(Section::Text {
+        label: "Resets".into(),
+        value: countdown::format(s.reset_at, now),
+    });
+    sections
+}
+
+fn copilot_pool_section(
+    sections: &mut SectionBuilder,
+    label: &str,
+    pool: &crate::usage::CopilotPool,
+    reset_at: Option<DateTime<Utc>>,
+) {
+    match pool {
+        crate::usage::CopilotPool::Metered {
+            entitlement,
+            remaining,
+            percent_used,
+        } => sections.push_metric(
+            Section::Metric {
+                label: label.into(),
+                pct: (*percent_used).clamp(0, 100) as u16,
+                severity: severity_for(*percent_used),
+                value_label: format!("{percent_used}%"),
+                footnote: format!("{remaining} of {entitlement} left"),
+            },
+            reset_at,
+        ),
+        crate::usage::CopilotPool::Unlimited => sections.push(Section::Text {
+            label: label.into(),
+            value: "Unlimited".into(),
+        }),
+        crate::usage::CopilotPool::NotApplicable => sections.push(Section::Text {
+            label: label.into(),
+            value: "Not included on this plan".into(),
+        }),
+    }
 }
 
 fn nous_sections(s: &crate::nous::types::AccountSnapshot, now: DateTime<Utc>) -> SectionBuilder {

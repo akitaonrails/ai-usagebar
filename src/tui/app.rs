@@ -135,6 +135,15 @@ fn build_tabs(config: &Config, desktop_labels: &[String]) -> Vec<TabId> {
             for label in desktop_labels {
                 tabs.push(TabId::desktop_account(label.clone()));
             }
+        } else if vendor == VendorId::Copilot && !config.copilot.accounts.is_empty() {
+            // Multiple Copilot accounts: create one tab per account
+            for acct in &config.copilot.accounts {
+                tabs.push(TabId {
+                    vendor: VendorId::Copilot,
+                    account: Some(acct.label.clone()),
+                    desktop: false,
+                });
+            }
         } else {
             tabs.push(TabId::vendor(vendor));
         }
@@ -669,6 +678,24 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                 &cache,
                 &endpoints,
                 DEFAULT_TTL,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
+        VendorId::Copilot => {
+            let cache = if let Some(label) = tab.account.as_deref() {
+                crate::cache::Cache::for_vendor(&format!("copilot@{}", label))?
+            } else {
+                crate::cache::Cache::for_vendor("copilot")?
+            };
+            let endpoints = crate::copilot::fetch::Endpoints::from_config(&config.copilot);
+            let outcome = crate::copilot::fetch_snapshot_with_account(
+                client,
+                &config.copilot,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+                tab.account.as_deref(),
             )
             .await?;
             Ok(outcome.into())
@@ -1257,4 +1284,70 @@ mod tests {
             Some(&TabId::vendor(VendorId::Anthropic))
         );
     }
+
+    fn config_with_copilot_accounts(labels: &[&str]) -> Config {
+        let mut config = Config::default();
+        // Keep only Copilot enabled to test account expansion.
+        config.anthropic.enabled = false;
+        config.openai.enabled = false;
+        config.zai.enabled = false;
+        config.openrouter.enabled = false;
+        config.copilot.enabled = true;
+        config.copilot.accounts = labels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let hostname = if i == 0 {
+                    "github.com".to_string()
+                } else {
+                    "work.ghe.com".to_string()
+                };
+                crate::config::CopilotAccountConfig {
+                    label: (*l).to_string(),
+                    hostname: Some(hostname),
+                    token: None,
+                    token_env: None,
+                }
+            })
+            .collect();
+        config
+    }
+
+    #[test]
+    fn copilot_multi_account_creates_separate_tabs_per_account() {
+        // With multiple Copilot accounts, each account gets its own tab
+        // with the format "copilot · <label>".
+        let tabs = tabs_from_config(&config_with_copilot_accounts(&["personal", "work"]));
+        assert_eq!(tabs.len(), 2);
+        
+        // First tab: personal account
+        assert_eq!(tabs[0].vendor, VendorId::Copilot);
+        assert_eq!(tabs[0].account, Some("personal".to_string()));
+        assert!(!tabs[0].desktop);
+        
+        // Second tab: work account
+        assert_eq!(tabs[1].vendor, VendorId::Copilot);
+        assert_eq!(tabs[1].account, Some("work".to_string()));
+        assert!(!tabs[1].desktop);
+    }
+
+    #[test]
+    fn copilot_single_account_creates_single_vendor_tab() {
+        // In legacy single-account mode (no accounts array), Copilot gets
+        // a single vendor tab with no account label.
+        let mut config = Config::default();
+        config.anthropic.enabled = false;
+        config.openai.enabled = false;
+        config.zai.enabled = false;
+        config.openrouter.enabled = false;
+        config.copilot.enabled = true;
+        config.copilot.hostname = Some("github.com".to_string());
+        config.copilot.accounts.clear(); // No accounts array = legacy mode
+        
+        let tabs = tabs_from_config(&config);
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].vendor, VendorId::Copilot);
+        assert_eq!(tabs[0].account, None); // No account label in legacy mode
+    }
 }
+
