@@ -275,14 +275,10 @@ impl Index {
         }
         Some(FileRecord {
             sealed_chunks: u64::try_from(sealed).ok()?,
-            chunk_ids: blob
-                .chunks_exact(32)
-                .map(|c| {
-                    let mut id = [0u8; 32];
-                    id.copy_from_slice(c);
-                    id
-                })
-                .collect(),
+            // `as_chunks`, not `chunks_exact(32)`: the const generic gives back
+            // `&[u8; 32]` already, so nothing copies into a scratch array and
+            // nothing can disagree about the length.
+            chunk_ids: blob.as_chunks::<32>().0.to_vec(),
         })
     }
 

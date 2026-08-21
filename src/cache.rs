@@ -243,8 +243,7 @@ pub fn acquire_lock(path: &Path, timeout: Duration) -> Result<LockGuard> {
             Err(_) => {
                 if std::time::Instant::now() >= deadline {
                     return Err(AppError::Other(format!(
-                        "cache lock timeout after {:?}",
-                        timeout
+                        "cache lock timeout after {timeout:?}"
                     )));
                 }
                 std::thread::sleep(Duration::from_millis(50));

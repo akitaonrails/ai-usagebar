@@ -220,10 +220,13 @@ impl Client {
         url: &str,
         accept: HeaderValue,
     ) -> Result<reqwest::RequestBuilder> {
-        let mut auth = HeaderValue::from_str(&Zeroizing::new(format!("Bearer {}", &*self.token)))
-            .map_err(|_| {
-            AppError::Credentials("the stored sync token is not a valid HTTP header value".into())
-        })?;
+        let mut auth =
+            HeaderValue::from_str(&Zeroizing::new(format!("Bearer {}", self.token.as_str())))
+                .map_err(|_| {
+                    AppError::Credentials(
+                        "the stored sync token is not a valid HTTP header value".into(),
+                    )
+                })?;
         auth.set_sensitive(true);
         Ok(self
             .http

@@ -606,7 +606,11 @@ mod tests {
             .1,
             TokenSource::File
         );
-        clear(&path).unwrap();
+        // `clear_file`, not a bare `clear`: 3-08 split the old one into
+        // `clear_source` (which store, if any, this tool owns) and `clear_file`
+        // (the file half). This arm only compiles off macOS, so the rename went
+        // unnoticed on every Mac in the project.
+        clear_file(&path).unwrap();
         assert!(!path.exists());
     }
 

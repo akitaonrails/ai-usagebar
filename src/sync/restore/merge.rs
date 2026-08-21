@@ -1071,6 +1071,9 @@ mod tests {
         }
     }
 
+    /// Only the macOS-gated `desktop_token_caches` module uses this, so off
+    /// macOS it is dead code and `-D warnings` says so.
+    #[cfg(target_os = "macos")]
     fn planned(m: &Machine, resolved: &Resolved, key: Option<safe_storage::Key>) -> RestorePlan {
         let client = m.client();
         plan_with_safe_key(&m.ctx(&client, applying()), resolved, key)

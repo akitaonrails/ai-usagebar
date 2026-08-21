@@ -109,6 +109,18 @@ pub(crate) fn take_with(
         .output()
         .map_err(|error| AppError::Other(format!("could not run `tar`: {error}")))?;
 
+    // 127 is the shell's and `posix_spawn`'s "could not execute it" — on Linux a
+    // missing `tar` arrives here as a child that exited 127, while on macOS the
+    // same condition fails at spawn above. One message for one cause, rather
+    // than "tar exited 127" with an empty stderr at the moment a backup failed.
+    if output.status.code() == Some(127) {
+        return Err(AppError::Other(format!(
+            "could not run `tar` ({}): the pre-restore backup was not written, \
+             so nothing has been restored",
+            tar.display()
+        )));
+    }
+
     if !output.status.success() {
         // The caller must not proceed to write (T-5-45).
         return Err(AppError::Other(format!(
@@ -335,6 +347,10 @@ mod tests {
             .collect()
     }
 
+    /// Unix only: `PermissionsExt` does not exist on Windows, and the mode this
+    /// module preserves is a Unix concept. The assertions that use it are gated
+    /// the same way rather than asking for a number Windows cannot answer.
+    #[cfg(unix)]
     fn mode_of(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
         fs::metadata(path).unwrap().permissions().mode() & 0o777
@@ -463,7 +479,11 @@ mod tests {
             &fixture.dir.path().join("no-such-tar"),
         )
         .expect_err("an unrunnable tar must abort the restore");
-        assert!(error.to_string().contains("could not run `tar`"));
+        // The text, not just the boolean: a bare `assert!` here reported only
+        // "assertion failed" from a Linux container and cost a round trip to
+        // find out which arm had actually fired.
+        let text = error.to_string();
+        assert!(text.contains("could not run `tar`"), "{text}");
     }
 
     /// T-5-40. The directory is restricted *before* `tar` creates the file, so
@@ -477,8 +497,11 @@ mod tests {
         let targets = vec![fixture.seed(".claude/a.jsonl", b"a", 0o600)];
         let record = take_with(&fixture.ctx(), &targets, &tar).unwrap().unwrap();
 
-        assert_eq!(mode_of(&fixture.backups_dir), 0o700);
-        assert_eq!(mode_of(&record.archive), 0o600);
+        #[cfg(unix)]
+        {
+            assert_eq!(mode_of(&fixture.backups_dir), 0o700);
+            assert_eq!(mode_of(&record.archive), 0o600);
+        }
     }
 
     /// A customised `CLAUDE_CONFIG_DIR` outside the home is supported, and the
@@ -600,6 +623,7 @@ mod tests {
                 "{} not restored",
                 path.display()
             );
+            #[cfg(unix)]
             assert_eq!(
                 mode_of(path),
                 *mode,

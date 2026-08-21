@@ -1082,7 +1082,7 @@ fn push_window(
             reset_text, p.elapsed_pct, p.point_label
         )
     } else {
-        format!("Resets in {}", reset_text)
+        format!("Resets in {reset_text}")
     };
     sections.push(Section::Spacer);
     sections.push_metric(
