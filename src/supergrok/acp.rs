@@ -66,6 +66,19 @@ async fn fetch_billing_inner(grok_binary: &Path) -> Result<BillingResponse> {
 
     let result = run_protocol(stdout, stdin).await;
 
+    // The same "not installed" that `spawn` reports on macOS arrives on Linux as
+    // a child that exited 127: `posix_spawn` cannot fail the parent's call, so
+    // the exec failure surfaces in the child's status instead. Without this the
+    // friendly message above never fires on Linux and the user is told the
+    // protocol failed, rather than that the binary is missing.
+    let missing = matches!(child.try_wait(), Ok(Some(status)) if status.code() == Some(127));
+    if missing {
+        let _ = child.start_kill();
+        return Err(AppError::Credentials(
+            "official Grok Build CLI not found; install it or set [supergrok] grok_binary".into(),
+        ));
+    }
+
     // `grok agent stdio` is long-lived. End it immediately after this one
     // extension response; kill_on_drop is the final backstop on every error.
     let _ = child.start_kill();
