@@ -39,8 +39,12 @@
 //!
 //! **Only three ways a password enters the process:** a reader ([`read_line`],
 //! for a pipe or stdin), a mode-0600 file ([`read_from_file`]), and a TTY
-//! prompt, which belongs to whichever surface owns the terminal and is
-//! deliberately not here. There is no function taking a password from a
+//! prompt, whose *wording* belongs to whichever surface owns the terminal.
+//! The one part of it that lives here is [`MARKER`] — the unterminated,
+//! flushed `password: ` that makes a blocking read look like a question rather
+//! than a hang — because [`read_line`] is the one door all four asks go
+//! through and a marker at the door cannot be forgotten by the fifth caller.
+//! There is no function taking a password from a
 //! command-line argument or from the environment: argv is world-readable
 //! through `/proc`, environment values are inherited by children and land in
 //! crash dumps, and the project already forbids credentials in process
@@ -185,14 +189,41 @@ pub fn check(pw: &str, k: KdfParams) -> Strength {
     Strength::Weak(THIN)
 }
 
+/// The prompt marker, drawn immediately before an interactive read.
+///
+/// **No trailing newline, and it is flushed** — those two facts are the whole
+/// fix. Without them the cursor rests at column 0 of a blank line and a user who
+/// has just watched a silent Argon2id second and a half reads it as a hang
+/// rather than a question. Short on purpose: the sentence explaining that the
+/// password is echoed is already on the line above it.
+pub const MARKER: &str = "password: ";
+
 /// Read a password from a reader — a pipe, or stdin when the caller has already
 /// decided this is not an interactive terminal.
+///
+/// **`marker` is not optional to supply, only to be `None`.** It is `Some` with
+/// the stream the caller's own prompt text went to, and `None` for a pipe or a
+/// file. Putting it here rather than at the four asks is what makes it
+/// impossible for the fifth to forget: there is no way to read a sync password
+/// without answering the question. The stream is the caller's because the two
+/// surfaces disagree — `sync pull`'s prompt goes to stderr and `sync setup`'s
+/// goes to stdout — and a prompt split across two streams is worse than none.
+///
+/// Write failures are **swallowed**: a closed prompt stream must not fail a
+/// password read that is otherwise fine, exactly as in `push::progress`.
 ///
 /// Only a single trailing newline (and the `\r` of a `\r\n` pair) is stripped.
 /// Nothing else is trimmed: a password may legitimately begin or end with a
 /// space, and silently eating it would make a correct password fail to open a
 /// bundle it created.
-pub fn read_line(mut r: impl BufRead) -> Result<Zeroizing<String>> {
+pub fn read_line(
+    mut r: impl BufRead,
+    marker: Option<&mut dyn std::io::Write>,
+) -> Result<Zeroizing<String>> {
+    if let Some(out) = marker {
+        let _ = write!(out, "{MARKER}");
+        let _ = out.flush();
+    }
     let mut line = Zeroizing::new(String::new());
     r.read_line(&mut line)
         .map_err(|e| AppError::Other(format!("could not read the password: {e}")))?;
@@ -228,7 +259,8 @@ pub fn read_from_file(path: &Path) -> Result<Zeroizing<String>> {
             )));
         }
     }
-    read_line(std::io::BufReader::new(file))
+    // A file is never a prompt.
+    read_line(std::io::BufReader::new(file), None)
 }
 
 #[cfg(test)]
@@ -355,18 +387,59 @@ mod tests {
 
     #[test]
     fn reading_a_line_strips_one_newline_and_nothing_else() {
-        let pw = read_line(&b"trailing space \n"[..]).unwrap();
+        let pw = read_line(&b"trailing space \n"[..], None).unwrap();
         assert_eq!(*pw, "trailing space ");
 
-        let crlf = read_line(&b"windows\r\n"[..]).unwrap();
+        let crlf = read_line(&b"windows\r\n"[..], None).unwrap();
         assert_eq!(*crlf, "windows");
 
-        let bare = read_line(&b"no newline at all"[..]).unwrap();
+        let bare = read_line(&b"no newline at all"[..], None).unwrap();
         assert_eq!(*bare, "no newline at all");
 
         // Only the *first* line is the password; a second line is not merged in.
-        let first = read_line(&b"first\nsecond\n"[..]).unwrap();
+        let first = read_line(&b"first\nsecond\n"[..], None).unwrap();
         assert_eq!(*first, "first");
+    }
+
+    /// The reported defect: two `println!`s and then a blocking read left the
+    /// cursor at column 0 of a blank line, and a user who had just watched a
+    /// silent Argon2id second and a half read it as a hang.
+    ///
+    /// Driven through the writer seam — no pty — which is also what proves the
+    /// marker is **flushed**: a `Vec<u8>` holds what was written, and the
+    /// `write!` that never reached it would be the bug this exists to fix.
+    #[test]
+    fn an_interactive_read_draws_an_unterminated_marker_and_a_piped_one_draws_nothing() {
+        let mut shown: Vec<u8> = Vec::new();
+        let pw = read_line(&b"a private passphrase\n"[..], Some(&mut shown)).unwrap();
+        assert_eq!(*pw, "a private passphrase");
+
+        let marker = String::from_utf8(shown).unwrap();
+        assert_eq!(marker, MARKER);
+        assert!(
+            !marker.ends_with('\n'),
+            "the cursor must rest after the marker, not below it: {marker:?}"
+        );
+        assert!(!marker.contains('\x1b'), "never styled: {marker:?}");
+        assert!(!marker.is_empty(), "a prompt that draws nothing is the bug");
+
+        // Piped: `None`, and so byte-identical to what this command has always
+        // emitted — which is what the macOS menu bar and the Node contract
+        // suites parse. There is no stream here for a marker to reach.
+        assert_eq!(*read_line(&b"piped\n"[..], None).unwrap(), "piped");
+    }
+
+    /// The marker is drawn **before** the read and nothing is drawn after it,
+    /// so no path here can echo, log or style what was typed.
+    #[test]
+    fn nothing_after_the_marker_carries_the_password() {
+        let secret = "correct horse battery staple";
+        let mut shown: Vec<u8> = Vec::new();
+        let pw = read_line(format!("{secret}\n").as_bytes(), Some(&mut shown)).unwrap();
+        assert_eq!(*pw, secret);
+        let written = String::from_utf8(shown).unwrap();
+        assert_eq!(written, MARKER, "{written:?}");
+        assert!(!written.contains("horse"), "{written:?}");
     }
 
     #[cfg(unix)]

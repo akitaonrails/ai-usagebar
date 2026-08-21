@@ -10,15 +10,40 @@
 //! `WorkosCursorSessionToken` cookie the dashboard's own usage call expects —
 //! see `fetch.rs`.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::{hash::Hash, hash::Hasher};
 
 use base64::Engine;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, types::ValueRef};
 
 use crate::error::{AppError, Result};
 
 const TOKEN_KEY: &str = "cursorAuth/accessToken";
+
+/// The `ItemTable` namespace Cursor's own sign-in writes, and the unit
+/// [`crate::sync::keystore`] moves between machines.
+///
+/// A **prefix**, not a hand-list of key names. Cursor's sign-in populates
+/// `cursorAuth/accessToken`, `cursorAuth/refreshToken`, `cursorAuth/cachedEmail`,
+/// `cursorAuth/cachedSignUpType`, `cursorAuth/stripeMembershipType` and
+/// `cursorAuth/scopePerMembershipType` — measured, but the list is Cursor's to
+/// change and a copy of it here goes stale silently, leaving a restored session
+/// that authenticates and then cannot say which plan it is on. The namespace is
+/// the thing that means "this login"; everything in it travels, and nothing
+/// outside it does.
+///
+/// It is also the **write** rule: [`write_auth_rows`] refuses any key that does
+/// not start with this, so a tampered bundle cannot reach another key in the
+/// 38 MB of editor state that shares this table.
+const AUTH_PREFIX: &str = "cursorAuth/";
+
+/// How long a write waits for a running Cursor to release the database before
+/// giving up. SQLite's own busy handler, rather than a lock invented here —
+/// `state.vscdb` is Cursor's file, and a second lock protocol only one side
+/// observes is not a lock.
+const WRITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Default location of Cursor's local state database. This is Cursor's own
 /// per-OS convention (same one every VS Code-family app uses for its user
@@ -80,6 +105,206 @@ pub fn read_access_token(path: &Path) -> Result<String> {
         ));
     }
     Ok(token)
+}
+
+/// Every `cursorAuth/*` row in `path`, as an ordered `key -> value` map.
+///
+/// Ordered because the map is serialised into a sync bundle and hashed to
+/// decide "is this the same login?" — a `HashMap`'s iteration order would make
+/// one unchanged credential look like a different one on every push.
+///
+/// A missing database, or one with no such rows, is an **empty map** and not an
+/// error: that is "this machine has never signed in to Cursor", which is a fact
+/// and not a failure. A database that exists but cannot be opened *is* an
+/// error, because reporting a locked or corrupt store as "no login here" is how
+/// a push silently ships a bundle without the credential in it.
+///
+/// Read-only, like [`read_access_token`] and for the same reason: this is
+/// Cursor's live file and a reader is safe alongside a running IDE.
+pub fn read_auth_rows(path: &Path) -> Result<BTreeMap<String, String>> {
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let conn =
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| {
+            AppError::Credentials(format!(
+                "could not open Cursor database at {}: {e}",
+                path.display()
+            ))
+        })?;
+    let mut stmt = conn
+        .prepare("SELECT key, value FROM ItemTable WHERE key LIKE ?1")
+        .map_err(|e| {
+            AppError::Credentials(format!(
+                "could not read Cursor sign-in state from {}: {e}",
+                path.display()
+            ))
+        })?;
+    let mut rows = stmt.query([format!("{AUTH_PREFIX}%")]).map_err(|e| {
+        AppError::Credentials(format!(
+            "could not read Cursor sign-in state from {}: {e}",
+            path.display()
+        ))
+    })?;
+    let mut out = BTreeMap::new();
+    while let Some(row) = rows.next().map_err(|e| {
+        AppError::Credentials(format!(
+            "could not read Cursor sign-in state from {}: {e}",
+            path.display()
+        ))
+    })? {
+        let (Ok(key), Ok(value)) = (row.get::<_, String>(0), text_at(row, 1)) else {
+            continue;
+        };
+        // The `LIKE` above is a coarse filter, not the rule. SQLite's `LIKE` is
+        // case-insensitive for ASCII by default, so it also matches
+        // `CursorAuth/…` — a different key, which must not travel as if it were
+        // this one. The byte-exact rule is here.
+        if !key.starts_with(AUTH_PREFIX) || value.is_empty() {
+            continue;
+        }
+        out.insert(key, value);
+    }
+    Ok(out)
+}
+
+/// Is there a Cursor sign-in in `path` — **without reading one**?
+///
+/// The question `sync status` asks, and it may not read a credential to answer
+/// it (the macOS menu bar runs that on every menu open). `SELECT 1 … LIMIT 1`
+/// returns no value at all.
+pub fn has_auth_rows(path: &Path) -> Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let conn =
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| {
+            AppError::Credentials(format!(
+                "could not open Cursor database at {}: {e}",
+                path.display()
+            ))
+        })?;
+    conn.query_row(
+        "SELECT 1 FROM ItemTable WHERE key LIKE ?1 AND value IS NOT NULL LIMIT 1",
+        [format!("{AUTH_PREFIX}%")],
+        |_| Ok(true),
+    )
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(false),
+        // No `ItemTable` at all is a database that is not Cursor's — "no
+        // sign-in here" is the honest reading, not a failure to report.
+        other => Err(AppError::Credentials(format!(
+            "could not check Cursor sign-in state in {}: {other}",
+            path.display()
+        ))),
+    })
+}
+
+/// Write `rows` into the `ItemTable` of an **existing** Cursor database,
+/// leaving every other row exactly as it was.
+///
+/// # Why this writes rows and never the file
+///
+/// `state.vscdb` is tens of megabytes of live editor state — open tabs,
+/// history, workspace layout. Copying the file between machines to move a
+/// few hundred bytes of credential would destroy the receiving machine's
+/// editor state, so the credential travels as rows and lands as rows.
+///
+/// # All or nothing
+///
+/// One transaction. Either every row lands or none does, so a failure leaves
+/// the machine's existing Cursor login exactly as it was rather than half
+/// replaced by another machine's — a spliced credential is worse than either
+/// whole one.
+///
+/// # If Cursor is running
+///
+/// SQLite's own busy handler waits [`WRITE_BUSY_TIMEOUT`] for the writer lock
+/// and then gives up with an error, which the caller turns into a refusal of
+/// this one item. Nothing here forces a lock or removes one.
+///
+/// The converse is the case this cannot solve and the caller must state: a
+/// *running* Cursor holds its own copy of these values in memory and may write
+/// them back over ours when it next persists. Quit Cursor before restoring
+/// into it.
+///
+/// # The keys are the bundle's, so they are checked
+///
+/// Every key must be in the [`AUTH_PREFIX`] namespace. Without that check a
+/// tampered manifest could set any key in this table — including the ones that
+/// tell the editor which files and extensions to load.
+pub fn write_auth_rows(path: &Path, rows: &BTreeMap<String, String>) -> Result<()> {
+    if !path.exists() {
+        return Err(AppError::Credentials(format!(
+            "no Cursor database at {}. Open the Cursor IDE once so it creates its state \
+             database, then restore again — ai-usagebar will not fabricate one.",
+            path.display()
+        )));
+    }
+    for key in rows.keys() {
+        if !key.starts_with(AUTH_PREFIX) || key.contains(|c: char| c.is_control()) {
+            return Err(AppError::Credentials(format!(
+                "refusing to write the Cursor state key {key:?}: a restore may only write the \
+                 `{AUTH_PREFIX}` namespace"
+            )));
+        }
+    }
+    let mut conn = Connection::open(path).map_err(|e| {
+        AppError::Credentials(format!(
+            "could not open Cursor database at {} for writing: {e}",
+            path.display()
+        ))
+    })?;
+    conn.busy_timeout(WRITE_BUSY_TIMEOUT).map_err(|e| {
+        AppError::Credentials(format!(
+            "could not set the Cursor database busy timeout: {e}"
+        ))
+    })?;
+    let tx = conn.transaction().map_err(|e| {
+        AppError::Credentials(format!(
+            "could not begin a write to {} (is Cursor running?): {e}",
+            path.display()
+        ))
+    })?;
+    for (key, value) in rows {
+        tx.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .map_err(|e| {
+            // `key` is a bundle string, `{:?}` escapes it; `value` is a live
+            // credential and appears nowhere.
+            AppError::Credentials(format!(
+                "could not write the Cursor state key {key:?} (is Cursor running?): {e}"
+            ))
+        })?;
+    }
+    tx.commit().map_err(|e| {
+        AppError::Credentials(format!(
+            "could not commit the Cursor sign-in to {} (is Cursor running?): {e}",
+            path.display()
+        ))
+    })?;
+    Ok(())
+}
+
+/// A row's column as text, whichever storage class SQLite chose for it.
+///
+/// `ItemTable.value` is declared `BLOB` but written as text by the editor, and
+/// SQLite stores what it is given — so a `get::<String>` alone fails on any
+/// value that happened to land as a blob.
+///
+/// Never lossy. A replacement character substituted into a token produces a
+/// credential that is silently wrong rather than one that is visibly missing.
+fn text_at(row: &rusqlite::Row<'_>, idx: usize) -> Result<String> {
+    match row.get_ref(idx) {
+        Ok(ValueRef::Text(b) | ValueRef::Blob(b)) => std::str::from_utf8(b)
+            .map(str::to_string)
+            .map_err(|_| AppError::Credentials("a Cursor state value is not UTF-8".into())),
+        _ => Err(AppError::Credentials(
+            "a Cursor state value is not text".into(),
+        )),
+    }
 }
 
 /// Default location of the `cursor-agent` CLI's own login state — a plain
@@ -217,10 +442,17 @@ mod tests {
         format!("{header}.{payload}.sig")
     }
 
+    /// Cursor's own `ItemTable` declaration, verbatim — `UNIQUE ON CONFLICT
+    /// REPLACE` and a `BLOB` value column. A laxer schema here would let
+    /// [`write_auth_rows`] pass a test that duplicates rows against the real
+    /// thing.
     fn seed_db(path: &Path, token: Option<&str>) {
         let conn = Connection::open(path).unwrap();
-        conn.execute("CREATE TABLE ItemTable (key TEXT, value TEXT)", [])
-            .unwrap();
+        conn.execute(
+            "CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)",
+            [],
+        )
+        .unwrap();
         if let Some(t) = token {
             conn.execute(
                 "INSERT INTO ItemTable (key, value) VALUES (?1, ?2)",
@@ -228,6 +460,28 @@ mod tests {
             )
             .unwrap();
         }
+    }
+
+    /// Every row in the table, as a plain map — what "the rest of the database
+    /// is untouched" is asserted against.
+    fn all_rows(path: &Path) -> BTreeMap<String, String> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut stmt = conn.prepare("SELECT key, value FROM ItemTable").unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, text_at(row, 1).unwrap()))
+            })
+            .unwrap();
+        rows.map(|row| row.unwrap()).collect()
+    }
+
+    fn put(path: &Path, key: &str, value: &str) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .unwrap();
     }
 
     #[test]
@@ -320,6 +574,133 @@ mod tests {
         let token = fake_jwt(serde_json::json!({"sub": "no-pipe-here"}));
         let err = session_auth(&token).unwrap_err();
         assert!(matches!(err, AppError::Credentials(_)));
+    }
+
+    #[test]
+    fn auth_rows_are_every_key_in_the_namespace_and_nothing_else() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("state.vscdb");
+        seed_db(&path, Some("the-jwt"));
+        put(&path, "cursorAuth/refreshToken", "the-refresh");
+        put(&path, "cursorAuth/cachedEmail", "person@example.com");
+        put(&path, "cursorAuth/stripeMembershipType", "pro");
+        // Editor state that shares the table, and must not travel.
+        put(&path, "workbench.explorer.views.state", "{}");
+        put(&path, "memento/workbench.parts.editor", "{}");
+        // Case is not the namespace: SQLite's LIKE would admit this.
+        put(&path, "CursorAuth/imposter", "no");
+
+        let rows = read_auth_rows(&path).unwrap();
+        assert_eq!(
+            rows.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "cursorAuth/accessToken",
+                "cursorAuth/cachedEmail",
+                "cursorAuth/refreshToken",
+                "cursorAuth/stripeMembershipType",
+            ]
+        );
+        assert_eq!(rows["cursorAuth/accessToken"], "the-jwt");
+    }
+
+    #[test]
+    fn a_missing_database_has_no_rows_rather_than_failing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("state.vscdb");
+        assert!(read_auth_rows(&path).unwrap().is_empty());
+        assert!(!has_auth_rows(&path).unwrap());
+    }
+
+    #[test]
+    fn presence_is_answered_without_reading_a_credential() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("state.vscdb");
+        seed_db(&path, None);
+        assert!(!has_auth_rows(&path).unwrap());
+        put(&path, "cursorAuth/accessToken", "the-jwt");
+        assert!(has_auth_rows(&path).unwrap());
+    }
+
+    /// **The property the whole row-level design exists for.** A restore moves
+    /// a few hundred bytes of credential into a database holding tens of
+    /// megabytes of the receiving machine's own editor state, and every byte of
+    /// that state has to still be there afterwards.
+    #[test]
+    fn writing_the_login_leaves_every_other_row_untouched() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("state.vscdb");
+        seed_db(&path, Some("this-macs-old-token"));
+        put(&path, "cursorAuth/cachedEmail", "old@example.com");
+        for i in 0..500 {
+            put(
+                &path,
+                &format!("workbench.state.{i}"),
+                &format!("value {i}"),
+            );
+        }
+        let before: BTreeMap<String, String> = all_rows(&path)
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with(AUTH_PREFIX))
+            .collect();
+
+        let incoming = BTreeMap::from([
+            (
+                "cursorAuth/accessToken".to_string(),
+                "other-mac".to_string(),
+            ),
+            (
+                "cursorAuth/refreshToken".to_string(),
+                "other-refresh".to_string(),
+            ),
+        ]);
+        write_auth_rows(&path, &incoming).unwrap();
+
+        let after = all_rows(&path);
+        assert_eq!(after["cursorAuth/accessToken"], "other-mac");
+        assert_eq!(after["cursorAuth/refreshToken"], "other-refresh");
+        // Replaced in place, never duplicated — the real schema's UNIQUE.
+        assert_eq!(read_access_token(&path).unwrap(), "other-mac");
+        let rest: BTreeMap<String, String> = after
+            .into_iter()
+            .filter(|(k, _)| !k.starts_with(AUTH_PREFIX))
+            .collect();
+        assert_eq!(rest, before, "the rest of the editor state changed");
+        assert_eq!(rest.len(), 500);
+    }
+
+    #[test]
+    fn a_key_outside_the_auth_namespace_is_refused_and_nothing_is_written() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("state.vscdb");
+        seed_db(&path, Some("mine"));
+        put(&path, "workbench.colorTheme", "dark");
+
+        let hostile = BTreeMap::from([
+            ("cursorAuth/accessToken".to_string(), "theirs".to_string()),
+            ("workbench.colorTheme".to_string(), "evil".to_string()),
+        ]);
+        let err = write_auth_rows(&path, &hostile).unwrap_err();
+        assert!(err.to_string().contains("workbench.colorTheme"), "{err}");
+
+        let after = all_rows(&path);
+        assert_eq!(after["workbench.colorTheme"], "dark");
+        assert_eq!(
+            after["cursorAuth/accessToken"], "mine",
+            "one refused key must not leave the others half applied"
+        );
+    }
+
+    #[test]
+    fn writing_into_a_machine_with_no_cursor_database_refuses_rather_than_creating_one() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("state.vscdb");
+        let rows = BTreeMap::from([("cursorAuth/accessToken".to_string(), "t".to_string())]);
+        let err = write_auth_rows(&path, &rows).unwrap_err();
+        assert!(
+            err.to_string().contains("Open the Cursor IDE once"),
+            "{err}"
+        );
+        assert!(!path.exists(), "no database was fabricated");
     }
 
     #[test]

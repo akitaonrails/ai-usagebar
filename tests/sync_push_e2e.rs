@@ -868,6 +868,33 @@ async fn a_first_push_issues_one_upload_per_pack_and_never_one_per_chunk() {
 // Criteria 2 and 3 — the kill, and the resume
 // ---------------------------------------------------------------------------
 
+/// A push that lands is recorded, so `sync status` can answer "last sync".
+///
+/// `Index::set_last_sync` shipped with **no production caller at all** — written,
+/// tested, and never invoked — so `sync status` said `never` after every
+/// successful push. Found by using the tool, not by any check: four real pushes
+/// to a real repository all reported `never`.
+#[tokio::test]
+async fn a_landed_push_records_when_it_landed() {
+    let local = Local::new();
+    local.seed("first", &payload(1, 1024));
+    let remote = Remote::new().await;
+
+    assert!(
+        Index::at(&local.roots.index_file)
+            .unwrap()
+            .last_sync()
+            .is_none(),
+        "nothing has landed yet"
+    );
+    push(&local, &remote).await.expect("the push lands");
+    assert_eq!(
+        Index::at(&local.roots.index_file).unwrap().last_sync(),
+        Some(NOW),
+        "a landed push records the run's own clock"
+    );
+}
+
 /// **ROADMAP §Phase 4 success criteria 2 and 3**, together, because they are
 /// one property: the flip is the only commit point, and what landed before it
 /// is reused rather than re-sent. This is the most important test in the file.

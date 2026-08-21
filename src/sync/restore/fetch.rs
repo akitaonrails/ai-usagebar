@@ -50,6 +50,7 @@ use crate::sync::github::write::{ASSET_STATE_UPLOADED, MAX_ASSET_BYTES};
 use crate::sync::github::{Client, RepoRef};
 use crate::sync::model::{IndexObject, Manifest, Root};
 use crate::sync::pack::PACK_ASSET_MAX;
+use crate::sync::push::progress::{self, Progress};
 use crate::sync::push::{self, RELEASE_TAG, SnapshotRecord};
 
 use super::{PackSource, Resolved, RestoreCtx};
@@ -137,7 +138,11 @@ struct AssetRef {
 /// the path it came from must not be derived from the remote's claimed
 /// `repo_id` — that is [`anchor`]'s stated constraint, and `restore::run` step 1
 /// is what honours it.
-pub async fn resolve(ctx: &RestoreCtx<'_>, local_anchor: Option<&Anchor>) -> Result<Resolved> {
+pub async fn resolve(
+    ctx: &RestoreCtx<'_>,
+    local_anchor: Option<&Anchor>,
+    progress: &mut dyn Progress,
+) -> Result<Resolved> {
     // 1. The pointer. `push::pointer::load` already probes `format` before
     //    deserializing and refuses a `repo_id` that is not this machine's own;
     //    a second copy of either check here would be one more thing to diverge.
@@ -193,6 +198,11 @@ pub async fn resolve(ctx: &RestoreCtx<'_>, local_anchor: Option<&Anchor>) -> Res
             pointer.keyfile
         ))
     })?;
+    // Argon2id at m = 1 GiB is a deliberate cost and it is the *first* thing a
+    // pull spends real time on. The push side announces it (`cli::open_keyfile`)
+    // and this side did not, so a restore's opening second and a half read as a
+    // hang. Announced before it starts, never after.
+    progress.phase("deriving the sync key (Argon2id)", 0, 0);
     let keys = keyfile.open(ctx.passphrase.as_bytes())?;
 
     // 5. Every snapshot root, opened under *this machine's* `repo_id`. It is
@@ -296,7 +306,7 @@ pub async fn resolve(ctx: &RestoreCtx<'_>, local_anchor: Option<&Anchor>) -> Res
     //    bootstrap — nothing describes itself.
     let mut packs = PackSource::empty(keys);
     let wanted: Vec<ChunkId> = record.index_chunks.iter().map(|e| e.pack).collect();
-    fetch_packs(ctx, &assets, &mut packs, &wanted).await?;
+    fetch_packs(ctx, &assets, &mut packs, &wanted, progress).await?;
 
     let index_sealed = sealed_in_order(
         &packs,
@@ -306,7 +316,7 @@ pub async fn resolve(ctx: &RestoreCtx<'_>, local_anchor: Option<&Anchor>) -> Res
 
     // 8. Round two: the packs holding the manifest, located through the index.
     let manifest_packs = packs_for(&index, &root.manifest_chunks)?;
-    fetch_packs(ctx, &assets, &mut packs, &manifest_packs).await?;
+    fetch_packs(ctx, &assets, &mut packs, &manifest_packs, progress).await?;
     let manifest_sealed = sealed_in_order(&packs, root.manifest_chunks.clone())?;
     let manifest = Manifest::open(packs.keys(), &manifest_sealed)?;
 
@@ -326,7 +336,7 @@ pub async fn resolve(ctx: &RestoreCtx<'_>, local_anchor: Option<&Anchor>) -> Res
         // No second count check here: `fetch_packs` bounds the running total
         // across all three rounds, which is the number that matters and the
         // only one a second copy here could ever disagree with.
-        fetch_packs(ctx, &assets, &mut packs, &needed).await?;
+        fetch_packs(ctx, &assets, &mut packs, &needed, progress).await?;
     }
 
     Ok(Resolved {
@@ -455,11 +465,27 @@ pub(crate) async fn published_keyfile(
 /// and a bound applied per round would let three rounds cost three times the
 /// ceiling. Already-held packs are skipped, which is what makes a pack shared
 /// by two manifest entries — or by the manifest and a file — one download.
+///
+/// # What the progress line can honestly say
+///
+/// `round.len()` and `round_bytes` are settled before the first request — both
+/// come from the release listing, which is also where the two ceilings above get
+/// their figures — so the count, the byte total and the percentage are measured
+/// rather than projected. The step is **one pack**, because [`download`] buffers
+/// a whole asset and there is no hook inside a 32 MiB one; see
+/// [`progress::DOWNLOAD`].
+///
+/// Each of the three rounds reports as its own stage. Rounds one and two are the
+/// metadata and are a pack or two each; round three is the ~880 MiB the user was
+/// waiting on. Reporting them as one bar would need a total that does not exist
+/// until round two has been *opened*, which is exactly the kind of number this
+/// module refuses to invent.
 async fn fetch_packs(
     ctx: &RestoreCtx<'_>,
     assets: &HashMap<String, AssetRef>,
     packs: &mut PackSource,
     wanted: &[ChunkId],
+    progress: &mut dyn Progress,
 ) -> Result<()> {
     let mut round: Vec<(ChunkId, String)> = Vec::new();
     let mut round_bytes = 0u64;
@@ -494,9 +520,19 @@ async fn fetch_packs(
         )));
     }
 
-    for (id, name) in round {
+    // Nothing to fetch is nothing to report: a second `sync pull` whose packs
+    // are all held must not draw an empty bar.
+    if round.is_empty() {
+        return Ok(());
+    }
+    progress.stage(progress::DOWNLOAD, round.len(), round_bytes);
+    for (index, (id, name)) in round.into_iter().enumerate() {
         let bytes = download(ctx.client, ctx.repo, ctx.now, assets, &name, "pack").await?;
+        // What actually arrived, not what the listing declared: a bar that
+        // reaches 100% on a size the remote chose is reporting the remote.
+        let arrived = bytes.len() as u64;
         packs.add(id, bytes)?;
+        progress.asset_done(index, &name, arrived);
     }
     Ok(())
 }
@@ -538,6 +574,7 @@ mod tests {
     use crate::sync::github::{Client, Endpoints, RepoRef};
     use crate::sync::index::Index;
     use crate::sync::plan::{FilePlan, SyncPlan};
+    use crate::sync::push::progress::Silent;
     use crate::sync::push::{Pointer, PushCtx, RemoteIndexEntry, keyfile_asset_name};
     use crate::sync::restore::RestoreOptions;
     use crate::sync::{SyncRoots, chunk};
@@ -944,7 +981,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let resolved = resolve(&restorer.ctx(&client, applying()), None)
+        let resolved = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .expect("a pushed bundle resolves");
 
@@ -964,7 +1001,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("an empty snapshot list is not an empty success");
@@ -987,7 +1024,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("an unbounded snapshot list must be refused");
@@ -1008,7 +1045,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a pointer naming an absent keyfile must refuse");
@@ -1026,7 +1063,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new().with_password("not the passphrase");
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a wrong passphrase cannot open the keyfile");
@@ -1045,7 +1082,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a root bound to another bundle must not open");
@@ -1080,7 +1117,7 @@ mod tests {
             let remote = Remote::serve(&bundle.pointer, &bundle.assets()).await;
             let client = client_at(&remote.url);
             let restorer = Restorer::new();
-            let resolved = resolve(&restorer.ctx(&client, applying()), None)
+            let resolved = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
                 .await
                 .unwrap();
             assert_eq!(
@@ -1115,7 +1152,7 @@ mod tests {
             let remote = Remote::serve(&bundle.pointer, &bundle.assets()).await;
             let client = client_at(&remote.url);
             let restorer = Restorer::new();
-            let resolved = resolve(&restorer.ctx(&client, applying()), None)
+            let resolved = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
                 .await
                 .unwrap();
             assert_eq!(resolved.root.counter, 1);
@@ -1143,7 +1180,7 @@ mod tests {
             counter: 5,
         };
 
-        let err = resolve(&restorer.ctx(&client, applying()), Some(&seen))
+        let err = resolve(&restorer.ctx(&client, applying()), Some(&seen), &mut Silent)
             .await
             .err()
             .expect("a rolled-back snapshot must be refused");
@@ -1162,6 +1199,7 @@ mod tests {
                 },
             ),
             Some(&seen),
+            &mut Silent,
         )
         .await
         .expect("--allow-rollback accepts an older snapshot of the same bundle");
@@ -1188,6 +1226,7 @@ mod tests {
                 },
             ),
             Some(&borrowed),
+            &mut Silent,
         )
         .await
         .err()
@@ -1207,7 +1246,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        resolve(&restorer.ctx(&client, applying()), None)
+        resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .unwrap();
 
@@ -1228,7 +1267,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a repository with no release has nothing to restore");
@@ -1247,7 +1286,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a root string larger than a root can be must be refused");
@@ -1271,7 +1310,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("an oversized manifest chunk list must be refused");
@@ -1297,7 +1336,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("an oversized index chunk list must be refused");
@@ -1317,7 +1356,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("an oversized pack list must be refused");
@@ -1348,7 +1387,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a pack set past the byte ceiling must be refused");
@@ -1369,7 +1408,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a pack that does not hash to its own name must be refused");
@@ -1391,7 +1430,7 @@ mod tests {
         let remote = Remote::serve(&bundle.pointer, &bundle.assets()).await;
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
-        let resolved = resolve(&restorer.ctx(&client, applying()), None)
+        let resolved = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .unwrap();
 
@@ -1439,7 +1478,7 @@ mod tests {
         let restorer = Restorer::new();
 
         assert!(
-            resolve(&restorer.ctx(&client, applying()), None)
+            resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
                 .await
                 .is_err(),
             "a truncated manifest produced a Manifest"
@@ -1455,7 +1494,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let err = resolve(&restorer.ctx(&client, applying()), None)
+        let err = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .err()
             .expect("a chunk the index does not describe must be refused");
@@ -1483,7 +1522,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let resolved = resolve(&restorer.ctx(&client, applying()), None)
+        let resolved = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .unwrap();
 
@@ -1503,7 +1542,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let resolved = resolve(&restorer.ctx(&client, applying()), None)
+        let resolved = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .unwrap();
         let id = resolved.manifest.files[0].chunks[0];
@@ -1531,7 +1570,7 @@ mod tests {
         let client = client_at(&remote.url);
         let restorer = Restorer::new();
 
-        let resolved = resolve(&restorer.ctx(&client, applying()), None)
+        let resolved = resolve(&restorer.ctx(&client, applying()), None, &mut Silent)
             .await
             .expect("absurd pointer offsets are inert, not fatal and not a panic");
         assert_eq!(resolved.manifest.files[0].path, "config/config.toml");

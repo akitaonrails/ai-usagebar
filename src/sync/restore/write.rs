@@ -122,7 +122,19 @@ use super::{Applied, Disposition, ItemPlan, PackSource, RestoreCtx, RestorePlan,
 /// during the writing itself is a partial restore, which is an `Ok` carrying
 /// [`Applied::failed_at`] — the caller must not advance the rollback anchor on
 /// one, and [`super::run`] does not.
-pub fn apply(ctx: &RestoreCtx<'_>, plan: &RestorePlan, packs: &PackSource) -> Result<Applied> {
+///
+/// `progress` is reported from the **queue**, after the preflight and so after
+/// every refusal: the count and the byte total are the items that will really be
+/// written, never the manifest's length. The item's manifest path is passed to
+/// `asset_done` and no reporter prints it — it is attacker-chosen, and
+/// `an_attacker_chosen_manifest_path_never_reaches_a_progress_line` in
+/// `push::progress` is what keeps that true.
+pub fn apply(
+    ctx: &RestoreCtx<'_>,
+    plan: &RestorePlan,
+    packs: &PackSource,
+    progress: &mut dyn crate::sync::push::progress::Progress,
+) -> Result<Applied> {
     let mut out = Applied::default();
     let mut queue: Vec<(&ItemPlan, Target)> = Vec::new();
 
@@ -194,12 +206,32 @@ pub fn apply(ctx: &RestoreCtx<'_>, plan: &RestorePlan, packs: &PackSource) -> Re
         queue.push((item, Target::File(checked)));
     }
 
-    // Manifest order, so a partial restore stops in the same place twice and is
-    // therefore debuggable.
-    for (item, target) in queue {
+    // **Files first, stores last, and never interleaved.**
+    //
+    // One path now has two writers. `cursor-user/globalStorage/state.vscdb` is
+    // carried as a file (it holds the conversations), and
+    // `keystore/cursor-auth` writes the `cursorAuth/*` rows into that very
+    // database. If the store ran first, the file write would replace the whole
+    // database and take the credential with it — and which ran first would
+    // otherwise depend on category order, which is not a thing this ordering
+    // should rest on. The file carries the conversations; the store's row-write
+    // lands on top of whatever database is there when it runs.
+    //
+    // `sort_by_key` on a `bool` is stable, so within each half the queue keeps
+    // manifest order — a partial restore still stops in the same place twice
+    // and is therefore debuggable.
+    queue.sort_by_key(|(_, target)| matches!(target, Target::Store(_)));
+
+    progress.stage(
+        crate::sync::push::progress::WRITE,
+        queue.len(),
+        queue.iter().map(|(item, _)| item.true_len).sum(),
+    );
+
+    for (index, (item, target)) in queue.into_iter().enumerate() {
         let outcome = match &target {
             Target::File(dest) => write_one(packs, item, dest, plan.created_at),
-            Target::Store(store) => write_store(ctx, packs, item, *store),
+            Target::Store(store) => write_store(ctx, packs, item, store),
         };
         if let Err(why) = outcome {
             // `Applied` carries where the run stopped, which is what the summary
@@ -210,6 +242,7 @@ pub fn apply(ctx: &RestoreCtx<'_>, plan: &RestorePlan, packs: &PackSource) -> Re
             break;
         }
         out.written += 1;
+        progress.asset_done(index, &item.manifest_path, item.true_len);
         if matches!(item.disposition, Disposition::Overwrite { .. }) {
             out.overwritten.push(item.manifest_path.clone());
         }
@@ -265,7 +298,7 @@ fn write_store(
     ctx: &RestoreCtx<'_>,
     packs: &PackSource,
     item: &ItemPlan,
-    store: Store,
+    store: &Store,
 ) -> Result<()> {
     let mut value: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::new());
     for id in &item.chunks {
@@ -389,6 +422,7 @@ mod tests {
     use crate::sync::github::token::TokenSource;
     use crate::sync::github::{Client, Endpoints, RepoRef};
     use crate::sync::pack::PackWriter;
+    use crate::sync::push::progress::Silent;
     use crate::sync::restore::RestoreOptions;
     use crate::sync::{CHUNK_SIZE, SyncRoots, chunk};
     use chrono::{DateTime, Utc};
@@ -586,7 +620,7 @@ mod tests {
             Disposition::Create,
         )]);
 
-        let applied = apply(&m.ctx(), &plan, &packs).unwrap();
+        let applied = apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
         assert_eq!(applied.written, 1);
         assert_eq!(applied.failed_at, None);
 
@@ -617,7 +651,7 @@ mod tests {
             Disposition::Create,
         )]);
 
-        apply(&m.ctx(), &plan, &packs).unwrap();
+        apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
 
         let mut dir = m.dest(path).parent().unwrap().to_path_buf();
         loop {
@@ -653,7 +687,7 @@ mod tests {
             ids[0].clone(),
             Disposition::Create,
         )]);
-        apply(&m.ctx(), &plan, &packs).unwrap();
+        apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
 
         assert_eq!(
             mode_of(&m.roots.config_dir),
@@ -677,7 +711,7 @@ mod tests {
             Disposition::Create,
         )]);
 
-        let applied = apply(&m.ctx(), &plan, &packs).unwrap();
+        let applied = apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
         assert_eq!(applied.failed_at.as_deref(), Some(CREDENTIAL));
         assert_eq!(applied.written, 0);
         assert!(!m.dest(CREDENTIAL).exists());
@@ -698,7 +732,7 @@ mod tests {
         only.true_len += 1;
         let plan = plan_of(vec![only]);
 
-        let applied = apply(&m.ctx(), &plan, &packs).unwrap();
+        let applied = apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
         assert_eq!(applied.failed_at.as_deref(), Some(CREDENTIAL));
         assert!(!m.dest(CREDENTIAL).exists());
         assert!(files_under(&m.roots.config_dir).is_empty());
@@ -720,7 +754,7 @@ mod tests {
             Disposition::Create,
         )]);
 
-        let applied = apply(&m.ctx(), &plan, &packs).unwrap();
+        let applied = apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
         assert_eq!(applied.failed_at.as_deref(), Some(CREDENTIAL));
         assert_eq!(applied.written, 0);
     }
@@ -792,7 +826,7 @@ mod tests {
         items[5].dest = None;
         items[6].dest = None;
 
-        let applied = apply(&m.ctx(), &plan_of(items), &packs).unwrap();
+        let applied = apply(&m.ctx(), &plan_of(items), &packs, &mut Silent).unwrap();
 
         assert_eq!(applied.written, 3);
         assert_eq!(applied.skipped, 4);
@@ -824,7 +858,7 @@ mod tests {
             item(&m, "config/a.toml", b"c", ids[2].clone(), overwrite),
         ]);
 
-        let applied = apply(&m.ctx(), &plan, &packs).unwrap();
+        let applied = apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
         assert_eq!(
             applied.overwritten,
             vec![
@@ -866,7 +900,7 @@ mod tests {
             ),
         ]);
 
-        let applied = apply(&m.ctx(), &plan, &packs).unwrap();
+        let applied = apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
 
         assert_eq!(applied.written, 1);
         assert_eq!(applied.failed_at.as_deref(), Some("config/2.toml"));
@@ -903,7 +937,8 @@ mod tests {
             ),
         ]);
 
-        let err = apply(&m.ctx(), &plan, &packs).expect_err("an unresolved credential");
+        let err =
+            apply(&m.ctx(), &plan, &packs, &mut Silent).expect_err("an unresolved credential");
         assert!(err.to_string().contains(CREDENTIAL), "{err}");
         assert!(
             files_under(&m.roots.config_dir).is_empty(),
@@ -936,7 +971,8 @@ mod tests {
             tampered,
         ]);
 
-        let err = apply(&m.ctx(), &plan, &packs).expect_err("a plan that disagrees with itself");
+        let err = apply(&m.ctx(), &plan, &packs, &mut Silent)
+            .expect_err("a plan that disagrees with itself");
         assert!(err.to_string().contains("config/b.toml"), "{err}");
         assert!(
             files_under(&m.roots.config_dir).is_empty(),
@@ -959,7 +995,7 @@ mod tests {
         );
         orphan.dest = None;
 
-        let err = apply(&m.ctx(), &plan_of(vec![orphan]), &packs)
+        let err = apply(&m.ctx(), &plan_of(vec![orphan]), &packs, &mut Silent)
             .expect_err("a writable item with nowhere to go");
         assert!(err.to_string().contains("config/a.toml"), "{err}");
     }
@@ -979,8 +1015,8 @@ mod tests {
             Disposition::Create,
         )]);
 
-        apply(&m.ctx(), &plan, &packs).unwrap();
-        apply(&m.ctx(), &plan, &packs).unwrap();
+        apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
+        apply(&m.ctx(), &plan, &packs, &mut Silent).unwrap();
 
         let dest = m.dest(CREDENTIAL);
         assert_eq!(std::fs::read(&dest).unwrap(), body);
@@ -1056,7 +1092,7 @@ mod tests {
             ),
         ]);
 
-        let err = apply(&m.ctx(), &plan, &packs)
+        let err = apply(&m.ctx(), &plan, &packs, &mut Silent)
             .expect_err("a machine-bound path must not reach the write path")
             .to_string();
         assert!(err.contains("bridge-state.json"), "{err}");
@@ -1089,5 +1125,69 @@ mod tests {
                  destination's own directory"
             );
         }
+    }
+
+    /// **Two writers, one path, and a fixed order.**
+    ///
+    /// `cursor-user/globalStorage/state.vscdb` is carried as a file — it holds
+    /// the conversations — and `keystore/cursor-auth` writes the `cursorAuth/*`
+    /// rows into that same database. The file must land first, or it replaces
+    /// the database and takes the freshly written credential with it.
+    ///
+    /// Manifest order here deliberately puts the **store first**, so a run that
+    /// merely followed the manifest would write it first. The file's write is
+    /// then made to fail, and the store having stayed empty is the proof that
+    /// the file ran ahead of it.
+    #[test]
+    fn every_file_is_written_before_any_store_whatever_the_manifest_order_says() {
+        let m = Machine::new();
+        const DB: &str = "cursor-user/globalStorage/state.vscdb";
+        const ROWS: &str = r#"{"cursorAuth/accessToken":"from-the-bundle"}"#;
+
+        // The database's own directory, planted as a regular file, so the file
+        // half of the run cannot succeed.
+        let dest = m.dest(DB);
+        std::fs::create_dir_all(dest.parent().unwrap().parent().unwrap()).unwrap();
+        std::fs::write(dest.parent().unwrap(), b"in the way").unwrap();
+
+        let (packs, ids) = packed(&[ROWS.as_bytes(), b"a whole database"]);
+        let store_item = ItemPlan {
+            dest: None,
+            manifest_path: "keystore/cursor-auth".into(),
+            category: SyncCategory::Credentials,
+            true_len: ROWS.len() as u64,
+            chunks: ids[0].clone(),
+            disposition: Disposition::Create,
+        };
+        let file_item = item(
+            &m,
+            DB,
+            b"a whole database",
+            ids[1].clone(),
+            Disposition::Create,
+        );
+        let plan = plan_of(vec![store_item, file_item]);
+
+        let applied = apply(
+            &m.ctx(),
+            &plan,
+            &packs,
+            &mut crate::sync::push::progress::Silent,
+        )
+        .unwrap();
+        assert_eq!(
+            applied.failed_at.as_deref(),
+            Some(DB),
+            "the file half must have run first"
+        );
+        assert_eq!(applied.written, 0);
+        assert!(
+            m.roots
+                .stores
+                .edit()
+                .get(&crate::sync::keystore::Store::CursorAuth)
+                .is_none(),
+            "the store was written before the file it writes into"
+        );
     }
 }

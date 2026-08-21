@@ -149,13 +149,26 @@ pub trait SetupPrompt {
 #[derive(Debug, Default)]
 pub struct TtyPrompt {
     style: Style,
+    /// Whether stdin is a terminal, injected by `sync::cli`.
+    ///
+    /// Separate from `style` on purpose: `NO_COLOR` at a real keyboard makes
+    /// `style` plain and must not take the prompt marker with it, and a piped
+    /// `sync setup` must emit byte-identical output to what it always has.
+    interactive: bool,
 }
 
 impl TtyPrompt {
     /// With the palette `sync::cli` resolved for standard output — which is
-    /// where every line below is printed.
-    pub fn new(style: Style) -> TtyPrompt {
-        TtyPrompt { style }
+    /// where every line below is printed — and stdin's own terminal fact.
+    pub fn new(style: Style, interactive: bool) -> TtyPrompt {
+        TtyPrompt { style, interactive }
+    }
+
+    /// The stream [`passphrase::read_line`] draws its marker on: **stdout**,
+    /// which is where `say` and every prompt in this file already print. `None`
+    /// when stdin is not a terminal — there is nobody to prompt.
+    fn marker<'a>(&self, out: &'a mut std::io::Stdout) -> Option<&'a mut dyn std::io::Write> {
+        if self.interactive { Some(out) } else { None }
     }
 
     fn line(&self) -> Result<String> {
@@ -194,7 +207,8 @@ impl SetupPrompt for TtyPrompt {
              which is one more reason to take the generated one."
         );
         // Never argv, never an environment variable (T-3-37, Phase 1's rule).
-        let typed = passphrase::read_line(std::io::stdin().lock())?;
+        let mut out = std::io::stdout();
+        let typed = passphrase::read_line(std::io::stdin().lock(), self.marker(&mut out))?;
         Ok(typed)
     }
 
@@ -204,7 +218,8 @@ impl SetupPrompt for TtyPrompt {
              It is echoed — this build has no hidden-input dependency."
         );
         // Never argv, never an environment variable (T-3-37, Phase 1's rule).
-        passphrase::read_line(std::io::stdin().lock())
+        let mut out = std::io::stdout();
+        passphrase::read_line(std::io::stdin().lock(), self.marker(&mut out))
     }
 
     fn categories(&mut self, current: &[SyncCategory]) -> Result<Vec<SyncCategory>> {

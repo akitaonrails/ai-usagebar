@@ -447,6 +447,17 @@ fn bundle_view(roots: &SyncRoots) -> BTreeMap<String, (Vec<u8>, u32)> {
             {
                 continue;
             }
+            // A Claude Desktop token cache is not bundle *content* either. Its
+            // bytes are safeStorage ciphertext under the pushing Mac's own key,
+            // so `scope` deliberately does not collect the file; the credential
+            // travels decrypted through `keystore::Store::DesktopTokenCache`
+            // and is re-sealed under the target's key. A byte-for-byte
+            // comparison of the two trees would therefore be asserting the one
+            // thing that must *not* happen — see
+            // `a_sealed_desktop_token_cache_is_not_carried_as_a_file` below.
+            if wire.ends_with("/config-tokenCache") || wire.ends_with("/config-tokenCacheV2") {
+                continue;
+            }
             out.insert(
                 wire,
                 (
@@ -1004,7 +1015,11 @@ async fn pull(
     let repo = repo();
     let anchor_path = m.anchor_path();
     let backups = m.backups();
-    restore::run(m.restore_ctx(&client, &repo, &anchor_path, &backups, opts)).await
+    restore::run(
+        m.restore_ctx(&client, &repo, &anchor_path, &backups, opts),
+        &mut Silent,
+    )
+    .await
 }
 
 /// `sync setup`'s prompt seam, scripted — the second machine's operator.
@@ -1219,7 +1234,7 @@ async fn criterion_1_a_pushed_tree_restores_byte_for_byte_under_a_second_machine
     let sent = bundle_view(&a.roots);
     let landed = bundle_view(&b.roots);
     assert!(
-        sent.len() >= 8,
+        sent.len() >= 7,
         "the fixture stopped covering every category: {:?}",
         sent.keys().collect::<Vec<_>>()
     );
@@ -1251,6 +1266,28 @@ async fn criterion_1_a_pushed_tree_restores_byte_for_byte_under_a_second_machine
     assert!(
         landed["claude-home/projects/repo/session.jsonl"].0.len() > ai_usagebar::sync::CHUNK_SIZE,
         "the multi-chunk file shrank"
+    );
+
+    // **The sealed blob is not carried as a file.** Its bytes are AES
+    // ciphertext under machine A's own Safe Storage key, so a copy of them is
+    // inert on B — worse than nothing, because Claude Desktop would find a
+    // token cache it cannot decrypt. The credential travels through
+    // `keystore::Store::DesktopTokenCache`, decrypted on push and re-sealed
+    // under B's key; these machines have an empty injected store, so nothing
+    // arrives here at all.
+    assert!(
+        a.roots
+            .desktop_profiles_dir
+            .join("work/config-tokenCache")
+            .is_file(),
+        "the fixture stopped seeding the sealed cache, so this proves nothing"
+    );
+    assert!(
+        !b.roots
+            .desktop_profiles_dir
+            .join("work/config-tokenCache")
+            .exists(),
+        "a blob sealed under A's key was copied onto B, where nothing can open it"
     );
 
     // Nothing landed outside B's four roots, and nothing carries A's username.

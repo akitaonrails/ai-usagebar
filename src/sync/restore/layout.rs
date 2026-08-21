@@ -45,7 +45,7 @@ use crate::sync::{SyncRoots, scope};
 // call it directly — a local mirror would make the drift test compare a copy
 // against itself, which is exactly the drift it exists to catch.
 
-// The four prefixes. `config_file` needs no fifth: `SyncRoots::resolve` derives
+// The five prefixes. `config_file` needs no sixth: `SyncRoots::resolve` derives
 // `config_dir` as its parent, so the file itself already lives under `config/`.
 fn config_dir(roots: &SyncRoots) -> &Path {
     roots.config_dir.as_path()
@@ -59,21 +59,25 @@ fn desktop_profiles_dir(roots: &SyncRoots) -> &Path {
 fn claude_home(roots: &SyncRoots) -> &Path {
     roots.claude_home.as_path()
 }
+fn cursor_user_dir(roots: &SyncRoots) -> &Path {
+    roots.cursor_user_dir.as_path()
+}
 
 type RootOf = fn(&SyncRoots) -> &Path;
 
 /// The prefix table, once: name on the wire, and the root it resolves against
 /// on *this* machine. A second table is a second thing to get wrong.
 ///
-/// The push direction reads the same four literals from
+/// The push direction reads the same five literals from
 /// [`crate::sync::push::packer::manifest_path`], which predates this module;
 /// `the_two_directions_agree_on_every_prefix` below is the mechanical guard
 /// that keeps them one vocabulary rather than two.
-const ROOT_PREFIXES: [(&str, RootOf); 4] = [
+const ROOT_PREFIXES: [(&str, RootOf); 5] = [
     ("config", config_dir),
     ("desktop-data", desktop_data_dir),
     ("desktop-profiles", desktop_profiles_dir),
     ("claude-home", claude_home),
+    ("cursor-user", cursor_user_dir),
 ];
 
 /// Ceilings on the *size* of a manifest entry, alongside the eight checks on
@@ -246,6 +250,10 @@ mod tests {
                 .join("claude-code-sessions/acct/org/local_1.json"),
             roots.claude_home.join("projects/repo/session.jsonl"),
             roots.desktop_profiles_dir.join("work/meta.json"),
+            roots.cursor_user_dir.join("globalStorage/state.vscdb"),
+            roots
+                .cursor_user_dir
+                .join("workspaceStorage/9f2c/state.vscdb"),
         ]
     }
 
@@ -474,10 +482,21 @@ mod tests {
     fn a_machine_bound_stores_wire_name_never_resolves_to_a_place_on_disk() {
         let dir = TempDir::new().unwrap();
         let roots = machine(dir.path(), "bob");
+        let cursor = crate::sync::keystore::Store::CursorAuth.manifest_path();
+        let desktop = crate::sync::keystore::Store::DesktopTokenCache {
+            profile: "gmail".to_string(),
+            slot: crate::sync::keystore::TokenSlot::V2,
+        }
+        .manifest_path();
         for spelling in [
-            crate::sync::keystore::Store::ClaudeCodeOauth.manifest_path(),
+            crate::sync::keystore::Store::ClaudeCodeOauth
+                .manifest_path()
+                .as_str(),
+            cursor.as_str(),
+            desktop.as_str(),
             "keystore/from-a-later-version",
             "keystore/../config/config.toml",
+            "keystore/desktop-token-cache/../../config/config.toml",
             "keystore",
         ] {
             let err = from_manifest_path(&roots, spelling)

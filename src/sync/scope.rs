@@ -77,12 +77,15 @@ pub(crate) const CREDENTIAL_FILE: FixedName = FixedName::new(".credentials.json"
 
 // Names owned by claude-acc's profile store and Claude Desktop's data dir.
 // They mirror the private consts in [`crate::claude_desktop`] (`META_JSON`,
-// `TOKEN_CACHE`, `TOKEN_CACHE_V2`, `DESKTOP_STATE`, `SESSIONS_DIR`) and
-// `claude_desktop::merge::SCHEDULED_TASKS`. Restated here rather than reached
-// for as a literal at each use site: if that layout moves, both blocks move.
+// `DESKTOP_STATE`, `SESSIONS_DIR`) and `claude_desktop::merge::SCHEDULED_TASKS`.
+// Restated here rather than reached for as a literal at each use site: if that
+// layout moves, both blocks move.
+//
+// The two `config-tokenCache{,V2}` names used to be here too. They are not any
+// more, and their absence is load-bearing: those files travel through
+// [`crate::sync::keystore::TokenSlot`], which owns their spelling now, because
+// their *bytes* are useless on another machine.
 const META_JSON: &str = "meta.json";
-const TOKEN_CACHE: &str = "config-tokenCache";
-const TOKEN_CACHE_V2: &str = "config-tokenCacheV2";
 const DESKTOP_STATE: &str = "desktop-state";
 const SESSIONS_DIR: &str = "claude-code-sessions";
 /// The per-account registry, one per `<account>/<org>/`.
@@ -93,6 +96,14 @@ const SCHEDULED_TASKS_DIR: &str = "scheduled-tasks";
 /// A chat session index. The sibling `scheduled-tasks.json` lives in the same
 /// folder but belongs to the routines category, so the two never double-count.
 const SESSION_PREFIX: &str = "local_";
+
+// The three shapes under Cursor's user-data directory that carry conversations.
+// Exact names, matched by [`Path::join`] rather than by a suffix test, because
+// the 33 GB file this must never admit is called `state.vscdb.bloated.bak`.
+const CURSOR_GLOBAL_STORAGE: &str = "globalStorage";
+const CURSOR_WORKSPACE_STORAGE: &str = "workspaceStorage";
+const CURSOR_STATE_DB: &str = "state.vscdb";
+const CURSOR_CONVERSATIONS_DB: &str = "conversation-search.db";
 
 /// One collected file and the three quarters of D5's change-detection key that
 /// come from its metadata; the fourth is the path itself.
@@ -352,18 +363,26 @@ pub fn collect(
                 &roots.claude_home.join(CREDENTIAL_FILE.to_string()),
                 &mut scan,
             );
-            // D1: per profile, `meta.json`, both token caches and
-            // `desktop-state/` — and nothing else in the store. A profile
-            // without a readable meta.json is skipped rather than failing the
-            // other accounts, exactly as `load_profiles` already treats one.
+            // D1: per profile, `meta.json` and `desktop-state/` — and nothing
+            // else in the store. A profile without a readable meta.json is
+            // skipped rather than failing the other accounts, exactly as
+            // `load_profiles` already treats one.
+            //
+            // **The two `config-tokenCache{,V2}` files are deliberately absent
+            // here.** They are Chromium safeStorage ciphertext under a key in
+            // *this* Mac's login Keychain, so their bytes are inert on any
+            // other machine; they travel through
+            // [`crate::sync::keystore::Store::DesktopTokenCache`] instead,
+            // decrypted on push and re-sealed under the target's own key on
+            // restore. Collecting them here as well would put two carriers on
+            // one credential — and two carriers for one thing is two carriers
+            // that disagree, which is this milestone's most expensive shape.
             for profile in subdirs(&roots.desktop_profiles_dir) {
                 let meta = profile.join(META_JSON);
                 if !meta.is_file() {
                     continue;
                 }
                 push_path(&meta, &mut scan);
-                push_path(&profile.join(TOKEN_CACHE), &mut scan);
-                push_path(&profile.join(TOKEN_CACHE_V2), &mut scan);
                 walk(&profile.join(DESKTOP_STATE), &mut scan);
             }
         }
@@ -392,10 +411,54 @@ pub fn collect(
             });
             scan.bytes = scan.files.iter().map(|f| f.size).sum();
         }
-        // Owned by plan 2-04.
-        SyncCategory::Transcripts => return super::transcripts::collect_bounded(roots, cfg, now),
+        // Owned by plan 2-04, plus Cursor's conversation stores, which are the
+        // same kind of thing under the same opt-in switch.
+        SyncCategory::Transcripts => {
+            let mut scan = super::transcripts::collect_bounded(roots, cfg, now);
+            collect_cursor(roots, &mut scan);
+            return scan;
+        }
     }
     scan
+}
+
+/// Cursor's conversations, as an **allow-list of three shapes**.
+///
+/// # Why an allow-list, and why no walk
+///
+/// Measured on this user's Mac, `~/Library/Application Support/Cursor` is
+/// **37 GB**. The part worth carrying is these three shapes; the rest is
+/// derived, rebuildable or stale — a 33 GB `state.vscdb.bloated.bak` Cursor
+/// left behind, 1.6 GB of agent-worker data, 688 MB of file-edit `History`,
+/// and about 6 GB of caches. A deny-list that missed `.bloated.bak` would have
+/// multiplied the bundle fifteen-fold for nothing, and would silently admit
+/// whatever Cursor adds next. So this names what travels, and everything else
+/// is excluded by not being named.
+///
+/// That also means **no directory walk**: three explicit files plus one
+/// listing of `workspaceStorage`. Nothing here can hit
+/// [`MAX_WALK_ENTRIES`] and quietly truncate a user's chat history at some
+/// count — the 197 workspaces measured on that Mac are 197 [`push_path`] calls,
+/// not 197 subtrees.
+///
+/// # Ceiling
+///
+/// ponytail: the `-wal` and `-shm` sidecars are not carried. A database
+/// copied while Cursor is running can therefore be missing whatever is still
+/// only in its write-ahead log — the same exposure every other SQLite file in
+/// this bundle already has. Quitting Cursor before a push checkpoints them.
+fn collect_cursor(roots: &SyncRoots, scan: &mut CategoryScan) {
+    let global = roots.cursor_user_dir.join(CURSOR_GLOBAL_STORAGE);
+    // Global editor state — where `composerData:*` chat bubbles live, and the
+    // same file the `cursorAuth/*` rows come out of.
+    push_path(&global.join(CURSOR_STATE_DB), scan);
+    // The conversation index.
+    push_path(&global.join(CURSOR_CONVERSATIONS_DB), scan);
+    // Per-workspace chat: `workspaceStorage/<hash>/state.vscdb`, one level deep
+    // and by exact name, so a sibling `.bloated.bak` is not a candidate.
+    for workspace in subdirs(&roots.cursor_user_dir.join(CURSOR_WORKSPACE_STORAGE)) {
+        push_path(&workspace.join(CURSOR_STATE_DB), scan);
+    }
 }
 
 #[cfg(test)]
@@ -693,8 +756,13 @@ mod tests {
 
     // ---- credentials: the four D1 profile members, and nothing else --------
 
+    /// **The two token caches are deliberately not here.** They are Chromium
+    /// safeStorage ciphertext under this Mac's own key, and they travel through
+    /// [`crate::sync::keystore`] — decrypted on push, re-sealed under the
+    /// target's key on restore. Collecting them as files too would put two
+    /// carriers on one credential.
     #[test]
-    fn a_profile_yields_its_meta_both_token_caches_and_the_whole_desktop_state_tree() {
+    fn a_profile_yields_its_meta_and_desktop_state_but_never_the_sealed_token_caches() {
         let dir = TempDir::new().unwrap();
         seed(dir.path(), "profiles/gmail/meta.json", "{}");
         seed(dir.path(), "profiles/gmail/config-tokenCache", "x");
@@ -709,16 +777,7 @@ mod tests {
         seed(dir.path(), "profiles/gmail/config.json", "{}");
 
         let scan = scan_of(SyncCategory::Credentials, &dir);
-        assert_eq!(
-            names(&scan),
-            vec![
-                "000003.log",
-                "Cookies",
-                "config-tokenCache",
-                "config-tokenCacheV2",
-                "meta.json",
-            ]
-        );
+        assert_eq!(names(&scan), vec!["000003.log", "Cookies", "meta.json"]);
         assert_eq!(scan.bytes, scan.files.iter().map(|f| f.size).sum::<u64>());
     }
 
@@ -738,7 +797,8 @@ mod tests {
         seed(dir.path(), "profiles/broken/config-tokenCache", "x");
 
         let scan = scan_of(SyncCategory::Credentials, &dir);
-        assert_eq!(scan.files.len(), 8, "{:?}", names(&scan));
+        // Four `meta.json`, and no token cache: those are the keystore's now.
+        assert_eq!(scan.files.len(), 4, "{:?}", names(&scan));
         assert!(
             !scan
                 .files
@@ -1031,5 +1091,118 @@ mod tests {
         assert!(scan.files.is_empty());
         assert_eq!(scan.bytes, 0);
         assert_eq!(scan.category, SyncCategory::Config);
+    }
+
+    // ---- cursor: three named shapes out of a 37 GB directory ---------------
+
+    /// **The allow-list, measured.** On this user's Mac the Cursor directory is
+    /// 37 GB and the part worth carrying is about 1.2 GB. Everything named here
+    /// that is *not* collected was measured on that machine, and a deny-list
+    /// that had missed any one of them would have multiplied the bundle.
+    #[test]
+    fn cursor_carries_the_three_conversation_shapes_and_nothing_else() {
+        let dir = TempDir::new().unwrap();
+        let user = "cursor-user";
+        seed(
+            dir.path(),
+            &format!("{user}/globalStorage/state.vscdb"),
+            "x",
+        );
+        seed(
+            dir.path(),
+            &format!("{user}/globalStorage/conversation-search.db"),
+            "x",
+        );
+        for ws in ["9f2c", "aa11", "bb22"] {
+            seed(
+                dir.path(),
+                &format!("{user}/workspaceStorage/{ws}/state.vscdb"),
+                "x",
+            );
+        }
+
+        // 33 GB of stale backup Cursor left behind — the single entry that
+        // makes this an allow-list rather than a deny-list.
+        seed(
+            dir.path(),
+            &format!("{user}/globalStorage/state.vscdb.bloated.bak"),
+            "x",
+        );
+        // 1.6 GB of derived worker data, and a 688 MB rebuildable edit history.
+        seed(
+            dir.path(),
+            &format!("{user}/globalStorage/anysphere.cursor-agent-worker/index.bin"),
+            "x",
+        );
+        seed(
+            dir.path(),
+            &format!("{user}/History/1a2b/entries.json"),
+            "x",
+        );
+        // ~6 GB of caches.
+        for junk in [
+            "CachedData/x.code",
+            "GPUCache/data_0",
+            "logs/main.log",
+            "snapshots/s1.bin",
+            "WebStorage/1/x.db",
+        ] {
+            seed(dir.path(), &format!("{user}/{junk}"), "x");
+        }
+        // Per-workspace clutter beside the one file that is wanted.
+        seed(
+            dir.path(),
+            &format!("{user}/workspaceStorage/9f2c/anysphere.cursor-retrieval/index"),
+            "x",
+        );
+
+        let cfg = SyncConfig {
+            categories: vec![SyncCategory::Transcripts],
+            ..SyncConfig::default()
+        };
+        let scan = collect(SyncCategory::Transcripts, &roots_at(&dir), &cfg, Utc::now());
+        let mut got: Vec<String> = scan
+            .files
+            .iter()
+            .map(|f| {
+                f.path
+                    .strip_prefix(dir.path().join(user))
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![
+                "globalStorage/conversation-search.db",
+                "globalStorage/state.vscdb",
+                "workspaceStorage/9f2c/state.vscdb",
+                "workspaceStorage/aa11/state.vscdb",
+                "workspaceStorage/bb22/state.vscdb",
+            ]
+        );
+        // No walk was involved, so no count of workspaces can silently truncate.
+        assert!(!scan.walk_capped);
+    }
+
+    /// Conversations are transcripts, and transcripts are opt-in. A user who
+    /// has not asked for them does not get 1.2 GB of Cursor state.
+    #[test]
+    fn cursor_conversations_do_not_travel_unless_transcripts_are_switched_on() {
+        let dir = TempDir::new().unwrap();
+        seed(dir.path(), "cursor-user/globalStorage/state.vscdb", "x");
+        assert!(
+            !SyncConfig::default().includes(SyncCategory::Transcripts),
+            "the default set is what makes this opt-in"
+        );
+        let scan = collect(
+            SyncCategory::Transcripts,
+            &roots_at(&dir),
+            &SyncConfig::default(),
+            Utc::now(),
+        );
+        assert!(scan.files.is_empty(), "{:?}", names(&scan));
     }
 }

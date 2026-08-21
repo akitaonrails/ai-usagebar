@@ -442,6 +442,18 @@ pub async fn run(mut ctx: PushCtx<'_>, progress: &mut dyn Progress) -> Result<Pu
     //     one it merely intended to publish.
     advance_anchor(&ctx, &landed)?;
 
+    // 7c. And the index records when, so `sync status` can answer "last sync".
+    //
+    // Beside the anchor for the same reason: a snapshot that landed is the only
+    // one worth remembering. `set_last_sync` had no production caller at all —
+    // it was written, tested, and never invoked, so `sync status` reported
+    // `never` after every successful push. A failure to record it is not a
+    // failure to have pushed, so it warns rather than unwinding a run whose
+    // data is already safe.
+    if let Err(e) = ctx.index.set_last_sync(ctx.now) {
+        eprintln!("sync: the push landed, but the local index did not record when ({e})");
+    }
+
     // 8. Prune, against the pointer that actually **landed** — never the one
     //    this run built. If another machine won the flip, `landed` is *its*
     //    pointer and its packs are consequently live.

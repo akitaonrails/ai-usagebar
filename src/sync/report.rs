@@ -18,7 +18,6 @@ use chrono::{DateTime, Utc};
 
 use crate::config::{SyncCategory, SyncConfig};
 use crate::sync::index::Index;
-use crate::sync::keystore;
 use crate::sync::plan::{CategoryPlan, SyncPlan};
 use crate::sync::scope;
 use crate::sync::{SyncRoots, scope::CategoryScan};
@@ -257,8 +256,8 @@ fn count_stores(roots: &SyncRoots, cfg: &SyncConfig) -> crate::error::Result<usi
         return Ok(0);
     }
     let mut held = 0usize;
-    for store in keystore::Store::ALL {
-        if roots.stores.has(store)? {
+    for store in roots.stores.all()? {
+        if roots.stores.has(&store)? {
             held += 1;
         }
     }
@@ -2009,10 +2008,10 @@ mod tests {
     fn a_machine_with_a_keystore(dir: &TempDir) -> SyncRoots {
         seed(dir.path(), "claude-home/.credentials.json", "{}");
         let roots = roots_at(dir);
-        roots
-            .stores
-            .edit()
-            .set(keystore::Store::ClaudeCodeOauth, r#"{"claudeAiOauth":{}}"#);
+        roots.stores.edit().set(
+            crate::sync::keystore::Store::ClaudeCodeOauth,
+            r#"{"claudeAiOauth":{}}"#,
+        );
         roots
     }
 

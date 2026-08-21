@@ -133,7 +133,7 @@ pub fn build(ctx: &PushCtx<'_>, plan: &SyncPlan) -> Result<PushBundle> {
             .to_str()
             .and_then(keystore::Store::from_manifest_path)
         {
-            let Some(value) = ctx.roots.stores.read(store)? else {
+            let Some(value) = ctx.roots.stores.read_or_skip(&store)? else {
                 continue;
             };
             if value.is_empty() {
@@ -144,7 +144,7 @@ pub fn build(ctx: &PushCtx<'_>, plan: &SyncPlan) -> Result<PushBundle> {
                 // 0600 recorded for honesty; `restore::write` never applies a
                 // manifest mode, and a store has no mode to apply one to.
                 mode: 0o600,
-                path: store.manifest_path().to_string(),
+                path: store.manifest_path(),
                 true_len,
                 chunks,
             });
@@ -541,6 +541,7 @@ pub fn manifest_path(roots: &SyncRoots, path: &Path) -> Result<String> {
         ("desktop-data", roots.desktop_data_dir.as_path()),
         ("desktop-profiles", roots.desktop_profiles_dir.as_path()),
         ("claude-home", roots.claude_home.as_path()),
+        ("cursor-user", roots.cursor_user_dir.as_path()),
     ];
     candidates.sort_by_key(|(_, root)| std::cmp::Reverse(root.as_os_str().len()));
 

@@ -261,6 +261,14 @@ pub struct SyncRoots {
     pub desktop_profiles_dir: PathBuf,
     /// `~/.claude`, parent of `scheduled-tasks/` and `projects/`.
     pub claude_home: PathBuf,
+    /// Cursor's own user-data directory, parent of `globalStorage/` and
+    /// `workspaceStorage/`.
+    ///
+    /// A root of its own rather than a path derived at the collector, because
+    /// the whole point of [`SyncRoots`] is that a bundle's wire prefix resolves
+    /// against *this* machine's layout — and Cursor's differs per platform
+    /// (`~/Library/Application Support/Cursor/User` against `~/.config/Cursor/User`).
+    pub cursor_user_dir: PathBuf,
     /// The change-detection index db. In the *cache* dir in production — it is
     /// a wipeable hint, not durable state — and inside the injected tree under
     /// [`SyncRoots::at`], so no test writes to an installer's real `$XDG`.
@@ -278,11 +286,13 @@ pub struct SyncRoots {
 impl SyncRoots {
     /// Test seam: every root explicit.
     ///
-    /// [`index_file`](SyncRoots::index_file) is the one exception — derived
-    /// from `config_dir` rather than passed, so the six existing callers keep
-    /// compiling and every one of them still lands inside its own `TempDir`.
-    /// Production never takes this path; [`resolve`](SyncRoots::resolve) puts
-    /// the index in the cache directory where plan 2-01 put it.
+    /// [`index_file`](SyncRoots::index_file) and
+    /// [`cursor_user_dir`](SyncRoots::cursor_user_dir) are the exceptions —
+    /// derived from `config_dir` rather than passed, so the two dozen existing
+    /// callers keep compiling and every one of them still lands inside its own
+    /// `TempDir`. Production never takes this path;
+    /// [`resolve`](SyncRoots::resolve) puts the index in the cache directory
+    /// where plan 2-01 put it, and Cursor's tree where Cursor puts it.
     pub fn at(
         config_file: PathBuf,
         config_dir: PathBuf,
@@ -293,6 +303,7 @@ impl SyncRoots {
         Self {
             config_file,
             index_file: config_dir.join("sync").join("index.sqlite3"),
+            cursor_user_dir: config_dir.join("cursor-user"),
             config_dir,
             desktop_data_dir,
             desktop_profiles_dir,
@@ -322,16 +333,36 @@ impl SyncRoots {
             })?
             .to_path_buf();
         let desktop = crate::claude_desktop::Paths::resolve(&config.anthropic)?;
+        // Cursor's `.../User/globalStorage/state.vscdb`, one level up: the
+        // resolver that already exists rather than a second spelling of the
+        // per-platform convention.
+        let cursor_db = crate::cursor::db::default_db_path()?;
+        let cursor_user_dir = cursor_db
+            .parent()
+            .and_then(std::path::Path::parent)
+            .ok_or_else(|| {
+                AppError::Other(format!(
+                    "Cursor's state database path has no user directory above it: {}",
+                    cursor_db.display()
+                ))
+            })?
+            .to_path_buf();
+        let profiles_dir = desktop.profiles_dir;
         Ok(Self {
             config_file,
             config_dir,
             desktop_data_dir: desktop.data_dir,
-            desktop_profiles_dir: desktop.profiles_dir,
+            desktop_profiles_dir: profiles_dir.clone(),
             claude_home: crate::cache::home_dir()?.join(".claude"),
             index_file: index::default_path()?,
-            // The one door to a real login Keychain in the whole crate's sync
-            // tree, guarded by `keystore`'s own structural test.
-            stores: Stores::Machine,
+            cursor_user_dir,
+            // The one door to a real login Keychain, a real Cursor database and
+            // a real profile store in the whole crate's sync tree, guarded by
+            // `keystore`'s own structural test.
+            stores: Stores::Machine(std::sync::Arc::new(keystore::MachinePaths::new(
+                cursor_db,
+                profiles_dir,
+            ))),
         })
     }
 }

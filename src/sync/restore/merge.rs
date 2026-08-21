@@ -351,13 +351,13 @@ fn decide_store(ctx: &RestoreCtx<'_>, keys: &Keys, file: &FileEntry) -> Disposit
     // A store this build has no way to write — a macOS Keychain entry arriving
     // on Linux, where Claude Code keeps a real file instead. Refused here, in
     // the planner, rather than failing part-way through the write.
-    if !ctx.roots.stores.writable(store) {
+    if !ctx.roots.stores.writable(&store) {
         return Disposition::ExcludedByPolicy;
     }
     // A read failure is not "there is nothing here". A locked Keychain read as
     // an empty one would make the next line call a live credential absent and
     // replace it without ever asking.
-    let Ok(local) = ctx.roots.stores.read(store) else {
+    let Ok(local) = ctx.roots.stores.read(&store) else {
         return Disposition::ReplacesLiveCredential;
     };
     let Some(local) = local.filter(|v| !v.is_empty()) else {
@@ -590,6 +590,11 @@ fn category_of(manifest_path: &str) -> SyncCategory {
         // the switch deciding whether it travels at all.
         keystore::PREFIX => SyncCategory::Credentials,
         "desktop-profiles" => SyncCategory::Credentials,
+        // Cursor's conversation databases, which `scope` collects under the
+        // same opt-in switch as Claude Code's transcripts because they are the
+        // same thing and the same order of magnitude. Both directions must
+        // agree, or the report files them under a category nobody switched on.
+        "cursor-user" => SyncCategory::Transcripts,
         // Claude Code's own credential file, which `scope` collects under
         // `Credentials`. Both directions must agree, or the report files it
         // under a category its owner never switched on.
@@ -618,6 +623,7 @@ mod tests {
     use crate::sync::github::{Client, Endpoints, RepoRef};
     use crate::sync::model::{IndexEntry, Manifest, Root};
     use crate::sync::pack::PackWriter;
+    use crate::sync::push::progress::Silent;
     use crate::sync::restore::PackSource;
     use crate::sync::{CHUNK_SIZE, SyncRoots};
     use std::fs;
@@ -1482,7 +1488,7 @@ mod tests {
             m.roots
                 .stores
                 .edit()
-                .get(Store::ClaudeCodeOauth)
+                .get(&Store::ClaudeCodeOauth)
                 .map(str::to_string)
         }
 
@@ -1493,8 +1499,13 @@ mod tests {
 
         fn apply_to(m: &Machine, plan: &RestorePlan, resolved: &Resolved) -> Applied {
             let client = m.client();
-            write::apply(&m.ctx(&client, applying()), plan, &resolved.packs)
-                .expect("the write half returns Ok even for a partial run")
+            write::apply(
+                &m.ctx(&client, applying()),
+                plan,
+                &resolved.packs,
+                &mut Silent,
+            )
+            .expect("the write half returns Ok even for a partial run")
         }
 
         /// **The headline.** A machine with no Claude login gets one, byte for
@@ -1555,8 +1566,13 @@ mod tests {
             // the confirmation would have been answered — the same tripwire
             // `NeedsCredentialConfirm` has. Nothing is written either way.
             let client = m.client();
-            let err = write::apply(&m.ctx(&client, applying()), &plan, &resolved.packs)
-                .expect_err("an unanswered credential consent must not reach the write path");
+            let err = write::apply(
+                &m.ctx(&client, applying()),
+                &plan,
+                &resolved.packs,
+                &mut Silent,
+            )
+            .expect_err("an unanswered credential consent must not reach the write path");
             assert!(err.to_string().contains("credential confirmation"), "{err}");
             assert_eq!(held(&m).as_deref(), Some(LIVE));
         }
@@ -1687,10 +1703,240 @@ mod tests {
             assert!(
                 m.roots
                     .stores
-                    .read(Store::ClaudeCodeOauth)
+                    .read(&Store::ClaudeCodeOauth)
                     .unwrap()
                     .is_none()
             );
+        }
+
+        // --------------------------------------------- Cursor and Claude Desktop
+
+        const CURSOR: &str = "keystore/cursor-auth";
+        /// What [`crate::sync::keystore`] carries for Cursor: the `cursorAuth/*`
+        /// rows as one JSON object, not the 38 MB database around them.
+        const CURSOR_ROWS: &str =
+            r#"{"cursorAuth/accessToken":"eyJhbGciOi.bundle","cursorAuth/refreshToken":"r"}"#;
+
+        fn desktop(profile: &str) -> Store {
+            Store::DesktopTokenCache {
+                profile: profile.to_string(),
+                slot: crate::sync::keystore::TokenSlot::V2,
+            }
+        }
+
+        /// **The whole widened feature, end to end.** One restore carries the
+        /// Cursor sign-in and *four* Claude Desktop logins onto a machine that
+        /// had none of them, and every one of them lands in its own store.
+        #[test]
+        fn a_cursor_login_and_four_desktop_profiles_all_land_in_one_restore() {
+            let m = Machine::new();
+            // The target can re-seal: it has a Safe Storage key of its own.
+            m.roots.stores.edit().set_safe_key(Some([7u8; 16]));
+
+            let labels = ["gmail", "hotmail", "struct", "toptal"];
+            let wires: Vec<String> = labels.iter().map(|l| desktop(l).manifest_path()).collect();
+            let mut entries: Vec<(&str, &[u8])> = vec![(CURSOR, CURSOR_ROWS.as_bytes())];
+            for wire in &wires {
+                entries.push((wire.as_str(), br#"{"token":"per-profile"}"#));
+            }
+            let resolved = snapshot_with_packs(&entries);
+
+            let plan = plan_of(&m, &resolved, applying());
+            for wire in std::iter::once(&CURSOR.to_string()).chain(wires.iter()) {
+                assert_eq!(disposition_of(&plan, wire), &Disposition::Create, "{wire}");
+            }
+            assert!(
+                plan.items.iter().all(|i| i.dest.is_none()),
+                "no store may acquire a filesystem destination"
+            );
+
+            let applied = apply_to(&m, &plan, &resolved);
+            assert_eq!(applied.written, 5);
+            assert!(applied.failed_at.is_none());
+            let store = m.roots.stores.edit();
+            assert_eq!(store.get(&Store::CursorAuth), Some(CURSOR_ROWS));
+            for label in labels {
+                assert_eq!(
+                    store.get(&desktop(label)),
+                    Some(r#"{"token":"per-profile"}"#),
+                    "{label} did not land"
+                );
+            }
+        }
+
+        /// D2 for the two new stores, which is the same rule as for the Claude
+        /// Code login: writing either **is** overwriting a live sign-in, so
+        /// `--force` alone is not the consent and the local one survives.
+        #[test]
+        fn force_alone_replaces_neither_a_live_cursor_login_nor_a_desktop_one() {
+            let m = Machine::new();
+            m.roots.stores.edit().set_safe_key(Some([7u8; 16]));
+            m.roots
+                .stores
+                .edit()
+                .set(Store::CursorAuth, "{\"a\":\"1\"}");
+            m.roots.stores.edit().set(desktop("gmail"), "mine");
+
+            let gmail = desktop("gmail").manifest_path();
+            let resolved = snapshot_with_packs(&[
+                (CURSOR, CURSOR_ROWS.as_bytes()),
+                (gmail.as_str(), b"theirs"),
+            ]);
+
+            let plan = plan_of(&m, &resolved, opts(true, false));
+            for wire in [CURSOR, gmail.as_str()] {
+                assert_eq!(
+                    disposition_of(&plan, wire),
+                    &Disposition::ReplacesLiveCredential,
+                    "{wire}"
+                );
+            }
+            assert!(plan.items.iter().all(|i| !i.disposition.writes()));
+            let store = m.roots.stores.edit();
+            assert_eq!(store.get(&Store::CursorAuth), Some("{\"a\":\"1\"}"));
+            assert_eq!(store.get(&desktop("gmail")), Some("mine"));
+            drop(store);
+
+            // The single specific consent does promote both.
+            let forced = plan_of(&m, &resolved, opts(true, true));
+            for wire in [CURSOR, gmail.as_str()] {
+                assert_eq!(
+                    disposition_of(&forced, wire),
+                    &Disposition::Update,
+                    "{wire}"
+                );
+            }
+        }
+
+        /// A target with no Safe Storage key cannot re-seal a Desktop cache, so
+        /// the **planner** refuses it — named in the report, and never a
+        /// restore that stops half way through at the write.
+        #[test]
+        fn a_target_that_cannot_reseal_a_desktop_cache_is_refused_in_the_planner() {
+            let m = Machine::new(); // no `set_safe_key`: this machine has none
+            let gmail = desktop("gmail").manifest_path();
+            let resolved = snapshot_with_packs(&[
+                (CURSOR, CURSOR_ROWS.as_bytes()),
+                (gmail.as_str(), b"theirs"),
+            ]);
+
+            let plan = plan_of(&m, &resolved, applying());
+            assert_eq!(
+                disposition_of(&plan, &gmail),
+                &Disposition::ExcludedByPolicy
+            );
+            // Cursor is not Keychain-shaped, so it is unaffected by the same
+            // machine having no Safe Storage key.
+            assert_eq!(disposition_of(&plan, CURSOR), &Disposition::Create);
+
+            let applied = apply_to(&m, &plan, &resolved);
+            assert!(applied.failed_at.is_none(), "one refusal is not a failure");
+            assert_eq!(applied.written, 1);
+            assert_eq!(applied.skipped, 1);
+            assert!(m.roots.stores.edit().get(&desktop("gmail")).is_none());
+        }
+
+        /// A profile name that is not one plain directory name is not a store,
+        /// so it is skipped by name rather than resolved anywhere.
+        #[test]
+        fn a_desktop_entry_with_a_traversing_profile_name_is_excluded_never_resolved() {
+            let m = Machine::new();
+            m.roots.stores.edit().set_safe_key(Some([7u8; 16]));
+            const HOSTILE: &str = "keystore/desktop-token-cache/../../etc/config-tokenCacheV2";
+            let resolved = snapshot_with_packs(&[(HOSTILE, b"payload")]);
+
+            let plan = plan_of(&m, &resolved, applying());
+            assert_eq!(
+                disposition_of(&plan, HOSTILE),
+                &Disposition::ExcludedByPolicy
+            );
+            assert!(plan.items[0].dest.is_none());
+            let applied = apply_to(&m, &plan, &resolved);
+            assert_eq!(applied.written, 0);
+        }
+
+        /// Every store is a credential, so every one of them rides the switch
+        /// that decides whether credentials travel at all.
+        #[test]
+        fn every_store_is_filed_under_credentials() {
+            for wire in [
+                LOGIN,
+                CURSOR,
+                "keystore/desktop-token-cache/gmail/config-tokenCacheV2",
+                "keystore/from-a-later-version",
+            ] {
+                assert_eq!(category_of(wire), SyncCategory::Credentials, "{wire}");
+            }
+        }
+
+        /// **The gate cannot be walked around through the file.**
+        ///
+        /// `cursor-user/globalStorage/state.vscdb` is not credential-bearing —
+        /// it holds conversations, and `--force` is the right consent for
+        /// those. But the source machine's `cursorAuth/*` rows are *inside*
+        /// that database, so a run that wrote the file while refusing the store
+        /// would replace a live Cursor login with `--force` alone: exactly what
+        /// [`Disposition::ReplacesLiveCredential`] exists to prevent.
+        ///
+        /// It cannot, because the refusal is whole-run: `write::apply`'s
+        /// preflight sweeps every item before the first byte, so the file never
+        /// lands either. This asserts that, rather than trusting it.
+        #[test]
+        fn a_refused_cursor_store_stops_the_database_file_landing_too() {
+            let m = Machine::new();
+            m.roots
+                .stores
+                .edit()
+                .set(Store::CursorAuth, r#"{"a":"live"}"#);
+            const DB: &str = "cursor-user/globalStorage/state.vscdb";
+            let resolved = snapshot_with_packs(&[
+                (DB, b"the pushing machine's whole database, rows included"),
+                (CURSOR, CURSOR_ROWS.as_bytes()),
+            ]);
+
+            // `--force` and nothing else: the conversations would be written…
+            let plan = plan_of(&m, &resolved, opts(true, false));
+            assert!(
+                disposition_of(&plan, DB).writes(),
+                "the file half is not itself credential-bearing"
+            );
+            // …but the credential inside them is refused, and that refusal is
+            // the whole run's.
+            assert_eq!(
+                disposition_of(&plan, CURSOR),
+                &Disposition::ReplacesLiveCredential
+            );
+            let client = m.client();
+            let err = write::apply(
+                &m.ctx(&client, applying()),
+                &plan,
+                &resolved.packs,
+                &mut crate::sync::push::progress::Silent,
+            )
+            .expect_err("the preflight must refuse the run");
+            assert!(err.to_string().contains("credential confirmation"), "{err}");
+            assert!(
+                !layout::from_manifest_path(&m.roots, DB).unwrap().exists(),
+                "the database landed anyway, carrying another machine's login"
+            );
+            assert_eq!(
+                m.roots.stores.edit().get(&Store::CursorAuth),
+                Some(r#"{"a":"live"}"#)
+            );
+        }
+
+        /// Cursor's conversation databases are files, and they are filed under
+        /// the same opt-in switch as Claude Code's transcripts — not under
+        /// `Config`, which the fall-through would otherwise have given them.
+        #[test]
+        fn cursors_conversation_files_are_transcripts_on_both_sides() {
+            for wire in [
+                "cursor-user/globalStorage/state.vscdb",
+                "cursor-user/globalStorage/conversation-search.db",
+                "cursor-user/workspaceStorage/9f2c/state.vscdb",
+            ] {
+                assert_eq!(category_of(wire), SyncCategory::Transcripts, "{wire}");
+            }
         }
     }
 
@@ -1764,7 +2010,13 @@ mod tests {
             assert_eq!(disposition_of(&plan, CACHE), &Disposition::Create);
 
             let client = m.client();
-            write::apply(&m.ctx(&client, applying()), &plan, &resolved.packs).unwrap();
+            write::apply(
+                &m.ctx(&client, applying()),
+                &plan,
+                &resolved.packs,
+                &mut Silent,
+            )
+            .unwrap();
             let dest = layout::from_manifest_path(&m.roots, CACHE).unwrap();
             assert_eq!(fs::read_to_string(&dest).unwrap(), mine);
         }
@@ -1803,7 +2055,13 @@ mod tests {
             );
 
             let client = m.client();
-            write::apply(&m.ctx(&client, applying()), &plan, &resolved.packs).unwrap();
+            write::apply(
+                &m.ctx(&client, applying()),
+                &plan,
+                &resolved.packs,
+                &mut Silent,
+            )
+            .unwrap();
             assert_eq!(
                 fs::read_to_string(&dest).unwrap(),
                 live,
@@ -1824,7 +2082,13 @@ mod tests {
             assert_eq!(plan.items[0].disposition, Disposition::ForeignSafeStorage);
 
             let client = m.client();
-            write::apply(&m.ctx(&client, applying()), &plan, &resolved.packs).unwrap();
+            write::apply(
+                &m.ctx(&client, applying()),
+                &plan,
+                &resolved.packs,
+                &mut Silent,
+            )
+            .unwrap();
             assert!(
                 !layout::from_manifest_path(&m.roots, CACHE)
                     .unwrap()
@@ -1852,7 +2116,13 @@ mod tests {
             assert_eq!(disposition_of(&plan, PORTABLE), &Disposition::Create);
 
             let client = m.client();
-            write::apply(&m.ctx(&client, applying()), &plan, &resolved.packs).unwrap();
+            write::apply(
+                &m.ctx(&client, applying()),
+                &plan,
+                &resolved.packs,
+                &mut Silent,
+            )
+            .unwrap();
             let dest = layout::from_manifest_path(&m.roots, PORTABLE).unwrap();
             assert_eq!(fs::read(&dest).unwrap(), portable);
         }
@@ -1870,7 +2140,13 @@ mod tests {
             assert_eq!(plan.items[0].disposition, Disposition::Create);
 
             let client = m.client();
-            write::apply(&m.ctx(&client, applying()), &plan, &resolved.packs).unwrap();
+            write::apply(
+                &m.ctx(&client, applying()),
+                &plan,
+                &resolved.packs,
+                &mut Silent,
+            )
+            .unwrap();
             assert_eq!(
                 fs::read(layout::from_manifest_path(&m.roots, CACHE).unwrap()).unwrap(),
                 plain

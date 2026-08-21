@@ -386,12 +386,32 @@ impl PackSource {
 ///    denial of service anyone with repo write access could trigger at will,
 ///    and the risk plan 1-05 recorded against this phase. The value written is
 ///    the **root's** sealed counter, never the pointer's.
-pub async fn run(ctx: RestoreCtx<'_>) -> Result<RestoreOutcome> {
+///
+/// `progress` is the **same reporter `sync push` uses** — see
+/// [`crate::sync::push::progress`]. A restore of 2.1 GiB spends ~1.5 s deriving
+/// the key, minutes downloading packs and a while writing them, and until 6-12
+/// every second of that was a terminal with nothing on it. `finish` is called on
+/// both arms below, so a run that dies leaves the cursor on a fresh line rather
+/// than in the middle of a bar the error message then lands on top of.
+pub async fn run(
+    ctx: RestoreCtx<'_>,
+    progress: &mut dyn crate::sync::push::progress::Progress,
+) -> Result<RestoreOutcome> {
+    let outcome = restore(ctx, progress).await;
+    progress.finish();
+    outcome
+}
+
+/// [`run`]'s seven steps. Split out only so `finish` above covers every `?`.
+async fn restore(
+    ctx: RestoreCtx<'_>,
+    progress: &mut dyn crate::sync::push::progress::Progress,
+) -> Result<RestoreOutcome> {
     // 1.
     let local_anchor = anchor::read_from(ctx.anchor_path)?;
 
     // 2.
-    let resolved = fetch::resolve(&ctx, local_anchor.as_ref()).await?;
+    let resolved = fetch::resolve(&ctx, local_anchor.as_ref(), progress).await?;
 
     // 3.
     let plan = merge::plan(&ctx, &resolved)?;
@@ -420,7 +440,7 @@ pub async fn run(ctx: RestoreCtx<'_>) -> Result<RestoreOutcome> {
     let backup = backup::take(&ctx, &targets)?;
 
     // 6.
-    let applied = write::apply(&ctx, &plan, &resolved.packs)?;
+    let applied = write::apply(&ctx, &plan, &resolved.packs, progress)?;
 
     // 7. A partial restore does not advance the anchor either: the machine has
     //    not seen this snapshot whole.
@@ -457,12 +477,16 @@ mod ordering_guard {
     ///
     /// It asserts an order, not a presence: two calls in the wrong sequence
     /// still satisfies "both are called".
+    ///
+    /// It reads `restore`, not `run`: 6-12 made `run` a two-line wrapper that
+    /// calls `Progress::finish` on both arms, and the seven steps moved into
+    /// `restore` beneath it. The marker moved with the body it is about.
     #[test]
     fn the_archive_is_taken_before_the_first_byte_is_written() {
         let source = include_str!("mod.rs");
         let body = source
-            .split_once("pub async fn run(")
-            .expect("`run` is the entry point this guard is about")
+            .split_once("async fn restore(")
+            .expect("`restore` holds the seven steps this guard is about")
             .1;
         let take = body
             .find("backup::take(")
@@ -485,6 +509,7 @@ mod tests {
     use crate::sync::github::token::TokenSource;
     use crate::sync::index::Index;
     use crate::sync::plan::{FilePlan, SyncPlan};
+    use crate::sync::push::progress;
     use crate::sync::push::{
         self, Pointer, PushBundle, PushCtx, RELEASE_TAG, SnapshotRecord, keyfile_asset_name,
         pack_asset_name,
@@ -770,6 +795,155 @@ mod tests {
         out
     }
 
+    /// Every call the restore made, in order — no terminal, no writer, just the
+    /// sequence and the figures.
+    #[derive(Debug, Default)]
+    struct Recording {
+        calls: Vec<String>,
+    }
+
+    impl progress::Progress for Recording {
+        fn phase(&mut self, label: &str, files: usize, bytes: u64) {
+            self.calls.push(format!("phase {label} {files} {bytes}"));
+        }
+        fn start(&mut self, assets: usize, total_bytes: u64) {
+            self.calls.push(format!("start {assets} {total_bytes}"));
+        }
+        fn stage(&mut self, stage: progress::Stage, items: usize, total_bytes: u64) {
+            self.calls
+                .push(format!("stage {} {items} {total_bytes}", stage.verb));
+        }
+        fn asset_done(&mut self, index: usize, _name: &str, bytes: u64) {
+            self.calls.push(format!("done {index} {bytes}"));
+        }
+        fn finish(&mut self) {
+            self.calls.push("finish".into());
+        }
+    }
+
+    /// The reported defect: 2.1 GiB restored onto a second Mac under a silent
+    /// terminal — "ETA, progress, status, nothing".
+    ///
+    /// Asserted as a **sequence**, because the order is the fix: the key
+    /// derivation is announced before it starts (it is the first slow thing and
+    /// it used to be the first silent one), every downloaded pack reports, and
+    /// the write stage is entered with the count the run will really write.
+    ///
+    /// The download's byte total is the **release listing's** figure, and the
+    /// per-pack figure is what actually arrived — deliberately not
+    /// `plan.bytes_to_fetch`, which `merge::to_fetch` computes *after* the
+    /// download from the index's `clen`s and which therefore both post-dates the
+    /// bar and counts a different quantity (chunk payload, not pack asset).
+    #[tokio::test]
+    async fn every_slow_stretch_of_a_restore_reports_and_the_key_derivation_reports_first() {
+        let push_dir = TempDir::new().unwrap();
+        let bundle = push_one_file(
+            &roots_at(push_dir.path(), "alice"),
+            "accounts/work/settings.json",
+            b"{\"a\":1}",
+        );
+        let mut server = mockito::Server::new_async().await;
+        serve(&mut server, &bundle).await;
+
+        let client = client_at(&server.url());
+        let restorer = Restorer::new(TempDir::new().unwrap());
+        let mut seen = Recording::default();
+        let outcome = run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    ..Default::default()
+                },
+            ),
+            &mut seen,
+        )
+        .await
+        .expect("the chain resolves");
+        assert_eq!(outcome.written, 1);
+
+        let calls = &seen.calls;
+        assert_eq!(
+            calls.first().map(String::as_str),
+            Some("phase deriving the sync key (Argon2id) 0 0"),
+            "the ~1.5 s Argon2id is the first slow thing and must be the first \
+             thing said: {calls:?}"
+        );
+        let downloads: Vec<&String> = calls
+            .iter()
+            .filter(|c| c.starts_with("stage downloading"))
+            .collect();
+        assert!(
+            !downloads.is_empty(),
+            "the packs are the long stretch: {calls:?}"
+        );
+        for stage in &downloads {
+            let bytes: u64 = stage.rsplit(' ').next().unwrap().parse().unwrap();
+            assert!(bytes > 0, "a download stage knows its byte total: {stage}");
+        }
+
+        let write = calls
+            .iter()
+            .position(|c| c.starts_with("stage writing"))
+            .expect("the write stage reports too");
+        assert_eq!(calls[write], "stage writing 1 7", "{calls:?}");
+        assert!(
+            calls[..write]
+                .iter()
+                .any(|c| c.starts_with("stage downloading")),
+            "packs are downloaded before they are written: {calls:?}"
+        );
+        assert_eq!(
+            calls.last().map(String::as_str),
+            Some("finish"),
+            "the terminal is handed back on a fresh line: {calls:?}"
+        );
+        // Every stage's per-item calls are one apiece and never exceed the
+        // total the stage announced — a bar that overshoots is a bar lying.
+        let announced: usize = calls[write]
+            .split(' ')
+            .nth(2)
+            .and_then(|n| n.parse().ok())
+            .unwrap();
+        assert_eq!(
+            calls[write + 1..]
+                .iter()
+                .filter(|c| c.starts_with("done"))
+                .count(),
+            announced
+        );
+    }
+
+    /// A dry run is the *planning* pass `sync pull` always makes first, and it
+    /// deliberately fetches no file content (5-02) — so it must not announce a
+    /// write stage it will never enter, and must not draw a bar for the packs it
+    /// is not going to pull.
+    #[tokio::test]
+    async fn a_dry_run_narrates_only_what_it_actually_does() {
+        let push_dir = TempDir::new().unwrap();
+        let bundle = push_one_file(
+            &roots_at(push_dir.path(), "alice"),
+            "accounts/work/settings.json",
+            b"{\"a\":1}",
+        );
+        let mut server = mockito::Server::new_async().await;
+        serve(&mut server, &bundle).await;
+
+        let client = client_at(&server.url());
+        let restorer = Restorer::new(TempDir::new().unwrap());
+        let mut seen = Recording::default();
+        run(restorer.ctx(&client, RestoreOptions::default()), &mut seen)
+            .await
+            .expect("the chain resolves");
+
+        assert!(
+            !seen.calls.iter().any(|c| c.starts_with("stage writing")),
+            "a dry run writes nothing and says so by saying nothing: {:?}",
+            seen.calls
+        );
+        assert_eq!(seen.calls.last().map(String::as_str), Some("finish"));
+    }
+
     /// The tracer, first half: the whole chain walked end to end, and **nothing
     /// written** (D1, UX-01).
     #[tokio::test]
@@ -785,9 +959,12 @@ mod tests {
 
         let client = client_at(&server.url());
         let restorer = Restorer::new(TempDir::new().unwrap());
-        let outcome = run(restorer.ctx(&client, RestoreOptions::default()))
-            .await
-            .expect("the chain resolves");
+        let outcome = run(
+            restorer.ctx(&client, RestoreOptions::default()),
+            &mut progress::Silent,
+        )
+        .await
+        .expect("the chain resolves");
 
         assert!(!outcome.applied);
         assert_eq!(outcome.written, 0);
@@ -835,19 +1012,22 @@ mod tests {
             restorer
                 .roots
                 .stores
-                .read(Store::ClaudeCodeOauth)
+                .read(&Store::ClaudeCodeOauth)
                 .unwrap()
                 .is_none(),
             "the second Mac starts with no Claude login, which is the premise"
         );
 
-        let outcome = run(restorer.ctx(
-            &client,
-            RestoreOptions {
-                apply: true,
-                ..Default::default()
-            },
-        ))
+        let outcome = run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    ..Default::default()
+                },
+            ),
+            &mut progress::Silent,
+        )
         .await
         .expect("the chain resolves");
 
@@ -861,7 +1041,7 @@ mod tests {
             restorer
                 .roots
                 .stores
-                .read(Store::ClaudeCodeOauth)
+                .read(&Store::ClaudeCodeOauth)
                 .unwrap()
                 .map(|v| v.to_string())
                 .as_deref(),
@@ -897,13 +1077,16 @@ mod tests {
 
         let client = client_at(&server.url());
         let restorer = Restorer::new(TempDir::new().unwrap());
-        let outcome = run(restorer.ctx(
-            &client,
-            RestoreOptions {
-                apply: true,
-                ..Default::default()
-            },
-        ))
+        let outcome = run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    ..Default::default()
+                },
+            ),
+            &mut progress::Silent,
+        )
         .await
         .expect("the chain resolves and writes");
 
@@ -946,13 +1129,16 @@ mod tests {
 
         let client = client_at(&server.url());
         let restorer = Restorer::new(TempDir::new().unwrap());
-        let outcome = run(restorer.ctx(
-            &client,
-            RestoreOptions {
-                apply: true,
-                ..Default::default()
-            },
-        ))
+        let outcome = run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    ..Default::default()
+                },
+            ),
+            &mut progress::Silent,
+        )
         .await
         .unwrap();
 
@@ -993,13 +1179,16 @@ mod tests {
         let bytes_before = fs::read(&restorer.anchor_path).unwrap();
 
         let client = client_at(&server.url());
-        let err = run(restorer.ctx(
-            &client,
-            RestoreOptions {
-                apply: true,
-                ..Default::default()
-            },
-        ))
+        let err = run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    ..Default::default()
+                },
+            ),
+            &mut progress::Silent,
+        )
         .await
         .expect_err("a malformed pointer must refuse");
         assert!(!err.to_string().is_empty());
@@ -1025,13 +1214,16 @@ mod tests {
 
         let client = client_at(&server.url());
         let restorer = Restorer::new(TempDir::new().unwrap());
-        run(restorer.ctx(
-            &client,
-            RestoreOptions {
-                apply: true,
-                ..Default::default()
-            },
-        ))
+        run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    ..Default::default()
+                },
+            ),
+            &mut progress::Silent,
+        )
         .await
         .unwrap();
 
@@ -1067,14 +1259,17 @@ mod tests {
         .unwrap();
 
         let client = client_at(&server.url());
-        let err = run(restorer.ctx(
-            &client,
-            RestoreOptions {
-                apply: true,
-                allow_rollback: true,
-                ..Default::default()
-            },
-        ))
+        let err = run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    allow_rollback: true,
+                    ..Default::default()
+                },
+            ),
+            &mut progress::Silent,
+        )
         .await
         .expect_err("a borrowed counter must be refused");
         assert!(
@@ -1148,13 +1343,16 @@ mod tests {
 
         let client = client_at(&server.url());
         let restorer = Restorer::new(TempDir::new().unwrap());
-        run(restorer.ctx(
-            &client,
-            RestoreOptions {
-                apply: true,
-                ..Default::default()
-            },
-        ))
+        run(
+            restorer.ctx(
+                &client,
+                RestoreOptions {
+                    apply: true,
+                    ..Default::default()
+                },
+            ),
+            &mut progress::Silent,
+        )
         .await
         .unwrap();
 
