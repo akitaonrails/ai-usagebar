@@ -172,6 +172,16 @@ Official documentation is authoritative. Before implementing each slice, recheck
 - Follow `CLAUDE.md` only when cutting a release; provider work alone must not opportunistically change version/package artifacts (`Cargo.toml` version, `manifest.json`, PKGBUILDs, `.SRCINFO`s, `CHANGELOG` compare links are release-only).
 - **REV**: Verify Windows portability: `cargo build --release` on Windows produces `ai-usagebar.exe` + `ai-usagebar-tui.exe`; config path resolves via `directories::ProjectDirs` (`%APPDATA%` fallback), not hard-coded `~/.config`.
 
+### 10. TUI Navigation & Provider Visibility  ⏳ next slice (user request 2026-08-23; takes priority over Firecrawl)
+
+Targets the ratatui TUI (`src/bin/ai-usagebar-tui.rs`, `src/tui/app.rs`, `src/tui/settings.rs`). GNOME/KDE/Omarchy and the macOS menu bar are already mouse-driven and data-driven from `usage --json`, so they need no change; the macOS menubar is unaffected. Requirements are codified in spec §3.8 (REQ-039..043) and AC-021..025.
+
+- Remap the vendor navigation (the selectable ring `[Overview, tab0, tab1, …]`) from `Tab`/`l`/`→` to **Up/Down arrows** with wrap-around, keeping `Tab`/`Shift+Tab`/`l`/`h`/`←`/`→` as secondary aliases. `handle_key` in `src/bin/ai-usagebar-tui.rs:475-482` currently has no Up/Down arm.
+- Enable mouse handling in the event loop (`EnableMouseCapture` is already active in `src/bin/ai-usagebar-tui.rs:91`, but `event::read()` only matches `Event::Key` at line 210 — `Event::Mouse` is dropped). A click on a vendor navigation entry selects it; a click on a Settings overlay field moves focus to it; clicks elsewhere are ignored. Keep the key-hints footer accurate (add Up/Down + mouse).
+- Filter the vendor navigation and the Overview to **configured** providers: a provider that is enabled but has no resolvable credential (no env key and no inline key) must not appear as a selectable entry. The Settings overlay remains the configuration surface: group or collapse providers that are neither configured nor enabled (e.g., a "Configured" section plus a collapsed "More providers" section) so unconfigured entries do not dominate the screen. Preserve the existing deliberate behavior of showing enabled-and-failing providers with their error state.
+- Tests: `handle_key` Up/Down wrap, mouse-click selection, settings click-focus, tab/overview filtering for enabled-without-key providers, footer hints; update `README.md` TUI controls and any screenshot captions; `make desktop-test` must stay green.
+- Validation: `cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --all-targets --locked`, `make desktop-test`, `cargo machete`.
+
 ## Rollback Strategy
 
 - Each provider defaults disabled and is independently removable (single `VendorId` + config section + snapshot variant).

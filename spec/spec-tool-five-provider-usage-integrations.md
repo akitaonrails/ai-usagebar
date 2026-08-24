@@ -115,6 +115,24 @@ Define the implementation contract for adding five official usage providers as f
 - **NFR-006 — Compatibility**: `usage --json` additive; new vendors append entries in `VendorId::all()` order; existing placeholders remain; new short codes do not collide with the existing codes (`cld,gpt,zai,opr,dsk,kmi,klo,nvt,msh,grk,sgk,aac,agy,cur,mmx,kir` plus `nrs` for Nous and `ocg` for OpenCode Go, defined in their `src/*/vendor.rs` modules).
 - **NFR-007 — Testability**: All I/O behind injectable seams (`Cache::at`, `fetch_at` with `Endpoints` override, clock injection for month-to-date bounds, `candidate_bases_with`); hermetic tests never touch real `$HOME`/`$XDG`/credential paths; live tests are `#[ignore]` and credential-gated.
 - **NFR-008 — Observability**: Sanitized warnings visible in TUI panel, `usage` text report, tooltip and JSON `sections`; `.last_error` holds `(code, sanitized_message)` for post-mortem without credential leakage.
+- **NFR-009 — Accessibility**: Keyboard navigation must remain complete without a mouse (Up/Down + wrap navigate the vendor menu; Settings remains fully keyboard-operable). Mouse is an addition, never a requirement. Contrast and focus indicators are preserved.
+
+## 3.8 User Interface Requirements (TUI navigation, mouse, provider visibility)
+
+Requested 2026-08-23. Targets the ratatui TUI only: GNOME/KDE/Omarchy and the
+macOS menu bar are already mouse-driven and consume `usage --json`, so they
+need no change. Current gaps verified in code: `handle_key` in
+`src/bin/ai-usagebar-tui.rs` maps only `Tab`/`l`/`→` and `BackTab`/`h`/`←` to
+tab cycling (no Up/Down); `EnableMouseCapture` is active but the event loop
+matches only `Event::Key` and drops `Event::Mouse`; the Settings overlay lists
+every API-key vendor unconditionally.
+
+- **REQ-039**: The system shall navigate the vendor menu (the selectable ring `[Overview, tab0, tab1, …]`) with the Up and Down arrow keys with wrap-around, keeping `Tab`/`Shift+Tab`/`l`/`h`/`Left`/`Right` as secondary aliases.
+- **REQ-040**: The system shall process mouse events in the TUI event loop: a click on a vendor menu entry shall select that provider, a click on a Settings overlay field shall move focus to it, and clicks outside interactive areas shall be ignored.
+- **REQ-041**: The system shall list in the vendor menu and the Overview only configured providers — a provider enabled in config without a resolvable credential (no environment key and no inline key) shall not appear as a selectable entry.
+- **REQ-042**: The system shall keep the Settings overlay as the configuration surface for every API-key provider, but shall group or collapse providers that are neither configured nor enabled (e.g., a "Configured" section plus a collapsed "More providers" section) so unconfigured entries do not dominate the screen.
+- **REQ-043**: The system shall preserve the existing behavior of showing enabled-and-failing providers with their error state in the vendor menu; only unconfigured providers (no credential source) are hidden.
+- **REQ-044**: The system shall update the TUI key-hints footer and `README.md` TUI controls to reflect Up/Down and mouse navigation without breaking existing shortcuts.
 
 # 4. Constraints & Guidelines
 
@@ -124,7 +142,7 @@ Define the implementation contract for adding five official usage providers as f
 - **CON-004**: Respect global rate limits; use `interval: 300` for widget polling and 60 s file cache so multi-monitor setups coexist via flock — do not lower intervals to hide API drift.
 - **CON-005**: Preserve `section` ordering via `SectionBuilder`; do not recreate a per-vendor metric-order table in `report.rs`.
 - **CON-006**: Keep the seven-day `MAX_STALE`, `DEFAULT_TTL` 60 s, and 10-redirect same-origin limit unchanged unless this spec explicitly overrides for a sub-cache (Vercel report 6 h).
-- **GUD-001**: Implement in order Tavily → Firecrawl → Requesty → ZenMux → Vercel AI Gateway; complete desktop adapter mappings/tests before starting the next slice.
+- **GUD-001**: Implement in order Tavily (done) → **TUI Navigation & Provider Visibility (§3.8, user request 2026-08-23 — takes priority over Firecrawl)** → Firecrawl → Requesty → ZenMux → Vercel AI Gateway; complete desktop adapter mappings/tests before starting the next slice.
 - **GUD-002**: Add `VENDOR_SECRET_ENV_VARS` entries and `vendor_secret_env_vars_to_remove` coverage together with each `VendorId`.
 - **GUD-003**: Extend `has_inline_api_keys` / `protect_inline_api_keys` for every new `api_key` field, including any per-account keys if added.
 - **GUD-004**: Use `SectionBuilder::push_metric` for every gauge so absolute `reset_at` travels with the metric into `usage --json`.
@@ -555,11 +573,17 @@ Ordering is `VendorId::all()` filtered by `enabled` plus real `fetched_at`/`rese
 - **AC-018**: Given a partial snapshot with age < 5 minutes, When the caller requests again, Then the system serves the partial snapshot and defers the secondary retry until the 5-minute horizon expires.
 - **AC-019**: Given `usage --json` with all five new vendors enabled, When rendering JSON, Then entries appear in canonical `VendorId::all()` order, each `Metric` carries `severity` and absolute `reset_at`, and balance-only rows appear as `Text`/`Block` with no fabricated `percent`.
 - **AC-020**: Given a Windows install with `%USERPROFILE%\.claude\.credentials.json`, When resolving home, Then `directories::BaseDirs` resolves via `%USERPROFILE%` and `ai-usagebar.exe` + `ai-usagebar-tui.exe` read that path while TUI/config remain portable.
+- **AC-021**: Given the TUI with a vendor menu of N entries (Overview + enabled providers), When the user presses Down at the last entry, Then the selection wraps to the first entry; pressing Up wraps the other way.
+- **AC-022**: Given the TUI with mouse capture active, When the user clicks a vendor menu entry, Then that provider becomes the active tab; a click on a Settings overlay field moves focus to that field.
+- **AC-023**: Given a provider enabled in config with no resolvable credential, When the TUI builds the vendor menu and Overview, Then that provider is absent from both; it appears in the Settings overlay marked as unconfigured ("key missing").
+- **AC-024**: Given the Settings overlay with several unconfigured API-key providers, When it opens, Then unconfigured entries are grouped or collapsed so they do not dominate the screen while remaining reachable for configuration.
+- **AC-025**: Given an enabled provider whose fetch fails, When the TUI builds the vendor menu, Then that provider still appears with its error state (existing behavior preserved — only unconfigured providers are hidden).
 
 # 8. Test Automation Strategy
 
 - **Test Levels**
   - *Unit*: `src/<vendor>/types.rs` wire parsing (required fields, finiteness, negative, duplicate, currency), `fmt_minor`/`Cents` money, scope fingerprint derivation, TTL validation.
+  - *TUI (slice §3.8)*: `handle_key` Up/Down wrap and secondary aliases, mouse-click dispatch (vendor menu + Settings focus), `build_tabs`/Overview filtering for enabled-without-key providers, Settings grouping of unconfigured rows, key-hints footer text.
   - *Integration (hermetic, mocked)*: `mockito` servers per vendor; cache round-trip (`Cache::at` with `TempDir`), fresh-payload hit, expired-payload miss, flock contention (`acquire_lock_async` does not stall current-thread runtime), partial vs full cache, `.last_error` sanitization, Windows home resolution (`directories::BaseDirs` mock), report independent TTL for Vercel.
   - *End-to-end (cred-gated)*: `#[ignore]` live smoke per vendor requiring the real env key; validates fields consumed by the app, never asserts full upstream schema.
   - *Desktop adapter contract*: `node omarchy/model.test.mjs`, `node gnome-extension/marker-logic.test.mjs`, `node kde-plasmoid/plasmoid-logic.test.mjs` plus macOS `fixedFieldMapping` tests.
@@ -582,6 +606,8 @@ Ordering is `VendorId::all()` filtered by `enabled` plus real `fetched_at`/`rese
 - **Why a 5-minute partial horizon**: retrying a failing secondary every 60 s while the primary stays healthy would hammer a degraded endpoint (and, for Vercel, re-bill the paid report query); a 300 s horizon backs off the secondary while the cached primary block keeps displaying.
 - **Why the fingerprint is hash-based**: Storing the raw key in the payload would leak secrets to cache readers; a SHA-256 hex digest (the existing `opencode_go` convention) preserves binding without secret exposure and matches the existing cache isolation approach.
 - **Why additive JSON**: External adapters (COSMIC, Noctalia, KDE, Omarchy) already filter client-side from one `usage --json` call; adding `--vendor` to KDE would collide with Waybar's shared `active_vendor` state, so additive entries are the only compatible path.
+- **Why Up/Down instead of Tab for the vendor menu**: Tab has two meanings in the TUI (form focus in Settings, tab cycling in the main view) and is conventionally reserved for focus traversal, so users expect arrow keys for a vertical menu. Mouse is prioritized because the desktop surfaces the user already uses (Waybar, GNOME, KDE, macOS) are mouse-driven; the ratatui TUI was the only keyboard-only holdout, and its capture is already enabled — only event dispatch is missing.
+- **Why hide unconfigured providers**: With the provider roster growing, every new opt-in vendor (Tavily and the four planned slices) would otherwise surface as an error or empty entry. Only *configured* (credential-resolvable) providers are selectable; the Settings overlay remains the deliberate discoverability surface for unconfigured vendors, collapsed so it does not dominate.
 
 # 10. Dependencies & External Integrations
 
@@ -716,6 +742,7 @@ Aggregation uses `checked_add` for integers and `finite_amount` for `cost`; `req
 - [ ] Inline keys trigger `chmod 600` on Unix; `VENDOR_SECRET_ENV_VARS` covers all five new env names.
 - [ ] `VendorId::display_name()` remains the sole provider-name source (no duplicate tables in `src/report.rs` or adapters).
 - [ ] `usage --json` ordering, non-percentage rows, `severity`, absolute `reset_at`, partial warnings, stale semantics and additive compatibility verified via fixtures / insta snapshots.
+- [ ] TUI slice (§3.8): Up/Down wrap navigation, mouse click selection (menu + Settings focus), unconfigured providers hidden from menu/Overview and grouped in Settings, enabled-but-failing providers still visible — all covered by `handle_key`/event-loop/`build_tabs` unit tests and the key-hints footer updated.
 - [ ] Docs updated with cliche placeholders only: `README.md`, `docs/configuration.md`, `docs/format-placeholders.md`, `docs/vendor-endpoints.md`, `config.example.toml`, adapter READMEs, `CHANGELOG.md` (Keep-a-Changelog `Added` + compare links as release step).
 - [ ] All live tests are `#[ignore]` and env-gated; no secret is printed or committed; `.env` and `*.credentials.json` remain gitignored.
 
