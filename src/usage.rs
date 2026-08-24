@@ -351,7 +351,58 @@ pub enum VendorSnapshot {
     Kiro(KiroSnapshot),
     NousResearch(crate::nous::types::AccountSnapshot),
     OpenCodeGo(crate::opencode_go::types::Usage),
+    Tavily(TavilySnapshot),
     CommandCode(crate::commandcode::types::Snapshot),
+}
+
+/// Tavily — credit usage from the documented `GET /usage` endpoint. Tavily
+/// reports integer credit counts only (no money and no reset timestamp): the
+/// plan's total used/limit for the current billing cycle, pay-as-you-go
+/// usage/limit, this key's own used/limit, and the per-endpoint breakdown
+/// (search/extract/crawl/map/research) at account scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TavilySnapshot {
+    /// Subscription plan name (`account.current_plan`), e.g. "Bootstrap".
+    pub plan: String,
+    /// Credits used by the plan this billing cycle (`account.plan_usage`).
+    pub plan_used: u64,
+    /// Plan credit limit (`account.plan_limit`); `None` means unlimited.
+    pub plan_limit: Option<u64>,
+    /// Pay-as-you-go usage count (`account.paygo_usage`).
+    pub payg_used: u64,
+    /// Pay-as-you-go usage limit (`account.paygo_limit`); `None` when absent.
+    pub payg_limit: Option<u64>,
+    /// Credits used by this API key (`key.usage`).
+    pub key_used: u64,
+    /// Key usage limit (`key.limit`); `None` means unlimited.
+    pub key_limit: Option<u64>,
+    /// Search endpoint credits used this cycle (account scope).
+    pub search: u64,
+    /// Extract endpoint credits used this cycle (account scope).
+    pub extract: u64,
+    /// Crawl endpoint credits used this cycle (account scope).
+    pub crawl: u64,
+    /// Map endpoint credits used this cycle (account scope).
+    pub map: u64,
+    /// Research endpoint credits used this cycle (account scope).
+    pub research: u64,
+    /// Non-secret binding to the API key + optional project id; a mismatch
+    /// forces a refetch and never serves another scope's payload.
+    pub scope_fingerprint: String,
+}
+
+impl TavilySnapshot {
+    /// Plan usage as an integer percentage, `None` when the plan has no
+    /// positive limit (unlimited or unreported) — a gauge with no denominator
+    /// would fabricate a number. Integer math keeps u64 counts exact; the
+    /// percentage saturates at 100 because over-limit usage is reported
+    /// separately as pay-as-you-go.
+    pub fn plan_pct(&self) -> Option<i32> {
+        self.plan_limit.filter(|limit| *limit > 0).map(|limit| {
+            let pct = ((self.plan_used as u128 * 100) + (limit as u128 / 2)) / limit as u128;
+            pct.min(100) as i32
+        })
+    }
 }
 
 /// Google Antigravity 2.0 / CLI snapshot. The API groups models into Gemini
@@ -839,5 +890,42 @@ mod tests {
             reset_at: None,
         };
         assert_eq!(snap.pct(), 33);
+    }
+
+    fn tavily(plan_used: u64, plan_limit: Option<u64>) -> TavilySnapshot {
+        TavilySnapshot {
+            plan: "Pro".into(),
+            plan_used,
+            plan_limit,
+            payg_used: 0,
+            payg_limit: None,
+            key_used: 0,
+            key_limit: None,
+            search: 0,
+            extract: 0,
+            crawl: 0,
+            map: 0,
+            research: 0,
+            scope_fingerprint: String::new(),
+        }
+    }
+
+    #[test]
+    fn tavily_plan_pct_is_none_without_a_positive_limit() {
+        assert_eq!(tavily(500, None).plan_pct(), None);
+        assert_eq!(tavily(500, Some(0)).plan_pct(), None);
+    }
+
+    #[test]
+    fn tavily_plan_pct_rounds_and_saturates() {
+        assert_eq!(tavily(62, Some(100)).plan_pct(), Some(62));
+        assert_eq!(tavily(150, Some(100)).plan_pct(), Some(100));
+        assert_eq!(tavily(1, Some(3)).plan_pct(), Some(33));
+    }
+
+    #[test]
+    fn tavily_plan_pct_is_exact_above_f64_precision() {
+        // Integer math must not lose precision on u64 counters.
+        assert_eq!(tavily(1 << 52, Some((1 << 53) + 1)).plan_pct(), Some(50));
     }
 }

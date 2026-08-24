@@ -198,7 +198,7 @@ func testDefaultEnabled() {
     for id in ["anthropic", "openai", "zai", "openrouter"] {
         assertEqual(defaultEnabled(id), true, "\(id) defaults enabled")
     }
-    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity"] {
+    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity", "tavily"] {
         assertEqual(defaultEnabled(id), false, "\(id) defaults disabled (opt-in)")
     }
 }

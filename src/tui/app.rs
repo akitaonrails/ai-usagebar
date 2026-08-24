@@ -737,6 +737,25 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
             .await?;
             Ok(outcome.into())
         }
+        VendorId::Tavily => {
+            let api_key = crate::config::resolve_api_key(
+                "Tavily",
+                &config.tavily.api_key_env,
+                config.tavily.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("tavily")?;
+            let endpoints = crate::tavily::fetch::Endpoints::default();
+            let outcome = crate::tavily::fetch_snapshot(
+                client,
+                &api_key,
+                config.tavily.project_id.as_deref(),
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
         VendorId::CommandCode => {
             let credential =
                 crate::commandcode::creds::resolve(config.commandcode.auth_paths.as_deref())?;

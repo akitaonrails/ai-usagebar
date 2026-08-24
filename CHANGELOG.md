@@ -9,6 +9,14 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- Tavily usage from the documented `GET /usage` endpoint: plan billing-cycle
+  used/limit (with a percentage when the plan has a limit), pay-as-you-go,
+  this key's used/limit, and the per-endpoint breakdown. Opt-in via
+  `[tavily]` / `TAVILY_API_KEY`; an optional `[tavily] project_id` scopes the
+  query and cache to one project.
+
 ## [1.10.0] — 2026-09-02
 
 ### Added

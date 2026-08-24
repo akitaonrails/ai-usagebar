@@ -134,6 +134,14 @@ enabled = true             # disabled by default; enable once you've run `kiro-c
 # No API key: reads the AWS SSO OIDC session kiro-cli already wrote to its own
 # data.sqlite3 after you logged in there.
 # db_path = "/home/you/.local/share/kiro-cli/data.sqlite3"
+
+[tavily]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "TAVILY_API_KEY"
+# api_key = "tvly-..."     # used if TAVILY_API_KEY is unset; chmod 600 the file!
+# Optional project id: sent as the X-Project-ID header and folded into the
+# cache-scope fingerprint so one project's usage is never served for another.
+# project_id = "..."
 ```
 
 For more than one OpenRouter key, see the

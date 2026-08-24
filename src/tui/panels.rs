@@ -222,6 +222,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             .collect();
             ("OpenCode Go".into(), cells)
         }
+        VendorSnapshot::Tavily(s) => {
+            let cell = s
+                .plan_pct()
+                .map(|p| pct("plan", p))
+                .unwrap_or_else(|| ("—".into(), PaceSeverity::Low));
+            (s.plan.clone(), vec![cell])
+        }
     };
 
     for (text, _) in &mut cells {
@@ -295,6 +302,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .flatten()
         .max(),
         VendorSnapshot::SuperGrok(s) => Some(s.weekly_pct),
+        VendorSnapshot::Tavily(s) => s.plan_pct(),
         VendorSnapshot::Openrouter(_)
         | VendorSnapshot::Deepseek(_)
         | VendorSnapshot::Kilo(_)
@@ -362,6 +370,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Kiro(s) => kiro_sections(s, now),
                 VendorSnapshot::NousResearch(s) => nous_sections(s, now),
                 VendorSnapshot::OpenCodeGo(s) => opencode_go_sections(s, now),
+                VendorSnapshot::Tavily(s) => tavily_sections(s),
                 VendorSnapshot::CommandCode(s) => commandcode_sections(s, now),
             };
             // Inject the (already-absolute) fetched-at instant into the title
@@ -431,7 +440,7 @@ fn sanitize_section(section: &mut Section) {
 
 /// Translate cache diagnostics at the presentation boundary. Cache files keep
 /// their established `(u16, String)` form: only non-zero codes are HTTP, while
-/// Kimi's stable schema marker identifies its code-zero schema warning.
+/// a stable schema marker identifies a code-zero schema warning.
 fn warning_label(
     snapshot: &VendorSnapshot,
     last_error: &Option<(u16, String)>,
@@ -443,14 +452,24 @@ fn warning_label(
     if message.is_empty() {
         return None;
     }
-    let label = if matches!(snapshot, VendorSnapshot::Kimi(_))
-        && matches!(
-            crate::kimi::vendor::warning_kind(*code, message),
-            crate::kimi::vendor::WarningKind::SchemaDrift
-        ) {
-        "Kimi API schema drift"
-    } else {
-        "Warning"
+    let label = match snapshot {
+        VendorSnapshot::Kimi(_)
+            if matches!(
+                crate::kimi::vendor::warning_kind(*code, message),
+                crate::kimi::vendor::WarningKind::SchemaDrift
+            ) =>
+        {
+            "Kimi API schema drift"
+        }
+        VendorSnapshot::Tavily(_)
+            if matches!(
+                crate::tavily::vendor::warning_kind(*code, message),
+                crate::tavily::vendor::WarningKind::SchemaDrift
+            ) =>
+        {
+            "Tavily API schema drift"
+        }
+        _ => "Warning",
     };
     // The stable marker is already the schema-warning label. Keep the label
     // visible but do not repeat that sentinel as a redundant body value.
@@ -1168,6 +1187,80 @@ fn kimi_sections(s: &crate::usage::KimiSnapshot, now: DateTime<Utc>, tol: u32) -
     }
     let w = window(s.weekly_pct(), s.weekly_reset_at, WEEKLY_WINDOW);
     push_window(&mut v, "Weekly quota", &w, now, tol, false);
+
+    v
+}
+
+fn tavily_sections(s: &crate::usage::TavilySnapshot) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![Section::Title {
+        left: s.plan.clone(),
+        right: None,
+    }]);
+
+    match s.plan_pct() {
+        Some(pct) => {
+            let p = pct.clamp(0, 100) as u16;
+            v.push(Section::Spacer);
+            v.push_metric(
+                Section::Metric {
+                    label: "Plan".into(),
+                    pct: p,
+                    severity: severity_for(pct),
+                    value_label: format!("{pct}%"),
+                    footnote: format!(
+                        "{} / {} used this cycle",
+                        s.plan_used,
+                        s.plan_limit.map_or_else(|| "∞".into(), |l| l.to_string())
+                    ),
+                },
+                None,
+            );
+        }
+        // No positive limit: a gauge would fabricate a denominator. Report the
+        // raw count as a text row instead of inventing a percentage.
+        None => {
+            v.push(Section::Spacer);
+            v.push(Section::Text {
+                label: "Plan used".into(),
+                value: format!(
+                    "{} / {}",
+                    s.plan_used,
+                    s.plan_limit
+                        .filter(|l| *l > 0)
+                        .map_or_else(|| "unlimited".into(), |l| l.to_string())
+                ),
+            });
+        }
+    }
+
+    v.push(Section::Spacer);
+    v.push(Section::Text {
+        label: "Pay-as-you-go".into(),
+        value: s
+            .payg_limit
+            .map(|limit| format!("{} of {limit}", s.payg_used))
+            .unwrap_or_else(|| s.payg_used.to_string()),
+    });
+    v.push(Section::Text {
+        label: "This key".into(),
+        value: s
+            .key_limit
+            .map(|limit| format!("{} of {limit}", s.key_used))
+            .unwrap_or_else(|| format!("{} (unlimited)", s.key_used)),
+    });
+
+    v.push(Section::Spacer);
+    v.push(Section::Block {
+        label: "Usage by endpoint".into(),
+        body: vec![format!(
+            "search {} · extract {} · crawl {}",
+            s.search, s.extract, s.crawl
+        )],
+    });
+    v.push(Section::Block {
+        label: "".into(),
+        body: vec![format!("map {} · research {}", s.map, s.research)],
+    });
 
     v
 }
@@ -1893,6 +1986,80 @@ mod tests {
         let (_, cells) = compact_cells(&VendorSnapshot::Kimi(snap));
         let texts: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(texts, ["5h 15%", "wk 26%"]);
+    }
+
+    fn tavily_snap() -> crate::usage::TavilySnapshot {
+        crate::usage::TavilySnapshot {
+            plan: "Pro".into(),
+            plan_used: 620,
+            plan_limit: Some(1000),
+            payg_used: 25,
+            payg_limit: Some(100),
+            key_used: 150,
+            key_limit: Some(1000),
+            search: 350,
+            extract: 75,
+            crawl: 50,
+            map: 15,
+            research: 10,
+            scope_fingerprint: String::new(),
+        }
+    }
+
+    #[test]
+    fn tavily_sections_show_plan_metric_and_breakdown_without_reset() {
+        let snap = tavily_snap();
+        let sections = sections_for(&ready(VendorSnapshot::Tavily(snap)), now(), 5);
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter(|s| matches!(s, Section::Metric { .. }))
+            .collect();
+        assert_eq!(metrics.len(), 1);
+        let Some(Section::Metric {
+            label,
+            pct,
+            value_label,
+            ..
+        }) = sections
+            .iter()
+            .find(|s| matches!(s, Section::Metric { label, .. } if label == "Plan"))
+        else {
+            panic!("no Plan metric row");
+        };
+        assert_eq!(label, "Plan");
+        assert_eq!(*pct, 62);
+        assert_eq!(value_label, "62%");
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Block { label, .. } if label == "Usage by endpoint"
+        )));
+    }
+
+    #[test]
+    fn tavily_sections_without_limit_have_no_fabricated_metric() {
+        let mut snap = tavily_snap();
+        snap.plan_limit = None;
+        let sections = sections_for(&ready(VendorSnapshot::Tavily(snap)), now(), 5);
+        assert!(!sections.iter().any(|s| matches!(s, Section::Metric { .. })));
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { label, value } if label == "Plan used" && value == "620 / unlimited"
+        )));
+    }
+
+    #[test]
+    fn tavily_schema_drift_is_labeled_instead_of_generic_warning() {
+        let snap = tavily_snap();
+        let mut schema = ready(VendorSnapshot::Tavily(snap));
+        let TabState::Ready(tab) = &mut schema else {
+            unreachable!()
+        };
+        tab.last_error = Some((0, crate::tavily::fetch::SCHEMA_DRIFT_MESSAGE.into()));
+        let schema_sections = sections_for(&schema, now(), 5);
+        assert!(schema_sections.iter().any(|section| matches!(
+            section,
+            Section::Text { label, value } if label == "Tavily API schema drift" && value.is_empty()
+        )));
     }
 
     #[test]

@@ -18,7 +18,8 @@ metrics expand to an empty string unless noted otherwise.
 | Anthropic API | `aac` | Antigravity | `agy` |
 | Cursor | `cur` | MiniMax | `mmx` |
 | Kiro CLI | `kir` | Nous Research | `nrs` |
-| OpenCode Go | `ocg` | Command Code | `cmc` |
+| OpenCode Go | `ocg` | Tavily | `tav` |
+| Command Code | `cmc` | | |
 
 The same codes ride the `ai-usagebar usage --json` report as each entry's
 `short_name`, so a native frontend can draw a Waybar-style provider tag without
@@ -237,3 +238,23 @@ through the documented AWS SSO OIDC `CreateToken` API and stores refreshed or
 rotated credentials in an account-scoped `kiro/oauth.json` file. That file is
 mode `0600` on Unix. kiro-cli's database is opened read-only and is never
 modified.
+
+## Tavily
+
+`{tav_plan}`, `{tav_headline}`, `{tav_plan_pct}`, `{tav_plan_used}`,
+`{tav_plan_limit}`, `{tav_payg_used}`, `{tav_payg_limit}`, `{tav_key_used}`,
+`{tav_key_limit}`, `{tav_search}`, `{tav_extract}`, `{tav_crawl}`,
+`{tav_map}`, `{tav_research}` report the documented `/usage` billing-cycle
+credit counts.
+
+- `{tav_headline}` is the bar's default: `62%` when the plan has a positive
+  limit, otherwise the truthful `620 used` — never a fabricated percentage.
+- `{tav_plan_pct}` is `—` and `{session_pct}`/`{weekly_pct}` are `0` when the
+  plan has no positive limit (unlimited plans).
+- `{tav_plan_limit}` and `{tav_key_limit}` are `unlimited` for uncapped plans;
+  `{tav_payg_limit}` is `—` when the API omits it.
+- There is no reset timestamp in the API response, so reset placeholders
+  render as `—`.
+- `{plan}` and `{session_pct}`/`{weekly_pct}` alias the plan name and plan
+  percentage. An optional `[tavily] project_id` scopes the query and cache;
+  it does not change any placeholder.

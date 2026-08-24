@@ -150,6 +150,15 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         secret_label: "API key",
         note: "usage quota",
     },
+    KeyVendor {
+        id: VendorId::Tavily,
+        label: "Tavily",
+        env: "TAVILY_API_KEY",
+        section: "tavily",
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "usage & quota",
+    },
 ];
 
 /// Read the inline credential currently in config, so the field opens
@@ -167,6 +176,7 @@ fn config_inline_key<'a>(cfg: &'a Config, vendor: &KeyVendor) -> Option<&'a str>
         "grok" => cfg.grok.api_key.as_deref(),
         "minimax" => cfg.minimax.api_key.as_deref(),
         "opencode-go" => cfg.opencode_go.api_key.as_deref(),
+        "tavily" => cfg.tavily.api_key.as_deref(),
         _ => None,
     }
 }

@@ -40,6 +40,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "GITHUB_COPILOT_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "TAVILY_API_KEY",
 ];
 
 pub(crate) fn vendor_secret_env_vars_to_remove(keep: &[&str]) -> Vec<&'static str> {
@@ -135,6 +136,7 @@ pub enum VendorId {
     OpenCodeGo,
     #[serde(rename = "commandcode")]
     CommandCode,
+    Tavily,
 }
 
 impl VendorId {
@@ -160,6 +162,7 @@ impl VendorId {
             VendorId::NousResearch => "nous",
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
+            VendorId::Tavily => "tavily",
         }
     }
 
@@ -188,6 +191,7 @@ impl VendorId {
             VendorId::NousResearch => "Nous Research",
             VendorId::OpenCodeGo => "OpenCode Go",
             VendorId::CommandCode => "Command Code",
+            VendorId::Tavily => "Tavily",
         }
     }
 
@@ -217,6 +221,7 @@ impl VendorId {
             VendorId::NousResearch => "nrs",
             VendorId::OpenCodeGo => "ocg",
             VendorId::CommandCode => "cmc",
+            VendorId::Tavily => "tav",
         }
     }
 
@@ -242,6 +247,7 @@ impl VendorId {
             VendorId::NousResearch,
             VendorId::OpenCodeGo,
             VendorId::CommandCode,
+            VendorId::Tavily,
         ]
     }
 }
@@ -324,6 +330,12 @@ mod tests {
             serde_json::to_value(VendorId::OpenCodeGo).unwrap(),
             serde_json::json!("opencode-go")
         );
+        assert_eq!(VendorId::Tavily.slug(), "tavily");
+        assert_eq!(VendorId::Tavily.display_name(), "Tavily");
+        assert_eq!(
+            serde_json::to_value(VendorId::Tavily).unwrap(),
+            serde_json::json!("tavily")
+        );
     }
 
     #[test]
@@ -340,6 +352,7 @@ mod tests {
             "XAI_MANAGEMENT_KEY",
             "ANTHROPIC_ADMIN_KEY",
             "GITHUB_COPILOT_TOKEN",
+            "TAVILY_API_KEY",
         ];
         for name in configured_defaults {
             assert!(VENDOR_SECRET_ENV_VARS.contains(&name), "missing {name}");

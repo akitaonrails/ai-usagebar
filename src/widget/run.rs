@@ -28,6 +28,7 @@ use crate::openai;
 use crate::openrouter;
 use crate::pango::escape;
 use crate::supergrok;
+use crate::tavily;
 use crate::theme::Theme;
 use crate::vendor::{HTTP_CLIENT_TIMEOUT, RenderOpts, VendorOutcome};
 use crate::waybar::WaybarOutput;
@@ -162,6 +163,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Kiro => kiro_output(cli, &config).await,
         Vendor::NousResearch => nous_output(cli).await,
         Vendor::OpenCodeGo => opencode_go_output(cli, &config).await,
+        Vendor::Tavily => tavily_output(cli, &config).await,
         Vendor::CommandCode => commandcode_output(cli, &config).await,
     }
 }
@@ -821,6 +823,43 @@ async fn kimi_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let vendor_outcome: VendorOutcome = outcome.into();
     let opts = RenderOpts::from_cli(cli);
     Ok(kimi::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn tavily_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "Tavily",
+        &config.tavily.api_key_env,
+        config.tavily.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "tavily")?;
+    let endpoints = tavily::fetch::Endpoints::default();
+    let outcome = match tavily::fetch_snapshot(
+        &client,
+        &api_key,
+        config.tavily.project_id.as_deref(),
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+        Err(e) => return Err(e),
+    };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(tavily::vendor::render(
         &vendor_outcome,
         &snap,
         &theme,
