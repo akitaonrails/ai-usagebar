@@ -692,13 +692,21 @@ make clippy                                        # cargo clippy -D warnings
 
 ![ai-usagebar-tui showing the Codex tab — 5h and weekly gauges, Credits block with message-count ranges, tabs at top, key hints in the footer](screenshots/tui-openai.png)
 
-- `Tab` / `l` / `→` — next tab
-- `Shift+Tab` / `h` / `←` — previous tab
+- `↑` / `↓` — move through the vendor menu (wraps; `Tab`/`l`/`→` and
+  `Shift+Tab`/`h`/`←` still work as secondary shortcuts)
+- Mouse — click a vendor menu entry to select it; click the footer's
+  `r`/`R`/`s`/`q`/`Esc` actions to refresh, refresh all, open Settings, or
+  quit; in Settings, click a field to focus it or click **Save** to save
 - `r` — refresh active tab
 - `R` — refresh all tabs
 - `s` — open Settings overlay (primary vendor + API keys)
 - `c` — open local Claude context sessions (only when `[context] enabled = true`); `v` cycles its layout
 - `q` / `Esc` / `Ctrl-C` — quit
+
+The vendor menu and Overview show only **configured** providers — a provider
+enabled in config without a key is hidden until you configure it in Settings,
+where unconfigured vendors are grouped under a collapsed "More providers"
+section.
 
 The TUI refreshes every 60 seconds. During a refresh it keeps the current values
 visible with a `↻` marker. If the request fails, the last snapshot remains on

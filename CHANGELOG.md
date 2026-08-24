@@ -16,6 +16,16 @@ Each release is also published at
   this key's used/limit, and the per-endpoint breakdown. Opt-in via
   `[tavily]` / `TAVILY_API_KEY`; an optional `[tavily] project_id` scopes the
   query and cache to one project.
+- The TUI vendor menu is now navigated with the Up/Down arrow keys (wrapping),
+  with `Tab`/`Shift+Tab`/`l`/`h`/`←`/`→` kept as secondary shortcuts. Mouse
+  clicks work in the TUI: click a vendor menu entry to select it, click a
+  footer action to refresh, refresh all, open Settings, or quit, click a
+  Settings field to focus it, or click **Save** to save.
+- The TUI vendor menu and Overview list only **configured** providers: a
+  provider enabled in config without a key no longer appears as a tab. In the
+  Settings overlay, unconfigured key vendors are grouped under a collapsed
+  "More providers" section (navigate past the last configured row or click the
+  header to expand).
 
 ## [1.10.0] — 2026-09-02
 

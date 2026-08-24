@@ -4,12 +4,14 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use chrono::Utc;
+use ratatui::layout::Rect;
 use reqwest::Client;
 
 use crate::cache::DEFAULT_TTL;
 use crate::config::Config;
 use crate::error::Result;
 use crate::theme::Theme;
+use crate::tui::settings::SettingsRow;
 use crate::vendor::{VendorId, VendorOutcome};
 
 /// What we display per vendor — raw snapshot + fetch metadata for native
@@ -86,7 +88,9 @@ impl TabId {
 /// Expand enabled vendors into the tab list. Claude, OpenRouter, and Codex
 /// (OpenAI) yield their default account followed by configured named accounts;
 /// every other vendor is a single tab. With no extra accounts the result equals
-/// `config.enabled_vendors()`, preserving the historical tab set and order.
+/// `config.enabled_vendors()` filtered to configured vendors (a resolvable
+/// credential), preserving the historical tab set and order for the vendors
+/// that are actually usable.
 ///
 /// Config-only and pure — no Desktop profiles. Production uses
 /// [`tabs_with_desktop`]; this stays for the hermetic unit tests and any caller
@@ -117,7 +121,14 @@ pub fn tabs_with_desktop(config: &Config) -> Vec<TabId> {
 fn build_tabs(config: &Config, desktop_labels: &[String]) -> Vec<TabId> {
     let desktop_set: HashSet<&str> = desktop_labels.iter().map(String::as_str).collect();
     let mut tabs = Vec::new();
-    for vendor in config.enabled_vendors() {
+    // Only *configured* providers become tabs: a vendor enabled in config but
+    // without a resolvable credential is not configured, and an unconfigured
+    // provider must not appear in the vendor menu or Overview (REQ-041).
+    for vendor in config
+        .enabled_vendors()
+        .into_iter()
+        .filter(|vendor| config.is_configured(*vendor))
+    {
         if vendor == VendorId::Anthropic {
             let accounts: Vec<_> = config
                 .anthropic
@@ -181,6 +192,37 @@ fn desktop_profile_labels(_config: &Config) -> Vec<String> {
     Vec::new()
 }
 
+/// Mouse hit-test surface recorded by the last draw and consumed by the event
+/// loop. Draw is the single source of truth for where things are on screen, so
+/// the render pass records the interactive rects here instead of the input
+/// handler re-deriving layout.
+#[derive(Debug, Default, Clone)]
+pub struct HitTargets {
+    /// Vendor navigation entries: Overview first, then each tab by index.
+    pub nav_entries: Vec<(NavTarget, Rect)>,
+    /// Footer actions with a mouse-accessible keyboard equivalent.
+    pub footer_actions: Vec<(FooterAction, Rect)>,
+    /// Settings overlay interactive rows: key fields and the save row, plus
+    /// the collapsed "More providers" header.
+    pub settings_rows: Vec<(SettingsRow, Rect)>,
+}
+
+/// What a click in the vendor navigation selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavTarget {
+    Overview,
+    Tab(usize),
+}
+
+/// What a click in the footer invokes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FooterAction {
+    Refresh,
+    RefreshAll,
+    Settings,
+    Quit,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub tabs_meta: Vec<TabId>,
@@ -212,6 +254,8 @@ pub struct App {
     pub context: Option<crate::tui::context::ContextState>,
     /// Presentation style for the vendor navigation box (`[ui] vendor_box`).
     pub vendor_box: crate::config::VendorBoxStyle,
+    /// Interactive rects from the most recent draw, for mouse hit-testing.
+    pub hit: std::rc::Rc<std::cell::RefCell<HitTargets>>,
 }
 
 impl App {
@@ -243,6 +287,7 @@ impl App {
             context_generation: 0,
             context: None,
             vendor_box: crate::config::VendorBoxStyle::Sidebar,
+            hit: std::rc::Rc::new(std::cell::RefCell::new(HitTargets::default())),
         }
     }
 
@@ -377,6 +422,27 @@ impl App {
             self.active -= 1;
         } else {
             self.overview = true;
+        }
+    }
+
+    /// Select the Overview pane (mouse click on the first nav entry).
+    pub fn select_overview(&mut self) {
+        self.overview = true;
+    }
+
+    /// Select a vendor tab by index (mouse click on a nav entry).
+    pub fn select_tab(&mut self, index: usize) {
+        if index < self.tabs_meta.len() {
+            self.active = index;
+            self.overview = false;
+        }
+    }
+
+    /// Apply a mouse click on a vendor-navigation entry.
+    pub fn nav_from_target(&mut self, target: NavTarget) {
+        match target {
+            NavTarget::Overview => self.select_overview(),
+            NavTarget::Tab(index) => self.select_tab(index),
         }
     }
 
@@ -900,6 +966,34 @@ mod tests {
     }
 
     #[test]
+    fn mouse_nav_targets_select_overview_and_tabs() {
+        let mut app = App::with_theme(
+            vec![
+                TabId::vendor(VendorId::Anthropic),
+                TabId::vendor(VendorId::Openai),
+            ],
+            Theme::default(),
+        );
+        app.overview = true;
+        app.nav_from_target(NavTarget::Tab(1));
+        assert!(!app.overview);
+        assert_eq!(app.active, 1);
+        app.nav_from_target(NavTarget::Overview);
+        assert!(app.overview);
+        // Out-of-range tab indices are ignored.
+        app.nav_from_target(NavTarget::Tab(99));
+        assert!(app.overview);
+    }
+
+    #[test]
+    fn hit_targets_default_to_empty() {
+        let app = App::with_theme(Vec::new(), Theme::default());
+        assert!(app.hit.borrow().nav_entries.is_empty());
+        assert!(app.hit.borrow().footer_actions.is_empty());
+        assert!(app.hit.borrow().settings_rows.is_empty());
+    }
+
+    #[test]
     fn overview_tabs_defaults_to_all_and_honors_the_config_filter() {
         let mut app = App::with_theme(
             vec![
@@ -976,13 +1070,34 @@ mod tests {
     }
 
     #[test]
-    fn tabs_without_accounts_are_just_enabled_vendors() {
-        // No [[anthropic.accounts]] → one tab per enabled vendor, unchanged.
-        let config = Config::default();
+    fn tabs_are_enabled_vendors_filtered_to_configured() {
+        // No [[anthropic.accounts]] → one tab per enabled vendor that resolves
+        // a credential; an enabled vendor with no key anywhere is not
+        // configured and must not become a tab (REQ-041).
+        let mut config = Config::default();
+        // Give Z.AI an inline key so the expectation does not depend on the
+        // shell's environment.
+        config.zai.api_key = Some("test-key".into());
         let tabs = tabs_from_config(&config);
         let vendors: Vec<VendorId> = tabs.iter().map(|t| t.vendor).collect();
-        assert_eq!(vendors, config.enabled_vendors());
+        let expected: Vec<VendorId> = config
+            .enabled_vendors()
+            .into_iter()
+            .filter(|vendor| config.is_configured(*vendor))
+            .collect();
+        assert_eq!(vendors, expected);
         assert!(tabs.iter().all(|t| t.account.is_none()));
+
+        // Removing the inline key drops the tab again — unless the shell also
+        // configures Z.AI through the environment, which is outside the test.
+        config.zai.api_key = None;
+        let tabs = tabs_from_config(&config);
+        if std::env::var("ZAI_API_KEY")
+            .map(|v| v.is_empty())
+            .unwrap_or(true)
+        {
+            assert!(!tabs.iter().any(|t| t.vendor == VendorId::Zai));
+        }
     }
 
     #[test]
@@ -1038,6 +1153,8 @@ mod tests {
         config.anthropic.enabled = false;
         config.openai.enabled = false;
         config.zai.enabled = false;
+        // Inline base key keeps this test independent of the shell environment.
+        config.openrouter.api_key = Some("test-key".into());
         config.openrouter.show_default_account = false;
         assert_eq!(
             tabs_from_config(&config),

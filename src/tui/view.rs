@@ -8,15 +8,35 @@ use ratatui::widgets::Paragraph;
 use ratatui_bubbletea_components::{Help, KeyBinding, ListItem, SelectList};
 
 use crate::format::local_time_hms;
-use crate::tui::app::App;
 use crate::tui::app::TabId;
 use crate::tui::app::TabState;
+use crate::tui::app::{App, FooterAction, NavTarget};
 use crate::tui::panels;
 use crate::tui::style::{bubble_theme, color, severity_color};
 use crate::vendor::VendorId;
 
 const WIDE_LAYOUT_MIN_WIDTH: u16 = 86;
 const SIDEBAR_WIDTH: u16 = 28;
+const FOOTER_SEPARATOR_WIDTH: u16 = 3;
+
+#[derive(Clone, Copy)]
+struct FooterBinding {
+    action: Option<FooterAction>,
+    key: &'static str,
+    description: &'static str,
+}
+
+impl FooterBinding {
+    fn width(self) -> u16 {
+        text_width(self.key)
+            .saturating_add(1)
+            .saturating_add(text_width(self.description))
+    }
+}
+
+fn text_width(text: &str) -> u16 {
+    text.chars().count().min(u16::MAX as usize) as u16
+}
 
 pub fn draw(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -33,8 +53,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_footer(f, app, chunks[2]);
 
     // Settings still floats on top of everything.
+    let mut hit = app.hit.borrow_mut();
+    hit.settings_rows.clear();
     if let Some(s) = &app.settings {
-        crate::tui::settings::render(f, f.area(), s, &app.theme);
+        crate::tui::settings::render(f, f.area(), s, &app.theme, &mut hit.settings_rows);
     }
 }
 
@@ -195,6 +217,21 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     let mut list = SelectList::new(items).theme(theme);
     list.select(Some(if app.overview { 0 } else { app.active + 1 }));
     f.render_widget(&list, inner);
+
+    // Each list row is exactly one line; the Overview is row 0, tab i is
+    // row i+1. Record those rects for mouse hit-testing.
+    let mut hits: Vec<(NavTarget, ratatui::layout::Rect)> = vec![(
+        NavTarget::Overview,
+        ratatui::layout::Rect::new(inner.x, inner.y, inner.width, 1),
+    )];
+    for (index, _) in app.tabs_meta.iter().enumerate() {
+        let y = inner.y + 1 + index as u16;
+        hits.push((
+            NavTarget::Tab(index),
+            ratatui::layout::Rect::new(inner.x, y, inner.width, 1),
+        ));
+    }
+    app.hit.borrow_mut().nav_entries = hits;
 }
 
 fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
@@ -205,11 +242,24 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // Entry list drives both the rendered spans and the mouse hit rects, so a
+    // label/order change can never desync the two.
+    let mut entries: Vec<(NavTarget, String, bool)> =
+        vec![(NavTarget::Overview, "Overview".to_string(), app.overview)];
+    for (index, tab) in app.tabs_meta.iter().enumerate() {
+        let selected = !app.overview && index == app.active;
+        entries.push((NavTarget::Tab(index), compact_tab_label(tab), selected));
+    }
+
     let mut spans = vec![theme.muted(" ")];
-    // Overview entry first, then each vendor tab.
-    let push_entry = |spans: &mut Vec<Span>, first: bool, selected: bool, label: String| {
+    let mut hits: Vec<(NavTarget, ratatui::layout::Rect)> = Vec::new();
+    let mut x = inner.x + 1; // after the leading muted space
+    let mut first = true;
+    for (target, label, selected) in entries {
+        let label_w = label.chars().count() as u16;
         if !first {
             spans.push(theme.muted("  "));
+            x += 2;
         }
         let marker = if selected {
             theme.symbols.selected
@@ -221,13 +271,16 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(marker, marker_style));
         spans.push(theme.span(" "));
         spans.push(Span::styled(label, label_style));
-    };
-    push_entry(&mut spans, true, app.overview, "Overview".to_string());
-    for (index, tab) in app.tabs_meta.iter().enumerate() {
-        let selected = !app.overview && index == app.active;
-        push_entry(&mut spans, false, selected, compact_tab_label(tab));
+        // Marker + gap + label is the clickable region (symbols are one cell).
+        hits.push((
+            target,
+            ratatui::layout::Rect::new(x, inner.y, label_w + 2, inner.height),
+        ));
+        x += label_w + 2;
+        first = false;
     }
     f.render_widget(Paragraph::new(Line::from(spans)), inner);
+    app.hit.borrow_mut().nav_entries = hits;
 }
 
 fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
@@ -369,17 +422,67 @@ fn draw_footer(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     // 875x600 windows. Keep the footer to just the keybinding hints.
     let theme = bubble_theme(&app.theme);
     let mut bindings = vec![
-        KeyBinding::with_keys(["tab", "h/l"], "switch"),
-        KeyBinding::new("r", "refresh"),
-        KeyBinding::new("R", "refresh all"),
-        KeyBinding::new("s", "settings"),
+        FooterBinding {
+            action: None,
+            key: "tab/h/l",
+            description: "switch",
+        },
+        FooterBinding {
+            action: Some(FooterAction::Refresh),
+            key: "r",
+            description: "refresh",
+        },
+        FooterBinding {
+            action: Some(FooterAction::RefreshAll),
+            key: "R",
+            description: "refresh all",
+        },
+        FooterBinding {
+            action: Some(FooterAction::Settings),
+            key: "s",
+            description: "settings",
+        },
     ];
     if app.context_enabled {
-        bindings.push(KeyBinding::new("c", "context"));
+        bindings.push(FooterBinding {
+            action: None,
+            key: "c",
+            description: "context",
+        });
     }
-    bindings.push(KeyBinding::with_keys(["q", "esc"], "quit"));
-    let help = Help::new(bindings).theme(theme);
+    bindings.push(FooterBinding {
+        action: Some(FooterAction::Quit),
+        key: "q/esc",
+        description: "quit",
+    });
+    let help = Help::new(
+        bindings
+            .iter()
+            .map(|binding| KeyBinding::new(binding.key, binding.description)),
+    )
+    .theme(theme);
     f.render_widget(&help, area);
+
+    // Help renders compact bindings as "key description • ". Record the same
+    // cells so click targets stay aligned even when the footer is truncated.
+    let right = area.x.saturating_add(area.width);
+    let mut x = area.x;
+    let mut actions = Vec::new();
+    for binding in bindings {
+        let width = binding.width();
+        if let Some(action) = binding.action
+            && x < right
+        {
+            let visible_width = width.min(right.saturating_sub(x));
+            if visible_width > 0 {
+                actions.push((action, Rect::new(x, area.y, visible_width, area.height)));
+            }
+        }
+        x = x
+            .saturating_add(width)
+            .saturating_add(FOOTER_SEPARATOR_WIDTH);
+    }
+    app.hit.borrow_mut().footer_actions = actions;
 }
 
 #[cfg(test)]
@@ -625,5 +728,130 @@ mod tests {
             "vendor nav must be fully hidden: {rows:?}"
         );
         assert!(rows[0].contains(" Overview "), "{:?}", rows[0]);
+    }
+
+    #[test]
+    fn sidebar_records_nav_hit_rects_in_entry_order() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut app = app_with(vec![TabState::Loading, TabState::Loading]);
+        app.overview = true;
+        let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let hit = app.hit.borrow();
+        assert_eq!(hit.nav_entries.len(), 3); // Overview + two tabs
+        assert_eq!(hit.nav_entries[0].0, NavTarget::Overview);
+        assert_eq!(hit.nav_entries[1].0, NavTarget::Tab(0));
+        assert_eq!(hit.nav_entries[2].0, NavTarget::Tab(1));
+        // Rows stack vertically, one line each.
+        let (first, second, third) = (
+            hit.nav_entries[0].1,
+            hit.nav_entries[1].1,
+            hit.nav_entries[2].1,
+        );
+        assert_eq!(first.y + 1, second.y);
+        assert_eq!(second.y + 1, third.y);
+        assert_eq!(first.width, second.width);
+        assert_eq!(first.height, 1);
+    }
+
+    #[test]
+    fn top_nav_records_hit_rects_in_entry_order() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut app = app_with(vec![TabState::Loading, TabState::Loading]);
+        app.overview = true;
+        app.vendor_box = crate::config::VendorBoxStyle::Navbar;
+        let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let hit = app.hit.borrow();
+        assert_eq!(hit.nav_entries.len(), 3);
+        assert_eq!(hit.nav_entries[0].0, NavTarget::Overview);
+        // Horizontal layout: entries are separated by a two-column gap, so the
+        // next entry starts right after it.
+        let (first, second) = (hit.nav_entries[0].1, hit.nav_entries[1].1);
+        assert_eq!(first.x + first.width + 2, second.x);
+        assert_eq!(first.y, second.y);
+    }
+
+    #[test]
+    fn footer_records_click_targets_for_mouse_actions() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let app = app_with(vec![TabState::Loading, TabState::Loading]);
+        let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let hit = app.hit.borrow();
+        assert_eq!(
+            hit.footer_actions
+                .iter()
+                .map(|(action, _)| *action)
+                .collect::<Vec<_>>(),
+            vec![
+                FooterAction::Refresh,
+                FooterAction::RefreshAll,
+                FooterAction::Settings,
+                FooterAction::Quit,
+            ]
+        );
+        assert!(hit.footer_actions.iter().all(|(_, rect)| rect.height == 1));
+    }
+
+    #[test]
+    fn settings_draw_groups_unconfigured_rows_and_records_hits() {
+        use crate::tui::settings::{Focus as SFocus, KeyInput, SettingsRow, SettingsState};
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = app_with(vec![TabState::Loading, TabState::Loading]);
+        let keys: Vec<KeyInput> = crate::tui::settings::KEY_VENDORS
+            .iter()
+            .map(|_| KeyInput::default())
+            .collect();
+        // Only the first key vendor is configured; the rest are grouped.
+        let configured = crate::tui::settings::KEY_VENDORS
+            .iter()
+            .enumerate()
+            .map(|(i, _)| i == 0)
+            .collect();
+        app.settings = Some(SettingsState {
+            focus: SFocus::Primary,
+            primary_choices: vec![VendorId::Anthropic],
+            primary: VendorId::Anthropic,
+            keys,
+            status: String::new(),
+            configured,
+            show_more: false,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        // The collapsed header is present and clickable; hidden rows have no
+        // hit rect and are not focusable.
+        let hit = app.hit.borrow();
+        assert!(
+            hit.settings_rows
+                .iter()
+                .any(|(row, _)| matches!(row, SettingsRow::MoreHeader))
+        );
+        assert!(
+            hit.settings_rows
+                .iter()
+                .any(|(row, _)| matches!(row, SettingsRow::Focus(SFocus::Key(0))))
+        );
+        assert!(
+            hit.settings_rows
+                .iter()
+                .any(|(row, _)| matches!(row, SettingsRow::Focus(SFocus::Save)))
+        );
+        assert!(
+            !hit.settings_rows
+                .iter()
+                .any(|(row, _)| matches!(row, SettingsRow::Focus(SFocus::Key(1))))
+        );
     }
 }

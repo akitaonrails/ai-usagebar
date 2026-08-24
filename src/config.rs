@@ -1199,6 +1199,68 @@ impl Config {
         }
     }
 
+    /// Whether `vendor` has a resolvable credential today, independent of
+    /// whether it is enabled. API-key vendors check the configured env var or
+    /// inline key without erroring; OAuth/local vendors are considered
+    /// configured whenever enabled, because their credential probing happens
+    /// at fetch time (files, local servers, CLI logins).
+    ///
+    /// Used by the TUI to keep unconfigured providers out of the vendor menu
+    /// and Overview: a vendor enabled in config but with no key anywhere is
+    /// not configured, so it must not appear as a selectable entry.
+    pub fn is_configured(&self, vendor: VendorId) -> bool {
+        let env_or_inline = |env: &str, inline: Option<&str>| {
+            std::env::var(env).map(|v| !v.is_empty()).unwrap_or(false)
+                || inline.map(|v| !v.is_empty()).unwrap_or(false)
+        };
+        match vendor {
+            VendorId::AnthropicApi => env_or_inline(
+                &self.anthropic_api.api_key_env,
+                self.anthropic_api.api_key.as_deref(),
+            ),
+            VendorId::Zai => env_or_inline(&self.zai.api_key_env, self.zai.api_key.as_deref()),
+            VendorId::Openrouter => {
+                // A key for the default account, or any named account, counts.
+                env_or_inline(
+                    &self.openrouter.api_key_env,
+                    self.openrouter.api_key.as_deref(),
+                ) || self.openrouter.accounts.iter().any(|account| {
+                    let env_ok = account
+                        .api_key_env
+                        .as_deref()
+                        .map(|name| std::env::var(name).map(|v| !v.is_empty()).unwrap_or(false))
+                        .unwrap_or(false);
+                    env_ok || account.api_key.as_deref().is_some_and(|k| !k.is_empty())
+                })
+            }
+            VendorId::Deepseek => {
+                env_or_inline(&self.deepseek.api_key_env, self.deepseek.api_key.as_deref())
+            }
+            VendorId::Kimi => env_or_inline(&self.kimi.api_key_env, self.kimi.api_key.as_deref()),
+            VendorId::Kilo => env_or_inline(&self.kilo.api_key_env, self.kilo.api_key.as_deref()),
+            VendorId::Novita => {
+                env_or_inline(&self.novita.api_key_env, self.novita.api_key.as_deref())
+            }
+            VendorId::Moonshot => {
+                env_or_inline(&self.moonshot.api_key_env, self.moonshot.api_key.as_deref())
+            }
+            VendorId::Grok => env_or_inline(&self.grok.api_key_env, self.grok.api_key.as_deref()),
+            VendorId::Minimax => {
+                env_or_inline(&self.minimax.api_key_env, self.minimax.api_key.as_deref())
+            }
+            VendorId::OpenCodeGo => env_or_inline(
+                &self.opencode_go.api_key_env,
+                self.opencode_go.api_key.as_deref(),
+            ),
+            VendorId::Tavily => {
+                env_or_inline(&self.tavily.api_key_env, self.tavily.api_key.as_deref())
+            }
+            // OAuth / local-state vendors (Claude, Codex, Nous, Cursor, Kiro,
+            // Antigravity, SuperGrok) resolve their credential at fetch time.
+            _ => true,
+        }
+    }
+
     pub fn enabled_vendors(&self) -> Vec<VendorId> {
         VendorId::all()
             .iter()
@@ -1532,6 +1594,50 @@ mod tests {
         config.tavily.project_id = Some("   ".into());
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("project_id"), "{err}");
+    }
+
+    #[test]
+    fn is_configured_follows_inline_keys_and_env() {
+        let mut config = Config::default();
+        // OAuth/local vendors are configured whenever enabled.
+        assert!(config.is_configured(VendorId::Anthropic));
+        assert!(config.is_configured(VendorId::Openai));
+        // Point the API-key vendors at test-only env names so the assertions
+        // never depend on the shell's real variables.
+        config.tavily.api_key_env = "TAVILY_TEST_UNSET_ENV".into();
+        assert!(!config.is_configured(VendorId::Tavily));
+        // An inline key makes the vendor configured regardless of env.
+        config.tavily.api_key = Some("tvly-test".into());
+        assert!(config.is_configured(VendorId::Tavily));
+        config.tavily.api_key = None;
+        assert!(!config.is_configured(VendorId::Tavily));
+        // The configured env var name wins; removing it unconfigures again.
+        // SAFETY: the variable name is unique to this test, so no parallel
+        // test reads it; we remove it before returning.
+        unsafe {
+            std::env::set_var("TAVILY_TEST_UNSET_ENV", "tvly-env");
+        }
+        assert!(config.is_configured(VendorId::Tavily));
+        unsafe {
+            std::env::remove_var("TAVILY_TEST_UNSET_ENV");
+        }
+        assert!(!config.is_configured(VendorId::Tavily));
+    }
+
+    #[test]
+    fn is_configured_counts_openrouter_named_account_keys() {
+        let mut config = Config::default();
+        config.openrouter.api_key_env = "OR_TEST_UNSET_ENV".into();
+        assert!(!config.is_configured(VendorId::Openrouter));
+        config
+            .openrouter
+            .accounts
+            .push(crate::config::OpenRouterAccount {
+                label: "work".into(),
+                api_key_env: None,
+                api_key: Some("sk-work".into()),
+            });
+        assert!(config.is_configured(VendorId::Openrouter));
     }
 
     #[cfg(unix)]
