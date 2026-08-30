@@ -40,6 +40,7 @@ codebase.
 - [Format placeholders](docs/format-placeholders.md)
 - [Provider endpoints and live tests](docs/vendor-endpoints.md)
 - [KDE Plasma 6 plasmoid](kde-plasmoid/README.md)
+- [AI Usage cards plasmoid](plasmoid/README.md)
 
 ## Install
 
@@ -464,6 +465,7 @@ privileges, and does not overwrite user configuration.
 | [macOS menu bar](macos/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok (xAI), Anthropic API, Cursor, Google Antigravity | Thirteen providers. |
 | [GNOME Shell](gnome-extension/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Google Antigravity | Antigravity's two quota pools appear as grouped rows. |
 | [KDE Plasma 6](kde-plasmoid/README.md) | Whatever `usage --json` reports | Provider tabs in the popup; vendor is per applet instance. |
+| [AI Usage cards](plasmoid/README.md) | Claude, OpenAI, Z.AI, Kimi, SuperGrok | Alternative dark-card widget: one card per vendor with gauges, per-card refresh on click, auto-refresh every 5 minutes, stale/unconfigured/error card states. |
 
 Cursor is not available in the GNOME extension yet. On GNOME, use
 `ai-usagebar --vendor cursor` or open the TUI.

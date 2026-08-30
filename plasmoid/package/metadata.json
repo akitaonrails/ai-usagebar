@@ -1,0 +1,18 @@
+{
+  "KPlugin": {
+    "Authors": [
+      {
+        "Email": "fjaltendorfer@gmail.com",
+        "Name": "Florian Altendorfer"
+      }
+    ],
+    "Category": "System Information",
+    "Description": "Desktop widget for local AI usage limits",
+    "Icon": "view-statistics",
+    "Id": "dev.altendorfer.aiusage",
+    "Name": "AI Usage",
+    "Version": "0.4.1"
+  },
+  "X-Plasma-API-Minimum-Version": "6.0",
+  "KPackageStructure": "Plasma/Applet"
+}
