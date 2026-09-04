@@ -35,10 +35,58 @@ use tokio::sync::mpsc;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    if let Err(message) = apply_config_flag() {
+        eprintln!("ai-usagebar-tui: {message}");
+        std::process::exit(2);
+    }
     if let Err(e) = run().await {
         eprintln!("ai-usagebar-tui: {e}");
         std::process::exit(1);
     }
+}
+
+/// The TUI accepts only `--config <PATH>` (or `--config=PATH`); every other
+/// argument is rejected so typos fail fast instead of being silently ignored.
+/// The path must already exist — loads treat a missing file as defaults, which
+/// would hide the mistake. Must run before any config is read.
+fn apply_config_flag() -> Result<(), String> {
+    let mut override_path: Option<PathBuf> = None;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" => {
+                let Some(value) = args.next() else {
+                    return Err("--config requires a path".into());
+                };
+                if override_path.is_some() {
+                    return Err("--config given more than once".into());
+                }
+                override_path = Some(PathBuf::from(value));
+            }
+            _ if arg.starts_with("--config=") => {
+                if override_path.is_some() {
+                    return Err("--config given more than once".into());
+                }
+                override_path = Some(PathBuf::from(&arg["--config=".len()..]));
+            }
+            "--help" | "-h" => {
+                println!("usage: ai-usagebar-tui [--config <PATH>]");
+                std::process::exit(0);
+            }
+            other => return Err(format!("unrecognized argument: {other}")),
+        }
+    }
+    let Some(path) = override_path else {
+        return Ok(());
+    };
+    if !path.is_file() {
+        return Err(format!(
+            "config file not found: {} (create it first, or point --config at an existing file)",
+            path.display()
+        ));
+    }
+    ai_usagebar::config::set_override_path(&path);
+    Ok(())
 }
 
 async fn run() -> io::Result<()> {

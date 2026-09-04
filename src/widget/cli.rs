@@ -23,7 +23,12 @@ Output modes:
     in a terminal Does The Right Thing.
   - --watch N: like --pretty but refreshes every N seconds, clearing the screen
     between ticks. Useful while iterating on `--format` or `--tooltip-format`.
-  - --json: force JSON output even when stdout is a TTY (for scripting)."
+  - --json: force JSON output even when stdout is a TTY (for scripting).
+  - --config PATH: read and write an alternate config file instead of the
+    default `%APPDATA%/ai-usagebar/config.toml` (Windows) or
+    `~/.config/ai-usagebar/config.toml`. Accepted in any position, before or
+    after the subcommand; the file must already exist, and Settings saves
+    write back to it."
 )]
 pub struct Cli {
     /// Which vendor to query. When omitted, reads `[ui] primary` from

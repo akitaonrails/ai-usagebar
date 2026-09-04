@@ -1307,13 +1307,18 @@ fn legacy_xdg_path() -> Option<PathBuf> {
 
 /// The config file actually in effect.
 ///
-/// [`default_path`] stays canonical, but on macOS a file at the documented
+/// A `--config` override (see [`set_override_path`]) wins outright so a test
+/// run never touches the real file. Otherwise [`default_path`] stays
+/// canonical, but on macOS a file at the documented
 /// `~/.config/ai-usagebar/config.toml` is honored when the canonical one does
 /// not exist — otherwise everyone who followed the README (and both desktop
 /// integrations, which read that path) silently got defaults. The legacy file
 /// is never moved or rewritten: it may hold API keys, and relocating a secret
 /// behind the user's back is not this tool's business.
 pub fn resolved_path() -> Option<PathBuf> {
+    if let Some(path) = override_path() {
+        return Some(path);
+    }
     let canonical = default_path();
     if let Some(p) = &canonical
         && p.exists()
@@ -1326,6 +1331,32 @@ pub fn resolved_path() -> Option<PathBuf> {
         return Some(legacy);
     }
     canonical
+}
+
+static PATH_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Point every config load, save, and hint at one explicit file — the
+/// `--config` flag. Takes precedence over the canonical and legacy locations.
+/// The file does not have to exist yet: loads treat it as defaults while
+/// Settings saves create it. Process-wide, so call it once at startup before
+/// any config is read.
+pub fn set_override_path(path: &std::path::Path) {
+    if let Ok(mut slot) = PATH_OVERRIDE.lock() {
+        *slot = Some(path.to_path_buf());
+    }
+}
+
+/// Drop the override again. Used only by tests so they can restore the
+/// process-wide state they changed.
+#[doc(hidden)]
+pub fn clear_override_path() {
+    if let Ok(mut slot) = PATH_OVERRIDE.lock() {
+        *slot = None;
+    }
+}
+
+fn override_path() -> Option<PathBuf> {
+    PATH_OVERRIDE.lock().ok().and_then(|slot| slot.clone())
 }
 
 /// Expand a leading `~` (or `~/`) against the user's home directory. Anything
@@ -1886,8 +1917,27 @@ enabled = false
         );
     }
 
+    fn path_override_guard() -> std::sync::MutexGuard<'static, ()> {
+        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        M.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn override_path_wins_over_canonical_and_legacy() {
+        let _g = path_override_guard();
+        let file = NamedTempFile::new().unwrap();
+        set_override_path(file.path());
+        assert_eq!(resolved_path().as_deref(), Some(file.path()));
+        assert_eq!(config_path_hint(), file.path().display().to_string());
+        clear_override_path();
+        // The usual locations decide again once the override is gone.
+        let p = resolved_path().expect("a config path must resolve");
+        assert!(p.ends_with("config.toml"));
+    }
+
     #[test]
     fn config_path_hint_ends_with_config_toml() {
+        let _g = path_override_guard();
         // Platform-resolved (Linux/macOS/Windows), but always ends in the
         // config filename — the trailing segment is what messages rely on.
         assert!(config_path_hint().ends_with("config.toml"));
@@ -2176,6 +2226,7 @@ enabled = false
 
     #[test]
     fn resolved_path_is_the_canonical_one_and_names_the_config_file() {
+        let _g = path_override_guard();
         // Hermetic: only asserts the shape, never which file happens to exist
         // on the machine running the tests.
         let p = resolved_path().expect("a config path must resolve");

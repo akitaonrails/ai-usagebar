@@ -6,7 +6,18 @@ use ai_usagebar::widget::run::run;
 use clap::Parser;
 
 fn main() {
-    let cli = Cli::parse();
+    let (argv, config_path) = split_config_arg();
+    if let Some(path) = &config_path {
+        if !path.is_file() {
+            eprintln!(
+                "ai-usagebar: config file not found: {} (create it first, or point --config at an existing file)",
+                path.display()
+            );
+            std::process::exit(2);
+        }
+        ai_usagebar::config::set_override_path(path);
+    }
+    let cli = Cli::parse_from(argv);
     if let Some(Command::Account { action }) = &cli.command {
         std::process::exit(ai_usagebar::account::run(action));
     }
@@ -47,6 +58,37 @@ fn main() {
     }
     let code = rt.block_on(run(cli));
     std::process::exit(code);
+}
+
+/// Extract `--config <PATH>` (or `--config=PATH`) from argv before clap sees
+/// it, so the flag is accepted in any position — including alongside a
+/// subcommand, which clap's `args_conflicts_with_subcommands` would otherwise
+/// reject. Returns the remaining argv (with the program name kept first) and
+/// the override, if any. A dangling `--config` without a value is an error.
+fn split_config_arg() -> (Vec<std::ffi::OsString>, Option<std::path::PathBuf>) {
+    let mut rest = Vec::new();
+    let mut config: Option<std::path::PathBuf> = None;
+    let mut argv = std::env::args_os();
+    if let Some(program) = argv.next() {
+        rest.push(program);
+    }
+    while let Some(arg) = argv.next() {
+        let text = arg.to_string_lossy();
+        if text == "--config" {
+            match argv.next() {
+                Some(value) => config = Some(std::path::PathBuf::from(value)),
+                None => {
+                    eprintln!("ai-usagebar: --config requires a path");
+                    std::process::exit(2);
+                }
+            }
+        } else if let Some(value) = text.strip_prefix("--config=") {
+            config = Some(std::path::PathBuf::from(value));
+        } else {
+            rest.push(arg);
+        }
+    }
+    (rest, config)
 }
 
 async fn run_nous_auth(action: &NousAuthAction) -> i32 {
