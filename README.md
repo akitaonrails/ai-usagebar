@@ -357,6 +357,46 @@ macOS's `security` tool to read and refresh the `Claude Code-credentials` item.
 - Named accounts use the scoped Keychain item on macOS and fall back to their
   credentials file on Linux.
 
+## Known issues
+
+### macOS: repeated Keychain prompts for Claude Code (#148)
+
+**Affects every release up to and including 1.10.0, on macOS only.**
+
+When ai-usagebar refreshes the Claude OAuth token it writes the result back to
+the login Keychain through the native Security.framework API. That marks the
+`Claude Code-credentials` item as belonging to ai-usagebar's own code signature
+(`cdhash:…`). Claude Code reads the same item with `/usr/bin/security`, whose
+partition is `apple-tool:`, so from the next launch onward every read raises a
+Keychain permission dialog — once per `claude` process, which means bursts of
+them across subagents, `claude -p` jobs and IDE integrations.
+
+`securityd` logs it as `ACL partition mismatch`. **"Always Allow" does not
+help**: it edits the trusted-application list, not the partition list.
+
+To clear it, sign in to Claude Code again:
+
+```
+claude
+/login
+```
+
+Claude Code recreates the item through `security`, restoring the `apple-tool:`
+partition. Note that ai-usagebar's next token write-back reintroduces the
+problem, so this is relief rather than a cure.
+
+To stop it recurring until the fix ships, set `enabled = false` under
+`[anthropic]` in `config.toml`. That removes Claude from the panel and from the
+automatic refresh cycle, so nothing writes to the Keychain. An explicit
+`ai-usagebar --vendor anthropic` still fetches — `--vendor` overrides the
+enabled flag by design — so avoid that too while the workaround is in place.
+
+A fix — writing through `security(1)` so the writer and reader share a
+partition — is being worked on in [#148]. Linux is unaffected: there the
+credential is a file, not a Keychain item.
+
+[#148]: https://github.com/akitaonrails/ai-usagebar/issues/148
+
 ## Configuration
 
 The optional config file is `~/.config/ai-usagebar/config.toml`. Claude,
@@ -674,6 +714,11 @@ ai-usagebar --vendor openrouter --format '${or_balance} remaining'
 
 Shared claudebar placeholders and every provider-specific field are listed in
 the [format placeholder reference](docs/format-placeholders.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the pre-PR gate, the checklist,
+and the bar a new provider has to clear.
 
 ## Local development
 
