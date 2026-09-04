@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 use crate::countdown;
-use crate::format::{placeholders, substitute, updated_at_hm, usd};
+use crate::format::{
+    placeholders, reset_credit_lines, reset_credits, substitute, updated_at_hm, usd,
+};
 use crate::pacing::PaceSeverity;
 use crate::pango::{self, color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
@@ -43,6 +45,11 @@ pub fn build_placeholders(
         ("sgk_reset", reset),
         ("sgk_period", snap.period.label().to_string()),
         ("sgk_prepaid", prepaid),
+        (
+            "sgk_resets_available",
+            snap.reset_credits.available.to_string(),
+        ),
+        ("sgk_resets", reset_credits(&snap.reset_credits, now)),
     ])
 }
 
@@ -130,6 +137,7 @@ fn render_tooltip(
 ) -> String {
     let blue = &theme.blue;
     let dim = &theme.dim;
+    let fg = &theme.fg;
 
     let mut lines: Vec<TooltipLine> = Vec::new();
     lines.push(TooltipLine::Center(format!(
@@ -156,6 +164,19 @@ fn render_tooltip(
             " <span foreground='{dim}'>  󰢗  Prepaid API  {}</span>",
             escape(&bal_s)
         )));
+    }
+
+    if snap.reset_credits.available > 0 {
+        lines.push(TooltipLine::Body("".into()));
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{fg}'>  󰁯  Reset credits</span>"
+        )));
+        for line in reset_credit_lines(&snap.reset_credits, now) {
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{dim}'>     {}</span>",
+                escape(&line)
+            )));
+        }
     }
 
     if let Some((code, msg)) = outcome.last_error.as_ref() {
@@ -214,6 +235,7 @@ mod tests {
             period: SuperGrokPeriod::Weekly,
             reset_at: Some(now() + chrono::Duration::hours(20)),
             prepaid_balance: Some(0.0),
+            reset_credits: Default::default(),
         }
     }
 
@@ -254,6 +276,44 @@ mod tests {
             out.tooltip
         );
         assert!(out.tooltip.contains("Resets in"));
+    }
+
+    #[test]
+    fn tooltip_reports_banked_resets_and_stays_silent_without_them() {
+        let snap = sample_snap();
+        let quiet = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(!quiet.tooltip.contains("available"), "{}", quiet.tooltip);
+
+        let mut snap = snap;
+        snap.reset_credits = crate::usage::ResetCredits {
+            available: 1,
+            credits: vec![crate::usage::ResetCredit {
+                title: None,
+                expires_at: Some(now() + chrono::Duration::days(7)),
+            }],
+        };
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(out.tooltip.contains("Reset credits"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("Expires"), "{}", out.tooltip);
+
+        let ph = build_placeholders(&snap, now());
+        assert_eq!(
+            ph.get("sgk_resets_available").map(String::as_str),
+            Some("1")
+        );
+        assert!(ph["sgk_resets"].starts_with("1 reset available"));
     }
 
     #[test]

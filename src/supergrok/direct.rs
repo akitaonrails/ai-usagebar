@@ -64,7 +64,7 @@ pub async fn fetch_billing_with(auth_path: &Path, base_url: &str) -> Result<Bill
 /// The file maps issuer-prefixed client ids to login records that carry a
 /// `key`. The first non-empty key wins; parsing stays bounded so a replaced
 /// or oversized file cannot stall or exhaust the fetch.
-fn read_billing_key(auth_path: &Path) -> Result<String> {
+pub(super) fn read_billing_key(auth_path: &Path) -> Result<String> {
     let metadata = std::fs::metadata(auth_path).map_err(|_| {
         AppError::Credentials("Grok Build login file not found; run `grok login`".into())
     })?;

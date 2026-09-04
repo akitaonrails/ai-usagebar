@@ -337,9 +337,11 @@ For each API-key vendor, ai-usagebar checks in this order:
   Redact them before committing that file to dotfiles. Environment variables
   remain the default and avoid storing keys in the config.
 - Claude and Codex credentials stay in files managed by their official CLIs.
-- SuperGrok credentials stay inside Grok Build. ai-usagebar receives a
-  credential-free billing result and hashes auth/config files only to separate
-  caches between logins.
+- SuperGrok credentials stay inside Grok Build. ai-usagebar reads the login's
+  `key` from `auth.json` and uses it in the outgoing `Authorization` headers
+  of the billing request and the remaining-resets RPC; it never copies,
+  caches, refreshes, or writes that key back. Auth/config files are also
+  hashed as opaque bytes to separate caches between logins.
 - Cursor's `state.vscdb` and `cursor-agent` fallback `auth.json` are read-only.
 - kiro-cli's `data.sqlite3` is read-only. Refreshed credentials go to an
   account-scoped `kiro/oauth.json` file, mode `600` on Unix.

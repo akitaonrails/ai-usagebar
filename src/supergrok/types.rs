@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::error::{AppError, Result};
-use crate::usage::{SuperGrokPeriod, SuperGrokSnapshot};
+use crate::usage::{ResetCredits, SuperGrokPeriod, SuperGrokSnapshot};
 
 const MAX_PLAN_CHARS: usize = 128;
 const MAX_BENIGN_PERCENT: f64 = 100.5;
@@ -18,6 +18,8 @@ pub struct BillingResponse {
     /// compatibility with older/direct extension bridges.
     #[serde(alias = "subscriptionTier")]
     pub subscription_tier: Option<String>,
+    #[serde(skip)]
+    pub reset_credits: ResetCredits,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -93,6 +95,7 @@ pub fn to_snapshot(resp: BillingResponse, account_scope: &str) -> Result<SuperGr
         period,
         reset_at,
         prepaid_balance,
+        reset_credits: resp.reset_credits,
     })
 }
 
