@@ -16,6 +16,22 @@ Each release is also published at
   beside a subcommand); the file must already exist, and the override applies
   to loads, Settings saves, and path hints for the whole process.
 
+### Changed
+
+- `README.md` documents the macOS Keychain prompt storm as a known issue, with
+  the workaround, until #148 is fixed. Every release so far is affected on
+  macOS: ai-usagebar's token write-back claims the `Claude Code-credentials`
+  item for its own code signature, and Claude Code's own reads then raise a
+  permission dialog per process.
+- `CONTRIBUTING.md` and a PR template record the pre-PR gate, the checklist
+  review kept asking for, and the bar a new provider has to clear.
+
+- `docs/vendor-endpoints.md` records which providers have been evaluated and not
+  added, and the credential bar a new one has to clear (#146, #147). Xiaomi MiMo
+  is blocked on Xiaomi: its quota routes need a web SSO session, not the plan's
+  API key. Alibaba Cloud Model Studio's Token Plan is wanted and fits the
+  existing patterns, pending the evidence to build it against.
+
 ## [1.10.0] — 2026-09-02
 
 ### Added

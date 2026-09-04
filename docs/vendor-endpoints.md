@@ -29,6 +29,22 @@ defensive and includes opt-in live tests for catching response changes.
 | **Command Code** | `api.commandcode.ai` `/alpha/billing/credits` + `/alpha/billing/subscriptions` (undocumented; the same calls the official `commandcode` CLI's `/usage` makes) | 5-hour and weekly rolling spend windows ($ used of $ cap), plan, and remaining monthly credits | No — widget/TUI only |
 
 
+## Providers evaluated and not added
+
+Requests for a new provider come down to one question: **is the quota reachable
+with a credential the user already has, obtained the way this project obtains
+credentials?** Every supported vendor uses one of three: an API key the user
+holds, an OAuth file an official CLI wrote (`~/.codex/auth.json`, kiro-cli's
+`data.sqlite3`, Cursor's `state.vscdb`), or an official CLI invoked for a token
+(`gh auth token`). CLI, editor and browser credentials are never parsed, copied,
+or stored, and no vendor asks the user to paste a session cookie.
+
+| Provider | Status | Why |
+|---|---|---|
+| **Xiaomi MiMo** (Token Plan) | Not implementable | The quota routes (`platform.xiaomimimo.com/api/v1/tokenPlan/{usage,detail}`) authenticate with a Xiaomi Account **web SSO session**, not the plan's API key. The API key reaches only the inference gateway, which exposes no quota surface and returns no rate-limit headers. The effective session credential is an HttpOnly cookie, so there is no CLI-written file to read — only a browser profile. Waiting on Xiaomi to expose quota to API keys. (#146) |
+| **Alibaba Cloud Model Studio** (Token Plan) | Viable, wanted | 5-hour and weekly percentage windows with epoch-ms resets — the Codex/Kimi/Z.AI shape. Usage needs the console credential rather than the `sk-sp-` inference key, but the official `bl` CLI stores that credential locally after `bl auth login --console`, which is the same pattern as Kiro CLI and Command Code. Blocked only on evidence: the credential's on-disk shape and a real response capture. (#147) |
+
+
 ## Stability notes
 
 | Provider | Status |
