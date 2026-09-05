@@ -23,6 +23,10 @@ assert.equal(manifest.barWidget.defaults.showProvider, false);
 const showProviderSchema = manifest.barWidget.schema.find(row => row.key === 'showProvider');
 assert.equal(showProviderSchema.type, 'boolean');
 assert.equal(showProviderSchema.defaultValue, false);
+assert.equal(manifest.barWidget.defaults.showAll, false);
+const showAllSchema = manifest.barWidget.schema.find(row => row.key === 'showAll');
+assert.equal(showAllSchema.type, 'boolean');
+assert.equal(showAllSchema.defaultValue, false);
 
 const barWidgetSource = fs.readFileSync(new URL('./BarWidget.qml', import.meta.url), 'utf8');
 assert.match(barWidgetSource, /^BarWidget\s*\{/m);
@@ -43,7 +47,20 @@ assert.match(panelSource, /function\s+openSettings\s*\(/);
 assert.match(panelSource, /setting\("lastSelectedEntryId",\s*""\)/);
 assert.match(panelSource, /setting\("showValue",\s*true\)/);
 assert.match(panelSource, /setting\("showProvider",\s*false\)/);
+assert.match(panelSource, /setting\("showAll",\s*false\)/);
 assert.match(panelSource, /showProvider\s*\?\s*Model\.providerShort\(entry\)\s*:\s*""/);
+assert.match(panelSource, /Model\.barStrip\(/);
+assert.match(panelSource, /Model\.providerIcon\(entry\)/);
+assert.match(panelSource, /BrandMark\s*\{/);
+assert.match(panelSource, /Model\.brandIconFile\(root\.entry\)/);
+assert.match(panelSource, /foreground:\s*root\.entryAlarming\s*\?\s*root\.urgent/);
+assert.doesNotMatch(panelSource, /BrandMark[\s\S]*foreground:\s*root\.alarming\s*\?/m);
+const brandMarkSource = fs.readFileSync(new URL('./BrandMark.qml', import.meta.url), 'utf8');
+assert.match(brandMarkSource, /icons\/" \+ root\.brand/);
+assert.ok(fs.existsSync(new URL('./icons/claude.svg', import.meta.url)));
+assert.ok(fs.existsSync(new URL('./icons/openai.svg', import.meta.url)));
+assert.ok(fs.existsSync(new URL('./icons/grok.svg', import.meta.url)));
+assert.ok(fs.existsSync(new URL('./icons/copilot.svg', import.meta.url)));
 assert.match(panelSource, /function\s+persistSelection\s*\(/);
 assert.match(panelSource, /Model\.settingsWithOverrides\(root\.settings,\s*root\.moduleName,\s*values\)/);
 assert.match(panelSource, /bar\.shell\.updateEntryInline\(root\.moduleName,\s*entry\)/);
@@ -63,6 +80,9 @@ assert.match(settingsViewSource, /signal\s+showValueRequested\(bool\s+enabled\)/
 assert.match(settingsViewSource, /label:\s*"Show usage value in the top bar"/);
 assert.match(settingsViewSource, /signal\s+showProviderRequested\(bool\s+enabled\)/);
 assert.match(settingsViewSource, /label:\s*"Show provider name in the top bar"/);
+assert.match(settingsViewSource, /signal\s+showAllRequested\(bool\s+enabled\)/);
+assert.match(settingsViewSource, /label:\s*"Show all providers in the top bar"/);
+assert.match(panelSource, /onShowAllRequested/);
 assert.match(panelSource, /onShowProviderRequested/);
 assert.match(settingsViewSource, /Log in with Nous Research/);
 assert.match(settingsViewSource, /Log in with GitHub Copilot/);
@@ -201,6 +221,51 @@ assert.equal(model.barLabel(true, false, true, false, false, '', 'gpt'), '󰅙')
 // A tag that sanitizes down to nothing degrades to the label without one.
 assert.equal(model.barLabel(false, false, true, false, true, '29%', '   '), '󰚩  29%');
 assert.equal(model.barLabel(false, false, true, false, true, '29%', undefined), '󰚩  29%');
+assert.equal(model.barLabel(false, false, true, false, true, '100%', '', '󱢆'), '󱢆  100%');
+
+assert.equal(model.brandIconFile({id: 'anthropic'}), 'claude.svg');
+assert.equal(model.brandIconFile({id: 'anthropic@work'}), 'claude.svg');
+assert.equal(model.brandIconFile({id: 'openai'}), 'openai.svg');
+assert.equal(model.brandIconFile({id: 'supergrok'}), 'grok.svg');
+assert.equal(model.brandIconFile({id: 'copilot'}), 'copilot.svg');
+assert.equal(model.brandIconFile({id: 'kimi'}), 'kimi.svg');
+assert.equal(model.brandIconFile({id: 'opencode-go'}), 'opencode.svg');
+assert.equal(model.brandIconFile({id: 'commandcode'}), '');
+assert.equal(model.brandIconFile({id: 'anthropic_api'}), 'anthropic.svg');
+assert.equal(model.brandIconFile({id: 'grok'}), model.brandIconFile({id: 'supergrok'}));
+
+const slugs = [
+  'anthropic', 'anthropic_api', 'openai', 'copilot', 'zai', 'openrouter',
+  'deepseek', 'kimi', 'kilo', 'novita', 'moonshot', 'grok', 'supergrok',
+  'antigravity', 'cursor', 'minimax', 'kiro', 'nous', 'opencode-go', 'commandcode'
+];
+const byMark = {};
+for (const slug of slugs) {
+  const mark = model.brandIconFile({id: slug}) || slug;
+  byMark[mark] = (byMark[mark] || []).concat(slug);
+}
+const sharedMarks = Object.entries(byMark).filter(([, vendors]) =>
+  vendors.length > 1 && vendors.join() !== 'grok,supergrok');
+assert.deepEqual(sharedMarks, []);
+for (const slug of slugs) {
+  const file = model.brandIconFile({id: slug});
+  if (file) assert.ok(fs.existsSync(new URL('./icons/' + file, import.meta.url)), file);
+}
+
+const claudeChip = parsed.entries[0];
+claudeChip.icon = '󰚩';
+const openaiChip = parsed.entries[1];
+openaiChip.icon = '󱢆';
+const strip = model.barChips([claudeChip, openaiChip], openaiChip, true, true, false, false, false, false);
+assert.equal(strip.length, 2);
+assert.equal(strip[0].brand, 'claude.svg');
+assert.equal(strip[1].brand, 'openai.svg');
+assert.equal(strip[0].label, '29%');
+assert.equal(strip[1].label, '95%');
+const one = model.barChips([claudeChip, openaiChip], openaiChip, false, true, false, false, false, false);
+assert.equal(one.length, 1);
+assert.equal(one[0].brand, 'openai.svg');
+assert.equal(model.barStrip([claudeChip, openaiChip], false, false, true, false, false), '󰚩  29%  󱢆  95%');
 
 // The codes come from Rust's VendorId::short_name via the report; the vendor
 // half of the machine id only stands in for a binary that predates the field.

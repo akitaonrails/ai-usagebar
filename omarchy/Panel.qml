@@ -44,6 +44,7 @@ Panel {
   readonly property string rememberedEntryId: String(setting("lastSelectedEntryId", "") || "").trim()
   readonly property bool showValue: Model.booleanSetting(setting("showValue", true), true)
   readonly property bool showProvider: Model.booleanSetting(setting("showProvider", false), false)
+  readonly property bool showAll: Model.booleanSetting(setting("showAll", false), false)
   readonly property var visibleEntries: Model.filteredEntries(entries, configuredProvider)
   readonly property int entryIndex: Model.selectedIndex(visibleEntries, selectedEntryId)
   readonly property var entry: entryIndex >= 0 ? visibleEntries[entryIndex] : null
@@ -54,7 +55,9 @@ Panel {
   readonly property var summary: Model.headline(entry)
   readonly property var entrySections: entry ? entry.sections : []
   readonly property bool filterMiss: configuredProvider !== "" && entries.length > 0 && visibleEntries.length === 0
-  readonly property bool alarming: Model.isAlarming(entry) || loadError !== "" || filterMiss
+  readonly property bool entryAlarming: Model.isAlarming(entry)
+  readonly property bool alarming: loadError !== "" || filterMiss
+    || (showAll ? Model.anyAlarming(visibleEntries) : entryAlarming)
 
   function alpha(color, opacity) {
     return Qt.rgba(color.r, color.g, color.b, opacity)
@@ -110,6 +113,12 @@ Panel {
     var next = enabled === true
     if (next === showProvider) return
     persistWidgetSettings({ showProvider: next })
+  }
+
+  function setShowAll(enabled) {
+    var next = enabled === true
+    if (next === showAll) return
+    persistWidgetSettings({ showAll: next })
   }
 
   function selectEntry(index) {
@@ -211,12 +220,30 @@ Panel {
     return Model.autoTextSafe(text)
   }
 
+  readonly property var barChips: Model.barChips(
+    visibleEntries, entry, showAll, showValue, showProvider, loading, alarming, vertical)
+
   function barText() {
+    if (showAll)
+      return Model.barStrip(visibleEntries, alarming, vertical, showValue, showProvider, loading)
     return Model.barLabel(alarming, vertical, showValue, loading,
-      entry !== null, summary.text, showProvider ? Model.providerShort(entry) : "")
+      entry !== null, summary.text, showProvider ? Model.providerShort(entry) : "",
+      Model.providerIcon(entry))
   }
 
   function tooltipText() {
+    if (showAll && visibleEntries.length > 0) {
+      var chips = []
+      for (var i = 0; i < visibleEntries.length; i++) {
+        var item = visibleEntries[i]
+        var bit = Model.providerName(item)
+        var value = Model.autoTextSafe(Model.headline(item).text).trim()
+        if (value !== "") bit += " · " + value
+        if (item.stale) bit += " · cached"
+        chips.push(bit)
+      }
+      return chips.join("\n")
+    }
     if (!entry) return Model.autoTextSafe(statusMessage() || "AI usage")
     var text = Model.providerName(entry)
     if (summary.text !== "") text += " · " + Model.autoTextSafe(summary.text)
@@ -342,11 +369,12 @@ Panel {
             fontFamily: root.fontFamily
 
             iconComponent: Component {
-              Text {
-                text: root.settingsOpen ? "󰒓" : "󰚩"
-                color: root.alarming ? root.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
+              BrandMark {
+                brand: root.settingsOpen ? "" : Model.brandIconFile(root.entry)
+                fallback: root.settingsOpen ? "󰒓" : Model.providerIcon(root.entry)
+                foreground: root.entryAlarming ? root.urgent : root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.display
               }
             }
 
@@ -384,9 +412,11 @@ Panel {
             fontFamily: root.fontFamily
             showValue: root.showValue
             showProvider: root.showProvider
+            showAll: root.showAll
             onSaved: root.startRefresh()
             onShowValueRequested: function(enabled) { root.setShowValue(enabled) }
             onShowProviderRequested: function(enabled) { root.setShowProvider(enabled) }
+            onShowAllRequested: function(enabled) { root.setShowAll(enabled) }
             onFallbackRequested: root.openTerminalSettings()
             onNousLoginRequested: root.openNousLogin()
             onCopilotLoginRequested: root.openCopilotLogin()
