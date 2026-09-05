@@ -54,7 +54,7 @@ Panel {
   readonly property var summary: Model.headline(entry)
   readonly property var entrySections: entry ? entry.sections : []
   readonly property bool filterMiss: configuredProvider !== "" && entries.length > 0 && visibleEntries.length === 0
-  readonly property bool alarming: Model.isAlarming(entry) || loadError !== "" || filterMiss
+  readonly property bool alarming: false
 
   function alpha(color, opacity) {
     return Qt.rgba(color.r, color.g, color.b, opacity)
@@ -117,7 +117,6 @@ Panel {
     var wrapped = ((index % visibleEntries.length) + visibleEntries.length) % visibleEntries.length
     selectedEntryId = visibleEntries[wrapped].id
     persistSelection(selectedEntryId)
-    if (providerList.visible) providerList.positionViewAtIndex(wrapped, ListView.Contain)
     if (panelFlick) panelFlick.contentY = 0
   }
 
@@ -288,7 +287,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(390))
+    contentWidth: panel.fittedContentWidth(Style.space(480))
     contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(640))
 
     PanelKeyCatcher {
@@ -335,16 +334,18 @@ Panel {
             title: root.settingsOpen ? "Settings"
               : (root.entry ? Model.providerName(root.entry) : "AI usage")
             meta: root.settingsOpen ? "Display, provider & API keys" : root.heroMeta()
-            detail: root.settingsOpen
-              ? "Existing configuration stays in place until you save."
-              : (root.entry && root.summary.text !== "Ready" ? Model.autoTextSafe(root.summary.text) : "")
+            // A long bordered detail pill next to "Antigravity" was clipping
+            // off the trailing edge. Keep this to a short percent, if any.
+            detail: root.settingsOpen ? ""
+              : (root.summary.percent !== null && root.summary.percent !== undefined
+                ? String(root.summary.percent) + "%" : "")
             foreground: root.foreground
             fontFamily: root.fontFamily
 
             iconComponent: Component {
               Text {
                 text: root.settingsOpen ? "󰒓" : "󰚩"
-                color: root.alarming ? root.urgent : root.foreground
+                color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.display
               }
@@ -393,36 +394,34 @@ Panel {
             onCloseRequested: root.closeSettings()
           }
 
-          ListView {
+          Flow {
             id: providerList
             visible: !root.settingsOpen && root.visibleEntries.length > 1
             width: parent.width
-            height: visible ? Style.spacing.controlHeight : 0
-            orientation: ListView.Horizontal
-            spacing: Style.spacing.md
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            model: root.visibleEntries
-            currentIndex: root.entryIndex
+            spacing: Style.space(6)
 
-            delegate: Button {
-              required property var modelData
-              required property int index
+            Repeater {
+              model: root.visibleEntries
 
-              height: providerList.height
-              text: Model.providerName(modelData)
-              selected: index === root.entryIndex
-              hasCursor: root.cursorActive && index === root.entryIndex
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.spacing.controlPaddingY
-              onClicked: {
-                root.cursorActive = true
-                root.selectEntry(index)
+              Button {
+                required property var modelData
+                required property int index
+
+                text: Model.providerChip(modelData)
+                selected: index === root.entryIndex
+                hasCursor: root.cursorActive && index === root.entryIndex
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                horizontalPadding: Style.space(8)
+                verticalPadding: Style.spacing.controlPaddingY
+                onClicked: {
+                  root.cursorActive = true
+                  root.selectEntry(index)
+                }
+                onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
               }
-              onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
             }
           }
 

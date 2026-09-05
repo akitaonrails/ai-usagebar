@@ -112,6 +112,9 @@ assert.equal(parsed.entries[0].stale, true);
 assert.equal(parsed.entries[0].sections[1].reset_at, '2026-08-14T14:00:00Z');
 assert.equal(model.providerName(parsed.entries[0]), 'Claude · work');
 assert.equal(model.providerName(parsed.entries[1]), 'Codex');
+assert.equal(model.providerChip({id: 'antigravity', display_name: 'Antigravity', short_name: 'agy'}), 'agy');
+assert.equal(model.providerChip({id: 'supergrok', display_name: 'SuperGrok', short_name: 'sgk'}), 'grok');
+assert.equal(model.providerChip(parsed.entries[1]), 'codex');
 assert.deepEqual(Array.from(model.filteredEntries(parsed.entries, '')).map(entry => entry.id), ['anthropic@work', 'openai']);
 assert.deepEqual(Array.from(model.filteredEntries(parsed.entries, 'anthropic')).map(entry => entry.id), ['anthropic@work']);
 assert.deepEqual(Array.from(model.filteredEntries(parsed.entries, 'openai')).map(entry => entry.id), ['openai']);
@@ -215,8 +218,8 @@ assert.equal(model.providerShort({id: 'x', short_name: '<b>x</b>'}), '‹b›x�
 
 assert.equal(model.headline(parsed.entries[0]).text, '29%');
 assert.equal(model.headline(parsed.entries[1]).severity, 'critical');
-assert.equal(model.isAlarming(parsed.entries[0]), true); // stale
-assert.equal(model.isAlarming(parsed.entries[1]), true); // critical
+assert.equal(model.isAlarming(parsed.entries[0]), false); // stale is not red
+assert.equal(model.isAlarming(parsed.entries[1]), false); // quota warnings are not red
 // Reset-row fixtures are built from *local* calendar components, not UTC
 // strings, so every expectation below is a literal that holds in any
 // timezone the panel might run in. Deriving the expected clock from the same

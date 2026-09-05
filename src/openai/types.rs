@@ -41,6 +41,11 @@ pub struct UsageResponse {
     /// model-specific allowance. Each carries its own windows and can be the
     /// binding constraint while `rate_limit` still reads low, which is
     /// precisely when a user needs to see it.
+    ///
+    /// ChatGPT Team/Business responses currently send JSON `null` here rather
+    /// than omitting the field or using `[]`. `#[serde(default)]` only covers
+    /// a missing key, so treat null as empty too.
+    #[serde(default, deserialize_with = "de_null_as_empty_vec")]
     pub additional_rate_limits: Vec<AdditionalRateLimit>,
     /// Per-model availability. `available: false` is what "Selected model is
     /// at capacity" looks like in the data — a dispatch-time refusal, not a
@@ -210,6 +215,14 @@ where
     } else {
         i64_value::<D::Error>(v).map(Some)
     }
+}
+
+fn de_null_as_empty_vec<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
 }
 
 /// Accept either a string ("$0.00") or a finite number (0.0) — codexbar
@@ -880,6 +893,44 @@ mod tests {
         assert_eq!(snap.unavailable_models.len(), 1);
         assert_eq!(snap.unavailable_models[0].model, "gpt-6-astra");
         assert!(snap.unavailable_models[0].available_at.is_some());
+    }
+
+    /// Team/Business ChatGPT responses send `"additional_rate_limits": null`
+    /// instead of omitting the key. That used to abort the whole fetch as
+    /// "schema mismatch" before any quota could be shown.
+    #[test]
+    fn null_additional_rate_limits_parse_as_empty() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{
+                "plan_type": "self_serve_business_prolite",
+                "rate_limit": {
+                    "allowed": true,
+                    "limit_reached": false,
+                    "primary_window": {
+                        "used_percent": 2,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1789214851
+                    },
+                    "secondary_window": null
+                },
+                "code_review_rate_limit": null,
+                "additional_rate_limits": null,
+                "model_usage": {"gpt-6-astra": {"available": true, "available_at": null}},
+                "credits": {
+                    "has_credits": true,
+                    "unlimited": false,
+                    "balance": null,
+                    "approx_local_messages": null,
+                    "approx_cloud_messages": null
+                }
+            }"#,
+        )
+        .expect("null additional_rate_limits must deserialize");
+        assert!(response.additional_rate_limits.is_empty());
+        let snap = response.into_snapshot(None).unwrap();
+        assert!(snap.additional_limits.is_empty());
+        assert!(snap.weekly.is_some());
+        assert!(snap.session.is_none());
     }
 
     /// An account with none of this — which is most of them — must look

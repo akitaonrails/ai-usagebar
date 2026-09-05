@@ -136,6 +136,35 @@ function providerShort(entry) {
   return autoTextSafe(code).trim()
 }
 
+// Compact chip labels so the provider row fits without clipping. Keep the
+// full product name for the hero via providerName().
+function providerChip(entry) {
+  var id = baseProvider(entry && entry.id).toLowerCase()
+  var compact = {
+    anthropic: "claude",
+    openai: "codex",
+    kimi: "kimi",
+    supergrok: "grok",
+    grok: "grok",
+    antigravity: "agy",
+    copilot: "copilot",
+    zai: "zai",
+    openrouter: "or",
+    deepseek: "ds",
+    cursor: "cursor",
+    moonshot: "moon",
+    minimax: "mm",
+    kiro: "kiro",
+    nous: "nous",
+    "opencode-go": "oc",
+    commandcode: "cmd"
+  }
+  if (compact[id]) return compact[id]
+  var name = providerName(entry)
+  if (name.length <= 8) return name
+  return providerShort(entry)
+}
+
 function filteredEntries(entries, configuredProvider) {
   var list = Array.isArray(entries) ? entries : []
   var wanted = String(configuredProvider || "").trim().toLowerCase()
@@ -248,7 +277,9 @@ function headline(entry) {
 function isAlarming(entry) {
   if (!entry) return false
   var summary = headline(entry)
-  return entry.status === "error" || entry.stale === true || summary.severity === "critical"
+  // Cached/stale reports (Antigravity while the local server is down) are
+  // expected. Never paint the bar icon red for that, or for quota warnings.
+  return false
 }
 
 function formatDuration(milliseconds) {

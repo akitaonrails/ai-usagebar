@@ -77,7 +77,8 @@ BarWidget {
     bar: root.bar
     text: root.panelItem ? root.panelItem.barText() : "󰚩  …"
     fontSize: Style.font.bodySmall
-    active: root.panelItem ? root.panelItem.alarming : false
+    active: false
+    useActiveColor: false
     tooltipText: root.panelItem ? root.panelItem.tooltipText() : "AI usage"
     horizontalMargin: 8.5
 
