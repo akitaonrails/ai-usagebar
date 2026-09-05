@@ -41,10 +41,14 @@ pub struct UsageResponse {
     /// model-specific allowance. Each carries its own windows and can be the
     /// binding constraint while `rate_limit` still reads low, which is
     /// precisely when a user needs to see it.
+    /// Null from the API means "none" (observed 2026-09-05: OpenAI returns
+    /// `"additional_rate_limits": null` for accounts with no extra limits).
+    #[serde(default, deserialize_with = "de_vec_null_as_default")]
     pub additional_rate_limits: Vec<AdditionalRateLimit>,
     /// Per-model availability. `available: false` is what "Selected model is
     /// at capacity" looks like in the data — a dispatch-time refusal, not a
     /// quota, so no percentage anywhere else reflects it.
+    #[serde(default, deserialize_with = "de_map_null_as_default")]
     pub model_usage: BTreeMap<String, ModelUsage>,
 }
 
@@ -106,6 +110,7 @@ pub struct CreditsBlock {
 #[serde(default)]
 pub struct ResetCreditsBlock {
     pub available_count: u32,
+    #[serde(default, deserialize_with = "de_vec_null_as_default")]
     pub credits: Vec<ResetCredit>,
 }
 
@@ -232,6 +237,28 @@ where
             "expected credit balance string, number, or null; got {other:?}"
         ))),
     }
+}
+
+/// OpenAI omits empty collections as `null` instead of `[]`/`{}` (observed
+/// 2026-09-05 for `additional_rate_limits`). With `#[serde(default)]` alone,
+/// a missing field gets the default but an explicit `null` still fails with
+/// "invalid type: null, expected a sequence/map". These helpers treat `null`
+/// as empty while keeping every other malformed shape an error.
+fn de_vec_null_as_default<'de, D, T>(d: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(d)?.unwrap_or_default())
+}
+
+fn de_map_null_as_default<'de, D, K, V>(d: D) -> Result<BTreeMap<K, V>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    K: serde::Deserialize<'de> + Ord,
+    V: serde::Deserialize<'de>,
+{
+    Ok(Option::<BTreeMap<K, V>>::deserialize(d)?.unwrap_or_default())
 }
 
 const MAX_RESET_TITLE_CHARS: usize = 80;
@@ -935,5 +962,37 @@ mod tests {
                 .unavailable_models
                 .is_empty()
         );
+    }
+
+    /// Live shape observed 2026-09-05: OpenAI returns explicit `null` for
+    /// empty collections instead of omitting them. `#[serde(default)]` alone
+    /// covers a missing field but still rejects `null` with "invalid type:
+    /// null, expected a sequence" — which surfaced as `⚠ API schema drift`
+    /// in Waybar. Null must mean "none", not drift.
+    #[test]
+    fn null_collections_parse_as_empty_rather_than_schema_drift() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{
+                "plan_type": "plus",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 0, "limit_window_seconds": 18000,
+                                       "reset_after_seconds": 18000, "reset_at": 1788646037},
+                    "secondary_window": {"used_percent": 64, "limit_window_seconds": 604800,
+                                         "reset_after_seconds": 152957, "reset_at": 1788780993}
+                },
+                "code_review_rate_limit": null,
+                "additional_rate_limits": null,
+                "model_usage": null,
+                "rate_limit_reset_credits": {"available_count": 3, "credits": null}
+            }"#,
+        )
+        .expect("null collections must parse");
+        let snap = response.into_snapshot(None).unwrap();
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 0);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 64);
+        assert!(snap.additional_limits.is_empty());
+        assert!(snap.unavailable_models.is_empty());
+        assert_eq!(snap.reset_credits.available, 3);
+        assert!(snap.reset_credits.credits.is_empty());
     }
 }

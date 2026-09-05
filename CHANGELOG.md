@@ -9,6 +9,13 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI (Codex) usage parsing treats explicit `null` for `additional_rate_limits`,
+  `model_usage`, and `rate_limit_reset_credits.credits` as empty rather than schema
+  drift. OpenAI returns `"additional_rate_limits": null` for accounts with no extra
+  limits, which previously surfaced as `⚠ API schema drift ... expected a sequence`.
+
 ## [1.11.0] — 2026-09-05
 
 ### Security
