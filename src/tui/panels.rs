@@ -581,6 +581,32 @@ fn openai_sections(
     if let Some(cr) = &s.code_review {
         push_window(&mut v, "Code review", cr, now, tol, false);
     }
+    // A named limit can be the binding one while the headline window reads
+    // low, so it gets a real row rather than a footnote.
+    for limit in &s.additional_limits {
+        if let Some(w) = &limit.session {
+            push_window(&mut v, &format!("{} (5h)", limit.name), w, now, tol, false);
+        }
+        if let Some(w) = &limit.weekly {
+            push_window(&mut v, &format!("{} (7d)", limit.name), w, now, tol, false);
+        }
+    }
+    // No percentage reflects a model the account cannot dispatch to, so say it
+    // outright rather than leaving the user to infer it from healthy bars.
+    if !s.unavailable_models.is_empty() {
+        v.push(Section::Spacer);
+        v.push(Section::Block {
+            label: "Unavailable".into(),
+            body: s
+                .unavailable_models
+                .iter()
+                .map(|m| match m.available_at {
+                    Some(at) => format!("{} — back {}", m.model, countdown::format(Some(at), now)),
+                    None => format!("{} — at capacity", m.model),
+                })
+                .collect(),
+        });
+    }
     if let Some(c) = &s.credits {
         v.push(Section::Spacer);
         let balance = if c.unlimited {
@@ -1727,6 +1753,8 @@ mod tests {
             session: None,
             weekly: None,
             code_review: None,
+            additional_limits: Vec::new(),
+            unavailable_models: Vec::new(),
             credits: None,
             reset_credits: ResetCredits::default(),
             source: OpenAiSource::CodexOauth,
@@ -1775,6 +1803,8 @@ mod tests {
                 window_duration: chrono::Duration::days(7),
             }),
             code_review: None,
+            additional_limits: Vec::new(),
+            unavailable_models: Vec::new(),
             credits: Some(OpenAiCredits {
                 balance: "$5.00".into(),
                 has_credits: true,
@@ -1804,6 +1834,8 @@ mod tests {
                 window_duration: chrono::Duration::days(7),
             }),
             code_review: None,
+            additional_limits: Vec::new(),
+            unavailable_models: Vec::new(),
             credits: None,
             reset_credits: ResetCredits::default(),
             source: OpenAiSource::CodexOauth,
@@ -1843,6 +1875,8 @@ mod tests {
             session: None,
             weekly: None,
             code_review: None,
+            additional_limits: Vec::new(),
+            unavailable_models: Vec::new(),
             credits: None,
             reset_credits: credits.clone(),
             source: OpenAiSource::CodexOauth,
@@ -1885,6 +1919,8 @@ mod tests {
             session: None,
             weekly: None,
             code_review: None,
+            additional_limits: Vec::new(),
+            unavailable_models: Vec::new(),
             credits: None,
             reset_credits: ResetCredits::default(),
             source: OpenAiSource::CodexOauth,

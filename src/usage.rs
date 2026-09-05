@@ -533,6 +533,14 @@ pub struct OpenAiSnapshot {
     pub weekly: Option<UsageWindow>,
     /// Optional 7d code-review bucket.
     pub code_review: Option<UsageWindow>,
+    /// Named limits beside the main one, each with its own windows. Empty for
+    /// an account that has none.
+    pub additional_limits: Vec<OpenAiNamedLimit>,
+    /// Models the account currently cannot dispatch to, with the time they
+    /// return when the API states one. Only unavailable models are kept: a
+    /// list of everything that *is* working is noise, and the reason this
+    /// exists is to explain a refusal no percentage accounts for.
+    pub unavailable_models: Vec<OpenAiUnavailableModel>,
     /// Optional credit balance + approximate message-count ranges.
     pub credits: Option<OpenAiCredits>,
     pub reset_credits: ResetCredits,
@@ -540,6 +548,25 @@ pub struct OpenAiSnapshot {
     /// the placeholder set and the "OpenAI does not expose this for Plus"
     /// tooltip when the OAuth path isn't available.
     pub source: OpenAiSource,
+}
+
+/// A named limit that sits beside Codex's main window — a reserved pool or a
+/// model-specific allowance. It can be exhausted while the headline window is
+/// nearly untouched, which is the case it exists to make visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiNamedLimit {
+    /// The API's own name for it, shown as given.
+    pub name: String,
+    pub session: Option<UsageWindow>,
+    pub weekly: Option<UsageWindow>,
+}
+
+/// A model the account cannot currently dispatch to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiUnavailableModel {
+    pub model: String,
+    /// When the API says it returns. `None` means it did not say.
+    pub available_at: Option<DateTime<Utc>>,
 }
 
 /// Banked, user-redeemable quota resets — Codex's "rate limit reset credits"

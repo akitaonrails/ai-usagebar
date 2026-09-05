@@ -73,6 +73,15 @@ the ones Codex lets you redeem by hand, not the automatic window rollover in
 available`). The panel lists each credit on its own row with title and
 expiry. Accounts that have never earned one report `0`.
 
+- `{oai_extra_limits}` lists Codex's *named* limits with their worst window
+  (`GPT-5.3-Codex-Spark 34% · gpt-reserve 71%`), and is empty for an account
+  that has none. These sit beside the headline window and can be the binding
+  constraint while it still reads low.
+- `{oai_unavailable_models}` names models the account cannot dispatch to right
+  now, comma separated, and is empty when everything is reachable. This is what
+  "Selected model is at capacity" looks like in the data — no percentage
+  anywhere reflects it.
+
 ## GitHub Copilot
 
 `{copilot_plan}`, `{copilot_reset}`, `{copilot_premium_pct}`,

@@ -18,13 +18,15 @@
 //! }
 //! ```
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result as AppResult};
 use crate::usage::{
-    OpenAiCredits, OpenAiSnapshot, OpenAiSource, ResetCredit as BankedReset, ResetCredits,
-    UsageWindow,
+    OpenAiCredits, OpenAiNamedLimit, OpenAiSnapshot, OpenAiSource, OpenAiUnavailableModel,
+    ResetCredit as BankedReset, ResetCredits, UsageWindow,
 };
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -35,6 +37,31 @@ pub struct UsageResponse {
     pub code_review_rate_limit: Option<RateLimit>,
     pub credits: Option<CreditsBlock>,
     pub rate_limit_reset_credits: Option<ResetCreditsBlock>,
+    /// Named limits alongside the main one — a reserved pool, a
+    /// model-specific allowance. Each carries its own windows and can be the
+    /// binding constraint while `rate_limit` still reads low, which is
+    /// precisely when a user needs to see it.
+    pub additional_rate_limits: Vec<AdditionalRateLimit>,
+    /// Per-model availability. `available: false` is what "Selected model is
+    /// at capacity" looks like in the data — a dispatch-time refusal, not a
+    /// quota, so no percentage anywhere else reflects it.
+    pub model_usage: BTreeMap<String, ModelUsage>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct AdditionalRateLimit {
+    pub limit_name: Option<String>,
+    pub metered_feature: Option<String>,
+    pub rate_limit: Option<RateLimit>,
+}
+
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct ModelUsage {
+    /// Absent means "not stated", which is not the same as unavailable.
+    pub available: Option<bool>,
+    pub available_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -254,11 +281,30 @@ impl UsageResponse {
             })
             .unwrap_or_default();
 
+        let additional_limits = self
+            .additional_rate_limits
+            .into_iter()
+            .filter_map(named_limit)
+            .collect();
+        // Only the unavailable ones: a roster of working models is noise, and
+        // this list exists to name a refusal nothing else accounts for.
+        let unavailable_models = self
+            .model_usage
+            .into_iter()
+            .filter(|(_, usage)| usage.available == Some(false))
+            .map(|(model, usage)| OpenAiUnavailableModel {
+                model,
+                available_at: usage.available_at,
+            })
+            .collect();
+
         Ok(OpenAiSnapshot {
             plan,
             session,
             weekly,
             code_review,
+            additional_limits,
+            unavailable_models,
             credits,
             reset_credits,
             source: OpenAiSource::CodexOauth,
@@ -276,6 +322,25 @@ enum WindowKind {
 pub(crate) const SESSION_WINDOW_SECS: u64 = 18_000;
 /// `limit_window_seconds` value the Codex API reports for the 7-day window.
 pub(crate) const WEEKLY_WINDOW_SECS: u64 = 604_800;
+
+/// One named limit, or `None` when it carries no window we can show. Windows
+/// go through the same classifier as the main limit — identified by duration,
+/// not wire position — so a named 5h reads as a 5h everywhere.
+fn named_limit(entry: AdditionalRateLimit) -> Option<OpenAiNamedLimit> {
+    let name = entry
+        .limit_name
+        .or(entry.metered_feature)
+        .filter(|name| !name.trim().is_empty())?;
+    let (session, weekly) = classify_rate_limit(entry.rate_limit?).ok()?;
+    if session.is_none() && weekly.is_none() {
+        return None;
+    }
+    Some(OpenAiNamedLimit {
+        name: crate::display::sanitize_untrusted_field(&name),
+        session,
+        weekly,
+    })
+}
 
 fn classify_rate_limit(
     rate_limit: RateLimit,
@@ -753,5 +818,122 @@ mod tests {
         let reset = s.session.unwrap().resets_at.unwrap();
         let delta = reset.signed_duration_since(now).num_seconds();
         assert!((400..=600).contains(&delta), "got delta={delta}");
+    }
+    /// The shape that prompted this: a real account whose headline window read
+    /// 5% while two named limits and a per-model availability flag went
+    /// unparsed entirely. Field names and nesting are from a live
+    /// `wham/usage` response; the numbers are made up.
+    #[test]
+    fn named_limits_and_unavailable_models_are_read_from_the_live_shape() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{
+              "plan_type": "pro",
+              "rate_limit": {
+                "allowed": true, "limit_reached": false,
+                "primary_window": {"used_percent": 5, "limit_window_seconds": 604800,
+                                   "reset_after_seconds": 400000, "reset_at": 1789000000},
+                "secondary_window": null
+              },
+              "code_review_rate_limit": null,
+              "additional_rate_limits": [
+                {"limit_name": "GPT-5.3-Codex-Spark", "metered_feature": "codex_bengalfox",
+                 "rate_limit": {
+                   "primary_window": {"used_percent": 12, "limit_window_seconds": 18000,
+                                      "reset_at": 1788000000},
+                   "secondary_window": {"used_percent": 34, "limit_window_seconds": 604800,
+                                        "reset_at": 1789500000}},
+                 "normal_model_slug": null},
+                {"limit_name": "gpt-reserve", "metered_feature": "base_model_inference",
+                 "rate_limit": {
+                   "primary_window": {"used_percent": 71, "limit_window_seconds": 604800,
+                                      "reset_at": 1789500000},
+                   "secondary_window": null}}
+              ],
+              "model_usage": {
+                "gpt-6-astra": {"available": false, "available_at": "2026-09-05T22:00:00Z",
+                                "credits_would_enable": false},
+                "gpt-5.3-codex": {"available": true, "available_at": null}
+              }
+            }"#,
+        )
+        .expect("the live response shape parses");
+
+        let snap = response.into_snapshot(None).unwrap();
+
+        // The headline window is unchanged and still low — which is the point:
+        // it is not what stopped the request.
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 5);
+
+        assert_eq!(snap.additional_limits.len(), 2);
+        let spark = &snap.additional_limits[0];
+        assert_eq!(spark.name, "GPT-5.3-Codex-Spark");
+        assert_eq!(spark.session.as_ref().unwrap().utilization_pct, 12);
+        assert_eq!(spark.weekly.as_ref().unwrap().utilization_pct, 34);
+        // Classified by duration, not wire position: a 7d in the primary slot
+        // is still the weekly one.
+        let reserve = &snap.additional_limits[1];
+        assert_eq!(reserve.name, "gpt-reserve");
+        assert!(reserve.session.is_none());
+        assert_eq!(reserve.weekly.as_ref().unwrap().utilization_pct, 71);
+
+        // Only the unavailable model is kept.
+        assert_eq!(snap.unavailable_models.len(), 1);
+        assert_eq!(snap.unavailable_models[0].model, "gpt-6-astra");
+        assert!(snap.unavailable_models[0].available_at.is_some());
+    }
+
+    /// An account with none of this — which is most of them — must look
+    /// exactly as it did before, not gain empty rows.
+    #[test]
+    fn an_account_without_extra_limits_reports_none_rather_than_empty_rows() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{"plan_type": "plus",
+                "rate_limit": {"primary_window": {"used_percent": 3,
+                               "limit_window_seconds": 604800}}}"#,
+        )
+        .unwrap();
+        let snap = response.into_snapshot(None).unwrap();
+
+        assert!(snap.additional_limits.is_empty());
+        assert!(snap.unavailable_models.is_empty());
+    }
+
+    /// A named limit with no usable window is dropped rather than drawn as a
+    /// nameless empty row, and one with no name at all falls back to the
+    /// metered feature before being dropped.
+    #[test]
+    fn nameless_or_windowless_limits_are_dropped() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{"additional_rate_limits": [
+                 {"limit_name": null, "metered_feature": "base_model_inference",
+                  "rate_limit": {"primary_window": {"used_percent": 9,
+                                 "limit_window_seconds": 604800}}},
+                 {"limit_name": "no windows", "rate_limit": {"primary_window": null,
+                                                             "secondary_window": null}},
+                 {"limit_name": "  ", "rate_limit": {"primary_window":
+                   {"used_percent": 1, "limit_window_seconds": 18000}}}
+               ]}"#,
+        )
+        .unwrap();
+        let snap = response.into_snapshot(None).unwrap();
+
+        assert_eq!(snap.additional_limits.len(), 1);
+        assert_eq!(snap.additional_limits[0].name, "base_model_inference");
+    }
+
+    /// `available` absent is "not stated", which is not the same as
+    /// unavailable — inventing a capacity warning is worse than staying quiet.
+    #[test]
+    fn a_model_without_an_availability_flag_is_not_reported_as_down() {
+        let response: UsageResponse =
+            serde_json::from_str(r#"{"model_usage": {"gpt-6-astra": {"available_at": null}}}"#)
+                .unwrap();
+        assert!(
+            response
+                .into_snapshot(None)
+                .unwrap()
+                .unavailable_models
+                .is_empty()
+        );
     }
 }
