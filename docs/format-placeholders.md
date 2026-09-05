@@ -62,10 +62,16 @@ window is absent, it returns neutral empty, `0`, or `—` values as appropriate.
 `{oai_session_elapsed}`, `{oai_session_pace}`,
 `{oai_session_pace_indicator}`, `{oai_weekly_*}`,
 `{oai_code_review_pct}`, `{oai_credit_balance}`, `{oai_local_msgs}`,
-`{oai_cloud_msgs}`
+`{oai_cloud_msgs}`, `{oai_resets_available}`, `{oai_resets}`
 
 Session and weekly families are empty when the API omits that window. The
 default widget automatically uses weekly values for a weekly-only response.
+
+`{oai_resets_available}` is the number of banked rate-limit reset credits —
+the ones Codex lets you redeem by hand, not the automatic window rollover in
+`{oai_session_reset}`. `{oai_resets}` is the compact count (`2 resets
+available`). The panel lists each credit on its own row with title and
+expiry. Accounts that have never earned one report `0`.
 
 ## GitHub Copilot
 
@@ -161,24 +167,28 @@ USD; the China service uses CNY.
 
 ## SuperGrok
 
-`{sgk_plan}`, `{sgk_pct}`, `{sgk_reset}`, `{sgk_period}`, `{sgk_prepaid}`
+`{sgk_plan}`, `{sgk_pct}`, `{sgk_reset}`, `{sgk_period}`, `{sgk_prepaid}`,
+`{sgk_resets_available}`, `{sgk_resets}`
 
 - `{sgk_period}` is `Weekly`, `Monthly`, or `Current period`.
 - The default bar format is `{sgk_pct}% · {sgk_reset}`.
 - `{session_pct}` and `{weekly_pct}` remain aliases for `sgk_pct`.
 - `{plan}` is the subscription tier when Grok Build supplies one.
+- `{sgk_resets_available}` is the number of banked resets you can redeem by
+  hand, and `{sgk_resets}` the compact count (`1 reset available`). These are
+  unrelated to `{sgk_reset}`, which is the current period's automatic rollover.
 
 SuperGrok is the subscription path. It is separate from the Grok Management
 API prepaid balance. Billing comes from Grok Build's documented
 `cli-chat-proxy.grok.com` endpoint, with the CLI's `x.ai/billing` ACP extension
 as a fallback for builds where that endpoint is unavailable.
 
-The HTTPS path reads the long-lived `key` from the login's `auth.json` and uses
-it inside one outgoing `Authorization` header. ai-usagebar never copies,
-caches, refreshes, logs, or writes that key back, and never echoes it in an
-error; account selection and token rotation stay with Grok Build. The config
-file is read only as opaque bytes for the one-way digest that keeps caches
-separate between logins.
+The HTTPS path reads the `key` from the login's `auth.json` and uses it inside
+the outgoing `Authorization` headers of the billing request and, separately,
+the remaining-resets RPC. ai-usagebar never copies, caches, refreshes, logs,
+or writes that key back, and never echoes it in an error; account selection
+and token rotation stay with Grok Build. The config file is read only as
+opaque bytes for the one-way digest that keeps caches separate between logins.
 
 The default executable is `$GROK_HOME/bin/grok`, or `~/.grok/bin/grok` when
 `GROK_HOME` is unset. ai-usagebar does not search `PATH`. Set

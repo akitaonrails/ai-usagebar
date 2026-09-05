@@ -109,9 +109,10 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 
 [supergrok]
 enabled = true             # disabled by default; enable once you've run `grok login`
-# No API key of its own: billing comes from Grok Build's documented HTTPS
-# endpoint using the `key` already in its auth.json (read-only, sent in one
-# Authorization header, never copied or rewritten), or from its ACP process.
+# No API key of its own: billing and banked resets use the `key` already in
+# its auth.json (read-only, sent in an Authorization header, never copied or
+# rewritten). Billing is Grok Build's documented HTTPS endpoint, or its ACP
+# process as fallback; remaining resets are a separate grok.com RPC.
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok. Override only when the
 # trusted official binary was installed elsewhere.
 # grok_binary = "/opt/grok/bin/grok"

@@ -13,14 +13,19 @@
 //!     "secondary_window": {"used_percent": 0, "limit_window_seconds": 604800, "reset_at": 1780184124}
 //!   },
 //!   "code_review_rate_limit": {...optional...},
-//!   "credits": {...optional...}
+//!   "credits": {...optional...},
+//!   "rate_limit_reset_credits": {"available_count": 2}
 //! }
 //! ```
 
-use serde::Deserialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result as AppResult};
-use crate::usage::{OpenAiCredits, OpenAiSnapshot, OpenAiSource, UsageWindow};
+use crate::usage::{
+    OpenAiCredits, OpenAiSnapshot, OpenAiSource, ResetCredit as BankedReset, ResetCredits,
+    UsageWindow,
+};
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
@@ -29,6 +34,7 @@ pub struct UsageResponse {
     pub rate_limit: Option<RateLimit>,
     pub code_review_rate_limit: Option<RateLimit>,
     pub credits: Option<CreditsBlock>,
+    pub rate_limit_reset_credits: Option<ResetCreditsBlock>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -62,6 +68,31 @@ pub struct CreditsBlock {
     pub approx_local_messages: Option<Vec<i64>>,
     #[serde(default)]
     pub approx_cloud_messages: Option<Vec<i64>>,
+}
+
+/// Banked rate-limit reset credits. `available_count` rides along with the
+/// usage response; `credits` only ever arrives from the separate
+/// `/rate-limit-reset-credits` call, so it is routinely empty while the count
+/// is not. The redemption `id` each entry carries is deliberately not
+/// deserialized.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct ResetCreditsBlock {
+    pub available_count: u32,
+    pub credits: Vec<ResetCredit>,
+}
+
+/// Cached beside the usage payload. Status, title, and expiry are written
+/// back — the wire's redemption `id` is never deserialized.
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ResetCredit {
+    /// "available", "redeemed", … — only an available credit is one you still
+    /// have, so a redeemed entry's expiry must not become a deadline on screen.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Accept a JSON number or numeric string without turning malformed, non-finite
@@ -176,6 +207,19 @@ where
     }
 }
 
+const MAX_RESET_TITLE_CHARS: usize = 80;
+
+fn checked_reset_title(value: Option<String>) -> Option<String> {
+    let value = value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    if value.chars().count() > MAX_RESET_TITLE_CHARS || value.chars().any(char::is_control) {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 impl UsageResponse {
     pub fn into_snapshot(self, plan_hint: Option<&str>) -> AppResult<OpenAiSnapshot> {
         let plan_type = self.plan_type.as_deref().or(plan_hint).unwrap_or("Unknown");
@@ -194,6 +238,21 @@ impl UsageResponse {
             approx_local_messages: range_from_vec(c.approx_local_messages),
             approx_cloud_messages: range_from_vec(c.approx_cloud_messages),
         });
+        let reset_credits = self
+            .rate_limit_reset_credits
+            .map(|credits| ResetCredits {
+                available: credits.available_count,
+                credits: credits
+                    .credits
+                    .into_iter()
+                    .filter(|credit| credit.status == "available")
+                    .map(|credit| BankedReset {
+                        title: checked_reset_title(credit.title),
+                        expires_at: credit.expires_at,
+                    })
+                    .collect(),
+            })
+            .unwrap_or_default();
 
         Ok(OpenAiSnapshot {
             plan,
@@ -201,6 +260,7 @@ impl UsageResponse {
             weekly,
             code_review,
             credits,
+            reset_credits,
             source: OpenAiSource::CodexOauth,
         })
     }
@@ -448,6 +508,56 @@ mod tests {
         assert!(c.has_credits);
         assert_eq!(c.approx_local_messages, Some((100, 200)));
         assert_eq!(c.approx_cloud_messages, Some((40, 60)));
+    }
+
+    /// The count travels with the usage response; the per-credit detail only
+    /// arrives from the second endpoint, so a snapshot must be able to report
+    /// "2 available" with no expiry attached to either of them.
+    #[test]
+    fn reset_credit_count_stands_on_its_own_without_the_detail_call() {
+        let body = r#"{"plan_type":"plus","rate_limit_reset_credits":{"available_count":2}}"#;
+        let s: UsageResponse = serde_json::from_str(body).unwrap();
+        let s = s.into_snapshot(None).unwrap();
+        assert_eq!(s.reset_credits.available, 2);
+        assert!(s.reset_credits.credits.is_empty());
+        assert!(!s.reset_credits.is_empty());
+    }
+
+    /// A redeemed credit still appears in the detail list. Its expiry is not a
+    /// deadline the user can act on, so it must not become the next one shown.
+    #[test]
+    fn only_an_available_credit_contributes_an_expiry() {
+        let body = r#"{
+            "rate_limit_reset_credits":{
+                "available_count":1,
+                "credits":[
+                    {"id":"c1","status":"redeemed","title":"Full reset (Weekly + 5 hr)","expires_at":"2026-07-01T00:00:00Z"},
+                    {"id":"c2","status":"available","title":"Full reset (Weekly + 5 hr)","expires_at":"2026-07-17T00:00:00Z"},
+                    {"id":"c3","status":"available","expires_at":null}
+                ]
+            }
+        }"#;
+        let s: UsageResponse = serde_json::from_str(body).unwrap();
+        let s = s.into_snapshot(None).unwrap();
+        assert_eq!(s.reset_credits.available, 1);
+        assert_eq!(s.reset_credits.credits.len(), 2);
+        assert_eq!(
+            s.reset_credits.credits[0].title.as_deref(),
+            Some("Full reset (Weekly + 5 hr)")
+        );
+        assert_eq!(
+            s.reset_credits.next_expiry(),
+            Some("2026-07-17T00:00:00Z".parse::<DateTime<Utc>>().unwrap())
+        );
+    }
+
+    /// Every other vendor's absent block means "none". This one is load-bearing
+    /// in the same way: a response from an account with no banked resets, or
+    /// from a Codex build that predates them, reports none rather than failing.
+    #[test]
+    fn an_absent_reset_block_is_no_credits_rather_than_an_error() {
+        let s: UsageResponse = serde_json::from_str(r#"{"plan_type":"plus"}"#).unwrap();
+        assert!(s.into_snapshot(None).unwrap().reset_credits.is_empty());
     }
 
     #[test]

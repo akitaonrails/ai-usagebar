@@ -64,7 +64,7 @@ pub async fn fetch_billing_with(auth_path: &Path, base_url: &str) -> Result<Bill
 /// The file maps issuer-prefixed client ids to login records that carry a
 /// `key`. The first non-empty key wins; parsing stays bounded so a replaced
 /// or oversized file cannot stall or exhaust the fetch.
-fn read_billing_key(auth_path: &Path) -> Result<String> {
+pub(super) fn read_billing_key(auth_path: &Path) -> Result<String> {
     let metadata = std::fs::metadata(auth_path).map_err(|_| {
         AppError::Credentials("Grok Build login file not found; run `grok login`".into())
     })?;
@@ -194,19 +194,10 @@ mod tests {
         );
         m.assert_async().await;
     }
-    /// `GROK_CLI_CHAT_PROXY_BASE_URL` is a real Grok CLI variable — `scope.rs`
-    /// hashes it into the cache digest for exactly that reason. Honouring it
-    /// *here* would be different: this is the one request that carries the
-    /// login's long-lived key, so an ambient variable in whatever environment
-    /// Waybar inherited would choose where that key is sent. The destination
-    /// stays pinned; tests reach the seam through `fetch_billing_with`.
+    /// The published host, pinned. (That neither module takes its host from
+    /// the environment is asserted once for the whole vendor in `mod.rs`.)
     #[test]
-    fn the_billing_destination_is_not_environment_controlled() {
-        let source = include_str!("direct.rs");
-        assert!(
-            !crate::guard::production_code(source).contains("env::var"),
-            "the credential-bearing request must not take its host from the environment"
-        );
+    fn the_billing_host_is_the_published_one() {
         assert_eq!(DEFAULT_BASE_URL, "https://cli-chat-proxy.grok.com");
     }
 }

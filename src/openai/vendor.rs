@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 use crate::countdown;
-use crate::format::{placeholders, substitute, updated_at_hm};
+use crate::format::{placeholders, reset_credit_lines, reset_credits, substitute, updated_at_hm};
 use crate::pacing::{self, PaceSeverity};
 use crate::pango::{color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
@@ -50,6 +50,7 @@ pub fn build_placeholders(
         .and_then(|c| c.approx_cloud_messages)
         .map(|(a, b)| format!("{a}-{b}"))
         .unwrap_or_default();
+    let reset_summary = reset_credits(&snap.reset_credits);
 
     placeholders(vec![
         ("icon", "󱢆".to_string()),
@@ -79,6 +80,11 @@ pub fn build_placeholders(
         ("oai_credit_balance", credit_balance),
         ("oai_local_msgs", local_msgs),
         ("oai_cloud_msgs", cloud_msgs),
+        (
+            "oai_resets_available",
+            snap.reset_credits.available.to_string(),
+        ),
+        ("oai_resets", reset_summary),
     ])
 }
 
@@ -250,6 +256,20 @@ fn render_tooltip(
         }
     }
 
+    if snap.reset_credits.available > 0 {
+        lines.push(TooltipLine::Body("".into()));
+        lines.push(TooltipLine::Sep);
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{fg}'>  󰁯  Reset credits</span>"
+        )));
+        for line in reset_credit_lines(&snap.reset_credits, now) {
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{dim}'>     {}</span>",
+                escape(&line)
+            )));
+        }
+    }
+
     if matches!(snap.source, OpenAiSource::Unavailable) {
         lines.push(TooltipLine::Body("".into()));
         lines.push(TooltipLine::Sep);
@@ -316,6 +336,7 @@ mod tests {
             }),
             code_review: None,
             credits: None,
+            reset_credits: Default::default(),
             source: OpenAiSource::CodexOauth,
         }
     }
@@ -435,6 +456,42 @@ mod tests {
         assert!(out.tooltip.contains("$5.00"));
         assert!(out.tooltip.contains("100-200 local messages"));
         assert!(out.tooltip.contains("30-50 cloud messages"));
+    }
+
+    #[test]
+    fn tooltip_reports_banked_resets_and_stays_silent_without_them() {
+        let s = sample();
+        let quiet = render(&oc(s.clone()), &s, &Theme::default(), &opts(), Utc::now());
+        assert!(!quiet.tooltip.contains("available"), "{}", quiet.tooltip);
+
+        let mut s = s;
+        s.reset_credits = crate::usage::ResetCredits {
+            available: 2,
+            credits: vec![
+                crate::usage::ResetCredit {
+                    title: Some("Full reset (Weekly + 5 hr)".into()),
+                    expires_at: Some(Utc::now() + chrono::Duration::days(13)),
+                },
+                crate::usage::ResetCredit {
+                    title: Some("Full reset (Weekly + 5 hr)".into()),
+                    expires_at: Some(
+                        Utc::now() + chrono::Duration::days(13) + chrono::Duration::hours(6),
+                    ),
+                },
+            ],
+        };
+        let out = render(&oc(s.clone()), &s, &Theme::default(), &opts(), Utc::now());
+        assert!(out.tooltip.contains("Reset credits"), "{}", out.tooltip);
+        assert_eq!(
+            out.tooltip.matches("Full reset (Weekly + 5 hr)").count(),
+            2,
+            "{}",
+            out.tooltip
+        );
+
+        let values = build_placeholders(&s, &opts(), Utc::now());
+        assert_eq!(values["oai_resets_available"], "2");
+        assert_eq!(values["oai_resets"], "2 resets available");
     }
 
     #[test]

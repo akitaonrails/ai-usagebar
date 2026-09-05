@@ -19,7 +19,7 @@ use ratatui_bubbletea_components::{Progress, Spinner, SpinnerFrames};
 use ratatui_bubbletea_theme::BubbleTheme;
 
 use crate::countdown;
-use crate::format::{local_time_hms, money, usd};
+use crate::format::{local_time_hms, money, reset_credit_lines, usd};
 use crate::pacing::{self, PaceSeverity};
 use crate::pango::severity_for;
 use crate::theme::Theme;
@@ -600,6 +600,7 @@ fn openai_sections(
             body,
         });
     }
+    push_reset_credits(&mut v, &s.reset_credits, now);
     v
 }
 
@@ -1096,11 +1097,6 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
         },
         s.reset_at,
     );
-    v.push(Section::Spacer);
-    v.push(Section::Text {
-        label: "Resets".into(),
-        value: countdown::format(s.reset_at, now),
-    });
     if let Some(bal) = s.prepaid_balance {
         v.push(Section::Spacer);
         v.push(Section::Text {
@@ -1108,7 +1104,23 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
             value: usd(bal),
         });
     }
+    push_reset_credits(&mut v, &s.reset_credits, now);
     v
+}
+
+fn push_reset_credits(
+    v: &mut SectionBuilder,
+    credits: &crate::usage::ResetCredits,
+    now: DateTime<Utc>,
+) {
+    if credits.is_empty() {
+        return;
+    }
+    v.push(Section::Spacer);
+    v.push(Section::Block {
+        label: "Reset credits".into(),
+        body: reset_credit_lines(credits, now),
+    });
 }
 
 fn deepseek_sections(s: &crate::usage::DeepseekSnapshot) -> SectionBuilder {
@@ -1418,7 +1430,7 @@ mod tests {
     use super::*;
     use crate::usage::{
         AnthropicSnapshot, Cents, ExtraUsage, KimiSnapshot, OpenAiCredits, OpenAiSnapshot,
-        OpenAiSource, OpenRouterSnapshot, UsageWindow, ZaiSnapshot,
+        OpenAiSource, OpenRouterSnapshot, ResetCredit, ResetCredits, UsageWindow, ZaiSnapshot,
     };
     use chrono::TimeZone;
 
@@ -1716,6 +1728,7 @@ mod tests {
             weekly: None,
             code_review: None,
             credits: None,
+            reset_credits: ResetCredits::default(),
             source: OpenAiSource::CodexOauth,
         };
         let sections = sections_for(&ready(VendorSnapshot::Openai(snap)), now(), 5);
@@ -1769,6 +1782,7 @@ mod tests {
                 approx_local_messages: Some((100, 200)),
                 approx_cloud_messages: Some((30, 50)),
             }),
+            reset_credits: ResetCredits::default(),
             source: OpenAiSource::CodexOauth,
         };
         let sections = sections_for(&ready(VendorSnapshot::Openai(snap)), now(), 5);
@@ -1791,6 +1805,7 @@ mod tests {
             }),
             code_review: None,
             credits: None,
+            reset_credits: ResetCredits::default(),
             source: OpenAiSource::CodexOauth,
         };
         let sections = sections_for(&ready(VendorSnapshot::Openai(snap)), now(), 5);
@@ -1801,6 +1816,106 @@ mod tests {
         assert!(!sections.iter().any(|section| matches!(
             section,
             Section::Metric { label, .. } if label == "Codex 5h"
+        )));
+    }
+
+    /// Both vendors reach every frontend through these sections — the TUI
+    /// panel, `usage --json`, and from there the Omarchy, GNOME and KDE
+    /// surfaces. One row, one wording, whichever provider banked the reset.
+    #[test]
+    fn banked_resets_reach_the_panel_for_both_providers() {
+        let now = now();
+        let credits = ResetCredits {
+            available: 2,
+            credits: vec![
+                ResetCredit {
+                    title: Some("Full reset (Weekly + 5 hr)".into()),
+                    expires_at: Some(now + chrono::Duration::days(13)),
+                },
+                ResetCredit {
+                    title: Some("Full reset (Weekly + 5 hr)".into()),
+                    expires_at: Some(now + chrono::Duration::days(13) + chrono::Duration::hours(6)),
+                },
+            ],
+        };
+        let codex = OpenAiSnapshot {
+            plan: "ChatGPT Plus".into(),
+            session: None,
+            weekly: None,
+            code_review: None,
+            credits: None,
+            reset_credits: credits.clone(),
+            source: OpenAiSource::CodexOauth,
+        };
+        let supergrok = crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "scope".into(),
+            weekly_pct: 30,
+            period: crate::usage::SuperGrokPeriod::Weekly,
+            reset_at: Some(now + chrono::Duration::days(3)),
+            prepaid_balance: None,
+            reset_credits: credits,
+        };
+
+        for snapshot in [
+            VendorSnapshot::Openai(codex),
+            VendorSnapshot::SuperGrok(supergrok),
+        ] {
+            let sections = sections_for(&ready(snapshot), now, 5);
+            let body = sections.iter().find_map(|section| match section {
+                Section::Block { label, body } if label == "Reset credits" => Some(body.clone()),
+                _ => None,
+            });
+            let body = body.expect("reset credits block");
+            assert_eq!(body.len(), 2, "{body:?}");
+            assert!(
+                body.iter()
+                    .all(|line| line.contains("Full reset (Weekly + 5 hr)")),
+                "{body:?}"
+            );
+        }
+    }
+
+    /// The row is absent, not zeroed: an account that has never earned a reset
+    /// should not carry a permanent "0 resets available" line.
+    #[test]
+    fn a_provider_with_no_banked_resets_shows_no_reset_row() {
+        let snap = OpenAiSnapshot {
+            plan: "ChatGPT Plus".into(),
+            session: None,
+            weekly: None,
+            code_review: None,
+            credits: None,
+            reset_credits: ResetCredits::default(),
+            source: OpenAiSource::CodexOauth,
+        };
+        let sections = sections_for(&ready(VendorSnapshot::Openai(snap)), now(), 5);
+        assert!(!sections.iter().any(|section| matches!(
+            section,
+            Section::Block { label, .. } if label == "Reset credits"
+        )));
+    }
+
+    #[test]
+    fn supergrok_does_not_repeat_the_window_reset_as_its_own_section() {
+        let now = now();
+        let snap = crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "scope".into(),
+            weekly_pct: 0,
+            period: crate::usage::SuperGrokPeriod::Weekly,
+            reset_at: Some(now + chrono::Duration::days(6)),
+            prepaid_balance: Some(0.0),
+            reset_credits: ResetCredits::default(),
+        };
+        let sections = sections_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5);
+        assert!(!sections.iter().any(|section| matches!(
+            section,
+            Section::Text { label, .. } if label == "Resets"
+        )));
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            Section::Text { label, .. } if label == "Prepaid API"
         )));
     }
 

@@ -8,7 +8,7 @@ defensive and includes opt-in live tests for catching response changes.
 | Vendor | Endpoint | What you see | Native desktop selector (v0.13) |
 |---|---|---|---|
 | **Claude** | `api.anthropic.com/api/oauth/usage` (undocumented) | Session (5h), Weekly (7d), model-scoped weekly (e.g. Fable), Extra usage $ | Yes |
-| **Codex** | `chatgpt.com/backend-api/wham/usage` (undocumented; used by official `codex` CLI) | Codex 5h and/or weekly, Code-review weekly, Credits | Yes |
+| **Codex** | `chatgpt.com/backend-api/wham/usage`, plus `…/wham/rate-limit-reset-credits` when any are banked (undocumented; both used by the official `codex` CLI) | Codex 5h and/or weekly, Code-review weekly, Credits, banked reset credits + expiry | Yes |
 | **GitHub Copilot** | `api.github.com/copilot_internal/user` (private; used by VS Code) | Premium requests, Chat, and Completions quota %, counts when supplied, plan, reset | Yes |
 | **Z.AI** | `api.z.ai/api/monitor/usage/quota/limit` (undocumented) | Session 5h, Weekly 7d, MCP tools monthly | Yes |
 | **OpenRouter** | `openrouter.ai/api/v1/{credits,key}` (documented) | Balance, today/week/month spend, free vs paid tier | Yes |
@@ -19,7 +19,7 @@ defensive and includes opt-in live tests for catching response changes.
 | **Novita** | `api.novita.ai/openapi/v1/billing/balance/detail` (documented) | Remaining credit balance ($) | No — widget/TUI only |
 | **Moonshot** | `api.moonshot.ai\|.cn/v1/users/me/balance` (documented) | Account balance ($ on `.ai`, ¥ on `.cn`) | No — widget/TUI only |
 | **Grok (xAI)** | `management-api.x.ai/v1/billing/teams/{team}/prepaid/balance` (Management API; documented) | Prepaid credit balance ($) | No — widget/TUI only |
-| **SuperGrok** | `cli-chat-proxy.grok.com/v1/billing` with the Grok Build login's key, falling back to its `x.ai/billing` ACP extension | Current weekly/monthly included-credit %, prepaid API balance, reset | No — widget/TUI only |
+| **SuperGrok** | `cli-chat-proxy.grok.com/v1/billing` with the Grok Build login's key, falling back to its `x.ai/billing` ACP extension; `grok.com` `ConsumerUiSvc/GetRemainingResets` for banked resets | Current weekly/monthly included-credit %, prepaid API balance, reset, banked resets + expiry | No — widget/TUI only |
 | **Anthropic API** | `api.anthropic.com/v1/organizations/cost_report` (Admin API; documented) | Month-to-date spend ($, excludes Priority Tier), optional spend-vs-limit % | No — widget/TUI only |
 | **Google Antigravity** | A loopback RPC on the local Antigravity product's own port, discovered from `/proc` (Linux), `lsof` (macOS), or the process/TCP tables (Windows); no remote endpoint and no credential | Whichever quota windows the running product reports — Gemini and Claude/GPT pools, 5-hour and weekly | Yes |
 | **Cursor** | `cursor.com/api/usage-summary` (undocumented; the dashboard's own frontend) | Two included-usage pools this billing cycle — Cursor Models (Auto/Composer) % and Other Models (named/API) % — plus plan, reset, on-demand | Yes |
@@ -64,6 +64,25 @@ duration, not by `primary_window` or `secondary_window` position. This handles
 both the normal response and the temporary
 [weekly-only response](https://github.com/openai/codex/issues/32707) without a
 config switch.
+
+### Banked resets
+
+Codex and SuperGrok both let you *earn* quota resets and redeem them by hand,
+which is a different thing from the window rollover in the table above. Both
+report them behind a second endpoint, and both are read-only here:
+ai-usagebar shows what you have and when it lapses, and never redeems one. The
+redemption identifier each provider returns beside the expiry
+(`credits[].id`, `tokens[].token_id`) is skipped during parsing rather than
+parsed and dropped, so it reaches neither the cache nor the screen.
+
+| Provider | Endpoint | Notes |
+|---|---|---|
+| Codex | `GET chatgpt.com/backend-api/wham/rate-limit-reset-credits` | Called only when the usage response's `rate_limit_reset_credits.available_count` is non-zero. The count always comes from the usage response — that is the one consistent with the quota figures beside it. A failure of this call costs the expiry date and nothing else. |
+| SuperGrok | `POST grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets` | gRPC-Web (`application/grpc-web+proto`) with the Grok Build login's own bearer key — the same key `direct.rs` uses, in one outgoing header, never copied or cached. The response is a `repeated ConsumerResetToken` whose `validity_end` is the expiry; a hand-written bounded protobuf reader takes the count and that field, skipping everything else by wire type. gRPC reports failure in a trailer *behind* HTTP 200, so the trailer's `grpc-status` is checked before any count is believed. |
+
+Neither is documented, and both are more fragile than the usage endpoints they
+accompany. Both fail quietly by design: a broken reset call leaves the rest of
+the vendor's snapshot exactly as it was.
 
 ## Run the live tests
 

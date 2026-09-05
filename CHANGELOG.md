@@ -9,7 +9,38 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Banked reset credits for Codex and SuperGrok.** Both providers let you earn
+  quota resets and redeem them by hand, on their own expiry clock — information
+  that existed nowhere in ai-usagebar, because it is not the window rollover
+  the `*_reset` placeholders already showed. The count and the next expiry now
+  appear in the Waybar tooltip, the TUI panel, and `ai-usagebar usage --json`
+  (and so in the Omarchy, GNOME and KDE frontends, which read that report) as
+  a list, one row per credit, with its own title and expiry — two Codex
+  "Full reset (Weekly + 5 hr)" credits that lapse hours apart on the same day
+  no longer collapse into a single "next expires" line. New placeholders are
+  `{oai_resets_available}` / `{oai_resets}` and `{sgk_resets_available}` /
+  `{sgk_resets}` (the compact count). A provider with none reports nothing
+  rather than a standing `0`.
+
+  Codex's count rides its usage response; the expiries come from
+  `wham/rate-limit-reset-credits`, called only when something is banked.
+  SuperGrok's come from `grok.com`'s `ConsumerUiSvc/GetRemainingResets`, a
+  gRPC-Web call authenticated with the Grok Build login's own key, parsed by a
+  bounded hand-written protobuf reader rather than a new dependency.
+
+  Read-only: **ai-usagebar never redeems a reset.** The redemption identifier
+  each provider returns beside the expiry is skipped during parsing rather than
+  parsed and dropped, so it reaches neither the cache nor the screen. Both
+  extra calls fail quietly — a broken one costs the expiry date and leaves
+  every quota figure beside it untouched.
+
 ### Changed
+
+- SuperGrok's panel no longer repeats the current period's rollover as a
+  standalone "Resets" row. That countdown already sits under the weekly
+  credits bar, the same way Codex 5h and Codex weekly do.
 
 - `README.md` documents the macOS Keychain prompt storm as a known issue, with
   the workaround, until #148 is fixed. Every release so far is affected on

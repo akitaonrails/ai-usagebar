@@ -207,7 +207,7 @@ fn parse_payload(bytes: &[u8], plan_hint: Option<&str>) -> Result<OpenAiSnapshot
     r.into_snapshot(plan_hint)
 }
 
-async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<Vec<u8>> {
+fn authorized(client: &reqwest::Client, url: String, t: &Tokens) -> reqwest::RequestBuilder {
     let mut req = client
         .get(url)
         .header("Authorization", format!("Bearer {}", t.access_token))
@@ -215,7 +215,19 @@ async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<
     if let Some(aid) = t.account_id.as_deref() {
         req = req.header("ChatGPT-Account-Id", aid);
     }
-    let resp = req.send().await?;
+    req
+}
+
+/// Cache the usage payload, grafting on the reset-credit expiries from the
+/// second endpoint when they exist. The graft is a field insert into the
+/// original JSON: re-serializing our typed `UsageResponse` would drop every
+/// unknown key the API still sends (`user_id`, tomorrow's new window, …),
+/// and a cache holding only the usage bytes would keep the count while the
+/// deadline beside it vanished for the rest of the TTL. The inserted
+/// `credits` array is our typed projection — status + expiry, never the
+/// redemption `id`.
+async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<Vec<u8>> {
+    let resp = authorized(client, url.to_string(), t).send().await?;
     let status = resp.status();
     let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
 
@@ -226,10 +238,95 @@ async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<
             body,
         });
     }
-    let parsed: UsageResponse = serde_json::from_slice(&bytes)
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("openai usage response: {e}")))?;
-    parsed.into_snapshot(None)?;
-    Ok(bytes)
+    let mut parsed: UsageResponse = serde_json::from_value(value.clone())
+        .map_err(|e| AppError::Schema(format!("openai usage response: {e}")))?;
+    parsed.rate_limit_reset_credits = enrich_reset_credits(client, url, t, &parsed).await;
+    parsed.clone().into_snapshot(None)?;
+    attach_reset_credit_expiries(&mut value, parsed.rate_limit_reset_credits.as_ref())?;
+    serde_json::to_vec(&value).map_err(AppError::Json)
+}
+
+fn attach_reset_credit_expiries(
+    value: &mut serde_json::Value,
+    block: Option<&super::types::ResetCreditsBlock>,
+) -> Result<()> {
+    let Some(credits) = block.map(|block| {
+        block
+            .credits
+            .iter()
+            .filter(|credit| credit.status == "available")
+            .cloned()
+            .collect::<Vec<_>>()
+    }) else {
+        return Ok(());
+    };
+    if credits.is_empty() {
+        return Ok(());
+    }
+    let Some(root) = value.as_object_mut() else {
+        return Ok(());
+    };
+    let entry = root
+        .entry("rate_limit_reset_credits")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(map) = entry.as_object_mut() else {
+        return Ok(());
+    };
+    map.insert(
+        "credits".into(),
+        serde_json::to_value(credits).map_err(AppError::Json)?,
+    );
+    Ok(())
+}
+
+/// The usage endpoint reports how many banked resets exist but not when they
+/// expire; a second call carries the per-credit detail. That call is strictly
+/// additive: its failure leaves the count exactly as the usage endpoint
+/// reported it, because a count with no deadline is still true, and it is not
+/// worth failing a whole refresh over the deadline alone. The count itself
+/// always stays the usage endpoint's — the two responses can disagree across a
+/// redemption, and the one that also carries the quota figures is the one the
+/// rest of the snapshot is consistent with.
+async fn enrich_reset_credits(
+    client: &reqwest::Client,
+    usage_url: &str,
+    t: &Tokens,
+    parsed: &UsageResponse,
+) -> Option<super::types::ResetCreditsBlock> {
+    let mut block = parsed.rate_limit_reset_credits.clone()?;
+    if block.available_count == 0 {
+        return Some(block);
+    }
+    if let Ok(details) = fetch_reset_credits(client, usage_url, t).await {
+        block.credits = details.credits;
+    }
+    Some(block)
+}
+
+async fn fetch_reset_credits(
+    client: &reqwest::Client,
+    usage_url: &str,
+    t: &Tokens,
+) -> Result<super::types::ResetCreditsBlock> {
+    let base = usage_url.strip_suffix("/usage").unwrap_or(usage_url);
+    let resp = authorized(client, format!("{base}/rate-limit-reset-credits"), t)
+        .send()
+        .await?;
+    let status = resp.status();
+    let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
+    if !status.is_success() {
+        // The body is discarded rather than reported: this call is optional,
+        // its failure never reaches the user, and it would only carry an
+        // account-identifying error into a log.
+        return Err(AppError::Http {
+            status: status.as_u16(),
+            body: String::new(),
+        });
+    }
+    serde_json::from_slice(&bytes)
+        .map_err(|_| AppError::Schema("openai reset credits response is invalid".into()))
 }
 
 #[cfg(test)]
@@ -374,6 +471,148 @@ mod tests {
         .unwrap();
         assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 37);
         assert!(!out.stale);
+    }
+
+    /// The expiry lives behind a second endpoint. It has to reach the cache
+    /// with the usage figures, or the deadline disappears for the rest of the
+    /// TTL while the count beside it stays on screen.
+    #[tokio::test]
+    async fn banked_reset_expiries_are_fetched_and_cached_with_the_usage_figures() {
+        let mut server = mockito::Server::new_async().await;
+        let usage = server
+            .mock("GET", "/backend-api/wham/usage")
+            .with_body(
+                r#"{"plan_type":"plus","future_field":true,"rate_limit":{
+                    "primary_window":{"used_percent":81,"limit_window_seconds":18000,"reset_at":1786536977}},
+                    "rate_limit_reset_credits":{"available_count":2}}"#,
+            )
+            .create_async()
+            .await;
+        let details = server
+            .mock("GET", "/backend-api/wham/rate-limit-reset-credits")
+            .with_body(
+                r#"{"available_count":2,"credits":[
+                    {"id":"c1","status":"available","title":"Full reset (Weekly + 5 hr)","expires_at":"2026-07-17T00:00:00Z"},
+                    {"id":"c2","status":"available","title":"Full reset (Weekly + 5 hr)","expires_at":"2026-08-01T00:00:00Z"}]}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let creds = future_creds();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &reqwest::Client::new(),
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+        usage.assert_async().await;
+        details.assert_async().await;
+        assert_eq!(out.snapshot.reset_credits.available, 2);
+        assert_eq!(
+            out.snapshot.reset_credits.next_expiry(),
+            Some("2026-07-17T00:00:00Z".parse().unwrap())
+        );
+
+        // The redemption id is what spends a credit; it must not be written to
+        // disk just because it shared a response with the expiry.
+        let cached = std::fs::read_to_string(cache.payload_path()).unwrap();
+        assert!(!cached.contains("\"c1\""), "{cached}");
+        assert!(
+            cached.contains("\"future_field\":true"),
+            "unknown usage fields must survive the expiry graft: {cached}"
+        );
+        let reused = parse_payload(cached.as_bytes(), None).unwrap();
+        assert_eq!(reused.reset_credits, out.snapshot.reset_credits);
+    }
+
+    /// The detail call is an extra. When it fails, the count the usage
+    /// endpoint reported is still true and still worth showing — refusing the
+    /// whole refresh over a missing deadline would cost the quota figures too.
+    #[tokio::test]
+    async fn a_failed_detail_call_keeps_the_count_from_the_usage_response() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/backend-api/wham/usage")
+            .with_body(
+                r#"{"plan_type":"plus","rate_limit":{
+                    "primary_window":{"used_percent":10,"limit_window_seconds":18000}},
+                    "rate_limit_reset_credits":{"available_count":1}}"#,
+            )
+            .create_async()
+            .await;
+        let details = server
+            .mock("GET", "/backend-api/wham/rate-limit-reset-credits")
+            .with_status(404)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let creds = future_creds();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &reqwest::Client::new(),
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+        details.assert_async().await;
+        assert!(!out.stale);
+        assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 10);
+        assert_eq!(out.snapshot.reset_credits.available, 1);
+        assert!(out.snapshot.reset_credits.credits.is_empty());
+    }
+
+    /// With nothing banked there is nothing to detail. Asking anyway would
+    /// double every refresh's request count for every account that has none.
+    #[tokio::test]
+    async fn no_banked_resets_means_no_second_request() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/backend-api/wham/usage")
+            .with_body(
+                r#"{"plan_type":"plus","rate_limit":{
+                    "primary_window":{"used_percent":10,"limit_window_seconds":18000}},
+                    "rate_limit_reset_credits":{"available_count":0}}"#,
+            )
+            .create_async()
+            .await;
+        let details = server
+            .mock("GET", "/backend-api/wham/rate-limit-reset-credits")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let creds = future_creds();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &reqwest::Client::new(),
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+        details.assert_async().await;
+        assert!(out.snapshot.reset_credits.is_empty());
     }
 
     #[tokio::test]
