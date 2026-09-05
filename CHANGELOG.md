@@ -9,6 +9,16 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Security
+
+- Codex's cache no longer holds the account's `user_id`, `account_id` and
+  `email`. It stored the raw `wham/usage` body, so all three sat in
+  `~/.cache/ai-usagebar/openai/usage.json` for the life of the TTL, though no
+  renderer reads any of them. It now stores the parsed response, which is an
+  allowlist by construction — a field OpenAI adds later cannot start living on
+  disk without someone adding it to the type first. The file was, and remains,
+  mode 0600. This is the rule `CLAUDE.md` already stated for Command Code.
+
 ### Added
 
 - **Banked reset credits for Codex and SuperGrok.** Both providers let you earn

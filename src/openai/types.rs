@@ -29,7 +29,7 @@ use crate::usage::{
     ResetCredit as BankedReset, ResetCredits, UsageWindow,
 };
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct UsageResponse {
     pub plan_type: Option<String>,
@@ -48,7 +48,7 @@ pub struct UsageResponse {
     pub model_usage: BTreeMap<String, ModelUsage>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AdditionalRateLimit {
     pub limit_name: Option<String>,
@@ -56,7 +56,7 @@ pub struct AdditionalRateLimit {
     pub rate_limit: Option<RateLimit>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ModelUsage {
     /// Absent means "not stated", which is not the same as unavailable.
@@ -64,14 +64,14 @@ pub struct ModelUsage {
     pub available_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct RateLimit {
     pub primary_window: Option<Window>,
     pub secondary_window: Option<Window>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Window {
     #[serde(deserialize_with = "de_percent_number_or_string")]
     pub used_percent: f64,
@@ -85,7 +85,7 @@ pub struct Window {
     pub reset_after_seconds: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CreditsBlock {
     #[serde(default, deserialize_with = "de_opt_money_string")]
     pub balance: Option<String>,
@@ -102,7 +102,7 @@ pub struct CreditsBlock {
 /// `/rate-limit-reset-credits` call, so it is routinely empty while the count
 /// is not. The redemption `id` each entry carries is deliberately not
 /// deserialized.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct ResetCreditsBlock {
     pub available_count: u32,

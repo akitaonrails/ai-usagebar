@@ -124,9 +124,14 @@ pub async fn fetch_snapshot(
     )
     .await
     {
-        Ok(Ok(bytes)) => {
-            cache.write_payload(&bytes)?;
-            let snap = parse_payload(&bytes, plan_hint.as_deref())?;
+        Ok(Ok(response)) => {
+            // Cache what we parse, not what arrived. The raw body carries the
+            // account's `user_id`, `account_id` and `email`, none of which any
+            // renderer reads — writing the parsed response is an allowlist by
+            // construction, so a field OpenAI adds later cannot quietly start
+            // living on disk. Same rule Command Code follows.
+            cache.write_payload(&serde_json::to_vec(&response)?)?;
+            let snap = response.into_snapshot(plan_hint.as_deref())?;
             Ok(crate::outcome::Outcome::fresh(snap))
         }
         Ok(Err(AppError::Http { status, body })) => {
@@ -203,8 +208,13 @@ fn handle_auth_failure(
 }
 
 fn parse_payload(bytes: &[u8], plan_hint: Option<&str>) -> Result<OpenAiSnapshot> {
-    let r: UsageResponse = serde_json::from_slice(bytes)?;
-    r.into_snapshot(plan_hint)
+    parse_response(bytes)?.into_snapshot(plan_hint)
+}
+
+/// The wire response, before it becomes a snapshot. Split out so the live path
+/// can cache the parsed form rather than the raw body.
+fn parse_response(bytes: &[u8]) -> Result<UsageResponse> {
+    Ok(serde_json::from_slice(bytes)?)
 }
 
 fn authorized(client: &reqwest::Client, url: String, t: &Tokens) -> reqwest::RequestBuilder {
@@ -226,7 +236,7 @@ fn authorized(client: &reqwest::Client, url: String, t: &Tokens) -> reqwest::Req
 /// deadline beside it vanished for the rest of the TTL. The inserted
 /// `credits` array is our typed projection — status + expiry, never the
 /// redemption `id`.
-async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<Vec<u8>> {
+async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<UsageResponse> {
     let resp = authorized(client, url.to_string(), t).send().await?;
     let status = resp.status();
     let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
@@ -238,47 +248,12 @@ async fn fetch_usage(client: &reqwest::Client, url: &str, t: &Tokens) -> Result<
             body,
         });
     }
-    let mut value: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Schema(format!("openai usage response: {e}")))?;
-    let mut parsed: UsageResponse = serde_json::from_value(value.clone())
+    let mut parsed: UsageResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("openai usage response: {e}")))?;
     parsed.rate_limit_reset_credits = enrich_reset_credits(client, url, t, &parsed).await;
+    // Reject drift here, while the caller can still fall back to a good cache.
     parsed.clone().into_snapshot(None)?;
-    attach_reset_credit_expiries(&mut value, parsed.rate_limit_reset_credits.as_ref())?;
-    serde_json::to_vec(&value).map_err(AppError::Json)
-}
-
-fn attach_reset_credit_expiries(
-    value: &mut serde_json::Value,
-    block: Option<&super::types::ResetCreditsBlock>,
-) -> Result<()> {
-    let Some(credits) = block.map(|block| {
-        block
-            .credits
-            .iter()
-            .filter(|credit| credit.status == "available")
-            .cloned()
-            .collect::<Vec<_>>()
-    }) else {
-        return Ok(());
-    };
-    if credits.is_empty() {
-        return Ok(());
-    }
-    let Some(root) = value.as_object_mut() else {
-        return Ok(());
-    };
-    let entry = root
-        .entry("rate_limit_reset_credits")
-        .or_insert_with(|| serde_json::json!({}));
-    let Some(map) = entry.as_object_mut() else {
-        return Ok(());
-    };
-    map.insert(
-        "credits".into(),
-        serde_json::to_value(credits).map_err(AppError::Json)?,
-    );
-    Ok(())
+    Ok(parsed)
 }
 
 /// The usage endpoint reports how many banked resets exist but not when they
@@ -525,12 +500,69 @@ mod tests {
         // disk just because it shared a response with the expiry.
         let cached = std::fs::read_to_string(cache.payload_path()).unwrap();
         assert!(!cached.contains("\"c1\""), "{cached}");
+        // The cache holds the parsed response, so it holds only what a
+        // renderer reads. An unknown field is dropped rather than kept — the
+        // cache is a short-lived copy of something refetchable, and keeping
+        // the whole body is how the account's identity ended up on disk.
         assert!(
-            cached.contains("\"future_field\":true"),
-            "unknown usage fields must survive the expiry graft: {cached}"
+            !cached.contains("future_field"),
+            "the cache must not carry fields nothing parses: {cached}"
         );
         let reused = parse_payload(cached.as_bytes(), None).unwrap();
         assert_eq!(reused.reset_credits, out.snapshot.reset_credits);
+    }
+
+    /// The response carries the account's identity — `user_id`, `account_id`
+    /// and `email` — and no renderer reads any of it. Caching the raw body put
+    /// all three on disk for the life of the TTL. Caching the *parsed*
+    /// response is an allowlist by construction: a field OpenAI adds later
+    /// cannot start living there without someone adding it to the type first.
+    #[tokio::test]
+    async fn the_cache_holds_no_account_identity() {
+        let mut server = mockito::Server::new_async().await;
+        let usage = server
+            .mock("GET", "/backend-api/wham/usage")
+            .with_body(
+                r#"{"plan_type":"pro",
+                    "user_id":"user_abc123",
+                    "account_id":"acct_abc123",
+                    "email":"person@example.test",
+                    "rate_limit":{"primary_window":{"used_percent":5,
+                                  "limit_window_seconds":604800}}}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let creds = future_creds();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &reqwest::Client::new(),
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+        usage.assert_async().await;
+
+        // The figures still arrive.
+        assert_eq!(out.snapshot.weekly.as_ref().unwrap().utilization_pct, 5);
+
+        let cached = std::fs::read_to_string(cache.payload_path()).unwrap();
+        for identity in ["user_abc123", "acct_abc123", "person@example.test"] {
+            assert!(
+                !cached.contains(identity),
+                "{identity} reached the cache: {cached}"
+            );
+        }
+        for key in ["user_id", "account_id", "email"] {
+            assert!(!cached.contains(key), "{key} reached the cache: {cached}");
+        }
     }
 
     /// The detail call is an extra. When it fails, the count the usage
