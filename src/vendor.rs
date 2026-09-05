@@ -191,6 +191,33 @@ impl VendorId {
         }
     }
 
+    /// Glyph for a compact bar chip. Same role as [`Self::short_name`]: the
+    /// Omarchy top bar (and any other frontend) takes it from `usage --json`
+    /// rather than keeping its own provider-icon table.
+    pub const fn bar_icon(self) -> &'static str {
+        match self {
+            VendorId::Anthropic => "󰚩",
+            VendorId::AnthropicApi => "󰢗",
+            VendorId::Openai => "󱢆",
+            VendorId::Copilot => "󰊤",
+            VendorId::Zai => "zai",
+            VendorId::Openrouter => "󱙺",
+            VendorId::Deepseek => "󰧑",
+            VendorId::Kimi => "kmi",
+            VendorId::Kilo => "󰭟",
+            VendorId::Novita => "󰄔",
+            VendorId::Moonshot => "msh",
+            VendorId::Grok | VendorId::Supergrok => "󰇷",
+            VendorId::Antigravity => "agy",
+            VendorId::Cursor => "❯",
+            VendorId::Minimax => "mmx",
+            VendorId::Kiro => "◆",
+            VendorId::NousResearch => "nrs",
+            VendorId::OpenCodeGo => "ocg",
+            VendorId::CommandCode => "cmc",
+        }
+    }
+
     /// Compact three-letter code for the bar. This is the single source for
     /// `{vendor_short}` in every renderer, the `usage --json` `short_name`
     /// field, and any frontend that wants a Waybar-style provider tag; a
@@ -312,6 +339,40 @@ mod tests {
         assert_eq!(VendorId::Openai.short_name(), "gpt");
         assert_eq!(VendorId::Zai.short_name(), "zai");
         assert_eq!(VendorId::Antigravity.short_name(), "agy");
+    }
+
+    /// The bar can show every provider at once, so a glyph two providers share
+    /// tells the user nothing about which row is which. Grok and SuperGrok are
+    /// the one sanctioned pair — same brand, two products. Providers without a
+    /// distinct Nerd Font mark use their `short_name`, which is unique by
+    /// construction and cannot render as tofu.
+    #[test]
+    fn every_vendor_has_a_bar_icon_and_no_two_share_one() {
+        use std::collections::BTreeMap;
+
+        let mut by_icon: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for vendor in VendorId::all() {
+            assert!(!vendor.bar_icon().is_empty(), "{}", vendor.slug());
+            by_icon
+                .entry(vendor.bar_icon())
+                .or_default()
+                .push(vendor.slug());
+        }
+
+        let shared: Vec<_> = by_icon
+            .iter()
+            .filter(|(_, vendors)| vendors.len() > 1)
+            .filter(|(_, vendors)| vendors.as_slice() != ["grok", "supergrok"])
+            .collect();
+        assert!(
+            shared.is_empty(),
+            "these providers are indistinguishable in a bar that shows them \
+             side by side: {shared:#?}"
+        );
+        assert_eq!(VendorId::Anthropic.bar_icon(), "󰚩");
+        assert_eq!(VendorId::Openai.bar_icon(), "󱢆");
+        assert_eq!(VendorId::Supergrok.bar_icon(), VendorId::Grok.bar_icon());
+        assert_eq!(VendorId::CommandCode.bar_icon(), "cmc");
     }
 
     #[test]

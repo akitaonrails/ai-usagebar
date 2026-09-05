@@ -75,11 +75,14 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.panelItem ? root.panelItem.barText() : "󰚩  …"
+    text: " "
+    labelVisible: false
+    hasVisualContent: true
     fontSize: Style.font.bodySmall
     active: root.panelItem ? root.panelItem.alarming : false
     tooltipText: root.panelItem ? root.panelItem.tooltipText() : "AI usage"
     horizontalMargin: 8.5
+    fixedWidth: root.bar && root.bar.vertical ? -1 : chipRow.implicitWidth + Style.spaceReal(17)
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.launchDashboard()
@@ -90,6 +93,55 @@ BarWidget {
     onWheelMoved: function(delta) {
       if (delta !== 0 && root.panelItem)
         root.panelItem.selectEntry(root.panelItem.entryIndex + (delta < 0 ? 1 : -1))
+    }
+
+    Row {
+      id: chipRow
+      anchors.centerIn: parent
+      spacing: Style.space(10)
+      visible: !(root.bar && root.bar.vertical)
+
+      Repeater {
+        model: root.panelItem ? root.panelItem.barChips : []
+
+        Row {
+          spacing: Style.space(4)
+
+          BrandMark {
+            anchors.verticalCenter: parent.verticalCenter
+            brand: modelData.brand || ""
+            fallback: modelData.icon || "󰚩"
+            foreground: modelData.alarming && button.useActiveColor
+              ? button.activeColor
+              : button.foreground
+            fontFamily: button.fontFamily
+            fontSize: button.fontSize
+          }
+
+          Text {
+            visible: modelData.label !== ""
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: modelData.label
+            color: modelData.alarming && button.useActiveColor
+              ? button.activeColor
+              : button.foreground
+            font.family: button.fontFamily
+            font.pixelSize: button.fontSize
+          }
+        }
+      }
+    }
+
+    Text {
+      visible: root.bar && root.bar.vertical
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: root.panelItem && root.panelItem.alarming ? "󰅙" : "󰚩"
+      color: button.active && button.useActiveColor ? button.activeColor : button.foreground
+      font.family: button.fontFamily
+      font.pixelSize: button.fontSize
+      rotation: button.textRotation
     }
   }
 }

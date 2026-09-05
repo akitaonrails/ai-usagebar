@@ -9,6 +9,17 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Omarchy bar: show every provider at once.** A new **Show all providers in
+  the top bar** toggle (and `showAll` widget setting) draws each configured
+  provider as its own chip with a brand mark and usage. Claude, Codex,
+  Copilot, Grok/SuperGrok, DeepSeek, Kimi, Cursor, OpenRouter, MiniMax,
+  Moonshot, Z.AI, Kilo, Novita, Antigravity, Kiro, Nous, and OpenCode Go
+  ship an SVG; Command Code (no public mark) falls back to its three-letter
+  code rather than a shared robot. The panel hero uses the same mark,
+  colored only when that provider is critical. Off by default.
+
 ## [1.11.0] — 2026-09-05
 
 ### Security
