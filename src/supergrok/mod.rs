@@ -29,3 +29,30 @@ pub mod types;
 pub mod vendor;
 
 pub use fetch::{FetchOutcome, fetch_snapshot};
+
+#[cfg(test)]
+mod guard_tests {
+    /// Both outgoing calls here carry the login's long-lived key, so neither
+    /// may take its host from the environment — an ambient variable in
+    /// whatever session Waybar inherited would choose where the key goes.
+    ///
+    /// One test over the whole module rather than a copy inside each file:
+    /// `direct.rs` and `resets.rs` each grew their own, and a third endpoint
+    /// would have grown a third. A new file is covered the moment it lands.
+    #[test]
+    fn no_credential_bearing_request_takes_its_host_from_the_environment() {
+        let mut offenders = Vec::new();
+        for file in crate::guard::rs_files_in("src/supergrok") {
+            let source = std::fs::read_to_string(&file).expect("readable module");
+            let production = crate::guard::production_code(&source);
+            if production.contains("Authorization") && production.contains("env::var") {
+                offenders.push(file.display().to_string());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "a request carrying the login key must use a fixed host; tests reach \
+             the seam through an explicit parameter. Found: {offenders:#?}"
+        );
+    }
+}

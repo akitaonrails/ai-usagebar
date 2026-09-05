@@ -28,6 +28,11 @@ use crate::vendor::{MAX_BODY_BYTES, read_body_capped, same_origin_redirect_polic
 /// reach the seam through [`fetch_with`].
 const RESET_URL: &str = "https://grok.com/prod_mc_billing.ConsumerUiSvc/GetRemainingResets";
 
+/// Upper bound on the per-credit rows kept for display. Nobody banks this many
+/// resets; the bound exists so a malformed or hostile response cannot turn a
+/// tooltip into a six-figure list.
+const MAX_LISTED_CREDITS: usize = 64;
+
 pub async fn fetch(auth_path: &Path) -> Result<ResetCredits> {
     fetch_with(auth_path, RESET_URL).await
 }
@@ -115,10 +120,16 @@ fn parse_response(bytes: &[u8], credits: &mut ResetCredits) -> Result<()> {
         if key == (10 << 3 | 2) {
             let token = read_delimited(bytes, &mut offset)?;
             credits.available = credits.available.checked_add(1).ok_or_else(schema_error)?;
-            credits.credits.push(ResetCredit {
-                title: None,
-                expires_at: parse_token(token)?,
-            });
+            // Each token becomes a rendered row. The 2 MiB body cap alone
+            // still allows a six-figure row count from ~2-byte tokens, so the
+            // count keeps rising while the *inventory* stops — the number
+            // stays truthful and the tooltip stays a tooltip.
+            if credits.credits.len() < MAX_LISTED_CREDITS {
+                credits.credits.push(ResetCredit {
+                    title: None,
+                    expires_at: parse_token(token)?,
+                });
+            }
         } else {
             skip_field(bytes, &mut offset, key & 7)?;
         }
@@ -390,14 +401,29 @@ mod tests {
         assert!(!error.contains("secret-key"));
     }
 
-    /// Same rule as `direct.rs`: the request that carries the login's key does
-    /// not take its destination from the environment.
+    /// The body cap alone permits a six-figure row count from minimal tokens,
+    /// and every row is rendered. The count must stay truthful while the
+    /// listed inventory stops.
     #[test]
-    fn the_reset_destination_is_not_environment_controlled() {
-        let source = include_str!("resets.rs");
-        assert!(
-            !crate::guard::production_code(source).contains("env::var"),
-            "the credential-bearing request must not take its host from the environment"
+    fn a_flood_of_tokens_is_counted_but_not_all_listed() {
+        let flood = MAX_LISTED_CREDITS + 25;
+        let mut body = Vec::new();
+        for _ in 0..flood {
+            body.extend(delimited(
+                10,
+                &token("restok", 1_786_560_540, 1_789_238_940),
+            ));
+        }
+        let parsed = parse_grpc_web(&data_frame(&body)).expect("a long but valid response parses");
+
+        assert_eq!(
+            parsed.available as usize, flood,
+            "every token still counts toward the total"
+        );
+        assert_eq!(
+            parsed.credits.len(),
+            MAX_LISTED_CREDITS,
+            "the per-credit inventory stops at the cap"
         );
     }
 }

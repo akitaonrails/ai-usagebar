@@ -96,7 +96,7 @@ pub fn local_date_hm(when: DateTime<Utc>) -> String {
 }
 
 /// Compact count for placeholders and tooltips that have to stay on one line.
-pub fn reset_credits(credits: &ResetCredits, _now: DateTime<Utc>) -> String {
+pub fn reset_credits(credits: &ResetCredits) -> String {
     let noun = if credits.available == 1 {
         "reset"
     } else {
@@ -116,7 +116,7 @@ pub fn reset_credit_lines(credits: &ResetCredits, now: DateTime<Utc>) -> Vec<Str
         .map(|credit| reset_credit_line(credit, now))
         .collect();
     if lines.is_empty() && credits.available > 0 {
-        lines.push(reset_credits(credits, now));
+        lines.push(reset_credits(credits));
     }
     lines
 }
@@ -219,7 +219,7 @@ mod tests {
                 offer(Some("Full reset (Weekly + 5 hr)"), "2026-07-17T00:00:00Z"),
             ],
         };
-        assert_eq!(reset_credits(&credits, now), "2 resets available");
+        assert_eq!(reset_credits(&credits), "2 resets available");
         let lines = reset_credit_lines(&credits, now);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].contains("Full reset (Weekly + 5 hr)"), "{lines:?}");

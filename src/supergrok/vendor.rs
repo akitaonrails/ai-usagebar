@@ -49,7 +49,7 @@ pub fn build_placeholders(
             "sgk_resets_available",
             snap.reset_credits.available.to_string(),
         ),
-        ("sgk_resets", reset_credits(&snap.reset_credits, now)),
+        ("sgk_resets", reset_credits(&snap.reset_credits)),
     ])
 }
 

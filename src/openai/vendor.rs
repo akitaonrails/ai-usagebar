@@ -50,7 +50,7 @@ pub fn build_placeholders(
         .and_then(|c| c.approx_cloud_messages)
         .map(|(a, b)| format!("{a}-{b}"))
         .unwrap_or_default();
-    let reset_summary = reset_credits(&snap.reset_credits, now);
+    let reset_summary = reset_credits(&snap.reset_credits);
 
     placeholders(vec![
         ("icon", "󱢆".to_string()),
