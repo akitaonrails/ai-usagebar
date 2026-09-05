@@ -77,6 +77,7 @@ impl Snapshot {
         self.five_hour
             .iter()
             .chain(self.weekly.iter())
+            .chain(self.monthly_window().iter())
             .map(SpendWindow::pct)
             .max()
             .unwrap_or(0)
@@ -87,6 +88,18 @@ impl Snapshot {
         let pool = self.credit_pool?;
         let remaining = self.credits.as_ref()?.remaining();
         Some((pool - remaining).max(0.0))
+    }
+
+    /// The monthly credit allowance as a spend window: dollars drawn from the
+    /// plan's pool, refilling at the billing period end. Needs the ledger and
+    /// a recognised plan; the subscription supplies the refill instant.
+    pub fn monthly_window(&self) -> Option<SpendWindow> {
+        let spent = self.credits_spent()?;
+        Some(SpendWindow {
+            used: spent,
+            cap: self.credit_pool.unwrap_or_default(),
+            resets_at: self.period_end,
+        })
     }
 }
 

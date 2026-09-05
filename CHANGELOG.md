@@ -9,6 +9,18 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- Command Code renders the monthly credit allowance as a full third window:
+  the Quattro panel, TUI, and Overview show a `Monthly` progress row with the
+  derived spend (`$20.72 of $70.00`), a `Resets` countdown from the
+  subscription's billing period end, and the Overview gains a monthly mini
+  bar. New placeholders `{cc_monthly_pct}`, `{cc_monthly_reset}`,
+  `{cc_monthly_used}`, `{cc_monthly_cap}`, and `{cc_credits_reset}`; the bar
+  headline and severity now consider the monthly window when it is the
+  closest to its cap. An unrecognised plan or a missing ledger leaves the
+  row out rather than guessing a denominator.
+
 ### Changed
 
 - `README.md` documents the macOS Keychain prompt storm as a known issue, with

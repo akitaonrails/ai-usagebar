@@ -237,3 +237,21 @@ through the documented AWS SSO OIDC `CreateToken` API and stores refreshed or
 rotated credentials in an account-scoped `kiro/oauth.json` file. That file is
 mode `0600` on Unix. kiro-cli's database is opened read-only and is never
 modified.
+
+## Command Code
+
+`{cc_plan}`, `{cc_session_pct}`, `{cc_session_reset}`, `{cc_session_used}`,
+`{cc_session_cap}`, `{cc_weekly_pct}`, `{cc_weekly_reset}`,
+`{cc_weekly_used}`, `{cc_weekly_cap}`, `{cc_monthly_pct}`,
+`{cc_monthly_reset}`, `{cc_monthly_used}`, `{cc_monthly_cap}`,
+`{cc_credits}`, `{cc_credits_pool}`, `{cc_credits_spent}`,
+`{cc_credits_reset}`
+
+The rolling windows are priced in dollars, so the `*_used` and `*_cap`
+placeholders expand to money rather than counts. The monthly family describes
+the plan's credit allowance as a window: `{cc_monthly_used}` is the spend
+derived from the credit ledger against the plan pool, and
+`{cc_monthly_reset}` is the subscription's billing period end, when the
+ledger refills. A plan the release does not know, or a response without the
+credit ledger, leaves the monthly family and `{cc_credits_reset}` at `—`.
+`{session_pct}` and `{weekly_pct}` alias the 5-hour and weekly windows.

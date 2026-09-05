@@ -203,6 +203,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             let cells = [
                 ("session", s.five_hour.as_ref()),
                 ("weekly", s.weekly.as_ref()),
+                ("monthly", s.monthly_window().as_ref()),
             ]
             .into_iter()
             .filter_map(|(label, window)| window.map(|window| pct(label, window.pct())))
@@ -866,6 +867,7 @@ fn commandcode_sections(
     for (label, window) in [
         ("Session (5h)", s.five_hour.as_ref()),
         ("Weekly", s.weekly.as_ref()),
+        ("Monthly", s.monthly_window().as_ref()),
     ] {
         if let Some(window) = window {
             let pct = window.pct();
@@ -887,26 +889,10 @@ fn commandcode_sections(
     }
     if let Some(credits) = s.credits.as_ref() {
         sections.push(Section::Spacer);
-        let footnote = match (s.credits_spent(), s.credit_pool) {
-            (Some(spent), Some(pool)) => format!("{} of {} spent", usd(spent), usd(pool)),
-            _ => String::new(),
-        };
         sections.push(Section::Text {
             label: "Credits".into(),
-            value: if footnote.is_empty() {
-                usd(credits.remaining())
-            } else {
-                format!("{} · {footnote}", usd(credits.remaining()))
-            },
+            value: usd(credits.remaining()),
         });
-        // The ledger refills at the billing period end — the subscription is
-        // the only source for that instant.
-        if let Some(at) = s.period_end {
-            sections.push(Section::Text {
-                label: "Credits reset".into(),
-                value: countdown::format(Some(at), now),
-            });
-        }
     }
     sections
 }

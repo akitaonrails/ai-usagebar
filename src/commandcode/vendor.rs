@@ -29,6 +29,10 @@ pub fn build_placeholders(snap: &Snapshot, now: DateTime<Utc>) -> HashMap<&'stat
     let plan = sanitize(snap.plan.as_deref().unwrap_or(DEFAULT_PLAN));
     let session = window_values(snap.five_hour.as_ref(), now);
     let weekly = window_values(snap.weekly.as_ref(), now);
+    // The monthly allowance rendered as a window of its own: dollars drawn
+    // from the plan pool, refilling at the billing period end.
+    let monthly = snap.monthly_window();
+    let monthly_values = window_values(monthly.as_ref(), now);
     let remaining = snap
         .credits
         .as_ref()
@@ -69,6 +73,10 @@ pub fn build_placeholders(snap: &Snapshot, now: DateTime<Utc>) -> HashMap<&'stat
         ("cc_weekly_reset", weekly.reset),
         ("cc_weekly_used", weekly.used),
         ("cc_weekly_cap", weekly.cap),
+        ("cc_monthly_pct", monthly_values.percent.clone()),
+        ("cc_monthly_reset", monthly_values.reset.clone()),
+        ("cc_monthly_used", monthly_values.used.clone()),
+        ("cc_monthly_cap", monthly_values.cap.clone()),
         ("cc_credits", remaining),
         ("cc_credits_pool", pool),
         ("cc_credits_spent", spent),
@@ -192,6 +200,7 @@ fn render_tooltip(
     for (label, window) in [
         ("Session (5h)", snap.five_hour.as_ref()),
         ("Weekly", snap.weekly.as_ref()),
+        ("Monthly", snap.monthly_window().as_ref()),
     ] {
         let Some(window) = window else {
             continue;
@@ -216,22 +225,15 @@ fn render_tooltip(
 
     if let Some(credits) = snap.credits.as_ref() {
         lines.push(TooltipLine::Body(String::new()));
-        let detail = match (snap.credits_spent(), snap.credit_pool) {
-            (Some(spent), Some(pool)) => {
-                format!(" · {} of {} spent", usd(spent), usd(pool))
-            }
-            _ => String::new(),
-        };
-        // The ledger refills at the billing period end, which only the
-        // subscription carries — show the countdown when it is known.
+        // The Monthly row above already carries the spend-of-pool detail, so
+        // the ledger line only adds the raw remaining balance and the refill.
         let reset = match snap.period_end {
             Some(at) => format!(" · resets in {}", countdown::format(Some(at), now)),
             None => String::new(),
         };
         lines.push(TooltipLine::Body(format!(
-            "  Credits  {}{}{}",
+            "  Credits  {}{}",
             escape(&usd(credits.remaining())),
-            escape(&detail),
             escape(&reset)
         )));
     }
@@ -305,6 +307,11 @@ mod tests {
         assert_eq!(values["plan"], "GOAT");
         assert_eq!(values["cc_session_pct"], "9");
         assert_eq!(values["cc_weekly_pct"], "15");
+        // The monthly allowance is a derived window: $20.72 of the $70 pool.
+        assert_eq!(values["cc_monthly_pct"], "30");
+        assert_eq!(values["cc_monthly_used"], "$20.72");
+        assert_eq!(values["cc_monthly_cap"], "$70.00");
+        assert_eq!(values["cc_monthly_reset"], "21d 11h");
         // Generic aliases keep a shared format string working across vendors.
         assert_eq!(values["session_pct"], "9");
         assert_eq!(values["weekly_pct"], "15");
@@ -321,6 +328,26 @@ mod tests {
         assert_eq!(values["cc_credits_spent"], "$20.72");
         // 2026-09-17 minus 2026-08-27 → 21 days and change.
         assert_eq!(values["cc_credits_reset"], "21d 11h");
+    }
+
+    #[test]
+    fn monthly_window_needs_ledger_and_a_recognised_plan() {
+        // No ledger: nothing to derive the spend from.
+        let no_ledger = Snapshot {
+            credits: None,
+            credit_pool: Some(70.0),
+            period_end: Some(at("2026-09-17T14:28:52Z")),
+            ..sample()
+        };
+        assert!(no_ledger.monthly_window().is_none());
+        assert_eq!(no_ledger.worst_pct(), 15);
+
+        // No pool: no denominator.
+        let no_pool = Snapshot {
+            credit_pool: None,
+            ..sample()
+        };
+        assert!(no_pool.monthly_window().is_none());
     }
 
     #[test]
@@ -393,8 +420,10 @@ mod tests {
         assert!(tooltip.contains("Session (5h)"), "{tooltip}");
         assert!(tooltip.contains("$1.23 of $14.00"), "{tooltip}");
         assert!(tooltip.contains("Weekly"), "{tooltip}");
+        // The monthly allowance renders as a third window row.
+        assert!(tooltip.contains("Monthly"), "{tooltip}");
+        assert!(tooltip.contains("$20.72 of $70.00"), "{tooltip}");
         assert!(tooltip.contains("$49.28"), "{tooltip}");
-        assert!(tooltip.contains("$20.72 of $70.00 spent"), "{tooltip}");
         assert!(tooltip.contains("resets in 21d 11h"), "{tooltip}");
     }
 
@@ -448,6 +477,8 @@ mod tests {
         );
 
         assert!(tooltip.contains("$49.28"), "{tooltip}");
-        assert!(!tooltip.contains("spent"), "{tooltip}");
+        // No recognised plan → no monthly window, no allowance line at all.
+        assert!(!tooltip.contains("Monthly"), "{tooltip}");
+        assert!(!tooltip.contains("$20.72 of $70.00"), "{tooltip}");
     }
 }
