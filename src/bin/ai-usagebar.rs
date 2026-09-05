@@ -6,7 +6,17 @@ use ai_usagebar::widget::run::run;
 use clap::Parser;
 
 fn main() {
-    let (argv, config_path) = split_config_arg();
+    let (argv, config_path) = match split_config_arg(std::env::args_os()) {
+        Ok(split) => split,
+        Err(message) => {
+            eprintln!("ai-usagebar: {message}");
+            std::process::exit(2);
+        }
+    };
+    // Parse first so `--version`/`--help` self-report regardless of the
+    // `--config` file's state; only then validate the override path, which
+    // must be set before any config is read.
+    let cli = Cli::parse_from(argv);
     if let Some(path) = &config_path {
         if !path.is_file() {
             eprintln!(
@@ -17,7 +27,6 @@ fn main() {
         }
         ai_usagebar::config::set_override_path(path);
     }
-    let cli = Cli::parse_from(argv);
     if let Some(Command::Account { action }) = &cli.command {
         std::process::exit(ai_usagebar::account::run(action));
     }
@@ -64,31 +73,47 @@ fn main() {
 /// it, so the flag is accepted in any position — including alongside a
 /// subcommand, which clap's `args_conflicts_with_subcommands` would otherwise
 /// reject. Returns the remaining argv (with the program name kept first) and
-/// the override, if any. A dangling `--config` without a value is an error.
-fn split_config_arg() -> (Vec<std::ffi::OsString>, Option<std::path::PathBuf>) {
+/// the override, if any. A bare `--` ends the scan: it and everything after it
+/// are positional (clap convention) and pass through untouched. A dangling
+/// `--config` and a repeated `--config` are errors, matching `ai-usagebar-tui`.
+fn split_config_arg<I>(
+    argv: I,
+) -> Result<(Vec<std::ffi::OsString>, Option<std::path::PathBuf>), String>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut argv = argv.into_iter();
     let mut rest = Vec::new();
     let mut config: Option<std::path::PathBuf> = None;
-    let mut argv = std::env::args_os();
     if let Some(program) = argv.next() {
         rest.push(program);
     }
     while let Some(arg) = argv.next() {
-        let text = arg.to_string_lossy();
-        if text == "--config" {
+        if arg == "--" {
+            rest.push(arg);
+            rest.extend(argv);
+            break;
+        }
+        // Compare at the OsStr level so a path the platform can store but
+        // UTF-8 cannot represent is never mangled by a lossy conversion.
+        let value = if arg == "--config" {
             match argv.next() {
-                Some(value) => config = Some(std::path::PathBuf::from(value)),
-                None => {
-                    eprintln!("ai-usagebar: --config requires a path");
-                    std::process::exit(2);
-                }
+                Some(value) => Some(std::path::PathBuf::from(value)),
+                None => return Err("--config requires a path".into()),
             }
-        } else if let Some(value) = text.strip_prefix("--config=") {
-            config = Some(std::path::PathBuf::from(value));
+        } else {
+            ai_usagebar::config::config_flag_value(&arg)
+        };
+        if let Some(value) = value {
+            if config.is_some() {
+                return Err("--config given more than once".into());
+            }
+            config = Some(value);
         } else {
             rest.push(arg);
         }
     }
-    (rest, config)
+    Ok((rest, config))
 }
 
 async fn run_nous_auth(action: &NousAuthAction) -> i32 {
@@ -163,5 +188,122 @@ async fn run_nous_auth(action: &NousAuthAction) -> i32 {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn argv(items: &[&str]) -> Vec<std::ffi::OsString> {
+        items.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn flag_is_extracted_before_the_subcommand() {
+        let (rest, config) = split_config_arg(argv(&[
+            "ai-usagebar",
+            "--config",
+            "a.toml",
+            "account",
+            "add",
+            "work",
+        ]))
+        .unwrap();
+        assert_eq!(config.as_deref(), Some(std::path::Path::new("a.toml")));
+        assert_eq!(rest, argv(&["ai-usagebar", "account", "add", "work"]));
+    }
+
+    #[test]
+    fn equals_form_is_extracted_after_the_subcommand() {
+        let (rest, config) =
+            split_config_arg(argv(&["ai-usagebar", "usage", "--config=a.toml", "--json"])).unwrap();
+        assert_eq!(config.as_deref(), Some(std::path::Path::new("a.toml")));
+        assert_eq!(rest, argv(&["ai-usagebar", "usage", "--json"]));
+    }
+
+    #[test]
+    fn tokens_after_double_dash_pass_through_untouched() {
+        let (rest, config) = split_config_arg(argv(&[
+            "ai-usagebar",
+            "account",
+            "add",
+            "--",
+            "--config",
+            "work",
+        ]))
+        .unwrap();
+        assert!(
+            config.is_none(),
+            "`--config` behind `--` is a positional, not the flag"
+        );
+        assert_eq!(
+            rest,
+            argv(&["ai-usagebar", "account", "add", "--", "--config", "work"])
+        );
+    }
+
+    #[test]
+    fn duplicate_flag_is_rejected_in_every_form() {
+        for repeated in [
+            &["ai-usagebar", "--config", "a.toml", "--config", "b.toml"][..],
+            &["ai-usagebar", "--config=a.toml", "--config=b.toml"][..],
+            &["ai-usagebar", "--config", "a.toml", "--config=b.toml"][..],
+        ] {
+            let err = split_config_arg(argv(repeated)).unwrap_err();
+            assert_eq!(err, "--config given more than once");
+        }
+    }
+
+    #[test]
+    fn dangling_flag_is_rejected() {
+        let err = split_config_arg(argv(&["ai-usagebar", "usage", "--config"])).unwrap_err();
+        assert_eq!(err, "--config requires a path");
+    }
+
+    /// Both `--config` forms must hand the exact platform bytes to the path
+    /// (the `=` form used to go through `to_string_lossy`, which replaced
+    /// undecodable bytes with U+FFFD and produced a false "file not found").
+    #[cfg(unix)]
+    #[test]
+    fn both_forms_keep_undecodable_bytes_intact() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let equals = std::ffi::OsString::from_vec(b"--config=caf\xe9.toml".to_vec());
+        let (_rest, config) =
+            split_config_arg(vec![std::ffi::OsString::from("ai-usagebar"), equals]).unwrap();
+        assert_eq!(
+            config.expect("equals form parsed").as_os_str().as_bytes(),
+            b"caf\xe9.toml"
+        );
+        let spaced = std::ffi::OsString::from_vec(b"caf\xe9.toml".to_vec());
+        let (_rest, config) = split_config_arg(vec![
+            std::ffi::OsString::from("ai-usagebar"),
+            std::ffi::OsString::from("--config"),
+            spaced,
+        ])
+        .unwrap();
+        assert_eq!(
+            config.expect("spaced form parsed").as_os_str().as_bytes(),
+            b"caf\xe9.toml"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn equals_form_keeps_lone_surrogates_intact() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let mut wide: Vec<u16> = "--config=".encode_utf16().collect();
+        wide.push(0xDC00); // lone low surrogate: not valid Unicode
+        let arg = std::ffi::OsString::from_wide(&wide);
+        let (_rest, config) =
+            split_config_arg(vec![std::ffi::OsString::from("ai-usagebar"), arg]).unwrap();
+        assert_eq!(
+            config
+                .expect("equals form parsed")
+                .as_os_str()
+                .encode_wide()
+                .collect::<Vec<_>>(),
+            vec![0xDC00u16]
+        );
     }
 }

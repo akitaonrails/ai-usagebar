@@ -49,31 +49,40 @@ async fn main() {
 /// argument is rejected so typos fail fast instead of being silently ignored.
 /// The path must already exist — loads treat a missing file as defaults, which
 /// would hide the mistake. Must run before any config is read.
+///
+/// Reads `args_os`, not `args`: the plain iterator panics on any argument the
+/// platform can store but UTF-8 cannot represent (an undecodable filename on
+/// Unix), and a crash-backtrace is a worse answer to a typo than a clean
+/// rejection.
 fn apply_config_flag() -> Result<(), String> {
+    apply_config_flag_from(std::env::args_os().skip(1))
+}
+
+fn apply_config_flag_from<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut args = args.into_iter();
     let mut override_path: Option<PathBuf> = None;
-    let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--config" => {
-                let Some(value) = args.next() else {
-                    return Err("--config requires a path".into());
-                };
-                if override_path.is_some() {
-                    return Err("--config given more than once".into());
-                }
-                override_path = Some(PathBuf::from(value));
+        let value = if arg == "--config" {
+            match args.next() {
+                Some(value) => Some(PathBuf::from(value)),
+                None => return Err("--config requires a path".into()),
             }
-            _ if arg.starts_with("--config=") => {
-                if override_path.is_some() {
-                    return Err("--config given more than once".into());
-                }
-                override_path = Some(PathBuf::from(&arg["--config=".len()..]));
+        } else {
+            ai_usagebar::config::config_flag_value(&arg)
+        };
+        if let Some(value) = value {
+            if override_path.is_some() {
+                return Err("--config given more than once".into());
             }
-            "--help" | "-h" => {
-                println!("usage: ai-usagebar-tui [--config <PATH>]");
-                std::process::exit(0);
-            }
-            other => return Err(format!("unrecognized argument: {other}")),
+            override_path = Some(value);
+        } else if arg == "--help" || arg == "-h" {
+            println!("usage: ai-usagebar-tui [--config <PATH>]");
+            std::process::exit(0);
+        } else {
+            return Err(format!("unrecognized argument: {}", arg.to_string_lossy()));
         }
     }
     let Some(path) = override_path else {
@@ -529,5 +538,77 @@ fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) -> bool {
             false
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(items: &[&str]) -> Vec<std::ffi::OsString> {
+        items.iter().map(std::ffi::OsString::from).collect()
+    }
+
+    #[test]
+    fn duplicate_flag_is_rejected() {
+        let err = apply_config_flag_from(args(&["--config", "a.toml", "--config", "b.toml"]))
+            .unwrap_err();
+        assert_eq!(err, "--config given more than once");
+    }
+
+    #[test]
+    fn dangling_flag_is_rejected() {
+        let err = apply_config_flag_from(args(&["--config"])).unwrap_err();
+        assert_eq!(err, "--config requires a path");
+    }
+
+    #[test]
+    fn unknown_arguments_are_rejected() {
+        let err = apply_config_flag_from(args(&["--watch"])).unwrap_err();
+        assert_eq!(err, "unrecognized argument: --watch");
+        let err = apply_config_flag_from(args(&["--"])).unwrap_err();
+        assert_eq!(err, "unrecognized argument: --");
+    }
+
+    #[test]
+    fn missing_file_is_rejected() {
+        let err =
+            apply_config_flag_from(args(&["--config", "does-not-exist-here.toml"])).unwrap_err();
+        assert!(
+            err.starts_with("config file not found: "),
+            "wrong error: {err}"
+        );
+    }
+
+    /// `std::env::args` panics on arguments the platform can store but UTF-8
+    /// cannot represent; the `args_os` parser must reject them cleanly.
+    #[cfg(unix)]
+    #[test]
+    fn undecodable_argument_is_rejected_not_panicking() {
+        use std::os::unix::ffi::OsStringExt;
+        let raw = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
+        let err = apply_config_flag_from(vec![raw]).unwrap_err();
+        assert!(err.starts_with("unrecognized argument: "), "got: {err}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn lone_surrogate_argument_is_rejected_not_panicking() {
+        use std::os::windows::ffi::OsStringExt;
+        let raw = std::ffi::OsString::from_wide(&[0xDC00]);
+        let err = apply_config_flag_from(vec![raw]).unwrap_err();
+        assert!(err.starts_with("unrecognized argument: "), "got: {err}");
+    }
+
+    #[test]
+    fn existing_file_sets_the_override() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let arg = format!("--config={}", file.path().display());
+        apply_config_flag_from(std::iter::once(std::ffi::OsString::from(arg))).unwrap();
+        assert_eq!(
+            ai_usagebar::config::resolved_path().as_deref(),
+            Some(file.path())
+        );
+        ai_usagebar::config::clear_override_path();
     }
 }

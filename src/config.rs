@@ -1359,6 +1359,43 @@ fn override_path() -> Option<PathBuf> {
     PATH_OVERRIDE.lock().ok().and_then(|slot| slot.clone())
 }
 
+/// Value of a `--config=PATH` argument, split at the OS-string level so a
+/// path with bytes Windows/Unix can store but UTF-8 cannot represent (an
+/// undecodable filename on Unix, a lone surrogate on Windows) survives
+/// intact instead of being mangled by `to_string_lossy`. `None` when the
+/// argument is not in that form. Used by both binaries' argv pre-parsers.
+#[doc(hidden)]
+pub fn config_flag_value(arg: &std::ffi::OsStr) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let rest = arg.as_bytes().strip_prefix(b"--config=")?;
+        Some(std::ffi::OsString::from_vec(rest.to_vec()).into())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        const PREFIX: &[u16] = &[
+            b'-' as u16,
+            b'-' as u16,
+            b'c' as u16,
+            b'o' as u16,
+            b'n' as u16,
+            b'f' as u16,
+            b'i' as u16,
+            b'g' as u16,
+            b'=' as u16,
+        ];
+        let wide: Vec<u16> = arg.encode_wide().collect();
+        let rest = wide.strip_prefix(PREFIX)?;
+        Some(std::ffi::OsString::from_wide(rest).into())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Some(PathBuf::from(arg.to_str()?.strip_prefix("--config=")?))
+    }
+}
+
 /// Expand a leading `~` (or `~/`) against the user's home directory. Anything
 /// else — including `~user` — is left untouched.
 fn expand_tilde(p: &std::path::Path) -> PathBuf {
@@ -1922,9 +1959,30 @@ enabled = false
         M.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// Serializes the override tests *and* guarantees the process-wide
+    /// override is dropped when the test ends — including via a panic, which
+    /// a bare set/clear pair does not survive. A leaked override makes every
+    /// later test in this process resolve a deleted temp file, turning one
+    /// failure into a cascade of confusing sibling failures.
+    struct ScopedPathOverride {
+        _serial: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for ScopedPathOverride {
+        fn drop(&mut self) {
+            clear_override_path();
+        }
+    }
+
+    fn scoped_path_override() -> ScopedPathOverride {
+        ScopedPathOverride {
+            _serial: path_override_guard(),
+        }
+    }
+
     #[test]
     fn override_path_wins_over_canonical_and_legacy() {
-        let _g = path_override_guard();
+        let _scoped = scoped_path_override();
         let file = NamedTempFile::new().unwrap();
         set_override_path(file.path());
         assert_eq!(resolved_path().as_deref(), Some(file.path()));
@@ -1936,11 +1994,79 @@ enabled = false
     }
 
     #[test]
+    fn scoped_override_guard_clears_the_override_on_panic() {
+        // Silence the simulated failure's hook output; the assertion below is
+        // the real report.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _scoped = scoped_path_override();
+            set_override_path(std::path::Path::new("panicked-override.toml"));
+            panic!("simulated mid-test failure");
+        }))
+        .is_err();
+        std::panic::set_hook(hook);
+        assert!(panicked, "the simulated failure must run");
+        let _serial = path_override_guard();
+        assert!(
+            override_path().is_none(),
+            "a panicking test must not leak the override into siblings"
+        );
+    }
+
+    #[test]
     fn config_path_hint_ends_with_config_toml() {
         let _g = path_override_guard();
         // Platform-resolved (Linux/macOS/Windows), but always ends in the
         // config filename — the trailing segment is what messages rely on.
         assert!(config_path_hint().ends_with("config.toml"));
+    }
+
+    #[test]
+    fn config_flag_value_splits_the_equals_form() {
+        use std::ffi::OsStr;
+        assert_eq!(
+            config_flag_value(OsStr::new("--config=work.toml")).as_deref(),
+            Some(std::path::Path::new("work.toml"))
+        );
+        assert_eq!(
+            config_flag_value(OsStr::new("--config=")).as_deref(),
+            Some(std::path::Path::new(""))
+        );
+        assert_eq!(config_flag_value(OsStr::new("--config")), None);
+        assert_eq!(config_flag_value(OsStr::new("--config-file")), None);
+        assert_eq!(config_flag_value(OsStr::new("account")), None);
+    }
+
+    /// The `--config=PATH` form must preserve a path the platform can store
+    /// but UTF-8 cannot represent — `to_string_lossy` would replace the bad
+    /// bytes with U+FFFD and produce a false "config file not found".
+    #[cfg(unix)]
+    #[test]
+    fn config_flag_value_keeps_undecodable_bytes_intact() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let raw = OsString::from_vec(b"--config=caf\xe9.toml".to_vec());
+        let value = config_flag_value(&raw).expect("prefix matches");
+        assert_eq!(value.as_os_str().as_bytes(), b"caf\xe9.toml");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_flag_value_keeps_lone_surrogates_intact() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let mut wide: Vec<u16> = "--config=".encode_utf16().collect();
+        wide.push(0xDC00); // lone low surrogate: not valid Unicode
+        wide.extend("x.toml".encode_utf16());
+        let raw = OsString::from_wide(&wide);
+        let value = config_flag_value(&raw).expect("prefix matches");
+        let mut expected = vec![0xDC00u16];
+        expected.extend("x.toml".encode_utf16());
+        assert_eq!(
+            value.as_os_str().encode_wide().collect::<Vec<_>>(),
+            expected
+        );
     }
 
     #[test]
