@@ -42,6 +42,12 @@ pub fn build_placeholders(snap: &Snapshot, now: DateTime<Utc>) -> HashMap<&'stat
         .credits_spent()
         .map(usd)
         .unwrap_or_else(|| UNAVAILABLE.to_string());
+    // When the monthly ledger refills (billing period end). Absent until the
+    // subscription supplies it.
+    let credits_reset = snap
+        .period_end
+        .map(|at| countdown::format(Some(at), now))
+        .unwrap_or_else(|| UNAVAILABLE.to_string());
 
     placeholders([
         (
@@ -66,6 +72,7 @@ pub fn build_placeholders(snap: &Snapshot, now: DateTime<Utc>) -> HashMap<&'stat
         ("cc_credits", remaining),
         ("cc_credits_pool", pool),
         ("cc_credits_spent", spent),
+        ("cc_credits_reset", credits_reset),
     ])
 }
 
@@ -215,10 +222,17 @@ fn render_tooltip(
             }
             _ => String::new(),
         };
+        // The ledger refills at the billing period end, which only the
+        // subscription carries — show the countdown when it is known.
+        let reset = match snap.period_end {
+            Some(at) => format!(" · resets in {}", countdown::format(Some(at), now)),
+            None => String::new(),
+        };
         lines.push(TooltipLine::Body(format!(
-            "  Credits  {}{}",
+            "  Credits  {}{}{}",
             escape(&usd(credits.remaining())),
-            escape(&detail)
+            escape(&detail),
+            escape(&reset)
         )));
     }
 
@@ -279,6 +293,7 @@ mod tests {
                 free: 0.0,
             }),
             credit_pool: Some(70.0),
+            period_end: Some(at("2026-09-17T14:28:52Z")),
         }
     }
 
@@ -304,6 +319,8 @@ mod tests {
         assert_eq!(values["cc_credits"], "$49.28");
         assert_eq!(values["cc_credits_pool"], "$70.00");
         assert_eq!(values["cc_credits_spent"], "$20.72");
+        // 2026-09-17 minus 2026-08-27 → 21 days and change.
+        assert_eq!(values["cc_credits_reset"], "21d 11h");
     }
 
     #[test]
@@ -378,6 +395,7 @@ mod tests {
         assert!(tooltip.contains("Weekly"), "{tooltip}");
         assert!(tooltip.contains("$49.28"), "{tooltip}");
         assert!(tooltip.contains("$20.72 of $70.00 spent"), "{tooltip}");
+        assert!(tooltip.contains("resets in 21d 11h"), "{tooltip}");
     }
 
     #[test]

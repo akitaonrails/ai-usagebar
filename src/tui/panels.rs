@@ -899,6 +899,14 @@ fn commandcode_sections(
                 format!("{} · {footnote}", usd(credits.remaining()))
             },
         });
+        // The ledger refills at the billing period end — the subscription is
+        // the only source for that instant.
+        if let Some(at) = s.period_end {
+            sections.push(Section::Text {
+                label: "Credits reset".into(),
+                value: countdown::format(Some(at), now),
+            });
+        }
     }
     sections
 }

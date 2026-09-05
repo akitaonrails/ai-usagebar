@@ -63,6 +63,10 @@ pub struct Snapshot {
     pub credits: Option<Credits>,
     /// Monthly credit allowance for the plan, when the plan is recognised.
     pub credit_pool: Option<f64>,
+    /// End of the current billing period — when the monthly credit ledger
+    /// refills. The windows reset on their own clocks; only the subscription
+    /// carries this instant.
+    pub period_end: Option<DateTime<Utc>>,
 }
 
 impl Eq for Snapshot {}
@@ -166,6 +170,7 @@ pub fn parse_credits(value: &Value) -> Result<Snapshot, String> {
             .transpose()?,
         credits,
         credit_pool: None,
+        period_end: None,
     };
 
     if snapshot.five_hour.is_none() && snapshot.weekly.is_none() && snapshot.credits.is_none() {
@@ -188,6 +193,14 @@ pub fn apply_subscription(snapshot: &mut Snapshot, value: &Value) {
     };
     snapshot.plan = Some(plan_label(plan_id));
     snapshot.credit_pool = plan_credits(plan_id);
+    // The billing period end is when the monthly ledger refills. Parse
+    // defensively: a missing or malformed field costs only this line.
+    snapshot.period_end = value
+        .get("data")
+        .and_then(|data| data.get("currentPeriodEnd"))
+        .and_then(Value::as_str)
+        .and_then(|text| text.trim().parse::<DateTime<chrono::FixedOffset>>().ok())
+        .map(|parsed| parsed.with_timezone(&Utc));
 }
 
 fn parse_window(value: Option<&Value>, name: &str) -> Option<Result<SpendWindow, String>> {
@@ -390,6 +403,24 @@ mod tests {
         assert_eq!(snapshot.credit_pool, Some(70.0));
         // The $70 allowance less the $42 still on the ledger.
         assert_eq!(snapshot.credits_spent(), Some(28.0));
+        // The billing period end doubles as the monthly credit reset.
+        assert_eq!(
+            snapshot.period_end.expect("period end").to_rfc3339(),
+            "2026-09-19T16:39:05+00:00"
+        );
+    }
+
+    #[test]
+    fn a_malformed_period_end_is_dropped_not_fatal() {
+        let mut snapshot = parse_credits(&credits_value()).unwrap();
+
+        apply_subscription(
+            &mut snapshot,
+            &serde_json::json!({"data": {"planId": "individual-goat", "currentPeriodEnd": "not-a-date"}}),
+        );
+
+        assert_eq!(snapshot.plan.as_deref(), Some("GOAT"));
+        assert_eq!(snapshot.period_end, None);
     }
 
     #[test]
