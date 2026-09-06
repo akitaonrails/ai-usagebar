@@ -32,6 +32,7 @@ let SETTINGS_DEFAULTS: [String: Any] = [
     "showPercent": true,
     "showBars": true,
     "showMeta": true,
+    "showResetClock": false,
     "barStyle": "block",
     "colorLow": "#98c379",
     "colorMid": "#e5c07b",
@@ -66,6 +67,11 @@ var COLOR_EMPTY: String { DEF.string(forKey: "colorEmpty") ?? "#3e4451" }
 // Meta reference: draw a pace marker at the elapsed-time position and flag the
 // over-meta segment of the fill. Off = plain absolute-usage bars, no marker.
 var SHOW_META: Bool { DEF.bool(forKey: "showMeta") }
+// Off (default) = countdown ("1d 1h", "14h 32m"); on = the wall-clock time the
+// window resets at ("14:32", or "9/7/26, 2:32 PM" beyond today), computed
+// client-side from the countdown the binary already reports — see
+// `resetSeconds`/`resetDate` below.
+var SHOW_RESET_CLOCK: Bool { DEF.bool(forKey: "showResetClock") }
 // The meta marker is a fixed blue, matching the binary's default theme `marker`
 // color and distinct from the over-pace warning fill.
 let COLOR_MARKER = "#61afef"
@@ -162,6 +168,66 @@ func shortReset(_ r: String) -> String? {
         return m == "m" ? "0m" : String(m)
     }
     return String(first)
+}
+
+/// Parse the binary's countdown text ("4d 1h", "23h 59m", "now", "—") back
+/// into seconds remaining. `nil` for "—"/empty/unparseable, matching
+/// `isReported`. The binary's own `countdown::format` drops minutes once a
+/// day is present, so a `>=1d` result only carries hour precision — the same
+/// precision loss the countdown display already has.
+func resetSeconds(_ r: String) -> Int? {
+    guard isReported(r) else { return nil }
+    if r == "now" { return 0 }
+    let parts = r.split(separator: " ")
+    var seconds = 0
+    var matchedAny = false
+    for part in parts {
+        if let h = part.hasSuffix("h") ? Int(part.dropLast()) : nil {
+            seconds += h * 3600
+            matchedAny = true
+        } else if let d = part.hasSuffix("d") ? Int(part.dropLast()) : nil {
+            seconds += d * 86_400
+            matchedAny = true
+        } else if let m = part.hasSuffix("m") ? Int(part.dropLast()) : nil {
+            seconds += m * 60
+            matchedAny = true
+        }
+    }
+    return matchedAny ? seconds : nil
+}
+
+/// The absolute instant a countdown string resolves to, or `nil` when the
+/// countdown itself carries no value.
+func resetDate(_ r: String, now: Date = Date()) -> Date? {
+    resetSeconds(r).map { now.addingTimeInterval(TimeInterval($0)) }
+}
+
+private let resetTimeOnlyFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .none
+    f.timeStyle = .short
+    return f
+}()
+
+private let resetDateTimeFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .short
+    f.timeStyle = .short
+    return f
+}()
+
+/// Wall-clock label for a countdown, honoring `SHOW_RESET_CLOCK`: off returns
+/// the countdown unchanged (`fallback`), on renders the resolved instant —
+/// just the time when it falls today, date + time otherwise. `nil` when the
+/// countdown itself is unreported, same as the value it replaces.
+func resetClockLabel(_ r: String, fallback: String?, showClock: Bool = SHOW_RESET_CLOCK,
+                     now: Date = Date()) -> String? {
+    guard showClock else { return fallback }
+    guard let date = resetDate(r, now: now) else { return nil }
+    let formatter = Calendar.current.isDate(date, inSameDayAs: now)
+        ? resetTimeOnlyFormatter
+        : resetDateTimeFormatter
+    return formatter.string(from: date)
 }
 
 let barFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -1338,6 +1404,7 @@ struct SettingsView: View {
     @AppStorage("showPercent") private var showPercent = true
     @AppStorage("showBars") private var showBars = true
     @AppStorage("showMeta") private var showMeta = true
+    @AppStorage("showResetClock") private var showResetClock = false
     @AppStorage("barStyle") private var barStyle = "block"
     @AppStorage("swapShortcutEnabled") private var swapShortcutEnabled = true
     @AppStorage("compactShortcutEnabled") private var compactShortcutEnabled = true
@@ -1384,6 +1451,7 @@ struct SettingsView: View {
                         Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
                         Toggle("Mostrar barras (off = só números)", isOn: $showBars)
                         Toggle("Mostrar referência da meta (linha de ritmo)", isOn: $showMeta)
+                        Toggle("Mostrar horário do reset (em vez da contagem regressiva)", isOn: $showResetClock)
                         Picker("Estilo do indicador", selection: $barStyle) {
                             Text("Barras (░█)").tag("block")
                             Text("Anel (○)").tag("ring")
@@ -2294,7 +2362,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard visible.contains($0.id), let s = $0.snap else { return nil }
                 if let cb = s.creditBalance { return ($0.name, -1, nil, "cr \(cb)", nil) }
                 let h = overviewHeadline(s)
-                return ($0.name, h.pct, h.elapsed, "\(h.pct)%", h.reset.flatMap(shortReset))
+                let shortValue = h.reset.flatMap(shortReset)
+                let reset = h.reset.flatMap { resetClockLabel($0, fallback: shortValue) }
+                return ($0.name, h.pct, h.elapsed, "\(h.pct)%", reset)
             }
         guard !heads.isEmpty else { return run("ovr", secondary) }
 
@@ -2482,7 +2552,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             a.append(run(label, .labelColor))
             a.append(progressAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed, menu: true, appearance: appearance))
             a.append(run("  \(value)", colorForPct(pct)))
-            if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }
+            if let r = reset, !r.isEmpty, let display = resetClockLabel(r, fallback: r) {
+                a.append(run("   ↺ \(display)", .secondaryLabelColor))
+            }
             item.attributedTitle = a
         }
         if let creditBalance = s.creditBalance {
