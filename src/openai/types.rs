@@ -41,10 +41,12 @@ pub struct UsageResponse {
     /// model-specific allowance. Each carries its own windows and can be the
     /// binding constraint while `rate_limit` still reads low, which is
     /// precisely when a user needs to see it.
+    #[serde(deserialize_with = "de_null_default")]
     pub additional_rate_limits: Vec<AdditionalRateLimit>,
     /// Per-model availability. `available: false` is what "Selected model is
     /// at capacity" looks like in the data — a dispatch-time refusal, not a
     /// quota, so no percentage anywhere else reflects it.
+    #[serde(deserialize_with = "de_null_default")]
     pub model_usage: BTreeMap<String, ModelUsage>,
 }
 
@@ -120,6 +122,19 @@ pub struct ResetCredit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     pub expires_at: Option<DateTime<Utc>>,
+}
+
+/// Optional collections in the usage response are represented inconsistently:
+/// accounts with no named limits may receive either an omitted field or JSON
+/// `null`, while accounts with limits receive the collection itself. Treat the
+/// two empty representations alike without weakening validation of populated
+/// arrays/maps.
+fn de_null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
 }
 
 /// Accept a JSON number or numeric string without turning malformed, non-finite
@@ -894,6 +909,21 @@ mod tests {
         .unwrap();
         let snap = response.into_snapshot(None).unwrap();
 
+        assert!(snap.additional_limits.is_empty());
+        assert!(snap.unavailable_models.is_empty());
+    }
+
+    /// The live endpoint uses JSON null, rather than omission or an empty
+    /// array, when this account has no named rate limits. Serde's field-level
+    /// `default` only covers omission, so this exact shape used to fail before
+    /// a snapshot could be produced.
+    #[test]
+    fn null_optional_collections_are_treated_as_empty() {
+        let response: UsageResponse =
+            serde_json::from_str(r#"{"additional_rate_limits": null, "model_usage": null}"#)
+                .expect("null optional collections should parse");
+
+        let snap = response.into_snapshot(None).unwrap();
         assert!(snap.additional_limits.is_empty());
         assert!(snap.unavailable_models.is_empty());
     }
