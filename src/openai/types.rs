@@ -41,11 +41,33 @@ pub struct UsageResponse {
     /// model-specific allowance. Each carries its own windows and can be the
     /// binding constraint while `rate_limit` still reads low, which is
     /// precisely when a user needs to see it.
+    ///
+    /// Some accounts get this key back as an explicit JSON `null` rather than
+    /// omitting it — struct-level `#[serde(default)]` only covers a missing
+    /// key, not a present-but-null one, so this needs its own null-tolerant
+    /// deserializer.
+    #[serde(deserialize_with = "null_as_default")]
     pub additional_rate_limits: Vec<AdditionalRateLimit>,
     /// Per-model availability. `available: false` is what "Selected model is
     /// at capacity" looks like in the data — a dispatch-time refusal, not a
     /// quota, so no percentage anywhere else reflects it.
+    ///
+    /// Same explicit-`null` caveat as `additional_rate_limits` above.
+    #[serde(deserialize_with = "null_as_default")]
     pub model_usage: BTreeMap<String, ModelUsage>,
+}
+
+/// Treat an explicit JSON `null` the same as a missing key: both mean "none
+/// reported". Struct-level `#[serde(default)]` alone does not do this — it
+/// only fires when the key is absent, and a `Vec`/`Map` field rejects a `null`
+/// value with "invalid type: null, expected a sequence" instead of falling
+/// back to its default.
+fn null_as_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
@@ -106,6 +128,7 @@ pub struct CreditsBlock {
 #[serde(default)]
 pub struct ResetCreditsBlock {
     pub available_count: u32,
+    #[serde(deserialize_with = "null_as_default")]
     pub credits: Vec<ResetCredit>,
 }
 
@@ -919,6 +942,36 @@ mod tests {
 
         assert_eq!(snap.additional_limits.len(), 1);
         assert_eq!(snap.additional_limits[0].name, "base_model_inference");
+    }
+
+    /// Some Codex accounts return `additional_rate_limits`/`model_usage` as
+    /// explicit JSON `null` instead of omitting them. Regression for
+    /// "invalid type: null, expected a sequence" — struct-level
+    /// `#[serde(default)]` alone does not cover a present-but-null field.
+    #[test]
+    fn null_additional_rate_limits_and_model_usage_are_treated_as_absent() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{"plan_type":"plus",
+                "rate_limit":{"primary_window":{"used_percent":3,"limit_window_seconds":18000}},
+                "additional_rate_limits":null,
+                "model_usage":null}"#,
+        )
+        .expect("null additional_rate_limits/model_usage must parse, not fail schema drift");
+        let snap = response.into_snapshot(None).unwrap();
+        assert!(snap.additional_limits.is_empty());
+        assert!(snap.unavailable_models.is_empty());
+    }
+
+    /// Same explicit-`null` tolerance for the reset-credits detail list.
+    #[test]
+    fn null_reset_credits_detail_list_is_treated_as_empty() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{"rate_limit_reset_credits":{"available_count":2,"credits":null}}"#,
+        )
+        .expect("null credits list must parse, not fail schema drift");
+        let snap = response.into_snapshot(None).unwrap();
+        assert_eq!(snap.reset_credits.available, 2);
+        assert!(snap.reset_credits.credits.is_empty());
     }
 
     /// `available` absent is "not stated", which is not the same as
