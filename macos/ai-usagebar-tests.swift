@@ -504,7 +504,7 @@ func testClaudeAccounts() {
                 "OpenRouter account display name")
     assertEqual(vendorArgs(for: "zai").joined(separator: " "), "--vendor zai", "vendor fetch args")
     assertEqual(entryDisplayName("anthropic@gmail"), "Claude · gmail", "account display name")
-    assertEqual(entryDisplayName("overview"), "Visão geral", "overview display name")
+    assertEqual(entryDisplayName("overview"), "Overview", "overview display name")
 
     let overviewEntries = [
         MenuEntry(id: "anthropic@struct", name: "Claude · struct"),
@@ -533,11 +533,11 @@ func testClaudeAccounts() {
 }
 
 func testCompactToggle() {
-    // Under the threshold → bars, unless Compactar forces the text mode.
+    // Under the threshold → bars, unless Collapse forces the text mode.
     assertEqual(overviewUsesBars(count: 3, barsMax: 4, compact: false), true,
                 "≤ barsMax without compact → bars")
     assertEqual(overviewUsesBars(count: 3, barsMax: 4, compact: true), false,
-                "Compactar forces %-text even under the threshold")
+                "Collapse forces %-text even under the threshold")
     assertEqual(overviewUsesBars(count: 5, barsMax: 4, compact: false), false,
                 "past the threshold → %-text regardless")
     assertEqual(overviewUsesBars(count: 4, barsMax: 4, compact: false), true,

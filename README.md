@@ -255,8 +255,9 @@ accounts cannot reuse another account's fresh or stale usage.
 
 Command Code meters spend rather than tokens, so its two rolling windows are
 priced in dollars: `$1.23 of $14.00` for the 5-hour window and `$5.24 of $35.00`
-for the weekly one, alongside the monthly credit that is left. The percentages
-the bar and the meters show are derived from those figures.
+for the weekly one. The monthly credit allowance renders as a third window with
+the derived spend against the plan's pool and a reset countdown from the
+subscription's billing period end.
 
 **There is no key to enter, and no key field in the settings panel.**
 Command Code appears in the provider selector but not in the key list, the same
