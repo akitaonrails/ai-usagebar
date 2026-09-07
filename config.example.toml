@@ -230,10 +230,12 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # reports an error saying so instead of querying the wrong team.
 # team_id = "..."
 
-# SuperGrok subscription usage — distinct from [grok] above. No API key enters
-# ai-usagebar: the official Grok Build CLI owns login, OIDC/provider refresh,
-# account scope, proxy settings, and credential locking. ai-usagebar invokes
-# its credential-free `x.ai/billing` ACP extension.
+# SuperGrok subscription usage — distinct from [grok] above. No API key of
+# its own: the official Grok Build CLI owns login, OIDC/provider refresh,
+# account scope, proxy settings, and credential locking. Billing and banked
+# resets use the `key` already in auth.json (read-only, sent in an
+# Authorization header, never copied or rewritten). The ACP `x.ai/billing`
+# extension is a fallback when the HTTPS billing endpoint is unavailable.
 [supergrok]
 # Disabled by default — enable after installing official Grok Build and running
 # `grok login` at least once.
@@ -241,8 +243,8 @@ enabled = false
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok, avoiding unrelated PATH
 # programs with the same name. Override only for a trusted official install.
 # grok_binary = "/opt/grok/bin/grok"
-# These files are hashed as opaque bytes only to invalidate cached usage when
-# the Grok login/scope changes. Their contents are never parsed or copied.
+# Cache-scope fingerprint inputs. config.toml is hashed as opaque bytes;
+# auth.json is also read for its billing `key`. Neither is copied or written.
 # auth_path = "/home/you/.grok/auth.json"
 # config_path = "/home/you/.grok/config.toml"
 

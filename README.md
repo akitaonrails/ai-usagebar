@@ -255,8 +255,9 @@ accounts cannot reuse another account's fresh or stale usage.
 
 Command Code meters spend rather than tokens, so its two rolling windows are
 priced in dollars: `$1.23 of $14.00` for the 5-hour window and `$5.24 of $35.00`
-for the weekly one, alongside the monthly credit that is left. The percentages
-the bar and the meters show are derived from those figures.
+for the weekly one. The monthly credit allowance renders as a third window with
+the derived spend against the plan's pool and a reset countdown from the
+subscription's billing period end.
 
 **There is no key to enter, and no key field in the settings panel.**
 Command Code appears in the provider selector but not in the key list, the same
@@ -337,9 +338,11 @@ For each API-key vendor, ai-usagebar checks in this order:
   Redact them before committing that file to dotfiles. Environment variables
   remain the default and avoid storing keys in the config.
 - Claude and Codex credentials stay in files managed by their official CLIs.
-- SuperGrok credentials stay inside Grok Build. ai-usagebar receives a
-  credential-free billing result and hashes auth/config files only to separate
-  caches between logins.
+- SuperGrok credentials stay inside Grok Build. ai-usagebar reads the login's
+  `key` from `auth.json` and uses it in the outgoing `Authorization` headers
+  of the billing request and the remaining-resets RPC; it never copies,
+  caches, refreshes, or writes that key back. Auth/config files are also
+  hashed as opaque bytes to separate caches between logins.
 - Cursor's `state.vscdb` and `cursor-agent` fallback `auth.json` are read-only.
 - kiro-cli's `data.sqlite3` is read-only. Refreshed credentials go to an
   account-scoped `kiro/oauth.json` file, mode `600` on Unix.

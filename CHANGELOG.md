@@ -16,7 +16,90 @@ Each release is also published at
   beside a subcommand); the file must already exist, and the override applies
   to loads, Settings saves, and path hints for the whole process.
 
+## [1.12.0] — 2026-09-06
+
+### Added
+
+- Command Code renders the monthly credit allowance as a full third window:
+  the Quattro panel, TUI, and Overview show a `Monthly` progress row with the
+  derived spend (`$20.72 of $70.00`), a `Resets` countdown from the
+  subscription's billing period end, and the Overview gains a monthly mini
+  bar. New placeholders `{cc_monthly_pct}`, `{cc_monthly_reset}`,
+  `{cc_monthly_used}`, `{cc_monthly_cap}`, and `{cc_credits_reset}`; the bar
+  headline and severity now consider the monthly window when it is the
+  closest to its cap. An unrecognised plan or a missing ledger leaves the
+  row out rather than guessing a denominator.
+
+- The KDE plasmoid offers a **one card per vendor** popup layout beside the
+  existing provider tabs, selectable per applet instance. The cards are drawn
+  entirely from the aggregate `usage --json` report — labels, windows,
+  severities, staleness and error text all come from Rust — so a newly added
+  provider gets a card with no widget change. Provider tabs remain the
+  default and are unchanged.
+
 ### Changed
+
+- `make test` fails if a changelog entry appears under two versions, or if one
+  release section repeats a category heading. Both are what a merge produces
+  when a branch predates the last tag, and both had happened here before — the
+  documented remedy was a manual `git diff` that the AUR build cannot run and
+  that a person has to remember.
+
+### Fixed
+
+- **Codex works again on accounts with no extra limits.** 1.11.0 added
+  `additional_rate_limits` and `model_usage` as plain collections, and OpenAI
+  sends `null` — not `[]`/`{}` — when an account has none. `#[serde(default)]`
+  covers a *missing* field but not a present-but-null one, so the whole usage
+  response failed and Waybar showed `⚠ API schema drift … expected a sequence`.
+  Explicit `null` is now read as empty for those two and for
+  `rate_limit_reset_credits.credits`. A wrong *type* is still drift: a string or
+  a number where a collection belongs is refused rather than read as empty.
+  Reported within a day by three people independently — thank you.
+## [1.11.0] — 2026-09-05
+
+### Security
+
+- Codex's cache no longer holds the account's `user_id`, `account_id` and
+  `email`. It stored the raw `wham/usage` body, so all three sat in
+  `~/.cache/ai-usagebar/openai/usage.json` for the life of the TTL, though no
+  renderer reads any of them. It now stores the parsed response, which is an
+  allowlist by construction — a field OpenAI adds later cannot start living on
+  disk without someone adding it to the type first. The file was, and remains,
+  mode 0600. This is the rule `CLAUDE.md` already stated for Command Code.
+
+### Added
+
+- **Banked reset credits for Codex and SuperGrok.** Both providers let you earn
+  quota resets and redeem them by hand, on their own expiry clock — information
+  that existed nowhere in ai-usagebar, because it is not the window rollover
+  the `*_reset` placeholders already showed. The count and the next expiry now
+  appear in the Waybar tooltip, the TUI panel, and `ai-usagebar usage --json`
+  (and so in the Omarchy, GNOME and KDE frontends, which read that report) as
+  a list, one row per credit, with its own title and expiry — two Codex
+  "Full reset (Weekly + 5 hr)" credits that lapse hours apart on the same day
+  no longer collapse into a single "next expires" line. New placeholders are
+  `{oai_resets_available}` / `{oai_resets}` and `{sgk_resets_available}` /
+  `{sgk_resets}` (the compact count). A provider with none reports nothing
+  rather than a standing `0`.
+
+  Codex's count rides its usage response; the expiries come from
+  `wham/rate-limit-reset-credits`, called only when something is banked.
+  SuperGrok's come from `grok.com`'s `ConsumerUiSvc/GetRemainingResets`, a
+  gRPC-Web call authenticated with the Grok Build login's own key, parsed by a
+  bounded hand-written protobuf reader rather than a new dependency.
+
+  Read-only: **ai-usagebar never redeems a reset.** The redemption identifier
+  each provider returns beside the expiry is skipped during parsing rather than
+  parsed and dropped, so it reaches neither the cache nor the screen. Both
+  extra calls fail quietly — a broken one costs the expiry date and leaves
+  every quota figure beside it untouched.
+
+### Changed
+
+- SuperGrok's panel no longer repeats the current period's rollover as a
+  standalone "Resets" row. That countdown already sits under the weekly
+  credits bar, the same way Codex 5h and Codex weekly do.
 
 - `README.md` documents the macOS Keychain prompt storm as a known issue, with
   the workaround, until #148 is fixed. Every release so far is affected on
@@ -1957,7 +2040,9 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
+[1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.8.0...v1.9.0

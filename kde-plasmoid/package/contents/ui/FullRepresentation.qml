@@ -115,11 +115,12 @@ Item {
         // --- provider tabs -------------------------------------------------
         // Every configured vendor, including the ones currently failing. Hiding
         // a broken vendor is what made "not configured" indistinguishable from
-        // "configured and erroring".
+        // "configured and erroring". Only in the tab layout; the cards layout
+        // shows every entry side by side instead.
         Flow {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.smallSpacing
-            visible: full.applet.tabs.length > 1
+            visible: full.applet.viewMode === 0 && full.applet.tabs.length > 1
             spacing: Kirigami.Units.smallSpacing
 
             Repeater {
@@ -161,16 +162,16 @@ Item {
             }
         }
 
-        // --- usage rows -----------------------------------------------------
+        // --- usage rows (tab layout) ----------------------------------------
         Kirigami.Separator {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.smallSpacing
-            visible: full.rows.length > 0
+            visible: full.applet.viewMode === 0 && full.rows.length > 0
         }
 
         PlasmaComponents.Label {
             Layout.fillWidth: true
-            visible: full.rows.length > 0
+            visible: full.applet.viewMode === 0 && full.rows.length > 0
             font: Kirigami.Theme.smallFont
             opacity: 0.6
             text: i18n("USAGE & BALANCE")
@@ -178,7 +179,7 @@ Item {
         }
 
         Repeater {
-            model: full.rows
+            model: full.applet.viewMode === 0 ? full.rows : []
 
             UsageRow {
                 required property var modelData
@@ -194,12 +195,23 @@ Item {
         PlasmaComponents.Label {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.smallSpacing
-            visible: !full.entry && full.status === ""
+            visible: !full.entry && full.status === "" && full.applet.viewMode === 0
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
             opacity: 0.6
             text: i18n("No configured provider reported usage.")
             textFormat: Text.PlainText
+        }
+
+        // --- cards (alternative layout) -------------------------------------
+        // The #142 card design, reworked: one card per entry the report
+        // returned, gauges per window, failures and staleness inline. Sourced
+        // from the same aggregate report as the tab view, so switching the
+        // layout never refetches.
+        VendorCards {
+            Layout.fillWidth: true
+            visible: full.applet.viewMode === 1
+            applet: full.applet
         }
 
         // --- footer ---------------------------------------------------------

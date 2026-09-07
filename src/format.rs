@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local, Utc};
 
+use crate::usage::{ResetCredit, ResetCredits};
+
 /// A monetary amount, with the sign outside the symbol. `format!("${v:.2}")`
 /// puts it inside — `$-5.71` — which reads as a typo rather than as debt, and
 /// several providers let a balance go negative: OpenRouter overruns its
@@ -87,6 +89,59 @@ pub fn local_time_hms(when: DateTime<Utc>) -> String {
     when.with_timezone(&Local).format("%H:%M:%S").to_string()
 }
 
+pub fn local_date_hm(when: DateTime<Utc>) -> String {
+    when.with_timezone(&Local)
+        .format("%b %-d %H:%M")
+        .to_string()
+}
+
+/// Compact count for placeholders and tooltips that have to stay on one line.
+pub fn reset_credits(credits: &ResetCredits) -> String {
+    let noun = if credits.available == 1 {
+        "reset"
+    } else {
+        "resets"
+    };
+    format!("{} {noun} available", credits.available)
+}
+
+/// One row per banked reset, soonest expiry first. This is what the panel,
+/// TUI, and tooltip list — a single "2 available · next expires Oct 4" line
+/// hides that two credits can lapse hours apart on the same day.
+pub fn reset_credit_lines(credits: &ResetCredits, now: DateTime<Utc>) -> Vec<String> {
+    let mut items = credits.credits.clone();
+    items.sort_by_key(|credit| credit.expires_at);
+    let mut lines: Vec<String> = items
+        .iter()
+        .map(|credit| reset_credit_line(credit, now))
+        .collect();
+    if lines.is_empty() && credits.available > 0 {
+        lines.push(reset_credits(credits));
+    }
+    lines
+}
+
+fn reset_credit_line(credit: &ResetCredit, now: DateTime<Utc>) -> String {
+    let expiry = match credit.expires_at {
+        Some(expires) if expires <= now => format!("expired {}", local_date_hm(expires)),
+        Some(expires) => format!(
+            "expires {} ({})",
+            local_date_hm(expires),
+            crate::countdown::format(Some(expires), now)
+        ),
+        None => "no expiry reported".into(),
+    };
+    match credit
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+    {
+        Some(title) => format!("{title} · {expiry}"),
+        None => capitalize(&expiry),
+    }
+}
+
 pub fn updated_at_hm(now: DateTime<Utc>, cache_age: Option<Duration>) -> String {
     match cache_age {
         Some(age) => local_time_hm(now - chrono::Duration::from_std(age).unwrap_or_default()),
@@ -145,6 +200,61 @@ mod tests {
 
     fn pm(pairs: &[(&'static str, &str)]) -> HashMap<&'static str, String> {
         placeholders(pairs.iter().map(|(k, v)| (*k, v.to_string())))
+    }
+
+    fn offer(title: Option<&str>, expires: &str) -> ResetCredit {
+        ResetCredit {
+            title: title.map(str::to_string),
+            expires_at: Some(expires.parse().unwrap()),
+        }
+    }
+
+    #[test]
+    fn a_reset_inventory_lists_each_credit_soonest_first() {
+        let now = "2026-07-04T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let credits = ResetCredits {
+            available: 2,
+            credits: vec![
+                offer(Some("Full reset (Weekly + 5 hr)"), "2026-08-01T00:00:00Z"),
+                offer(Some("Full reset (Weekly + 5 hr)"), "2026-07-17T00:00:00Z"),
+            ],
+        };
+        assert_eq!(reset_credits(&credits), "2 resets available");
+        let lines = reset_credit_lines(&credits, now);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].contains("Full reset (Weekly + 5 hr)"), "{lines:?}");
+        assert!(lines[0].contains("(13d 0h)"), "{lines:?}");
+        assert!(lines[1].contains("(28d 0h)"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_lapsed_deadline_reads_as_expired_rather_than_now() {
+        let now = "2026-07-04T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let lines = reset_credit_lines(
+            &ResetCredits {
+                available: 1,
+                credits: vec![offer(None, "2026-07-01T00:00:00Z")],
+            },
+            now,
+        );
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("Expired "), "{lines:?}");
+        assert!(!lines[0].contains("(now)"), "{lines:?}");
+    }
+
+    #[test]
+    fn a_count_without_detail_still_renders_the_inventory() {
+        let now = "2026-07-04T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        assert_eq!(
+            reset_credit_lines(
+                &ResetCredits {
+                    available: 2,
+                    credits: vec![]
+                },
+                now
+            ),
+            vec!["2 resets available"]
+        );
     }
 
     #[test]

@@ -868,9 +868,9 @@ impl Default for GrokConfig {
     }
 }
 
-/// SuperGrok subscription auth — no API key. Asks the official Grok Build
-/// CLI for billing through its `x.ai/billing` ACP extension, leaving every
-/// credential, issuer, proxy, and token-rotation decision inside Grok Build.
+/// SuperGrok subscription auth — no API key of its own. Billing and banked
+/// resets use the `key` already in Grok Build's `auth.json` (read-only).
+/// Login, issuer, proxy, and token rotation stay inside Grok Build.
 ///
 /// Opt-in like Cursor/Kiro (`enabled` defaults to `false`): it requires a
 /// separate official executable and signed-in session, so it stays off until
