@@ -2816,10 +2816,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 #if !SWIFT_TEST_HARNESS
 @main
 struct AppMain {
+    // NSApplication.delegate is `weak`; in optimized (-O) builds ARC can free a
+    // main()-local delegate before app.run() returns since it sees no later
+    // textual use, taking the status item down with it — the menu bar icon
+    // vanishes, intermittently, mid-session. Retain it here instead.
+    static var delegate: AppDelegate!
+
     static func main() {
         DEF.register(defaults: SETTINGS_DEFAULTS)
         let app = NSApplication.shared
-        let delegate = AppDelegate()
+        delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)   // menu-bar agent, no Dock icon
         app.run()
