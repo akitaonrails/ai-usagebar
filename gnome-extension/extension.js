@@ -136,15 +136,15 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        const refreshItem = new PopupMenu.PopupMenuItem('Atualizar agora');
+        const refreshItem = new PopupMenu.PopupMenuItem('Refresh now');
         refreshItem.connect('activate', () => this._refresh());
         this.menu.addMenuItem(refreshItem);
 
-        const tuiItem = new PopupMenu.PopupMenuItem('Abrir TUI');
+        const tuiItem = new PopupMenu.PopupMenuItem('Open TUI');
         tuiItem.connect('activate', () => this._openTui());
         this.menu.addMenuItem(tuiItem);
 
-        const prefsItem = new PopupMenu.PopupMenuItem('Configurações');
+        const prefsItem = new PopupMenu.PopupMenuItem('Settings');
         prefsItem.connect('activate', () => this._openPrefs());
         this.menu.addMenuItem(prefsItem);
     }
@@ -239,7 +239,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             this._busy = false;
             this._refreshCancellable = null;
             this._refreshPending = false;
-            this._setError(`não consegui executar "${bin}"`, String(e));
+            this._setError(`could not run "${bin}"`, String(e));
             return;
         }
         this._refreshProc = proc;

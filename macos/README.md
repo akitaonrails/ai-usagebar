@@ -57,7 +57,7 @@ cd macos
 ./ai-usagebar-menubar &    # appears in the menu bar (no Dock icon)
 ```
 
-Start at login — toggle **Preferências… → Sistema → "Iniciar no login"** in the
+Start at login — toggle **Preferences… → System → "Start at login"** in the
 app, or from the shell:
 
 ```bash
@@ -96,7 +96,7 @@ TUI. Requesting `anthropic` includes every configured named Claude account.
 In Overview mode, each dropdown row is a **checkbox**: click it to drop that
 provider from the always-visible top-bar summary (checkmark = shown; unchecked +
 dimmed = hidden). Hidden providers stay listed so you can re-enable them, and the
-choice persists. Jumping to a provider's detail view is via the *Trocar vendor*
+choice persists. Jumping to a provider's detail view is via the *Switch provider*
 submenu / ⌥⌘\ (the Overview row click toggles visibility instead).
 
 The Preferences window needs **macOS 12+** (the menu bar itself works on
@@ -114,7 +114,7 @@ reset (including a displayed `—`) retain their row but do not draw a marker.
 
 ## Indicator style
 
-The "Estilo do indicador" preference chooses between **block bars** (`░█`, the
+The "Indicator style" preference chooses between **block bars** (`░█`, the
 default) and a **ring** (`○`) drawn with `NSBezierPath` (AppKit). The ring paints
 the usage fraction as a severity-colored arc over a faint track, with the same
 pace marker as the block bar: calm fill from 12 o'clock up to the lesser of the
@@ -126,12 +126,12 @@ be invisible) and `COLOR_EMPTY` on light ones.
 
 ## Quick vendor switch
 
-A **"Trocar vendor"** submenu in the dropdown (between "Atualizar agora" /
-"Abrir TUI" and "Preferências…") lists only configured vendors, with a
+A **"Switch provider"** submenu in the dropdown (between "Refresh now" /
+"Open TUI" and "Preferences…") lists only configured vendors, with a
 checkmark on the active one.
 Selecting one switches immediately, without opening Preferences.
 The global **⌥⌘\\** shortcut performs the same cycle from any app; disable it
-under Preferências → Atalho if that chord belongs to another application.
+under Preferences → Shortcut if that chord belongs to another application.
 
 ## Multiple Claude accounts
 

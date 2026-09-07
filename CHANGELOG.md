@@ -24,13 +24,19 @@ Each release is also published at
 
 ### Changed
 
+- The macOS menu bar and the GNOME extension are in English. Both shipped with
+  a Brazilian Portuguese UI while the Rust core, the Omarchy panel and the KDE
+  plasmoid were already English, so the project read as two different products
+  depending on which surface you opened. Display strings only — no setting key,
+  comparison, or stored value changed — and the macOS test that asserted a
+  Portuguese label moves with it.
+
 - `KEY_VENDORS` no longer stores each provider's environment variable name: it
   comes from `VendorId::api_key_env`, and `Config::api_key_env_for` /
   `Config::inline_api_key` replaced two private helpers that matched on a
   section *string* with a `_ =>` fallback arm — where a new key vendor nobody
   added would silently read the wrong default and report as unconfigured for
   ever. Both match on `VendorId`, so that case now fails to compile.
-
 ## [1.12.0] — 2026-09-06
 
 ### Added
