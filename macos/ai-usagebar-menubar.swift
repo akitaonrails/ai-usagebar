@@ -1451,7 +1451,7 @@ struct SettingsView: View {
                         Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
                         Toggle("Mostrar barras (off = só números)", isOn: $showBars)
                         Toggle("Mostrar referência da meta (linha de ritmo)", isOn: $showMeta)
-                        Toggle("Mostrar horário do reset (em vez da contagem regressiva)", isOn: $showResetClock)
+                        Toggle("Show reset time instead of a countdown", isOn: $showResetClock)
                         Picker("Estilo do indicador", selection: $barStyle) {
                             Text("Barras (░█)").tag("block")
                             Text("Anel (○)").tag("ring")
