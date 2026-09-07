@@ -9,6 +9,14 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- The macOS menu bar icon no longer disappears mid-session. `AppMain` held its
+  `AppDelegate` in a `main()` local, and `NSApplication.delegate` is a *weak*
+  reference — so in optimised builds ARC was free to release it after the
+  assignment, since nothing later in the function mentions it, taking the
+  status item with it. The delegate is now held for the program's lifetime.
+
 ### Changed
 
 - The macOS menu bar and the GNOME extension are in English. Both shipped with
