@@ -7,6 +7,21 @@ use std::process::{Command, Stdio};
 use crate::error::{AppError, Result};
 use crate::vendor::vendor_secret_env_vars_to_remove;
 
+/// Where the GitHub CLI records a completed login. Its existence is the
+/// cheapest honest answer to "is Copilot signed in": the token itself only
+/// comes back from `gh auth token`, and a status list that runs a subprocess
+/// per provider is not a status list. `GH_CONFIG_DIR` wins, as it does for
+/// `gh` itself.
+pub fn default_hosts_path() -> Result<std::path::PathBuf> {
+    if let Some(dir) = std::env::var_os("GH_CONFIG_DIR").filter(|v| !v.is_empty()) {
+        return Ok(std::path::PathBuf::from(dir).join("hosts.yml"));
+    }
+    Ok(crate::cache::home_dir()?
+        .join(".config")
+        .join("gh")
+        .join("hosts.yml"))
+}
+
 /// The deliberately narrow process description used to obtain the current
 /// GitHub CLI OAuth token. Keeping it data makes the subprocess boundary
 /// inspectable in tests and prevents a shell from entering this path.

@@ -137,6 +137,31 @@ pub enum VendorId {
     CommandCode,
 }
 
+/// How a provider authenticates. Drives what a frontend offers a provider that
+/// is not usable yet: a command to run, a variable to set, or an app to sign
+/// in to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthKind {
+    /// An interactive login writes a credential file. `login_command` runs it.
+    Oauth,
+    /// An API key, from the environment or an inline `api_key` in config.
+    ApiKey,
+    /// No credential of its own — a local product's session or state file is
+    /// the login, and there is nothing for the user to paste.
+    Local,
+}
+
+impl AuthKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AuthKind::Oauth => "oauth",
+            AuthKind::ApiKey => "apikey",
+            AuthKind::Local => "local",
+        }
+    }
+}
+
 impl VendorId {
     pub fn slug(self) -> &'static str {
         match self {
@@ -217,6 +242,103 @@ impl VendorId {
             VendorId::NousResearch => "nrs",
             VendorId::OpenCodeGo => "ocg",
             VendorId::CommandCode => "cmc",
+        }
+    }
+
+    /// How a provider proves who you are. This is the fact a frontend needs to
+    /// say what an unconfigured provider is still missing, and it is the one
+    /// thing neither `usage --json` nor the config file carries: the report
+    /// lists only *enabled* providers, so the switched-off and the
+    /// never-credentialed are exactly the rows it cannot describe.
+    pub const fn auth_kind(self) -> AuthKind {
+        match self {
+            VendorId::Anthropic
+            | VendorId::Openai
+            | VendorId::Copilot
+            | VendorId::NousResearch
+            | VendorId::CommandCode => AuthKind::Oauth,
+            VendorId::AnthropicApi
+            | VendorId::Zai
+            | VendorId::Openrouter
+            | VendorId::Deepseek
+            | VendorId::Kimi
+            | VendorId::Kilo
+            | VendorId::Novita
+            | VendorId::Moonshot
+            | VendorId::Grok
+            | VendorId::Minimax
+            | VendorId::OpenCodeGo => AuthKind::ApiKey,
+            // No credential of their own: another local product's session is
+            // the login. Antigravity has no credential file at all (the binary
+            // probes whichever local server answers), Cursor and Kiro read the
+            // IDE's and kiro-cli's own state, and SuperGrok uses the Grok Build
+            // CLI's login.
+            VendorId::Supergrok | VendorId::Antigravity | VendorId::Cursor | VendorId::Kiro => {
+                AuthKind::Local
+            }
+        }
+    }
+
+    /// Default environment variable holding this provider's key, or `""` for a
+    /// provider that has none. This is only the *default*: most key vendors
+    /// accept an `api_key_env` override in config, so a frontend showing the
+    /// variable a user must set wants [`Config::api_key_env_for`], not this.
+    pub const fn api_key_env(self) -> &'static str {
+        match self {
+            VendorId::AnthropicApi => "ANTHROPIC_ADMIN_KEY",
+            VendorId::Zai => "ZAI_API_KEY",
+            VendorId::Openrouter => "OPENROUTER_API_KEY",
+            VendorId::Deepseek => "DEEPSEEK_API_KEY",
+            VendorId::Kimi => "KIMI_API_KEY",
+            VendorId::Kilo => "KILO_API_KEY",
+            VendorId::Novita => "NOVITA_API_KEY",
+            VendorId::Moonshot => "MOONSHOT_API_KEY",
+            VendorId::Grok => "XAI_MANAGEMENT_KEY",
+            VendorId::Minimax => "MINIMAX_API_KEY",
+            VendorId::OpenCodeGo => "OPENCODE_GO_API_KEY",
+            // OAuth-first, with an environment override for CI and headless
+            // use. Neither name is configurable, so neither has an
+            // `api_key_env` field in its config section.
+            VendorId::Copilot => "GITHUB_COPILOT_TOKEN",
+            VendorId::CommandCode => "COMMANDCODE_API_KEY",
+            VendorId::Anthropic
+            | VendorId::Openai
+            | VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Kiro
+            | VendorId::NousResearch => "",
+        }
+    }
+
+    /// Command that signs this provider in, or `""` when signing in happens
+    /// somewhere this cannot name — a desktop app's own window. The strings
+    /// are the ones the vendor modules' own credential errors already print,
+    /// so a status row and a failed fetch tell the user to run the same thing.
+    pub const fn login_command(self) -> &'static str {
+        match self {
+            VendorId::Anthropic => "claude",
+            VendorId::Openai => "codex login",
+            VendorId::Copilot => "gh auth login",
+            VendorId::CommandCode => "commandcode",
+            VendorId::NousResearch => "ai-usagebar auth nous login",
+            VendorId::Kiro => "kiro-cli login",
+            // Kimi takes a key *or* the Kimi Code CLI's own OAuth login, which
+            // is what a subscriber already has locally.
+            VendorId::Kimi => "kimi",
+            VendorId::AnthropicApi
+            | VendorId::Zai
+            | VendorId::Openrouter
+            | VendorId::Deepseek
+            | VendorId::Kilo
+            | VendorId::Novita
+            | VendorId::Moonshot
+            | VendorId::Grok
+            | VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Minimax
+            | VendorId::OpenCodeGo => "",
         }
     }
 
