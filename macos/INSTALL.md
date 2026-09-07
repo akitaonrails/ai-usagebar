@@ -48,12 +48,12 @@ claude        # authenticates; creds land in the login Keychain
 
 It appears in the menu bar next to the clock (no Dock icon). Click it for the
 dropdown: usage rows (Session / Weekly / Sonnet / Extra for rate-limit vendors,
-or a credit balance for balance-only vendors), a **"Trocar vendor"** submenu to
+or a credit balance for balance-only vendors), a **"Switch provider"** submenu to
 switch vendors quickly, and Preferences.
 
 ### 6. Start automatically at login
 
-The easiest way is the **Preferências… → Sistema → "Iniciar no login"** toggle in
+The easiest way is the **Preferences… → System → "Start at login"** toggle in
 the app itself — it installs (or removes) the LaunchAgent for you, no Terminal
 needed. It takes effect at your next login.
 
@@ -66,7 +66,7 @@ Or do it from the shell:
 Either way installs a LaunchAgent at
 `~/Library/LaunchAgents/com.akitaonrails.ai-usagebar-menubar.plist` with
 `RunAtLoad`, so the app starts on every login. It is not kept alive after you
-choose **Sair/Quit**.
+choose **Quit**.
 
 ### 7. Verify it's running
 
