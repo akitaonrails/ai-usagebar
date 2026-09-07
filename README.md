@@ -837,9 +837,10 @@ After saving:
 - Auto-merges with the active Omarchy theme at `~/.config/omarchy/current/theme/colors.toml`.
 - Per-color overrides: `--color-low`, `--color-mid`, `--color-high`, `--color-critical` (claudebar-compatible).
 
-## Changelog
+## Releases
 
-See [CHANGELOG.md](CHANGELOG.md) for the release history. Each release also has its own page at <https://github.com/akitaonrails/ai-usagebar/releases> with the auto-generated install snippet and checksum.
+Release history lives on GitHub Releases (`gh release list` / the Releases
+tab), generated from PR titles between tags. There is no `CHANGELOG.md`.
 
 ## Acknowledgements
 

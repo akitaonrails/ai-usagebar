@@ -75,9 +75,6 @@ jobs:
           check ".SRCINFO-bin pkgver" \
             "$(grep -m1 'pkgver = ' packaging/aur/.SRCINFO-bin | awk '{print $3}')" "$version"
 
-          grep -q "^## \[$version\]" CHANGELOG.md \
-            || { echo "::error::CHANGELOG.md has no '## [$version]' section"; fail=1; }
-
           [ "$fail" -eq 0 ] || exit 1
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "verified $ref"
@@ -159,7 +156,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout source (for CHANGELOG + previous tag)
+      - name: Checkout source (for previous tag + generated notes)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
@@ -180,22 +177,15 @@ jobs:
           # in version strings like `v0.4.1`.
           PREV_TAG=$(git tag --sort=-v:refname | grep -Fxv "$TAG" | head -1)
 
-          # Extract matching section from CHANGELOG.md (between "## [VERSION]"
-          # and the next "## [" header). Empty file if no match.
-          # `index(s, t) == 1` is a string prefix-equality match — no regex,
-          # so dots in `ver` (e.g. `0.4.1`) stay literal.
-          awk -v ver="$VERSION" '
-            BEGIN { hdr = "## [" ver "]" }
-            index($0, hdr) == 1 { flag=1; next }
-            flag && index($0, "## [") == 1 { exit }
-            flag { print }
-          ' CHANGELOG.md > changelog_section.md
-
           {
-            if [ -s changelog_section.md ]; then
-              echo "## What's changed"
+            echo "## What's changed"
+            echo
+            if [ -n "$PREV_TAG" ]; then
+              git log --pretty=format:'- %s' "${PREV_TAG}..${TAG}"
               echo
-              cat changelog_section.md
+            else
+              echo "First tagged release."
+              echo
             fi
 
             echo "## Install"
@@ -313,7 +303,7 @@ jobs:
           # bin repo tracks a file literally named `PKGBUILD`, so stage the
           # `-bin` variant under that name. Without this, makepkg generates
           # .SRCINFO from the stale PKGBUILD and pushes an empty commit (the
-          # mode that bit us in v0.4.4 — see CHANGELOG).
+          # mode that bit us in v0.4.4).
           mkdir -p staging/bin
           cp packaging/aur/PKGBUILD-bin staging/bin/PKGBUILD
 

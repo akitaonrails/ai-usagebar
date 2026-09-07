@@ -23,12 +23,6 @@ tests, and a change to the report shape can break them without touching Rust.
 
 Most review round-trips come from one of these. None takes long.
 
-- [ ] **`CHANGELOG.md` entry**, under `## [Unreleased]`, in the right category
-      (`Added` / `Changed` / `Fixed` / `Security`). Anything user-visible needs
-      one — a new provider, a changed default, a fixed bug, a renamed flag.
-      **Never edit a released section**; if your branch is older than the last
-      tag, git will merge your entry cleanly into whatever now sits at that
-      position, which has silently rewritten shipped history twice.
 - [ ] **Tests that fail without your change.** For a bug fix, confirm the new
       test fails on `main` and passes on your branch — say so in the PR.
 - [ ] **No leftovers.** If your change removes the last caller of a helper,
