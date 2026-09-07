@@ -9,6 +9,15 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Changed
+
+- The macOS menu bar and the GNOME extension are in English. Both shipped with
+  a Brazilian Portuguese UI while the Rust core, the Omarchy panel and the KDE
+  plasmoid were already English, so the project read as two different products
+  depending on which surface you opened. Display strings only — no setting key,
+  comparison, or stored value changed — and the macOS test that asserted a
+  Portuguese label moves with it.
+
 ## [1.12.0] — 2026-09-06
 
 ### Added
