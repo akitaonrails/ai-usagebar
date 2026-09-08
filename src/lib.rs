@@ -22,6 +22,7 @@ pub mod context;
 pub mod copilot;
 pub mod countdown;
 pub mod cursor;
+pub mod custom;
 pub mod deepseek;
 pub mod display;
 pub mod error;

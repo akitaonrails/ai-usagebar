@@ -19,7 +19,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::config::Config;
-use crate::tui::app::{TabId, TabState, refresh_one, tabs_with_desktop};
+use crate::tui::app::{TabId, TabSource, TabState, refresh_one, tabs_with_desktop};
 use crate::tui::panels::{Section, sections_with_metadata_for};
 
 /// Matches the widget's `--pace-tolerance` default; only affects the pacing
@@ -56,6 +56,12 @@ enum ReportSection {
         detail: String,
         severity: String,
         reset_at: Option<DateTime<Utc>>,
+        /// Full length of the reset window in seconds, present only when the
+        /// vendor states it exactly (rolling 5h/7d windows). A frontend that
+        /// wants a pace indicator needs both this and `reset_at`; a calendar
+        /// month or an unstated window omits the field rather than guessing.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        window_secs: Option<u64>,
     },
     Text {
         label: String,
@@ -133,8 +139,8 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         id: tab_id(tab),
         name: tab_name(tab),
         display_name: tab_display_name(tab),
-        short_name: tab.vendor.short_name().to_string(),
-        icon: tab.vendor.bar_icon().to_string(),
+        short_name: tab_short_name(tab),
+        icon: tab_icon(tab),
         plan: None,
         sections: Vec::new(),
         error: match &state {
@@ -170,6 +176,9 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
                     detail: footnote,
                     severity: severity.as_str().into(),
                     reset_at: projected.reset_at,
+                    window_secs: projected
+                        .window
+                        .map(|window| window.num_seconds().max(0) as u64),
                 });
             }
             Section::Text { label, value } => {
@@ -189,20 +198,52 @@ fn report_exit_code(entries: &[Entry]) -> i32 {
 }
 
 /// Stable machine id shared by aggregate views and the macOS menu bar:
-/// `<vendor>@<label>` for named accounts.
+/// `<vendor>@<label>` for named accounts, `custom:<id>` for a `[[custom]]`
+/// provider (which never has accounts).
 fn tab_id(tab: &TabId) -> String {
-    match &tab.account {
-        Some(account) => format!("{}@{account}", tab.vendor.slug()),
-        None => tab.vendor.slug().to_string(),
+    match &tab.source {
+        TabSource::Custom { id, .. } => format!("custom:{id}"),
+        TabSource::Builtin(vendor) => match &tab.account {
+            Some(account) => format!("{}@{account}", vendor.slug()),
+            None => vendor.slug().to_string(),
+        },
     }
 }
 
 fn tab_name(tab: &TabId) -> String {
-    format_tab_name(tab, tab.vendor.slug())
+    match &tab.source {
+        TabSource::Builtin(vendor) => format_tab_name(tab, vendor.slug()),
+        TabSource::Custom { name, .. } => format_tab_name(tab, name),
+    }
 }
 
 fn tab_display_name(tab: &TabId) -> String {
-    format_tab_name(tab, tab.vendor.display_name())
+    match &tab.source {
+        TabSource::Builtin(vendor) => format_tab_name(tab, vendor.display_name()),
+        TabSource::Custom { name, .. } => format_tab_name(tab, name),
+    }
+}
+
+/// The `{vendor_short}` code: the vendor's own for a built-in, the configured
+/// `short_name` for a custom provider.
+fn tab_short_name(tab: &TabId) -> String {
+    match &tab.source {
+        TabSource::Builtin(vendor) => vendor.short_name().to_string(),
+        TabSource::Custom { short_name, .. } => {
+            crate::display::sanitize_untrusted_field(short_name)
+        }
+    }
+}
+
+/// The bar glyph: the vendor's own for a built-in. A custom provider has no
+/// glyph of its own, so its `short_name` stands in, as Zai and Kimi's do.
+fn tab_icon(tab: &TabId) -> String {
+    match &tab.source {
+        TabSource::Builtin(vendor) => vendor.bar_icon().to_string(),
+        TabSource::Custom { short_name, .. } => {
+            crate::display::sanitize_untrusted_field(short_name)
+        }
+    }
 }
 
 fn format_tab_name(tab: &TabId, vendor_name: &str) -> String {
@@ -231,14 +272,22 @@ fn render_json_for_primary(entries: &[Entry], primary: Option<&str>) -> String {
                         detail,
                         severity,
                         reset_at,
-                    } => Some(json!({
-                        "label": label,
-                        "percent": percent,
-                        "value": value,
-                        "detail": detail,
-                        "severity": severity,
-                        "reset_at": reset_at,
-                    })),
+                        window_secs,
+                    } => {
+                        let mut metric = json!({
+                            "label": label,
+                            "percent": percent,
+                            "value": value,
+                            "detail": detail,
+                            "severity": severity,
+                            "reset_at": reset_at,
+                        });
+                        // Same rule as the `sections` serializer: absent, not null.
+                        if let Some(secs) = window_secs {
+                            metric["window_secs"] = json!(secs);
+                        }
+                        Some(metric)
+                    }
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -373,6 +422,7 @@ mod tests {
             detail: detail.into(),
             severity: "mid".into(),
             reset_at: None,
+            window_secs: None,
         }
     }
 
@@ -694,5 +744,114 @@ mod tests {
         let mut failed = entry("openai", Vec::new());
         failed.error = Some("not signed in".into());
         assert_eq!(report_exit_code(&[failed, entry("cursor", Vec::new())]), 0);
+    }
+
+    fn custom_spec(id: &str, enabled: bool) -> crate::config::CustomProviderConfig {
+        crate::config::CustomProviderConfig {
+            id: id.into(),
+            name: "My Tool".into(),
+            short_name: "myt".into(),
+            enabled,
+            ..Default::default()
+        }
+    }
+
+    /// A `[[custom]]` provider is one more report entry after the built-ins,
+    /// addressed as `custom:<id>`; a disabled one is absent.
+    #[test]
+    fn enabled_custom_providers_are_listed_after_builtins_by_custom_id() {
+        use crate::tui::app::tabs_from_config;
+
+        let mut config = Config {
+            custom: vec![custom_spec("mytool", true)],
+            ..Default::default()
+        };
+        let tabs = tabs_from_config(&config);
+        let ids: Vec<String> = tabs.iter().map(tab_id).collect();
+        assert_eq!(ids.last().map(String::as_str), Some("custom:mytool"));
+        assert!(
+            ids[..ids.len() - 1]
+                .iter()
+                .all(|id| !id.starts_with("custom:"))
+        );
+        assert_eq!(tabs.last(), Some(&TabId::custom(&config.custom[0])));
+
+        config.custom[0].enabled = false;
+        assert!(
+            tabs_from_config(&config)
+                .iter()
+                .all(|tab| tab_id(tab) != "custom:mytool")
+        );
+    }
+
+    #[test]
+    fn custom_entries_carry_their_configured_names_and_projected_windows() {
+        use crate::custom::types::{CustomMetric, CustomSnapshot, CustomText};
+
+        let now = Utc::now();
+        let spec = custom_spec("mytool", true);
+        let tab = TabId::custom(&spec);
+        assert_eq!(tab_id(&tab), "custom:mytool");
+        assert_eq!(tab_name(&tab), "My Tool");
+        assert_eq!(tab_display_name(&tab), "My Tool");
+
+        let session_reset = now + chrono::Duration::hours(2);
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Custom(CustomSnapshot {
+                plan: Some("Team".into()),
+                metrics: vec![
+                    CustomMetric {
+                        label: "Session".into(),
+                        pct: 40,
+                        footnote: "40 of 100".into(),
+                        resets_at: Some(session_reset),
+                        window_secs: Some(18_000),
+                    },
+                    CustomMetric {
+                        label: "Monthly".into(),
+                        pct: 10,
+                        footnote: String::new(),
+                        resets_at: None,
+                        window_secs: None,
+                    },
+                ],
+                texts: vec![CustomText {
+                    label: "Region".into(),
+                    value: "eu".into(),
+                }],
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: Some(now),
+        }));
+        let projected = entry_from_state(&tab, &state, now);
+        assert_eq!(projected.id, "custom:mytool");
+        assert_eq!(projected.display_name, "My Tool");
+        assert_eq!(projected.short_name, "myt");
+        assert_eq!(projected.plan.as_deref(), Some("Team"));
+
+        let rendered = render_json_for_primary(&[projected], None);
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let first = &value["entries"][0];
+        assert_eq!(first["short_name"], "myt");
+        assert_eq!(first["icon"], "myt");
+        assert_eq!(first["metrics"][0]["label"], "Session");
+        assert_eq!(first["metrics"][0]["percent"], 40);
+        assert_eq!(first["metrics"][0]["window_secs"], 18_000);
+        assert_eq!(
+            first["metrics"][0]["reset_at"],
+            session_reset.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        );
+        assert_eq!(first["metrics"][1]["label"], "Monthly");
+        assert!(first["metrics"][1].get("window_secs").is_none());
+        assert!(first["sections"].as_array().unwrap().iter().any(|section| {
+            section["type"] == "text" && section["label"] == "Region" && section["value"] == "eu"
+        }));
+
+        // A failed custom entry still carries its code and names.
+        let failed = entry_from_state(&tab, &TabState::Error("HTTP 500".into()), now);
+        assert_eq!(failed.short_name, "myt");
+        assert_eq!(failed.display_name, "My Tool");
+        assert!(failed.sections.is_empty());
     }
 }

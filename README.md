@@ -324,6 +324,54 @@ stores, editor state, or browser state, and never writes the token to config or
 cache. `GITHUB_COPILOT_TOKEN` is an optional explicit environment override and
 takes precedence over GitHub CLI OAuth.
 
+### Custom providers (static token)
+
+A service ai-usagebar does not know can still get a TUI tab and a
+`usage --json` entry — and so a card in every frontend that reads
+`usage --json` — when it exposes a JSON endpoint and accepts a static token.
+Declare it as a `[[custom]]` table in `config.toml`; the JSON is mapped with
+[RFC 6901 JSON Pointers](https://datatracker.ietf.org/doc/html/rfc6901):
+
+```toml
+[[custom]]
+id = "mytool"                    # slug; the entry id becomes custom:mytool
+name = "My Tool"                 # header / tab label
+short_name = "myt"               # three lowercase letters, unique
+enabled = true
+url = "https://api.example.com/v1/usage"   # https unless allow_http = true
+api_key_env = "MYTOOL_API_KEY"   # env var first, inline api_key second
+# api_key = "..."
+# auth_header = "Authorization"  # default; auth_scheme = "Bearer" (empty sends the raw key)
+# headers = { "X-Org" = "acme" } # extra non-secret headers
+# plan = "Pro"                   # literal, or plan_path = "/subscription/tier"
+# cache_ttl_secs = 60
+
+[[custom.metrics]]
+label = "Requests"
+used = "/usage/requests/used"    # numbers or numeric strings
+limit = "/usage/requests/limit"  # or percent = "/usage/pct" instead of used + limit
+resets_at = "/usage/requests/reset_at"   # RFC 3339, epoch seconds or epoch ms
+window_secs = 86400              # window length; reported as `window_secs` for pacing
+
+[[custom.texts]]
+label = "Balance"
+value = "/balance/display"
+```
+
+Each metric renders as a meter with the usual severity colours; texts render
+as one-line rows. The cache under `<cache>/ai-usagebar/custom/<id>` holds the
+projected snapshot (only the values the pointers selected, never the response
+body) with the same stale-while-revalidate rules as the built-in vendors, and
+an error names the failing pointer, never the response body or the key. The
+`api_key_env` variable is scrubbed from every child process ai-usagebar
+spawns, like the built-in ones.
+
+Limits by design: static tokens only (no OAuth or refresh flows); GET
+requests; no scripting. Custom providers appear in the TUI, in `usage --json`,
+and in every frontend that reads `usage --json`, but not in the Waybar
+widget's `--vendor` list, the TUI Settings overlay, `[ui] primary`, or the
+`vendors` catalog.
+
 ### Credential resolution order (for API-key vendors)
 
 For each API-key vendor, ai-usagebar checks in this order:
