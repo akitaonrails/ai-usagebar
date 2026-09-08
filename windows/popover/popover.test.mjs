@@ -156,14 +156,15 @@ const errored = parseHostPayload({
     display_name: 'Codex',
     status: 'error',
     error: 'not signed in',
+      sign_in: 'Run `codex login` in a terminal, then Refresh.',
     stale: true,
     sections: [],
   }],
 });
 const errorCards = projectCards(errored, 0);
 assert.equal(errorCards[0].errorTitle, 'Sign-in expired');
-assert.equal(errorCards[0].errorHint, 'Run codex login in a terminal, then Refresh.');
-assert.equal(errorCards[0].error, 'Sign-in expired. Run codex login in a terminal, then Refresh.');
+assert.equal(errorCards[0].errorHint, 'Run `codex login` in a terminal, then Refresh.');
+assert.equal(errorCards[0].error, 'Sign-in expired. Run `codex login` in a terminal, then Refresh.');
 assert.equal(errorCards[0].errorDetail, 'not signed in');
 assert.equal(errorCards[0].stale, true);
 assert.equal(errorCards[0].rows.length, 0);
@@ -175,6 +176,7 @@ const claudeErrored = parseHostPayload({
     plan: 'Claude Max 5x',
     status: 'error',
     error: 'HTTP 401: authentication rejected — credentials may be missing, expired, or invalid',
+    sign_in: 'Run `claude` in a terminal, then Refresh.',
     sections: [],
   }],
 });
@@ -182,7 +184,7 @@ const claudeCards = projectCards(claudeErrored, 0);
 assert.equal(claudeCards[0].title, 'Claude');
 assert.equal(claudeCards[0].plan, 'Claude Max 5x');
 assert.equal(claudeCards[0].errorTitle, 'Sign-in expired');
-assert.equal(claudeCards[0].errorHint, 'Run claude in a terminal, then Refresh.');
+assert.equal(claudeCards[0].errorHint, 'Run `claude` in a terminal, then Refresh.');
 assert.equal(claudeCards[0].rows.length, 0);
 
 const none = parseHostPayload({ version: '1', entries: [] });

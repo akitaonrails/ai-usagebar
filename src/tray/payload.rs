@@ -116,7 +116,7 @@ pub fn wrap_report(
                     obj.insert("primary".into(), primary.clone());
                 }
                 if let Some(entries) = map.get("entries") {
-                    obj.insert("entries".into(), entries.clone());
+                    obj.insert("entries".into(), with_sign_in_hints(entries));
                 }
             }
             payload
@@ -128,6 +128,40 @@ pub fn wrap_report(
             payload
         }
     }
+}
+
+/// Attach each entry's sign-in sentence from [`VendorId::sign_in_hint`].
+///
+/// The popover needs a "how do I fix this?" line on an error card. It must not
+/// keep its own table for that: a JS object literal silently omits a provider
+/// nobody remembered, while the Rust match cannot compile without one. The
+/// entry id is `vendor` or `vendor@account`, so the slug is the part before
+/// `@`; an id that matches no vendor is left without a hint rather than guessed.
+fn with_sign_in_hints(entries: &Value) -> Value {
+    let Some(list) = entries.as_array() else {
+        return entries.clone();
+    };
+    Value::Array(
+        list.iter()
+            .map(|entry| {
+                let mut entry = entry.clone();
+                let slug = entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| id.split('@').next().unwrap_or(id).to_ascii_lowercase());
+                let hint = slug.and_then(|slug| {
+                    crate::vendor::VendorId::all()
+                        .iter()
+                        .find(|v| v.slug() == slug)
+                        .map(|v| v.sign_in_hint())
+                });
+                if let (Some(hint), Some(obj)) = (hint, entry.as_object_mut()) {
+                    obj.insert("sign_in".into(), json!(hint));
+                }
+                entry
+            })
+            .collect(),
+    )
 }
 
 pub fn host_payload(value: &Value) -> String {
@@ -178,6 +212,53 @@ pub fn worst_severity(payload: &Value) -> Severity {
 
 #[cfg(test)]
 mod tests {
+
+    /// The popover renders "how do I fix this?" on an error card. That sentence
+    /// must come from the host: the frontend kept its own table first, and it
+    /// disagreed with `VendorId` for five of eight providers before shipping.
+    #[test]
+    fn every_entry_carries_its_sign_in_hint_from_the_vendor() {
+        let report = r#"{"primary":"anthropic","entries":[
+            {"id":"anthropic","status":"error","error":"not signed in"},
+            {"id":"openai@work","status":"error","error":"not signed in"},
+            {"id":"cursor","status":"ready"},
+            {"id":"custom:mytool","status":"ready"}
+        ]}"#;
+        let payload = wrap_report(report, &facts("1.0.0", false), 0, None);
+        let entries = payload["entries"].as_array().expect("entries");
+
+        assert_eq!(
+            entries[0]["sign_in"],
+            json!(crate::vendor::VendorId::Anthropic.sign_in_hint())
+        );
+        // "vendor@account" resolves on the vendor half.
+        assert_eq!(
+            entries[1]["sign_in"],
+            json!(crate::vendor::VendorId::Openai.sign_in_hint())
+        );
+        // A vendor that has no CLI login still says how to sign in.
+        assert_eq!(
+            entries[2]["sign_in"],
+            json!(crate::vendor::VendorId::Cursor.sign_in_hint())
+        );
+        // An id that is not a built-in vendor gets no invented hint.
+        assert!(entries[3].get("sign_in").is_none(), "{:?}", entries[3]);
+    }
+
+    /// Every id `usage --json` can emit must resolve, or the popover shows a
+    /// generic line for a provider we do know how to sign in.
+    #[test]
+    fn every_vendor_slug_resolves_to_a_hint() {
+        for vendor in crate::vendor::VendorId::all() {
+            let report = format!(
+                r#"{{"entries":[{{"id":"{}","status":"error","error":"x"}}]}}"#,
+                vendor.slug()
+            );
+            let payload = wrap_report(&report, &facts("1.0.0", false), 0, None);
+            let hint = payload["entries"][0]["sign_in"].as_str().unwrap_or("");
+            assert!(!hint.is_empty(), "{} has no sign-in hint", vendor.slug());
+        }
+    }
     use super::*;
 
     fn sample_report() -> String {

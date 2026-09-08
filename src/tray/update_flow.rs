@@ -1,8 +1,14 @@
 //! Release check, download, verification and binary swap for the Windows
-//! tray. Runs on the worker thread; the pure decisions (version compare,
+//! tray.
+//!
+//! Compiled on every OS so Linux CI exercises the release-check logic; only
+//! the Windows host calls the install path, hence the `dead_code` allowance
+//! off Windows. Runs on the worker thread; the pure decisions (version compare,
 //! asset selection, sha256, the rename dance) live in `crate::update` so
 //! they are unit-tested on every OS. This file is only the glue around
 //! `reqwest` and the process's own paths.
+
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -37,6 +43,17 @@ pub async fn check(
     let Some(url) = latest_release_url() else {
         return Err("this build names no GitHub repository to check".into());
     };
+    check_at(client, &url, current_version).await
+}
+
+/// [`check`] against an explicit URL. The test seam: `latest_release_url` is a
+/// compile-time constant pointing at the real repository, so without this a
+/// test of the response handling would have to reach GitHub.
+pub async fn check_at(
+    client: &reqwest::Client,
+    url: &str,
+    current_version: &str,
+) -> Result<Option<Release>, String> {
     let response = client
         .get(url)
         .header("Accept", "application/vnd.github+json")
@@ -145,4 +162,104 @@ pub fn install_dir() -> Result<PathBuf, String> {
     exe.parent()
         .map(Path::to_path_buf)
         .ok_or_else(|| "current exe has no parent directory".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release_json(tag: &str, prerelease: bool) -> String {
+        format!(
+            r#"{{"tag_name":"{tag}","prerelease":{prerelease},"draft":false,
+                "html_url":"https://github.com/akitaonrails/ai-usagebar/releases/tag/{tag}",
+                "assets":[
+                  {{"name":"ai-usagebar-tray-windows-x86_64.exe","browser_download_url":"https://github.com/x/y/a.exe","size":10}},
+                  {{"name":"ai-usagebar-tray-windows-x86_64.exe.sha256","browser_download_url":"https://github.com/x/y/a.exe.sha256","size":80}}
+                ]}}"#
+        )
+    }
+
+    /// A newer stable release is offered.
+    #[tokio::test]
+    async fn a_newer_release_is_reported() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/latest")
+            .with_status(200)
+            .with_body(release_json("v9.9.9", false))
+            .create_async()
+            .await;
+        let found = check_at(
+            &http_client().unwrap(),
+            &format!("{}/latest", server.url()),
+            "1.0.0",
+        )
+        .await
+        .unwrap();
+        assert_eq!(found.map(|r| r.version), Some("9.9.9".to_string()));
+    }
+
+    /// The tray must never offer a prerelease: `parse_release` refuses it and
+    /// `check` turns that into "nothing to do", not an error the UI shows.
+    #[tokio::test]
+    async fn a_prerelease_is_not_an_update_and_not_an_error() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/latest")
+            .with_status(200)
+            .with_body(release_json("v9.9.9", true))
+            .create_async()
+            .await;
+        let found = check_at(
+            &http_client().unwrap(),
+            &format!("{}/latest", server.url()),
+            "1.0.0",
+        )
+        .await
+        .unwrap();
+        assert!(found.is_none(), "{found:?}");
+    }
+
+    /// The same version is not an update.
+    #[tokio::test]
+    async fn the_running_version_is_not_an_update() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/latest")
+            .with_status(200)
+            .with_body(release_json("v1.0.0", false))
+            .create_async()
+            .await;
+        let found = check_at(
+            &http_client().unwrap(),
+            &format!("{}/latest", server.url()),
+            "1.0.0",
+        )
+        .await
+        .unwrap();
+        assert!(found.is_none(), "{found:?}");
+    }
+
+    /// A rate-limited or broken API is an error naming the status, and never a
+    /// silent "up to date" that would hide a stuck updater.
+    #[tokio::test]
+    async fn a_failed_release_check_reports_the_status() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/latest")
+            .with_status(403)
+            .with_body("rate limited")
+            .create_async()
+            .await;
+        let err = check_at(
+            &http_client().unwrap(),
+            &format!("{}/latest", server.url()),
+            "1.0.0",
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("403"), "{err}");
+        // The upstream body may name the account; it must not reach the UI.
+        assert!(!err.contains("rate limited"), "{err}");
+    }
 }

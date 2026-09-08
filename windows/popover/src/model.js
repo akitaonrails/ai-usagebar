@@ -143,6 +143,9 @@ function normalizeEntry(raw) {
     status: error !== "" || raw.status === "error" ? "error" : "ready",
     error,
     stale: raw.stale === true,
+    // How to sign this provider in, from VendorId::sign_in_hint on the host.
+    // Deliberately not a table in this file; see signInHint.
+    signIn: clean(raw.sign_in, 200),
     sections,
   };
 }
@@ -418,7 +421,7 @@ export function projectCards(payload, nowMs) {
     let warning = null;
     for (const section of entry.sections || []) {
       if (isWarningSection(section)) {
-        const explained = explainError(section.value || section.label, entry.id);
+        const explained = explainError(section.value || section.label, entry);
         warning = { title: explained.title, hint: explained.hint, raw: shortenDiagnostic(section.value || section.label) };
         continue;
       }
@@ -453,7 +456,7 @@ export function projectCards(payload, nowMs) {
     }
     dropRedundantResetRows(rows);
     dedupeRowKeys(rows);
-    const explained = explainError(entry.error, entry.id);
+    const explained = explainError(entry.error, entry);
     cards.push({
       id: entry.id,
       title: entry.displayName || entry.shortName || entry.id,
@@ -731,7 +734,7 @@ export function mergeVisibleOrder(fullOrder, visibleOrder) {
 // Only "No API key" counts — an expired sign-in means a credential exists.
 export function lacksCredentials(entry) {
   if (!entry || typeof entry !== "object") return false;
-  return explainError(entry.error, entry.id).title === "No API key";
+  return explainError(entry.error, entry).title === "No API key";
 }
 
 // Runs once, on the first payload that carries entries. A host error (no
@@ -897,17 +900,6 @@ export function moveRowToList(prefs, key, list, beforeKey) {
   return next;
 }
 
-const SIGN_IN_HINT = {
-  anthropic: "Run claude in a terminal, then Refresh.",
-  openai: "Run codex login in a terminal, then Refresh.",
-  copilot: "Run gh auth login in a terminal, then Refresh.",
-  cursor: "Sign in to the Cursor app, then Refresh.",
-  antigravity: "Sign in with agy, then Refresh.",
-  kiro: "Sign in with kiro-cli, then Refresh.",
-  grok: "Sign in with grok, then Refresh.",
-  supergrok: "Sign in with grok, then Refresh.",
-};
-
 function vendorSlug(entryId) {
   return String(entryId || "").split("@")[0].toLowerCase();
 }
@@ -927,8 +919,13 @@ export function initialsGlyph(title) {
   return (text.length >= 2 ? text.slice(0, 2) : text.charAt(0) || "?").toUpperCase();
 }
 
-function signInHint(entryId) {
-  return SIGN_IN_HINT[vendorSlug(entryId)] || "Open TUI → Settings to sign in.";
+// The host attaches `sign_in` per entry from VendorId::sign_in_hint, so this
+// file keeps no provider table: one that lived here disagreed with Rust for
+// five of eight providers before it shipped, and a JS object cannot fail to
+// compile when a provider is added.
+function signInHint(entry) {
+  const hint = entry && typeof entry === "object" ? entry.signIn : undefined;
+  return (typeof hint === "string" && hint.trim()) || "Open TUI → Settings to sign in.";
 }
 
 function joinError(explained) {
@@ -962,7 +959,7 @@ const REFRESH = { cmd: "refresh", label: "Refresh" };
 // can offer (a host command) when there is one. Errors whose fix is a terminal
 // command (sign-in) or waiting (429 backoff) carry no action.
 /** @returns {ExplainedError} */
-export function explainError(text, entryId) {
+export function explainError(text, entry) {
   const raw = clean(text, 1200);
   if (raw === "") return { title: "", hint: "" };
   if (/no vendors enabled/i.test(raw)) {
@@ -988,7 +985,7 @@ export function explainError(text, entryId) {
     };
   }
   if (/HTTP 401|HTTP 403|authentication rejected|not signed in|token refresh failed|re-auth|run `claude`|run `codex/i.test(raw)) {
-    return { title: "Sign-in expired", hint: signInHint(entryId) };
+    return { title: "Sign-in expired", hint: signInHint(entry) };
   }
   if (/HTTP 5\d\d|schema mismatch/i.test(raw)) {
     return { title: "Provider is unavailable", hint: "Try Refresh in a bit.", action: REFRESH };
@@ -1027,8 +1024,8 @@ function isWarningSection(section) {
   return section.type === "text" && (section.label === "Warning" || /schema drift/i.test(section.label));
 }
 
-export function friendlyError(text, entryId) {
-  return joinError(explainError(text, entryId));
+export function friendlyError(text, entry) {
+  return joinError(explainError(text, entry));
 }
 
 export function nextUpdateLabel(payload, nowMs) {

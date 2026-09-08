@@ -14,7 +14,9 @@ mod host;
 mod startup;
 #[cfg(windows)]
 mod tui_launch;
-#[cfg(windows)]
+// Release check, download and verification: `reqwest` and paths, no Windows
+// API. It follows this module's rule — compile everywhere so Linux CI runs its
+// tests — even though only the Windows host calls it.
 mod update_flow;
 
 pub use icon::{Severity, tray_icon_rgba};
