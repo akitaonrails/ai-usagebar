@@ -69,6 +69,17 @@ pub enum AppError {
     /// Catch-all for unexpected conditions (cache lock contention, etc.).
     #[error("{0}")]
     Other(String),
+
+    /// A fetch failed after the vendor's plan label was already known (Claude
+    /// OAuth `subscriptionType`, etc.). Display and [`Self::user_message`] are
+    /// the inner error so UIs can still name the real cause; the plan is for
+    /// surfaces that can show it without a quota snapshot.
+    #[error("{source}")]
+    WithPlan {
+        plan: String,
+        #[source]
+        source: Box<AppError>,
+    },
 }
 
 impl AppError {
@@ -80,16 +91,43 @@ impl AppError {
         }
     }
 
+    /// Attach a plan label already known from credentials. Empty labels are
+    /// dropped so a card does not render a blank plan row.
+    pub fn with_plan(self, plan: impl Into<String>) -> Self {
+        let plan = plan.into();
+        if plan.is_empty() {
+            self
+        } else {
+            AppError::WithPlan {
+                plan,
+                source: Box::new(self),
+            }
+        }
+    }
+
+    /// Plan label carried by [`Self::WithPlan`], if any.
+    pub fn plan(&self) -> Option<&str> {
+        match self {
+            AppError::WithPlan { plan, .. } => Some(plan.as_str()),
+            _ => None,
+        }
+    }
+
     /// True for transient network errors that the widget should hide behind a
     /// "Loading…" rather than a "⚠".
     pub fn is_transient(&self) -> bool {
-        matches!(self, AppError::Transport(_))
+        match self {
+            AppError::Transport(_) => true,
+            AppError::WithPlan { source, .. } => source.is_transient(),
+            _ => false,
+        }
     }
 
     /// Render an error for a local UI or report without exposing an upstream
     /// authentication response body. Other errors retain their diagnostic text.
     pub fn user_message(&self) -> String {
         match self {
+            AppError::WithPlan { source, .. } => source.user_message(),
             AppError::Http { status, .. } if matches!(status, 401 | 403) => {
                 format!("HTTP {status}: {AUTH_FAILURE_MESSAGE}")
             }
@@ -161,5 +199,24 @@ mod tests {
             body: "provider unavailable".into(),
         };
         assert!(error.user_message().contains("provider unavailable"));
+    }
+
+    #[test]
+    fn with_plan_keeps_the_inner_message_and_the_label() {
+        let error = AppError::Http {
+            status: 401,
+            body: "invalid token".into(),
+        }
+        .with_plan("Claude Max 5x");
+        assert_eq!(error.plan(), Some("Claude Max 5x"));
+        let rendered = error.user_message();
+        assert!(rendered.contains(AUTH_FAILURE_MESSAGE));
+        assert!(!rendered.contains("invalid token"));
+        assert!(!error.is_transient());
+        assert!(
+            AppError::Transport("timeout".into())
+                .with_plan("Pro")
+                .is_transient()
+        );
     }
 }

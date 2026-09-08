@@ -312,6 +312,38 @@ impl VendorId {
         }
     }
 
+    /// The `config.toml` table this vendor's settings live in — the `Config`
+    /// field name, or its `#[serde(rename)]` where one applies. This is the
+    /// single source for every writer that edits a vendor section by name
+    /// (the Settings overlay's `KEY_VENDORS`, `config::enable_vendors_in`), so
+    /// a section can't be spelled one way by the parser and another by a
+    /// writer. A guard test in `config` parses `[<section>] enabled = true` for
+    /// every vendor and checks `is_enabled`.
+    pub const fn config_section(self) -> &'static str {
+        match self {
+            VendorId::Anthropic => "anthropic",
+            VendorId::AnthropicApi => "anthropic_api",
+            VendorId::Openai => "openai",
+            VendorId::Copilot => "copilot",
+            VendorId::Zai => "zai",
+            VendorId::Openrouter => "openrouter",
+            VendorId::Deepseek => "deepseek",
+            VendorId::Kimi => "kimi",
+            VendorId::Kilo => "kilo",
+            VendorId::Novita => "novita",
+            VendorId::Moonshot => "moonshot",
+            VendorId::Grok => "grok",
+            VendorId::Supergrok => "supergrok",
+            VendorId::Antigravity => "antigravity",
+            VendorId::Cursor => "cursor",
+            VendorId::Minimax => "minimax",
+            VendorId::Kiro => "kiro",
+            VendorId::NousResearch => "nous",
+            VendorId::OpenCodeGo => "opencode-go",
+            VendorId::CommandCode => "commandcode",
+        }
+    }
+
     /// How a provider proves who you are. This is the fact a frontend needs to
     /// say what an unconfigured provider is still missing, and it is the one
     /// thing neither `usage --json` nor the config file carries: the report

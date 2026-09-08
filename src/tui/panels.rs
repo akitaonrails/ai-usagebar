@@ -366,18 +366,28 @@ pub(crate) fn sections_with_metadata_for(
                 value: "  Loading…".into(),
             },
         ]),
-        TabState::Error(e) => SectionBuilder::new(vec![
-            Section::Spacer,
-            Section::Text {
-                label: "Error".into(),
-                value: e.clone(),
-            },
-            Section::Spacer,
-            Section::Text {
-                label: "".into(),
-                value: "Press `r` to retry, `q` to quit.".into(),
-            },
-        ]),
+        TabState::Error { message: e, plan } => {
+            let mut rows = Vec::new();
+            if let Some(plan) = plan {
+                rows.push(Section::Title {
+                    left: plan.clone(),
+                    right: None,
+                });
+            }
+            rows.extend([
+                Section::Spacer,
+                Section::Text {
+                    label: "Error".into(),
+                    value: e.clone(),
+                },
+                Section::Spacer,
+                Section::Text {
+                    label: "".into(),
+                    value: "Press `r` to retry, `q` to quit.".into(),
+                },
+            ]);
+            SectionBuilder::new(rows)
+        }
         TabState::Ready(r) => {
             let snapshot = &r.snapshot;
             let last_error = &r.last_error;
@@ -825,6 +835,16 @@ fn antigravity_sections(
     v
 }
 
+/// A Cursor pool row. The billing cycle carries an exact window only when the
+/// API stated both ends; when it did not, the row goes out with its reset time
+/// and no window rather than a guessed month a frontend would pace as exact.
+fn push_cursor_pool(v: &mut SectionBuilder, section: Section, s: &crate::usage::CursorSnapshot) {
+    match s.cycle_window() {
+        Some(window) => v.push_metric_in_window(section, s.reset_at, window),
+        None => v.push_metric(section, s.reset_at),
+    }
+}
+
 fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> SectionBuilder {
     let mut v = SectionBuilder::new(vec![Section::Title {
         left: format!("Cursor {}", s.plan),
@@ -839,7 +859,8 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
     } else {
         // Two included-usage pools, mirroring the dashboard's two bars.
         v.push(Section::Spacer);
-        v.push_metric(
+        push_cursor_pool(
+            &mut v,
             Section::Metric {
                 label: "Cursor Models".into(),
                 pct: s.auto_pct.clamp(0, 100) as u16,
@@ -847,10 +868,11 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
                 value_label: format!("{}%", s.auto_pct),
                 footnote: "Auto + Composer".into(),
             },
-            s.reset_at,
+            s,
         );
         v.push(Section::Spacer);
-        v.push_metric(
+        push_cursor_pool(
+            &mut v,
             Section::Metric {
                 label: "Other Models".into(),
                 pct: s.api_pct.clamp(0, 100) as u16,
@@ -861,7 +883,7 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
                     if s.on_demand_enabled { "on" } else { "off" }
                 ),
             },
-            s.reset_at,
+            s,
         );
     }
     v.push(Section::Spacer);
@@ -1189,16 +1211,20 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
         },
         Section::Spacer,
     ]);
-    v.push_metric(
-        Section::Metric {
-            label: format!("{} Build credits", s.period.label()),
-            pct: pct.clamp(0, 100) as u16,
-            severity: severity_for(pct),
-            value_label: format!("{pct}%"),
-            footnote: String::new(),
-        },
-        s.reset_at,
-    );
+    let metric = Section::Metric {
+        label: format!("{} Build credits", s.period.label()),
+        pct: pct.clamp(0, 100) as u16,
+        severity: severity_for(pct),
+        value_label: format!("{pct}%"),
+        footnote: String::new(),
+    };
+    // Only the weekly period has an exact length; a month varies and an
+    // unknown period says nothing, so neither can be paced.
+    if s.period == crate::usage::SuperGrokPeriod::Weekly {
+        v.push_metric_in_window(metric, s.reset_at, chrono::Duration::days(7));
+    } else {
+        v.push_metric(metric, s.reset_at);
+    }
     if let Some(bal) = s.prepaid_balance {
         v.push(Section::Spacer);
         v.push(Section::Text {
@@ -1550,6 +1576,107 @@ mod tests {
         }))
     }
 
+    fn supergrok(period: crate::usage::SuperGrokPeriod) -> VendorSnapshot {
+        VendorSnapshot::SuperGrok(crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "digest".into(),
+            weekly_pct: 40,
+            period,
+            reset_at: Some(now() + chrono::Duration::days(2)),
+            prepaid_balance: None,
+            reset_credits: crate::usage::ResetCredits::default(),
+        })
+    }
+
+    fn only_metric(sections: &[SectionProjection]) -> &SectionProjection {
+        let mut metrics = sections
+            .iter()
+            .filter(|projection| matches!(projection.section, Section::Metric { .. }));
+        let metric = metrics.next().expect("one metric row");
+        assert!(metrics.next().is_none(), "expected exactly one metric row");
+        metric
+    }
+
+    /// Only a rolling window has a length a frontend can pace against. The
+    /// shared `UsageWindow` helper always knows it; SuperGrok knows it for a
+    /// week and not for a month, whose length varies.
+    #[test]
+    fn window_length_is_reported_only_when_exact() {
+        use crate::usage::SuperGrokPeriod;
+
+        let weekly =
+            sections_with_metadata_for(&ready(supergrok(SuperGrokPeriod::Weekly)), now(), 5);
+        assert_eq!(only_metric(&weekly).window, Some(chrono::Duration::days(7)));
+
+        let monthly =
+            sections_with_metadata_for(&ready(supergrok(SuperGrokPeriod::Monthly)), now(), 5);
+        assert_eq!(only_metric(&monthly).window, None);
+
+        let unknown =
+            sections_with_metadata_for(&ready(supergrok(SuperGrokPeriod::Unknown)), now(), 5);
+        assert_eq!(only_metric(&unknown).window, None);
+
+        let kimi = sections_with_metadata_for(
+            &ready(VendorSnapshot::Kimi(KimiSnapshot {
+                plan: None,
+                weekly_limit: 100,
+                weekly_used: 10,
+                weekly_remaining: 90,
+                weekly_reset_at: Some(now() + chrono::Duration::days(3)),
+                window_limit: 0,
+                window_used: 0,
+                window_remaining: 0,
+                window_reset_at: None,
+            })),
+            now(),
+            5,
+        );
+        assert_eq!(
+            only_metric(&kimi).window,
+            Some(crate::kimi::vendor::WEEKLY_WINDOW)
+        );
+    }
+
+    #[test]
+    fn cursor_pools_carry_the_billing_cycle_window_only_when_it_is_exact() {
+        let mut snap = cursor_snap();
+        snap.cycle_start = Some(now() - chrono::Duration::days(22));
+        let exact =
+            sections_with_metadata_for(&ready(VendorSnapshot::Cursor(snap.clone())), now(), 5);
+        let windows: Vec<_> = exact
+            .iter()
+            .filter(|p| matches!(p.section, Section::Metric { .. }))
+            .map(|p| p.window)
+            .collect();
+        assert_eq!(
+            windows,
+            vec![
+                Some(chrono::Duration::days(31)),
+                Some(chrono::Duration::days(31))
+            ]
+        );
+
+        // Without `billingCycleStart` the cycle length is unknown. Reporting a
+        // guessed month here would reach a frontend as an exact window and be
+        // paced as one; every pool goes out with no window instead. The reset
+        // time is unaffected.
+        snap.cycle_start = None;
+        let unknown = sections_with_metadata_for(&ready(VendorSnapshot::Cursor(snap)), now(), 5);
+        let pools: Vec<_> = unknown
+            .iter()
+            .filter(|p| matches!(p.section, Section::Metric { .. }))
+            .collect();
+        assert_eq!(pools.len(), 2);
+        assert!(
+            pools.iter().all(|p| p.window.is_none()),
+            "an unstated billing cycle must not report a window length"
+        );
+        assert!(
+            pools.iter().all(|p| p.reset_at.is_some()),
+            "the reset time still travels with the row"
+        );
+    }
+
     #[test]
     fn copilot_sections_carry_quota_reset_metadata() {
         let reset_at = now() + chrono::Duration::days(4);
@@ -1854,7 +1981,7 @@ mod tests {
 
     #[test]
     fn error_state_includes_retry_hint() {
-        let sections = sections_for(&TabState::Error("token expired".into()), now(), 5);
+        let sections = sections_for(&TabState::error("token expired"), now(), 5);
         assert!(sections.iter().any(|s| matches!(
             s,
             Section::Text { value, .. } if value.contains("token expired")
@@ -1863,6 +1990,24 @@ mod tests {
             s,
             Section::Text { value, .. } if value.contains("`r` to retry")
         )));
+    }
+
+    #[test]
+    fn error_state_keeps_oauth_plan_as_title() {
+        let sections = sections_for(
+            &TabState::error_with_plan("HTTP 401", Some("Claude Max 5x".into())),
+            now(),
+            5,
+        );
+        assert!(matches!(
+            &sections[0],
+            Section::Title { left, .. } if left == "Claude Max 5x"
+        ));
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { value, .. } if value.contains("HTTP 401")
+        )));
+        assert!(!sections.iter().any(|s| matches!(s, Section::Metric { .. })));
     }
 
     #[test]
@@ -2153,6 +2298,7 @@ mod tests {
             unlimited: false,
             on_demand_enabled: false,
             reset_at: Some(now() + chrono::Duration::days(9)),
+            cycle_start: None,
         }
     }
 
@@ -2176,7 +2322,7 @@ mod tests {
 
     #[test]
     fn terminal_controls_are_removed_from_detail_and_overview_fields() {
-        let error = TabState::Error("bad\x1b]52;c;Y2FuYXJ5\x07 value".into());
+        let error = TabState::error("bad\x1b]52;c;Y2FuYXJ5\x07 value");
         let sections = sections_for(&error, now(), 5);
         assert!(matches!(
             &sections[1],

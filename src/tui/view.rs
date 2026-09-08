@@ -350,7 +350,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
                     spans.push(theme.muted("  ↻"));
                 }
             }
-            Some(TabState::Error(_)) => spans.push(Span::styled(
+            Some(TabState::Error { .. }) => spans.push(Span::styled(
                 "error",
                 Style::default().fg(theme.palette.error),
             )),
@@ -366,7 +366,7 @@ fn tab_status(tab: Option<&TabState>, refreshing: bool) -> &'static str {
     match tab {
         Some(TabState::Ready(_)) if refreshing => "refreshing",
         Some(TabState::Loading) => "fetching",
-        Some(TabState::Error(_)) => "error",
+        Some(TabState::Error { .. }) => "error",
         Some(TabState::Ready(ready)) if ready.stale => "stale cache",
         Some(TabState::Ready(ready))
             if ready
@@ -471,7 +471,7 @@ mod tests {
         let mut app = app_with(vec![TabState::Loading, sibling]);
         assert_eq!(header_refresh_text(&app), "last refresh —");
 
-        app.tabs[0] = TabState::Error("401 Unauthorized".into());
+        app.tabs[0] = TabState::error("401 Unauthorized");
         assert_eq!(header_refresh_text(&app), "last refresh —");
     }
 

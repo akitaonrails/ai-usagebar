@@ -24,6 +24,7 @@ pub mod countdown;
 pub mod cursor;
 pub mod custom;
 pub mod deepseek;
+pub mod detect;
 pub mod display;
 pub mod error;
 pub mod format;

@@ -21,7 +21,13 @@ use crate::vendor::{VendorId, VendorOutcome};
 pub enum TabState {
     Loading,
     Ready(Box<ReadyTab>),
-    Error(String),
+    Error {
+        message: String,
+        /// Vendor plan already known from credentials when the quota fetch
+        /// failed (Claude OAuth `subscriptionType`). Absent when the vendor
+        /// has no plan without a snapshot.
+        plan: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +53,27 @@ pub enum TabSource {
         name: String,
         short_name: String,
     },
+}
+
+impl TabState {
+    pub fn error(message: impl AsRef<str>) -> Self {
+        Self::error_with_plan(message, None)
+    }
+
+    pub fn error_with_plan(message: impl AsRef<str>, plan: Option<String>) -> Self {
+        let plan = plan.and_then(|plan| {
+            let cleaned = crate::display::sanitize_untrusted_field(plan.trim());
+            if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("unknown") {
+                None
+            } else {
+                Some(cleaned)
+            }
+        });
+        Self::Error {
+            message: message.as_ref().to_string(),
+            plan,
+        }
+    }
 }
 
 /// Identity of one TUI tab. Usually a whole vendor; Claude and OpenRouter can
@@ -371,7 +398,7 @@ impl App {
         // become the normal Error state because there is no data to preserve.
         if was_refreshing
             && let TabState::Ready(ready) = &mut self.tabs[index]
-            && let TabState::Error(message) = state
+            && let TabState::Error { message, .. } = state
         {
             ready.stale = true;
             ready.last_error = Some((0, message));
@@ -462,7 +489,10 @@ pub async fn refresh_one(client: &Client, config: &Config, tab: &TabId) -> TabSt
                 fetched_at,
             }))
         }
-        Err(e) => TabState::Error(crate::display::sanitize_untrusted_field(&e.user_message())),
+        Err(e) => TabState::error_with_plan(
+            crate::display::sanitize_untrusted_field(&e.user_message()),
+            e.plan().map(str::to_string),
+        ),
     }
 }
 
@@ -1190,7 +1220,7 @@ mod tests {
             Theme::default(),
         );
         app.active = 2; // "personal"
-        app.tabs[0] = TabState::Error("old".into());
+        app.tabs[0] = TabState::error("old");
         let old_tab = app.tabs_meta[0].clone();
         assert!(app.begin_refresh(&old_tab));
 
@@ -1231,7 +1261,7 @@ mod tests {
         assert!(!app.apply_refresh(
             old_generation,
             &TabId::vendor(VendorId::Anthropic),
-            TabState::Error("old result".into()),
+            TabState::error("old result"),
         ));
         assert!(matches!(app.tabs[0], TabState::Loading));
     }
@@ -1244,7 +1274,7 @@ mod tests {
         assert!(!app.apply_refresh(
             generation,
             &TabId::vendor(VendorId::Openai),
-            TabState::Error("wrong tab".into()),
+            TabState::error("wrong tab"),
         ));
         assert!(matches!(app.tabs[0], TabState::Loading));
     }
@@ -1261,9 +1291,9 @@ mod tests {
         // not a stale positional index.
         app.tabs_meta.swap(0, 1);
         app.tabs.swap(0, 1);
-        assert!(app.apply_refresh(generation, &anthropic, TabState::Error("ready".into())));
+        assert!(app.apply_refresh(generation, &anthropic, TabState::error("ready")));
         assert!(matches!(app.tabs[0], TabState::Loading));
-        assert!(matches!(&app.tabs[1], TabState::Error(message) if message == "ready"));
+        assert!(matches!(&app.tabs[1], TabState::Error { message, .. } if message == "ready"));
         assert!(!app.is_refreshing(&anthropic));
     }
 
@@ -1314,13 +1344,11 @@ mod tests {
         assert!(app.is_refreshing(&tab));
         assert!(matches!(app.tabs[0], TabState::Loading));
 
-        assert!(app.apply_refresh(
-            app.tab_generation,
-            &tab,
-            TabState::Error("not signed in".into()),
-        ));
+        assert!(app.apply_refresh(app.tab_generation, &tab, TabState::error("not signed in"),));
         assert!(!app.is_refreshing(&tab));
-        assert!(matches!(&app.tabs[0], TabState::Error(message) if message == "not signed in"));
+        assert!(
+            matches!(&app.tabs[0], TabState::Error { message, .. } if message == "not signed in")
+        );
     }
 
     #[test]
@@ -1348,11 +1376,7 @@ mod tests {
         app.tabs[0] = ready_at(fetched_at);
 
         assert!(app.begin_refresh(&tab));
-        assert!(app.apply_refresh(
-            app.tab_generation,
-            &tab,
-            TabState::Error("refresh failed".into()),
-        ));
+        assert!(app.apply_refresh(app.tab_generation, &tab, TabState::error("refresh failed"),));
         assert!(!app.is_refreshing(&tab));
         match &app.tabs[0] {
             TabState::Ready(ready) => {
@@ -1378,7 +1402,7 @@ mod tests {
         app.set_tabs(vec![tab.clone()]);
         assert!(app.begin_refresh(&tab));
 
-        assert!(!app.apply_refresh(old_generation, &tab, TabState::Error("old result".into()),));
+        assert!(!app.apply_refresh(old_generation, &tab, TabState::error("old result"),));
         assert!(app.is_refreshing(&tab));
         assert!(matches!(app.tabs[0], TabState::Loading));
     }

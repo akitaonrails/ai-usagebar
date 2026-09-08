@@ -155,6 +155,17 @@ pub enum Command {
         json: bool,
     },
 
+    /// Turn on vendors whose credentials already exist on this machine
+    /// (local files, keychains, saved keys, env vars; never the network).
+    Detect {
+        /// Re-check every vendor, not only the ones never seen before.
+        #[arg(long)]
+        all: bool,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Every provider ai-usagebar knows: how each authenticates, whether it is
     /// switched on, and whether this machine has the credential it needs.
     /// Unlike `usage`, this lists the switched-off and the never-configured —
@@ -477,6 +488,29 @@ mod tests {
     fn usage_subcommand_parses_machine_readable_mode() {
         let cli = Cli::parse_from(["ai-usagebar", "usage", "--json"]);
         assert!(matches!(cli.command, Some(Command::Usage { json: true })));
+    }
+
+    #[test]
+    fn detect_subcommand_parses_its_flags_and_takes_no_widget_flags() {
+        let bare = Cli::parse_from(["ai-usagebar", "detect"]);
+        assert!(matches!(
+            bare.command,
+            Some(Command::Detect {
+                all: false,
+                json: false
+            })
+        ));
+
+        let full = Cli::parse_from(["ai-usagebar", "detect", "--all", "--json"]);
+        assert!(matches!(
+            full.command,
+            Some(Command::Detect {
+                all: true,
+                json: true
+            })
+        ));
+
+        assert!(Cli::try_parse_from(["ai-usagebar", "--vendor", "kimi", "detect"]).is_err());
     }
 
     #[test]

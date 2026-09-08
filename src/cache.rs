@@ -5,6 +5,7 @@
 //!   `~/.cache/ai-usagebar/<vendor>/usage.json`         payload
 //!   `~/.cache/ai-usagebar/<vendor>/.stale`             marker (cache is stale)
 //!   `~/.cache/ai-usagebar/<vendor>/.last_error`        HTTP code\nmessage
+//!   `~/.cache/ai-usagebar/<vendor>/.retry_after`       unix seconds; no network before this
 //!   `~/.cache/ai-usagebar/<vendor>/.fetch.lock`        flock target
 //!
 //! Multi-monitor safety: callers should `acquire_lock()` before the refresh+
@@ -25,6 +26,12 @@ pub const DEFAULT_TTL: Duration = Duration::from_secs(60);
 /// Maximum staleness before we refuse to serve cached data even on failure.
 /// Mirrors claudebar's `WEEKLY_WINDOW` (7 days).
 pub const MAX_STALE: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// How long a vendor is left alone after it answered HTTP 429. Without this
+/// every 60 s poll re-hit a rate-limited endpoint, which only extends the
+/// limit; five minutes is long enough for the common per-minute windows to
+/// roll over and short enough that the bar recovers unattended.
+pub const RATE_LIMIT_BACKOFF: Duration = Duration::from_secs(5 * 60);
 
 /// Per-vendor cache directory and helper API.
 ///
@@ -80,6 +87,11 @@ impl Cache {
     pub fn lock_path(&self) -> PathBuf {
         self.dir.join(".fetch.lock")
     }
+    /// Rate-limit backoff marker: unix epoch seconds (plain decimal text)
+    /// before which no request should be made to this vendor.
+    pub fn retry_after_path(&self) -> PathBuf {
+        self.dir.join(".retry_after")
+    }
 
     /// Age of the payload (`None` if it doesn't exist). Used by the widget to
     /// decide whether the 60s cache window applies.
@@ -91,7 +103,40 @@ impl Cache {
 
     /// Returns the cached payload only if it is younger than `ttl`. Used as
     /// the fast path in `_fetch_usage` (claudebar:343-349).
+    ///
+    /// This is the **one pre-network hook shared by every vendor**: each
+    /// `fetch_snapshot` calls it before opening a connection and records HTTP
+    /// failures through [`Cache::write_last_error`]. That makes this the single
+    /// place a cross-vendor request policy can live without nineteen private
+    /// copies drifting apart — which is why the rate-limit backoff is applied
+    /// here rather than in each vendor.
+    ///
+    /// Policy, in order:
+    /// 1. While a 429 backoff is armed ([`Cache::backoff_remaining_at`]), no
+    ///    request is made. A payload still inside [`MAX_STALE`] is served as
+    ///    the answer, TTL notwithstanding, so the bar keeps its last good figure
+    ///    without touching the network. With nothing worth showing this returns
+    ///    an [`AppError::Http`] with status 429 whose body names the time until
+    ///    the next attempt; the vendor's `?` propagates it and the network is
+    ///    never reached. `.last_error` is left as the vendor wrote it.
+    /// 2. Otherwise the ordinary TTL check runs unchanged.
     pub fn fresh_payload(&self, ttl: Duration) -> Result<Option<Vec<u8>>> {
+        self.fresh_payload_at(ttl, SystemTime::now())
+    }
+
+    /// [`Cache::fresh_payload`] with an injected clock for the backoff check.
+    /// The TTL comparison still reads the payload's mtime against the real
+    /// clock via [`Cache::payload_age`].
+    pub fn fresh_payload_at(&self, ttl: Duration, now: SystemTime) -> Result<Option<Vec<u8>>> {
+        if let Some(remaining) = self.backoff_remaining_at(now) {
+            if self.payload_age().is_some_and(|age| age <= MAX_STALE) {
+                return self.read_payload().map(Some);
+            }
+            return Err(AppError::Http {
+                status: 429,
+                body: format!("rate limited; next attempt in {}", human_backoff(remaining)),
+            });
+        }
         let Some(age) = self.payload_age() else {
             return Ok(None);
         };
@@ -100,6 +145,44 @@ impl Cache {
         } else {
             Ok(None)
         }
+    }
+
+    /// Arm the rate-limit backoff: no request until `now + RATE_LIMIT_BACKOFF`.
+    /// Best-effort, never errors — a cache dir that cannot be written costs a
+    /// retry, not a crash.
+    pub fn note_rate_limit_at(&self, now: SystemTime) {
+        let until = now + RATE_LIMIT_BACKOFF;
+        let secs = until
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = atomic_write(&self.retry_after_path(), secs.to_string().as_bytes());
+    }
+
+    /// Best-effort removal of the backoff marker. A successful payload write
+    /// and an explicit `clear_last_error` both end the backoff.
+    pub fn clear_backoff(&self) {
+        let _ = fs::remove_file(self.retry_after_path());
+    }
+
+    /// Time left on an armed backoff, as of `now`. `None` when the marker is
+    /// missing, unparseable, or already in the past — a corrupt marker must
+    /// never pin a vendor offline.
+    pub fn backoff_remaining_at(&self, now: SystemTime) -> Option<Duration> {
+        let raw = fs::read_to_string(self.retry_after_path()).ok()?;
+        let secs = raw.trim().parse::<u64>().ok()?;
+        let until = SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(secs))?;
+        let remaining = until.duration_since(now).ok()?;
+        if remaining.is_zero() {
+            None
+        } else {
+            Some(remaining)
+        }
+    }
+
+    /// [`Cache::backoff_remaining_at`] against the real clock.
+    pub fn backoff_remaining(&self) -> Option<Duration> {
+        self.backoff_remaining_at(SystemTime::now())
     }
 
     /// Read the payload regardless of age. `Err` if the file exists but is
@@ -153,9 +236,11 @@ impl Cache {
             .map_err(|e| AppError::io_at(tmp.path(), e))?;
         tmp.persist(self.payload_path())
             .map_err(|e| AppError::io_at(self.payload_path(), e.error))?;
-        // A successful write clears any stale marker.
+        // A successful write clears any stale marker, and a successful
+        // response is proof the rate limit has lifted.
         let _ = fs::remove_file(self.stale_path());
         let _ = fs::remove_file(self.last_error_path());
+        self.clear_backoff();
         Ok(())
     }
 
@@ -194,12 +279,17 @@ impl Cache {
         let msg = crate::display::sanitize_untrusted_field(msg);
         let body = format!("{code}\n{msg}");
         let _ = atomic_write(&path, body.as_bytes());
+        if code == 429 {
+            self.note_rate_limit_at(SystemTime::now());
+        }
         (code, msg)
     }
 
-    /// Best-effort removal of the `.last_error` marker.
+    /// Best-effort removal of the `.last_error` marker, and of the backoff
+    /// that a 429 among those errors may have armed.
     pub fn clear_last_error(&self) {
         let _ = fs::remove_file(self.last_error_path());
+        self.clear_backoff();
     }
 
     pub fn read_last_error(&self) -> Option<(u16, String)> {
@@ -211,6 +301,24 @@ impl Cache {
         // them this way, only the reader threw the tail away.
         let (code, msg) = raw.split_once('\n').unwrap_or((raw.as_str(), ""));
         Some((code.parse::<u16>().ok()?, msg.to_string()))
+    }
+}
+
+/// Render a backoff remainder for a tooltip: seconds below a minute, whole
+/// minutes rounded *up* above it (`4m01s` reads as `5m` — promising less
+/// wait than the real one would make the next poll look broken), and hours
+/// once the minutes pass sixty (`1h 2m`, `1h`).
+fn human_backoff(remaining: Duration) -> String {
+    let secs = remaining.as_secs();
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    let minutes = secs.div_ceil(60);
+    let (hours, minutes) = (minutes / 60, minutes % 60);
+    match (hours, minutes) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
     }
 }
 
@@ -299,7 +407,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn xdg_cache_dir() -> Result<PathBuf> {
+pub(crate) fn xdg_cache_dir() -> Result<PathBuf> {
     directories::BaseDirs::new()
         .map(|b| b.cache_dir().to_path_buf())
         .ok_or_else(|| AppError::Other("could not resolve XDG cache dir (no HOME?)".into()))
@@ -399,6 +507,199 @@ mod tests {
         cache.write_payload(b"fresh").unwrap();
         assert!(!cache.is_stale());
         assert!(cache.read_last_error().is_none());
+    }
+
+    // ---- rate-limit backoff ------------------------------------------------
+
+    /// A fixed instant well past the epoch so the arithmetic never underflows.
+    fn t0() -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000)
+    }
+
+    fn arm_backoff_at(cache: &Cache, now: SystemTime) {
+        cache.note_rate_limit_at(now);
+        assert!(cache.retry_after_path().exists());
+    }
+
+    #[test]
+    fn a_429_arms_the_backoff_and_other_statuses_do_not() {
+        let (_td, cache) = fixture();
+        cache.write_last_error(500, "upstream down");
+        assert!(cache.backoff_remaining().is_none());
+        assert!(!cache.retry_after_path().exists());
+
+        cache.write_last_error(429, "slow down");
+        let remaining = cache.backoff_remaining().expect("429 must arm the backoff");
+        // Written against the real clock a moment ago: within a few seconds of
+        // the full window, never above it.
+        assert!(remaining <= RATE_LIMIT_BACKOFF, "{remaining:?}");
+        assert!(
+            remaining >= RATE_LIMIT_BACKOFF - Duration::from_secs(5),
+            "{remaining:?}"
+        );
+        // The persisted `.last_error` is untouched by the backoff bookkeeping.
+        assert_eq!(cache.read_last_error(), Some((429, "slow down".into())));
+    }
+
+    #[test]
+    fn backoff_remaining_counts_down_from_the_injected_clock() {
+        let (_td, cache) = fixture();
+        arm_backoff_at(&cache, t0());
+
+        assert_eq!(cache.backoff_remaining_at(t0()), Some(RATE_LIMIT_BACKOFF));
+        assert_eq!(
+            cache.backoff_remaining_at(t0() + Duration::from_secs(60)),
+            Some(RATE_LIMIT_BACKOFF - Duration::from_secs(60))
+        );
+        // Exactly at expiry and beyond: no backoff.
+        assert!(
+            cache
+                .backoff_remaining_at(t0() + RATE_LIMIT_BACKOFF)
+                .is_none()
+        );
+        assert!(
+            cache
+                .backoff_remaining_at(t0() + RATE_LIMIT_BACKOFF + Duration::from_secs(1))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn during_backoff_with_no_payload_fresh_payload_refuses_the_network() {
+        let (_td, cache) = fixture();
+        arm_backoff_at(&cache, t0());
+
+        let err = cache
+            .fresh_payload_at(DEFAULT_TTL, t0() + Duration::from_secs(19))
+            .expect_err("no payload during backoff must be an error, not a fetch");
+        match err {
+            AppError::Http { status, body } => {
+                assert_eq!(status, 429);
+                assert!(body.contains("next attempt in"), "{body}");
+                // 5m − 19s = 4m41s, rounded up to the next minute.
+                assert!(body.ends_with("5m"), "{body}");
+            }
+            other => panic!("expected Http 429, got {other:?}"),
+        }
+    }
+
+    /// The whole point of the backoff: a vendor that still has a figure keeps
+    /// showing it instead of re-hitting the limit every poll. The payload is
+    /// written now with a zero TTL, so the ordinary fast path would reject it
+    /// as expired; only the backoff branch can be the one returning it.
+    #[test]
+    fn during_backoff_an_expired_but_not_stale_payload_is_served() {
+        let (_td, cache) = fixture();
+        cache.write_payload(b"last good").unwrap();
+        arm_backoff_at(&cache, t0());
+
+        // Control: without a backoff, TTL 0 means "not fresh".
+        assert!(
+            cache
+                .fresh_payload_at(Duration::ZERO, t0() + RATE_LIMIT_BACKOFF)
+                .unwrap()
+                .is_none()
+        );
+        // Under backoff the same payload is the answer.
+        assert_eq!(
+            cache
+                .fresh_payload_at(Duration::ZERO, t0())
+                .unwrap()
+                .as_deref(),
+            Some(&b"last good"[..])
+        );
+    }
+
+    #[test]
+    fn after_the_backoff_expires_the_ttl_rule_is_back_in_charge() {
+        let (_td, cache) = fixture();
+        cache.write_payload(b"x").unwrap();
+        arm_backoff_at(&cache, t0());
+        let later = t0() + RATE_LIMIT_BACKOFF + Duration::from_secs(1);
+
+        assert!(
+            cache
+                .fresh_payload_at(Duration::from_secs(10), later)
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            cache
+                .fresh_payload_at(Duration::ZERO, later)
+                .unwrap()
+                .is_none()
+        );
+        // And with no payload at all, expiry means a plain "go fetch".
+        fs::remove_file(cache.payload_path()).unwrap();
+        assert!(
+            cache
+                .fresh_payload_at(DEFAULT_TTL, later)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_successful_payload_write_clears_the_backoff() {
+        let (_td, cache) = fixture();
+        arm_backoff_at(&cache, t0());
+        assert!(cache.backoff_remaining_at(t0()).is_some());
+
+        cache.write_payload(b"fresh").unwrap();
+        assert!(cache.backoff_remaining_at(t0()).is_none());
+        assert!(!cache.retry_after_path().exists());
+    }
+
+    #[test]
+    fn clear_last_error_also_clears_the_backoff() {
+        let (_td, cache) = fixture();
+        cache.write_last_error(429, "slow down");
+        assert!(cache.backoff_remaining().is_some());
+
+        cache.clear_last_error();
+        assert!(cache.backoff_remaining().is_none());
+        assert!(!cache.retry_after_path().exists());
+    }
+
+    #[test]
+    fn a_corrupt_retry_after_marker_is_no_backoff() {
+        let (_td, cache) = fixture();
+        for raw in ["", "soon", "-5", "1e9", "12 34"] {
+            fs::write(cache.retry_after_path(), raw).unwrap();
+            assert!(
+                cache.backoff_remaining_at(t0()).is_none(),
+                "{raw:?} must not pin the vendor offline"
+            );
+            assert!(cache.fresh_payload_at(DEFAULT_TTL, t0()).unwrap().is_none());
+        }
+        // Surrounding whitespace is tolerated, though — a trailing newline is
+        // the sort of thing a hand edit leaves behind.
+        let until = t0() + Duration::from_secs(90);
+        let secs = until
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        fs::write(cache.retry_after_path(), format!("{secs}\n")).unwrap();
+        assert_eq!(
+            cache.backoff_remaining_at(t0()),
+            Some(Duration::from_secs(90))
+        );
+    }
+
+    #[test]
+    fn human_backoff_formats_seconds_minutes_and_hours() {
+        let s = Duration::from_secs;
+        assert_eq!(human_backoff(s(0)), "0s");
+        assert_eq!(human_backoff(s(45)), "45s");
+        assert_eq!(human_backoff(s(59)), "59s");
+        assert_eq!(human_backoff(s(60)), "1m");
+        assert_eq!(human_backoff(s(4 * 60)), "4m");
+        assert_eq!(human_backoff(s(4 * 60 + 1)), "5m");
+        assert_eq!(human_backoff(s(5 * 60)), "5m");
+        assert_eq!(human_backoff(s(60 * 60)), "1h");
+        assert_eq!(human_backoff(s(62 * 60)), "1h 2m");
+        assert_eq!(human_backoff(s(61 * 60 + 30)), "1h 2m");
+        assert_eq!(human_backoff(s(2 * 3600)), "2h");
     }
 
     #[test]
