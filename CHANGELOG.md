@@ -28,6 +28,26 @@ Each release is also published at
   for Antigravity, which has no credential to be missing, so a frontend never
   offers to fix one that cannot be.
 
+- **Local provider detection.** `detect::has_local_credentials` is a cheap,
+  local-only probe per vendor (credential files, sqlite stores, saved API keys,
+  env vars, Antigravity's local ports; never the network) that *parses* the
+  credential the way the fetch would, so an empty or unreadable file does not
+  count. `detect::run_once` writes `enabled = true` into `config.toml` for the
+  vendors that have one and are still off — so Cursor, Kiro, Grok, Copilot and
+  friends show up without editing the config by hand. Detection only ever
+  enables; `detect.json` in the cache dir remembers which vendors were already
+  checked, so a vendor the user turned off afterwards stays off.
+  `config::enable_vendors_in` and `VendorId::config_section` are the shared
+  toml_edit write path the TUI Settings overlay now reuses, with a guard test
+  that every section name parses to its own vendor's `enabled` switch.
+
+- `ai-usagebar detect [--all] [--json]` runs that local provider detection
+  from the command line, for the user or for any frontend that reads
+  `usage --json` and wants a first run to show the tools that are actually
+  installed. `--all` re-checks vendors already seen; `--json` prints
+  `{"enabled": [...], "known": [...], "probed": n}` with vendor slugs and no
+  paths or secrets.
+
 - **Omarchy bar: show every provider at once.** A new **Show all providers in
   the top bar** toggle (and `showAll` widget setting) draws each configured
   provider as its own chip with a brand mark and usage. Claude, Codex,

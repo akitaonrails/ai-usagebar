@@ -583,7 +583,7 @@ fn probe_order(per_pid: std::collections::BTreeMap<u32, Vec<u16>>) -> Vec<u16> {
 /// entries owning one of those inodes. All three products report the *same*
 /// shared quota, so whichever answers first is authoritative.
 #[cfg(target_os = "linux")]
-fn discover_ls_ports() -> Vec<u16> {
+pub(crate) fn discover_ls_ports() -> Vec<u16> {
     use std::collections::{BTreeMap, HashMap};
 
     // Socket inode -> owning pid, so the ports found in `/proc/net` can be
@@ -653,7 +653,7 @@ fn discover_ls_ports() -> Vec<u16> {
 /// then an `n<address>` line per matching socket already filtered down to
 /// listening TCP sockets by `-iTCP -sTCP:LISTEN`.
 #[cfg(target_os = "macos")]
-fn discover_ls_ports() -> Vec<u16> {
+pub(crate) fn discover_ls_ports() -> Vec<u16> {
     let Ok(output) = std::process::Command::new("lsof")
         .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"])
         .output()
@@ -901,7 +901,7 @@ fn windows_tcp_rows() -> Vec<WindowsTcpRow> {
 }
 
 #[cfg(target_os = "windows")]
-fn discover_ls_ports() -> Vec<u16> {
+pub(crate) fn discover_ls_ports() -> Vec<u16> {
     let pids = matching_windows_process_ids(&windows_processes());
     if pids.is_empty() {
         return Vec::new();
@@ -910,7 +910,7 @@ fn discover_ls_ports() -> Vec<u16> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-fn discover_ls_ports() -> Vec<u16> {
+pub(crate) fn discover_ls_ports() -> Vec<u16> {
     Vec::new()
 }
 
