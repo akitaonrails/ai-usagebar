@@ -30,6 +30,10 @@ codebase.
   Waybar setups.
 - Network failures keep the previous data visible; HTTP errors appear in the
   tooltip.
+- A vendor that answers HTTP 429 is left alone for five minutes: the last good
+  snapshot keeps showing, or the entry reads "rate limited; next attempt in 4m"
+  and no request is made until then (every vendor on the shared cache; Nous
+  Research has its own path).
 - `--pretty`, `--watch N`, and `make smoke` help with local testing and API
   response changes.
 
