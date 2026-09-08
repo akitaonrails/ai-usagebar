@@ -828,11 +828,7 @@ fn antigravity_sections(
 /// A Cursor pool row. The billing cycle carries an exact window only when the
 /// API stated both ends; when it did not, the row goes out with its reset time
 /// and no window rather than a guessed month a frontend would pace as exact.
-fn push_cursor_pool(
-    v: &mut SectionBuilder,
-    section: Section,
-    s: &crate::usage::CursorSnapshot,
-) {
+fn push_cursor_pool(v: &mut SectionBuilder, section: Section, s: &crate::usage::CursorSnapshot) {
     match s.cycle_window() {
         Some(window) => v.push_metric_in_window(section, s.reset_at, window),
         None => v.push_metric(section, s.reset_at),
