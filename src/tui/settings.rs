@@ -28,7 +28,7 @@ use ratatui_bubbletea_theme::BubbleTheme;
 use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, value};
 
-use crate::config::Config;
+use crate::config::{Config, read_config_document, set_bool, write_config_document};
 use crate::error::{AppError, Result};
 use crate::theme::Theme;
 use crate::tui::style::bubble_theme;
@@ -53,7 +53,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::AnthropicApi,
         label: "Anthropic API",
-        section: "anthropic_api",
+        section: VendorId::AnthropicApi.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "admin key — monthly spend",
@@ -61,7 +61,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Zai,
         label: "Z.AI",
-        section: "zai",
+        section: VendorId::Zai.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "",
@@ -69,7 +69,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Openrouter,
         label: "OpenRouter",
-        section: "openrouter",
+        section: VendorId::Openrouter.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "",
@@ -77,7 +77,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Deepseek,
         label: "DeepSeek",
-        section: "deepseek",
+        section: VendorId::Deepseek.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "",
@@ -85,7 +85,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Kimi,
         label: "Kimi",
-        section: "kimi",
+        section: VendorId::Kimi.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "coding-plan usage",
@@ -93,7 +93,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Kilo,
         label: "Kilo",
-        section: "kilo",
+        section: VendorId::Kilo.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "",
@@ -101,7 +101,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Novita,
         label: "Novita",
-        section: "novita",
+        section: VendorId::Novita.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "",
@@ -109,7 +109,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Moonshot,
         label: "Moonshot",
-        section: "moonshot",
+        section: VendorId::Moonshot.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "account balance",
@@ -117,7 +117,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Grok,
         label: "Grok",
-        section: "grok",
+        section: VendorId::Grok.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "management key, not the inference key",
@@ -125,7 +125,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Minimax,
         label: "MiniMax",
-        section: "minimax",
+        section: VendorId::Minimax.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "Token Plan subscription key",
@@ -133,7 +133,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::OpenCodeGo,
         label: "OpenCode Go",
-        section: "opencode-go",
+        section: VendorId::OpenCodeGo.config_section(),
         config_key: "api_key",
         secret_label: "API key",
         note: "usage quota",
@@ -465,18 +465,7 @@ fn save_to_config_default(state: &SettingsState) -> Result<()> {
 /// Same as `save_to_config_default` but with an explicit path — exposed for
 /// tests. Writing a non-empty credential also sets that vendor's `enabled = true`.
 pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
-    let original = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(AppError::io_at(path, error)),
-    };
-    let mut doc: DocumentMut = if original.trim().is_empty() {
-        DocumentMut::new()
-    } else {
-        original.parse().map_err(|e: toml_edit::TomlError| {
-            AppError::Other(format!("config.toml not parseable: {e}"))
-        })?
-    };
+    let mut doc = read_config_document(path)?;
 
     // Remove fields written by the short-lived inline Copilot-token design.
     // GitHub CLI owns the OAuth credential now; retaining a secret this app
@@ -506,19 +495,7 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
         update_key(&mut doc, kv, input)?;
     }
 
-    let bytes = doc.to_string();
-    crate::cache::atomic_write(path, bytes.as_bytes())?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(path) {
-            let mut perms = meta.permissions();
-            perms.set_mode(0o600);
-            let _ = std::fs::set_permissions(path, perms);
-        }
-    }
-    Ok(())
+    write_config_document(path, &doc)
 }
 
 /// Apply one credential field to the document. Untouched fields are left
@@ -546,25 +523,6 @@ fn update_key(doc: &mut DocumentMut, vendor: &KeyVendor, input: &KeyInput) -> Re
 /// Set or update a string field in a TOML section, preserving comments and
 /// formatting of unaffected nodes.
 fn set_string(doc: &mut DocumentMut, section: &str, key: &str, new_value: &str) -> Result<()> {
-    let table = doc
-        .entry(section)
-        .or_insert_with(toml_edit::table)
-        .as_table_mut()
-        .ok_or_else(|| AppError::Other(format!("config.toml: [{section}] is not a table")))?;
-
-    if let Some(item) = table.get_mut(key)
-        && let Some(v) = item.as_value_mut()
-    {
-        *v = toml_edit::Value::from(new_value);
-        v.decor_mut().set_prefix(" ");
-        return Ok(());
-    }
-    table.insert(key, value(new_value));
-    Ok(())
-}
-
-/// Same as [`set_string`] for a boolean field.
-fn set_bool(doc: &mut DocumentMut, section: &str, key: &str, new_value: bool) -> Result<()> {
     let table = doc
         .entry(section)
         .or_insert_with(toml_edit::table)

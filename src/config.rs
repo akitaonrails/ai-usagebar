@@ -450,6 +450,93 @@ pub fn add_anthropic_account_to_doc(
     Ok(())
 }
 
+/// Set or update a boolean field in a TOML section, preserving comments and
+/// formatting of unaffected nodes. Shared by the Settings overlay and
+/// [`enable_vendors_in`] so both writers shape `enabled = true` identically.
+pub(crate) fn set_bool(
+    doc: &mut toml_edit::DocumentMut,
+    section: &str,
+    key: &str,
+    new_value: bool,
+) -> Result<()> {
+    let table = doc
+        .entry(section)
+        .or_insert_with(toml_edit::table)
+        .as_table_mut()
+        .ok_or_else(|| AppError::Other(format!("config.toml: [{section}] is not a table")))?;
+
+    if let Some(item) = table.get_mut(key)
+        && let Some(v) = item.as_value_mut()
+    {
+        // Keep a trailing `# comment` on the line being rewritten: the value
+        // is the only thing that changed, and the note beside it is the
+        // user's.
+        let suffix = v.decor().suffix().cloned();
+        *v = toml_edit::Value::from(new_value);
+        v.decor_mut().set_prefix(" ");
+        if let Some(suffix) = suffix {
+            v.decor_mut().set_suffix(suffix);
+        }
+        return Ok(());
+    }
+    table.insert(key, toml_edit::value(new_value));
+    Ok(())
+}
+
+/// Read `path` into a `toml_edit` document with comments intact. A missing
+/// file is an empty document, so a writer can create the config from nothing;
+/// any other I/O failure or a parse error is reported rather than clobbered.
+pub(crate) fn read_config_document(path: &Path) -> Result<toml_edit::DocumentMut> {
+    let original = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(AppError::io_at(path, error)),
+    };
+    if original.trim().is_empty() {
+        return Ok(toml_edit::DocumentMut::new());
+    }
+    original.parse().map_err(|e: toml_edit::TomlError| {
+        AppError::Other(format!("config.toml not parseable: {e}"))
+    })
+}
+
+/// Persist an edited config document: parent dir created, atomic
+/// tempfile-and-rename write, and `chmod 600` on Unix because the file may
+/// carry inline credentials. The one write path for every config editor.
+pub(crate) fn write_config_document(path: &Path, doc: &toml_edit::DocumentMut) -> Result<()> {
+    let bytes = doc.to_string();
+    crate::cache::atomic_write(path, bytes.as_bytes())?;
+
+    #[cfg(unix)]
+    {
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o600);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+    Ok(())
+}
+
+/// Flip `enabled = true` for each vendor's section in the config at `path`,
+/// creating the file when it doesn't exist and leaving every other line —
+/// comments, keys, unrelated sections — exactly as it was. Never writes
+/// `false`: `config.toml` stays the user's source of truth and this only ever
+/// widens it. A document that comes out textually unchanged (every vendor
+/// already enabled) is not rewritten, so an idempotent call doesn't touch the
+/// file's mtime or race a concurrent editor.
+pub fn enable_vendors_in(path: &Path, vendors: &[VendorId]) -> Result<()> {
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    for vendor in vendors {
+        set_bool(&mut doc, vendor.config_section(), "enabled", true)?;
+    }
+    if doc.to_string() == before {
+        return Ok(());
+    }
+    write_config_document(path, &doc)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct OpenAiConfig {
@@ -2858,5 +2945,160 @@ credentials_path = "~/w/.credentials.json"
             default_account_credentials_path(cfg, "work"),
             Path::new("/home/u/.config/ai-usagebar/accounts/work/.credentials.json"),
         );
+    }
+
+    /// `VendorId::config_section` is what every by-name config writer uses;
+    /// this proves each section name is one the parser actually recognizes
+    /// (the `deny_unknown_fields` on `Config` makes a misspelling fail loudly)
+    /// and lands on that vendor's `enabled` switch.
+    #[test]
+    fn every_config_section_parses_to_its_vendors_enabled_switch() {
+        for vendor in VendorId::all() {
+            let text = format!(
+                "[{}]
+enabled = true
+",
+                vendor.config_section()
+            );
+            let config: Config = toml::from_str(&text)
+                .unwrap_or_else(|e| panic!("{}: {e}", vendor.config_section()));
+            assert!(config.is_enabled(*vendor), "{}", vendor.config_section());
+            let others = VendorId::all()
+                .iter()
+                .filter(|other| *other != vendor && config.is_enabled(**other))
+                .count();
+            assert_eq!(
+                others,
+                Config::default().enabled_vendors().len()
+                    - usize::from(Config::default().is_enabled(*vendor)),
+                "[{}] enabled a different vendor",
+                vendor.config_section()
+            );
+        }
+    }
+
+    #[test]
+    fn enable_vendors_in_creates_a_missing_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("config.toml");
+
+        enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[grok]
+enabled = true
+"
+        );
+        assert!(Config::load_from(&path).unwrap().is_enabled(VendorId::Grok));
+    }
+
+    #[test]
+    fn enable_vendors_in_keeps_comments_and_appends_the_new_section() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# my settings
+[zai]
+api_key = \"x\" # keep
+enabled = false
+";
+        std::fs::write(&path, original).unwrap();
+
+        enable_vendors_in(&path, &[VendorId::Grok, VendorId::OpenCodeGo]).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.starts_with(
+                "# my settings
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "api_key = \"x\" # keep
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "[grok]
+enabled = true
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "[opencode-go]
+enabled = true
+"
+            ),
+            "{text}"
+        );
+        let config = Config::load_from(&path).unwrap();
+        assert!(
+            !config.is_enabled(VendorId::Zai),
+            "never widens to false, never flips others"
+        );
+        assert!(config.is_enabled(VendorId::Grok));
+        assert!(config.is_enabled(VendorId::OpenCodeGo));
+    }
+
+    #[test]
+    fn enable_vendors_in_flips_an_explicit_false_in_place() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[grok]
+enabled = false # off
+api_key = \"k\"
+",
+        )
+        .unwrap();
+
+        enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[grok]
+enabled = true # off
+api_key = \"k\"
+"
+        );
+    }
+
+    #[test]
+    fn enable_vendors_in_is_textually_idempotent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "[grok]
+enabled = true
+
+# trailing
+";
+        std::fs::write(&path, original).unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before,
+            "an unchanged document must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn enable_vendors_in_with_nothing_to_enable_leaves_a_missing_file_missing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+
+        enable_vendors_in(&path, &[]).unwrap();
+
+        assert!(!path.exists());
     }
 }

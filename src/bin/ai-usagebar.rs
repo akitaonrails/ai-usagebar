@@ -13,6 +13,10 @@ fn main() {
     if let Some(Command::Settings { action }) = &cli.command {
         std::process::exit(ai_usagebar::tui::settings::run_cli(action));
     }
+    if let Some(Command::Detect { all, json }) = &cli.command {
+        std::process::exit(ai_usagebar::detect::run_cli(*all, *json));
+    }
+
     // Static catalog: it reads config and the filesystem, never the network,
     // so it needs no tokio runtime and must not go through the always-exit-0
     // Waybar contract.

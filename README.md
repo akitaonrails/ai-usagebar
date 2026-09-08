@@ -442,6 +442,13 @@ ai-usagebar --json
 ai-usagebar usage
 ai-usagebar usage --json | jq '.entries[] | {id, metrics, sections}'
 
+# Turn on every vendor that already has a credential on this machine
+# (local files, keychains, saved keys, env vars — never the network).
+# Only vendors never checked before are probed; --all re-checks everything.
+# Detection only ever sets enabled = true; it never turns a vendor off.
+ai-usagebar detect
+ai-usagebar detect --all --json
+
 # Every provider that exists — the switched-off and the never-configured
 # included — with how each authenticates and whether it is usable here.
 ai-usagebar vendors
