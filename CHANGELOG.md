@@ -11,6 +11,25 @@ Each release is also published at
 
 ### Added
 
+- **Antigravity with the app closed.** When no Antigravity product answers
+  locally, the vendor reads the Google OAuth session Antigravity saved in the
+  OS keyring (Windows Credential Manager `gemini:antigravity`, macOS
+  Keychain, `secret-tool` on Linux), refreshes it through Google when it
+  expired (cached in `antigravity/oauth.json`, never written back to the
+  keyring) and asks the Cloud Code API for the same quota summary the local
+  RPC serves, plus the plan from `loadCodeAssist`. The TUI panel and every
+  frontend that reads `usage --json` carry a "Source · Google API (app
+  closed)" row on that path; the "no local server found" error only remains
+  when there is no saved session either, and a server that is up but signed
+  out is still reported as such. Renewing the session needs `[antigravity]
+  oauth_client_id` / `oauth_client_secret` (Antigravity's public
+  installed-app client, not shipped in source); without them the fallback
+  lasts while the saved access token does.
+
+## [1.13.0] — 2026-09-08
+
+### Added
+
 - The macOS menu bar can show *when* a window resets — a wall-clock time, or a
   date once the reset is past today — instead of the countdown, under
   **Preferences → Display**. Off by default; the countdown is unchanged unless
@@ -43,21 +62,6 @@ Each release is also published at
   file instead of the default location. Accepted in any position (including
   beside a subcommand); the file must already exist, and the override applies
   to loads, Settings saves, and path hints for the whole process.
-
-- **Antigravity with the app closed.** When no Antigravity product answers
-  locally, the vendor reads the Google OAuth session Antigravity saved in the
-  OS keyring (Windows Credential Manager `gemini:antigravity`, macOS
-  Keychain, `secret-tool` on Linux), refreshes it through Google when it
-  expired (cached in `antigravity/oauth.json`, never written back to the
-  keyring) and asks the Cloud Code API for the same quota summary the local
-  RPC serves, plus the plan from `loadCodeAssist`. The TUI panel and every
-  frontend that reads `usage --json` carry a "Source · Google API (app
-  closed)" row on that path; the "no local server found" error only remains
-  when there is no saved session either, and a server that is up but signed
-  out is still reported as such. Renewing the session needs `[antigravity]
-  oauth_client_id` / `oauth_client_secret` (Antigravity's public
-  installed-app client, not shipped in source); without them the fallback
-  lasts while the saved access token does.
 
 ### Changed
 
@@ -2110,7 +2114,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
