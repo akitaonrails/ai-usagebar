@@ -56,6 +56,12 @@ enum ReportSection {
         detail: String,
         severity: String,
         reset_at: Option<DateTime<Utc>>,
+        /// Full length of the reset window in seconds, present only when the
+        /// vendor states it exactly (rolling 5h/7d windows). A frontend that
+        /// wants a pace indicator needs both this and `reset_at`; a calendar
+        /// month or an unstated window omits the field rather than guessing.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        window_secs: Option<u64>,
     },
     Text {
         label: String,
@@ -79,44 +85,83 @@ impl ReportSection {
     }
 }
 
-pub async fn run(json: bool) -> i32 {
-    let config = match Config::load() {
-        Ok(config) => config,
-        Err(error) => {
-            eprintln!("ai-usagebar usage: {}", error.user_message());
-            return 1;
-        }
-    };
-    let client = match crate::widget::run::http_client() {
-        Ok(client) => client,
-        Err(error) => {
-            eprintln!("ai-usagebar usage: {}", error.user_message());
-            return 1;
-        }
-    };
+/// Snapshot every configured vendor as the JSON `usage --json` prints.
+///
+/// A frontend hosted in the same process calls this instead of spawning a
+/// console subprocess. Errors are the same user-facing strings `usage` would
+/// print.
+pub async fn collect_json() -> std::result::Result<String, String> {
+    let (entries, primary) = collect_entries().await?;
+    Ok(render_json_for_primary(&entries, primary))
+}
 
+/// Snapshot one configured vendor or account — the entry whose `id` is
+/// `entry_id`, as `collect_json` would have labelled it — as `{"entries": [..]}`.
+///
+/// A frontend's per-provider "Refresh" calls this so re-fetching one vendor
+/// does not hit every other one. No `primary` key: the caller already knows
+/// which entry it asked for.
+pub async fn collect_entry_json(entry_id: &str) -> std::result::Result<String, String> {
+    let config = Config::load().map_err(|error| error.user_message())?;
+    let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
+    let tabs = tabs_matching(&tabs_with_desktop(&config), entry_id);
+    if tabs.is_empty() {
+        return Err(format!("no enabled provider matches {entry_id}"));
+    }
+    let entries = collect_entries_for(&client, &config, &tabs).await;
+    Ok(render_json_entries(&entries))
+}
+
+/// The tabs whose report entry would carry `entry_id` — at most one, since
+/// [`tab_id`] is unique across a tab list, but kept as a slice so the caller
+/// runs the same loop as the full report.
+fn tabs_matching(tabs: &[TabId], entry_id: &str) -> Vec<TabId> {
+    tabs.iter()
+        .filter(|tab| tab_id(tab) == entry_id)
+        .cloned()
+        .collect()
+}
+
+async fn collect_entries() -> std::result::Result<(Vec<Entry>, Option<&'static str>), String> {
+    let config = Config::load().map_err(|error| error.user_message())?;
+    let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
     let tabs = tabs_with_desktop(&config);
     if tabs.is_empty() {
-        eprintln!(
-            "ai-usagebar usage: no vendors enabled in {}",
+        return Err(format!(
+            "no vendors enabled in {}",
             crate::config::config_path_hint()
-        );
-        return 1;
+        ));
     }
+    let entries = collect_entries_for(&client, &config, &tabs).await;
+    Ok((entries, config.ui.primary.map(|vendor| vendor.slug())))
+}
 
+async fn collect_entries_for(
+    client: &reqwest::Client,
+    config: &Config,
+    tabs: &[TabId],
+) -> Vec<Entry> {
     // Sequential on purpose: several of these share a per-vendor cache lock,
     // and firing every account at Anthropic at once is a good way to get
     // rate-limited for no gain on a handful of entries.
     let mut entries = Vec::with_capacity(tabs.len());
-    for tab in &tabs {
-        entries.push(entry_for(&client, &config, tab).await);
+    for tab in tabs {
+        entries.push(entry_for(client, config, tab).await);
     }
+    entries
+}
+
+pub async fn run(json: bool) -> i32 {
+    let (entries, primary) = match collect_entries().await {
+        Ok(pair) => pair,
+        Err(message) => {
+            eprintln!("ai-usagebar usage: {message}");
+            return 1;
+        }
+    };
 
     if json {
-        println!(
-            "{}",
-            render_json_for_primary(&entries, config.ui.primary.map(|vendor| vendor.slug()))
-        );
+        println!("{}", render_json_for_primary(&entries, primary));
     } else {
         print!("{}", render_text(&entries));
     }
@@ -135,10 +180,18 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         display_name: tab_display_name(tab),
         short_name: tab.vendor.short_name().to_string(),
         icon: tab.vendor.bar_icon().to_string(),
-        plan: None,
+        plan: match state {
+            TabState::Error { plan, .. } => plan
+                .as_deref()
+                .map(crate::display::sanitize_untrusted_field)
+                .filter(|plan| !plan.is_empty()),
+            _ => None,
+        },
         sections: Vec::new(),
-        error: match &state {
-            TabState::Error(message) => Some(crate::display::sanitize_untrusted_field(message)),
+        error: match state {
+            TabState::Error { message, .. } => {
+                Some(crate::display::sanitize_untrusted_field(message))
+            }
             _ => None,
         },
         stale: matches!(state, TabState::Ready(ready) if ready.stale),
@@ -170,6 +223,9 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
                     detail: footnote,
                     severity: severity.as_str().into(),
                     reset_at: projected.reset_at,
+                    window_secs: projected
+                        .window
+                        .map(|window| window.num_seconds().max(0) as u64),
                 });
             }
             Section::Text { label, value } => {
@@ -217,7 +273,17 @@ fn format_tab_name(tab: &TabId, vendor_name: &str) -> String {
 }
 
 fn render_json_for_primary(entries: &[Entry], primary: Option<&str>) -> String {
-    let rows: Vec<serde_json::Value> = entries
+    json!({ "primary": primary, "entries": json_rows(entries) }).to_string()
+}
+
+/// The single-entry shape: the same rows, without a `primary` the caller
+/// did not ask about.
+fn render_json_entries(entries: &[Entry]) -> String {
+    json!({ "entries": json_rows(entries) }).to_string()
+}
+
+fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
+    entries
         .iter()
         .map(|entry| {
             let metrics = entry
@@ -231,14 +297,22 @@ fn render_json_for_primary(entries: &[Entry], primary: Option<&str>) -> String {
                         detail,
                         severity,
                         reset_at,
-                    } => Some(json!({
-                        "label": label,
-                        "percent": percent,
-                        "value": value,
-                        "detail": detail,
-                        "severity": severity,
-                        "reset_at": reset_at,
-                    })),
+                        window_secs,
+                    } => {
+                        let mut metric = json!({
+                            "label": label,
+                            "percent": percent,
+                            "value": value,
+                            "detail": detail,
+                            "severity": severity,
+                            "reset_at": reset_at,
+                        });
+                        // Same rule as the `sections` serializer: absent, not null.
+                        if let Some(secs) = window_secs {
+                            metric["window_secs"] = json!(secs);
+                        }
+                        Some(metric)
+                    }
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -257,8 +331,7 @@ fn render_json_for_primary(entries: &[Entry], primary: Option<&str>) -> String {
                 "sections": entry.sections,
             })
         })
-        .collect();
-    json!({ "primary": primary, "entries": rows }).to_string()
+        .collect()
 }
 
 fn render_text(entries: &[Entry]) -> String {
@@ -373,6 +446,7 @@ mod tests {
             detail: detail.into(),
             severity: "mid".into(),
             reset_at: None,
+            window_secs: None,
         }
     }
 
@@ -401,7 +475,7 @@ mod tests {
     #[test]
     fn every_entry_carries_its_vendor_short_code() {
         let now = Utc::now();
-        let failed = TabState::Error("not signed in".into());
+        let failed = TabState::error("not signed in");
 
         let account = entry_from_state(&TabId::account("gmail"), &failed, now);
         assert_eq!(account.short_name, "cld");
@@ -533,6 +607,137 @@ mod tests {
         assert_eq!(first["metrics"][0]["reset_at"], reset_rfc3339);
         assert_eq!(first["sections"][1]["reset_at"], reset_rfc3339);
         assert_eq!(first["metrics"][0]["severity"], "low");
+        // Kiro states a reset but not how long its window is; a frontend
+        // must not be handed a length to pace against.
+        assert!(first["metrics"][0]["window_secs"].is_null());
+        assert!(first["sections"][1].get("window_secs").is_none());
+    }
+
+    /// A rolling window's exact length rides along with its row, in both the
+    /// ordered `sections` and the `metrics` convenience view, and is omitted
+    /// (not `null`) for a metric that has none.
+    #[test]
+    fn json_carries_the_window_length_only_for_exact_windows() {
+        use crate::usage::{AnthropicSnapshot, UsageWindow};
+
+        let now = Utc::now();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Anthropic(AnthropicSnapshot {
+                plan: "Claude Max 20x".into(),
+                session: UsageWindow {
+                    utilization_pct: 29,
+                    resets_at: Some(now + chrono::Duration::minutes(50)),
+                    window_duration: chrono::Duration::hours(5),
+                },
+                weekly: UsageWindow {
+                    utilization_pct: 32,
+                    resets_at: Some(now + chrono::Duration::days(4)),
+                    window_duration: chrono::Duration::days(7),
+                },
+                sonnet: None,
+                scoped: vec![],
+                extra: None,
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Anthropic), &state, now);
+        let rendered = render_json_for_primary(&[projected], None);
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let first = &value["entries"][0];
+
+        let window_of = |label: &str| {
+            first["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|section| section["label"] == label)
+                .map(|section| section["window_secs"].clone())
+                .unwrap_or_else(|| panic!("no section labelled {label}"))
+        };
+        assert_eq!(window_of("Session (5h)"), 18_000);
+        assert_eq!(window_of("Weekly (7d)"), 604_800);
+        assert_eq!(first["metrics"][0]["label"], "Session (5h)");
+        assert_eq!(first["metrics"][0]["window_secs"], 18_000);
+        assert_eq!(first["metrics"][1]["window_secs"], 604_800);
+
+        // Same shape from the single-entry collector a frontend refreshes one provider with.
+        let single: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[entry_from_state(
+                &TabId::vendor(VendorId::Anthropic),
+                &state,
+                now,
+            )]))
+            .unwrap();
+        assert!(single.get("primary").is_none());
+        assert_eq!(single["entries"][0]["metrics"][0]["window_secs"], 18_000);
+
+        // A hand-built metric with no window serializes without the key at all.
+        let bare =
+            render_json_for_primary(&[entry("cursor", vec![metric("Auto", 5, "5%", "")])], None);
+        let bare: serde_json::Value = serde_json::from_str(&bare).unwrap();
+        assert!(
+            bare["entries"][0]["metrics"][0]
+                .get("window_secs")
+                .is_none()
+        );
+        assert!(
+            bare["entries"][0]["sections"][0]
+                .get("window_secs")
+                .is_none()
+        );
+    }
+
+    /// A per-provider refresh narrows the configured tab list to the
+    /// one whose report id it was shown; anything else yields nothing rather
+    /// than a fallback to the whole report.
+    #[test]
+    fn tabs_matching_selects_exactly_the_entry_with_that_id() {
+        use crate::tui::app::tabs_from_config;
+
+        // Flip the flags both ways rather than trusting any vendor's default,
+        // so the match below is this test's doing and the miss is a real one.
+        let mut config = Config::default();
+        config.zai.enabled = false;
+        config.deepseek.enabled = false;
+        assert!(tabs_matching(&tabs_from_config(&config), "zai").is_empty());
+        assert!(tabs_matching(&tabs_from_config(&config), "deepseek").is_empty());
+        config.zai.enabled = true;
+        config.deepseek.enabled = true;
+        let tabs = tabs_from_config(&config);
+
+        assert_eq!(
+            tabs_matching(&tabs, "zai"),
+            vec![TabId::vendor(VendorId::Zai)]
+        );
+        assert_eq!(
+            tabs_matching(&tabs, "deepseek"),
+            vec![TabId::vendor(VendorId::Deepseek)]
+        );
+        assert!(tabs_matching(&tabs, "not-a-vendor").is_empty());
+        assert!(tabs_matching(&tabs, "zai@work").is_empty());
+        assert!(tabs_matching(&tabs, "").is_empty());
+    }
+
+    /// Named accounts are addressed by the same `<vendor>@<label>` id the
+    /// report prints, so a frontend can refresh one Claude account by itself.
+    #[test]
+    fn tabs_matching_addresses_named_accounts_by_report_id() {
+        let tabs = vec![
+            TabId::vendor(VendorId::Anthropic),
+            TabId::account("gmail"),
+            TabId::account("work"),
+        ];
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic@work"),
+            vec![TabId::account("work")]
+        );
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic"),
+            vec![TabId::vendor(VendorId::Anthropic)]
+        );
+        assert!(tabs_matching(&tabs, "anthropic@nobody").is_empty());
     }
 
     #[test]
@@ -678,11 +883,28 @@ mod tests {
     fn failed_entries_do_not_duplicate_tui_retry_rows() {
         let failed = entry_from_state(
             &TabId::vendor(VendorId::Openai),
-            &TabState::Error("not \x1b[31msigned in\u{202e}".into()),
+            &TabState::error("not \x1b[31msigned in\u{202e}"),
             Utc::now(),
         );
         assert_eq!(failed.error.as_deref(), Some("not [31msigned in"));
         assert!(failed.sections.is_empty());
+    }
+
+    #[test]
+    fn anthropic_error_keeps_oauth_plan_without_inventing_gauges() {
+        let failed = TabState::error_with_plan(
+            "HTTP 401: authentication rejected — credentials may be missing, expired, or invalid",
+            Some("Claude Max 5x".into()),
+        );
+        let entry = entry_from_state(&TabId::vendor(VendorId::Anthropic), &failed, Utc::now());
+        assert_eq!(entry.plan.as_deref(), Some("Claude Max 5x"));
+        assert!(entry.sections.is_empty());
+        assert!(entry.error.as_deref().unwrap().contains("401"));
+        let rendered = render_json_for_primary(&[entry], None);
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value["entries"][0]["plan"], "Claude Max 5x");
+        assert_eq!(value["entries"][0]["status"], "error");
+        assert_eq!(value["entries"][0]["sections"].as_array().unwrap().len(), 0);
     }
 
     #[test]

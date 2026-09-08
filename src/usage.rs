@@ -248,9 +248,25 @@ pub struct CursorSnapshot {
     /// End of the current billing cycle (`billingCycleEnd`) — when the pools
     /// reset.
     pub reset_at: Option<DateTime<Utc>>,
+    /// Start of the current billing cycle (`billingCycleStart`), when the API
+    /// sends it. With `reset_at` it gives the exact window length the pace
+    /// projection needs; absent, no window length is reported at all.
+    pub cycle_start: Option<DateTime<Utc>>,
 }
 
 impl CursorSnapshot {
+    /// Length of the current billing cycle, but only when the API stated both
+    /// ends and they are ordered. `None` otherwise — older responses and every
+    /// snapshot cached before `billingCycleStart` existed omit the start, and a
+    /// guessed month would reach a frontend as an exact window and be paced as
+    /// one. `window_secs` is absent instead; the reset time still shows.
+    pub fn cycle_window(&self) -> Option<chrono::Duration> {
+        match (self.cycle_start, self.reset_at) {
+            (Some(start), Some(end)) if end > start => Some(end - start),
+            _ => None,
+        }
+    }
+
     /// The binding pool — whichever is closest to (or furthest past) its cap.
     /// Drives the bar color and the single generic `session_pct` alias.
     pub fn worst_pct(&self) -> i32 {

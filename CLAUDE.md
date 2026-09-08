@@ -150,9 +150,14 @@ patch version instead.
   parses its own cache format. A guard test forbids a second caller of
   `Cache::fallback_payload`: that function is the entry point to this decision,
   and eighteen private copies of it had already drifted into two generations
-  that disagreed for five vendors. The one sanctioned synthesized error is
-  `handle_auth_failure`'s — "run `claude`/`codex login` to re-auth" is
-  actionable where the underlying OAuth error is not.
+  that disagreed for five vendors. Two synthesized errors are sanctioned, both
+  on the same ground — they tell the user something actionable that the
+  underlying failure does not. `handle_auth_failure`'s "run `claude`/`codex
+  login` to re-auth", and `fresh_payload`'s "rate limited; next attempt in 4m"
+  after a 429 armed the backoff. The second is a *pre-network refusal*, not a
+  failed refresh: it is reached only when there is also no payload inside
+  `MAX_STALE` to show instead, so it never replaces a figure with a note about
+  the cache. Anything beyond these two returns the error that caused it.
 - **Frontend adapters stay thin.** Provider fetching, credentials, canonical
   product names, metric projection, and reset metadata belong in Rust.
   `VendorId::display_name` is the shared label source; do not add a complete

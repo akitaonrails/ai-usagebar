@@ -11,6 +11,36 @@ Each release is also published at
 
 ### Added
 
+- **Local provider detection.** `detect::has_local_credentials` is a cheap,
+  local-only probe per vendor (credential files, sqlite stores, saved API keys,
+  env vars, Antigravity's local ports; never the network) that *parses* the
+  credential the way the fetch would, so an empty or unreadable file does not
+  count. `detect::run_once` writes `enabled = true` into `config.toml` for the
+  vendors that have one and are still off — so Cursor, Kiro, Grok, Copilot and
+  friends show up without editing the config by hand. Detection only ever
+  enables, and never overrules an explicit `enabled = false` — that is the
+  user's answer, it lives in the config file, and not even `--all` rewrites it.
+  `detect.json` in the cache dir remembers which vendors were already checked so
+  repeat runs probe nothing; because it is a cache file and may be deleted, it
+  is a shortcut, not the thing protecting a decision.
+  `config::enable_vendors_in` and `VendorId::config_section` are the shared
+  toml_edit write path the TUI Settings overlay now reuses, with a guard test
+  that every section name parses to its own vendor's `enabled` switch.
+
+- `ai-usagebar detect [--all] [--json]` runs that local provider detection
+  from the command line, for the user or for any frontend that reads
+  `usage --json` and wants a first run to show the tools that are actually
+  installed. `--all` re-checks vendors already seen; `--json` prints
+  `{"enabled": [...], "known": [...], "probed": n}` with vendor slugs and no
+  paths or secrets.
+
+- `usage --json` metrics carry `window_secs`, the exact length of the reset
+  window, for the vendors that state it (Anthropic, Codex, Z.AI, Antigravity,
+  MiniMax, Kimi, SuperGrok weekly, and Cursor when the API sends both
+  `billingCycleStart` and `billingCycleEnd`); absent otherwise — an unstated
+  window omits the field rather than guessing — so a frontend that reads the
+  report can pace a metric without a per-vendor window table of its own.
+
 - **Antigravity with the app closed.** When no Antigravity product answers
   locally, the vendor reads the Google OAuth session Antigravity saved in the
   OS keyring (Windows Credential Manager `gemini:antigravity`, macOS
@@ -25,6 +55,23 @@ Each release is also published at
   oauth_client_id` / `oauth_client_secret` (Antigravity's public
   installed-app client, not shipped in source); without them the fallback
   lasts while the saved access token does.
+
+### Fixed
+
+- **Rate-limit backoff.** A vendor that answers HTTP 429 arms a five-minute
+  backoff in its cache dir (`.retry_after`). While it is armed
+  `Cache::fresh_payload` — the one pre-network step every vendor takes —
+  serves the last good snapshot if there is one and otherwise reports
+  `rate limited; next attempt in 4m` without touching the network, so the
+  60-second poll no longer prolongs the block. A successful fetch clears it.
+  Nous Research has its own fetch path without the shared cache and is not
+  covered. Frontends that read `usage --json` see the same message in the
+  vendor's error field.
+
+- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
+  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
+  plan-less error. Quotas are not invented; only the label from
+  `~/.claude/.credentials.json` is kept.
 
 ## [1.13.0] — 2026-09-08
 
