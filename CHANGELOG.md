@@ -11,6 +11,24 @@ Each release is also published at
 
 ### Added
 
+- `usage --json` metrics carry `window_secs`, the exact length of the reset
+  window, for the vendors that state it (Anthropic, Codex, Z.AI, Antigravity,
+  MiniMax, Kimi, SuperGrok weekly, and Cursor when the API sends both
+  `billingCycleStart` and `billingCycleEnd`); absent otherwise — an unstated
+  window omits the field rather than guessing — so a frontend that reads the
+  report can pace a metric without a per-vendor window table of its own.
+
+### Fixed
+
+- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
+  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
+  plan-less error. Quotas are not invented; only the label from
+  `~/.claude/.credentials.json` is kept.
+
+## [1.13.0] — 2026-09-08
+
+### Added
+
 - The macOS menu bar can show *when* a window resets — a wall-clock time, or a
   date once the reset is past today — instead of the countdown, under
   **Preferences → Display**. Off by default; the countdown is unchanged unless
@@ -38,13 +56,6 @@ Each release is also published at
   ship an SVG; Command Code (no public mark) falls back to its three-letter
   code rather than a shared robot. The panel hero uses the same mark,
   colored only when that provider is critical. Off by default.
-
-- `usage --json` metrics carry `window_secs`, the exact length of the reset
-  window, for the vendors that know it (Anthropic, Codex, Z.AI, Antigravity,
-  MiniMax, Kimi, SuperGrok weekly, and Cursor from `billingCycleStart` /
-  `billingCycleEnd`, assuming 30 days when the start is missing); absent
-  otherwise, so a frontend that reads the report can pace a metric without a
-  per-vendor window table of its own.
 
 - `--config <PATH>` on both binaries to read and write an alternate config
   file instead of the default location. Accepted in any position (including
@@ -76,11 +87,6 @@ Each release is also published at
   reference — so in optimised builds ARC was free to release it after the
   assignment, since nothing later in the function mentions it, taking the
   status item with it. The delegate is now held for the program's lifetime.
-
-- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
-  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
-  plan-less error. Quotas are not invented; only the label from
-  `~/.claude/.credentials.json` is kept.
 
 
 ## [1.12.0] — 2026-09-06
@@ -2107,7 +2113,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
