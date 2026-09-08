@@ -825,6 +825,20 @@ fn antigravity_sections(
     v
 }
 
+/// A Cursor pool row. The billing cycle carries an exact window only when the
+/// API stated both ends; when it did not, the row goes out with its reset time
+/// and no window rather than a guessed month a frontend would pace as exact.
+fn push_cursor_pool(
+    v: &mut SectionBuilder,
+    section: Section,
+    s: &crate::usage::CursorSnapshot,
+) {
+    match s.cycle_window() {
+        Some(window) => v.push_metric_in_window(section, s.reset_at, window),
+        None => v.push_metric(section, s.reset_at),
+    }
+}
+
 fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> SectionBuilder {
     let mut v = SectionBuilder::new(vec![Section::Title {
         left: format!("Cursor {}", s.plan),
@@ -839,7 +853,8 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
     } else {
         // Two included-usage pools, mirroring the dashboard's two bars.
         v.push(Section::Spacer);
-        v.push_metric_in_window(
+        push_cursor_pool(
+            &mut v,
             Section::Metric {
                 label: "Cursor Models".into(),
                 pct: s.auto_pct.clamp(0, 100) as u16,
@@ -847,11 +862,11 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
                 value_label: format!("{}%", s.auto_pct),
                 footnote: "Auto + Composer".into(),
             },
-            s.reset_at,
-            s.cycle_window(),
+            s,
         );
         v.push(Section::Spacer);
-        v.push_metric_in_window(
+        push_cursor_pool(
+            &mut v,
             Section::Metric {
                 label: "Other Models".into(),
                 pct: s.api_pct.clamp(0, 100) as u16,
@@ -862,8 +877,7 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
                     if s.on_demand_enabled { "on" } else { "off" }
                 ),
             },
-            s.reset_at,
-            s.cycle_window(),
+            s,
         );
     }
     v.push(Section::Spacer);
@@ -1575,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn cursor_pools_carry_the_billing_cycle_window_or_thirty_days() {
+    fn cursor_pools_carry_the_billing_cycle_window_only_when_it_is_exact() {
         let mut snap = cursor_snap();
         snap.cycle_start = Some(now() - chrono::Duration::days(22));
         let exact =
@@ -1593,13 +1607,25 @@ mod tests {
             ]
         );
 
+        // Without `billingCycleStart` the cycle length is unknown. Reporting a
+        // guessed month here would reach a frontend as an exact window and be
+        // paced as one; every pool goes out with no window instead. The reset
+        // time is unaffected.
         snap.cycle_start = None;
-        let assumed = sections_with_metadata_for(&ready(VendorSnapshot::Cursor(snap)), now(), 5);
-        let first = assumed
+        let unknown = sections_with_metadata_for(&ready(VendorSnapshot::Cursor(snap)), now(), 5);
+        let pools: Vec<_> = unknown
             .iter()
-            .find(|p| matches!(p.section, Section::Metric { .. }))
-            .unwrap();
-        assert_eq!(first.window, Some(chrono::Duration::days(30)));
+            .filter(|p| matches!(p.section, Section::Metric { .. }))
+            .collect();
+        assert_eq!(pools.len(), 2);
+        assert!(
+            pools.iter().all(|p| p.window.is_none()),
+            "an unstated billing cycle must not report a window length"
+        );
+        assert!(
+            pools.iter().all(|p| p.reset_at.is_some()),
+            "the reset time still travels with the row"
+        );
     }
 
     #[test]
