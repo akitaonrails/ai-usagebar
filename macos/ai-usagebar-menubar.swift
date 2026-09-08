@@ -96,7 +96,13 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{ds_balance};;{kilo_balance};;{nv_balance};;{km_balance};;{grok_balance};;" +
              "{aapi_headline};;{aapi_pct};;{aapi_spent};;{aapi_limit};;{cursor_total_pct};;" +
              "{extra_model};;{extra_reset};;{extra_elapsed};;" +
-             "{zai_mcp_pct};;{zai_mcp_reset};;{zai_mcp_elapsed}"
+             "{zai_mcp_pct};;{zai_mcp_reset};;{zai_mcp_elapsed};;" +
+             "{ocg_monthly_pct};;{ocg_monthly_reset};;" +
+             "{cc_monthly_pct};;{cc_monthly_reset};;" +
+             "{copilot_completions_pct};;{copilot_reset};;" +
+             "{sgk_period};;{minimax_video_pct};;{minimax_video_reset};;" +
+             "{minimax_video_elapsed};;{minimax_video_weekly_pct};;{minimax_video_weekly_reset};;{minimax_video_weekly_elapsed};;" +
+             "{copilot_chat_limit};;{copilot_completions_limit};;{copilot_premium_limit}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -394,6 +400,20 @@ func progressAttr(pct: Int, width: Int, elapsed: Int?, menu: Bool = false,
     return barAttr(pct: pct, width: width, elapsed: elapsed)
 }
 
+func subprocessEnvironment() -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+    let home = NSHomeDirectory()
+    let standardPaths = ["\(home)/.cargo/bin", "\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+    let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+    let currentParts = currentPath.split(separator: ":").map(String.init)
+    var allPaths: [String] = []
+    for path in standardPaths + currentParts where !allPaths.contains(path) {
+        allPaths.append(path)
+    }
+    env["PATH"] = allPaths.joined(separator: ":")
+    return env
+}
+
 func resolveBinary(_ name: String) -> String? {
     let fm = FileManager.default
     if name == "ai-usagebar" {
@@ -401,13 +421,14 @@ func resolveBinary(_ name: String) -> String? {
         if !configured.isEmpty, fm.isExecutableFile(atPath: configured) { return configured }
     }
     let home = NSHomeDirectory()
-    for c in ["\(home)/.cargo/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"]
+    for c in ["\(home)/.cargo/bin/\(name)", "\(home)/.local/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"]
     where fm.isExecutableFile(atPath: c) {
         return c
     }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/which")
     p.arguments = [name]
+    p.environment = subprocessEnvironment()
     let pipe = Pipe()
     p.standardOutput = pipe
     p.standardError = FileHandle.nullDevice
@@ -422,8 +443,19 @@ func resolveBinary(_ name: String) -> String? {
     return nil
 }
 
-// ─── Data model ──────────────────────────────────────────────────────────
-struct Window { let pct: Int; let reset: String; let elapsed: Int? }
+struct Window: Equatable {
+    let pct: Int
+    let reset: String
+    let elapsed: Int?
+    var unlimited: Bool = false
+
+    init(pct: Int, reset: String, elapsed: Int?, unlimited: Bool = false) {
+        self.pct = pct
+        self.reset = reset
+        self.elapsed = elapsed
+        self.unlimited = unlimited
+    }
+}
 struct Snapshot {
     let plan: String
     let hasUsageWindows: Bool
@@ -474,23 +506,26 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         s.hasPrefix("{") && s.hasSuffix("}")
     }
     func t(_ i: Int) -> String {
-        guard i < f.count else { return "" }
+        guard i >= 0 && i < f.count else { return "" }
         let v = f[i].trimmingCharacters(in: .whitespaces)
         return unknownPlaceholder(v) ? "" : v
     }
     // Do not accept a numeric prefix: a stale suffix such as "27 ⏸" is not elapsed.
     func n(_ i: Int) -> Int? {
         let value = t(i)
-        guard value.range(of: "^-?[0-9]+$", options: .regularExpression) != nil else { return nil }
-        return Int(value)
+        guard value.range(of: "^-?[0-9]+(\\.[0-9]+)?$", options: .regularExpression) != nil else { return nil }
+        if let intVal = Int(value) { return intVal }
+        if let doubleVal = Double(value) { return Int(doubleVal.rounded()) }
+        return nil
     }
-    func quotaWindow(_ pctIndex: Int, _ resetIndex: Int, _ elapsedIndex: Int) -> Window? {
+    func quotaWindow(_ pctIndex: Int, _ resetIndex: Int, _ elapsedIndex: Int, unlimited: Bool = false) -> Window? {
         guard let pct = n(pctIndex), (0...100).contains(pct) else { return nil }
         let reset = t(resetIndex)
         return Window(
             pct: pct,
             reset: reset,
-            elapsed: markerElapsed(reset: reset, elapsed: n(elapsedIndex)))
+            elapsed: markerElapsed(reset: reset, elapsed: n(elapsedIndex)),
+            unlimited: unlimited)
     }
     // Third bar = the per-model weekly window: a non-empty scoped model is the
     // presence signal. Its reset can legitimately be unavailable, so do not
@@ -510,6 +545,27 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         }
     } else if !sonnetReset.isEmpty, sonnetReset != "—", let p = n(5) {
         sonnet = Window(pct: p, reset: sonnetReset, elapsed: nil)
+    } else if vendor == "opencode-go" {
+        if isReported(t(35)), let w = quotaWindow(34, 35, -1) {
+            sonnet = w
+            sonnetLabel = "Monthly"
+        }
+    } else if vendor == "commandcode" {
+        if isReported(t(37)), let w = quotaWindow(36, 37, -1) {
+            sonnet = w
+            sonnetLabel = "Monthly"
+        }
+    } else if vendor == "copilot" {
+        let completionsUnlimited = t(48).lowercased().contains("unlimited")
+        if isReported(t(39)), let w = quotaWindow(38, 39, -1, unlimited: completionsUnlimited) {
+            sonnet = w
+            sonnetLabel = "Completions"
+        }
+    } else if vendor == "minimax" {
+        if isReported(t(42)), let w = quotaWindow(41, 42, 43) {
+            sonnet = w
+            sonnetLabel = "Video 5h"
+        }
     }
     let spent = t(8)
     let limit = t(9)
@@ -553,6 +609,80 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     // time windows), so relabel those bars rather than call them "Session"/
     // "Weekly". Every other vendor keeps the default time-window labels.
     let isCursor = vendor == "cursor"
+    var sessionWindow = quotaWindow(1, 2, 13)
+    let weeklyWindow: Window?
+    let sessionTag: String
+    let weeklyTag: String
+    let sessionLabel: String
+    let weeklyLabel: String
+
+    switch vendor {
+    case "opencode-go":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Session"
+        weeklyLabel = "Weekly"
+    case "commandcode":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Session"
+        weeklyLabel = "Weekly"
+    case "copilot":
+        let chatUnlimited = t(47).lowercased().contains("unlimited")
+        let premiumUnlimited = t(49).lowercased().contains("unlimited")
+        weeklyWindow = quotaWindow(3, 4, 14, unlimited: chatUnlimited)
+        sessionWindow = quotaWindow(1, 2, 13, unlimited: premiumUnlimited)
+        sessionTag = "pm"
+        weeklyTag = "ch"
+        sessionLabel = "Premium"
+        weeklyLabel = "Chat"
+    case "minimax":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Text 5h"
+        weeklyLabel = "Text Weekly"
+    case "supergrok":
+        let period = t(40)
+        weeklyWindow = nil
+        sessionTag = period == "Monthly" ? "mo" : "7d"
+        weeklyTag = "7d"
+        sessionLabel = period.isEmpty ? "Build credits" : "\(period) Credits"
+        weeklyLabel = ""
+    case "nous":
+        weeklyWindow = nil
+        sessionTag = "us"
+        weeklyTag = "7d"
+        sessionLabel = "Usage"
+        weeklyLabel = ""
+    case "kiro":
+        weeklyWindow = nil
+        sessionTag = "cr"
+        weeklyTag = "7d"
+        sessionLabel = "Credits"
+        weeklyLabel = ""
+    case "cursor":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "auto"
+        weeklyTag = "premium"
+        sessionLabel = "Cursor Models"
+        weeklyLabel = "Other Models"
+    case "antigravity":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Gemini 5h"
+        weeklyLabel = "Gemini Weekly"
+    default:
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Session"
+        weeklyLabel = "Weekly"
+    }
+
     let secondaryWeekly: Window?
     let secondaryWeeklyLabel: String
     if isAntigravity, !t(28).isEmpty {
@@ -566,6 +696,9 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         // must not grow a phantom 0% row.
         secondaryWeekly = mcp
         secondaryWeeklyLabel = "MCP tools (monthly)"
+    } else if vendor == "minimax", isReported(t(45)), let vw = quotaWindow(44, 45, 46) {
+        secondaryWeekly = vw
+        secondaryWeeklyLabel = "Video Weekly"
     } else {
         secondaryWeekly = nil
         secondaryWeeklyLabel = ""
@@ -573,17 +706,17 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     return Snapshot(plan: t(0),
                     hasUsageWindows: !balanceOnly,
                     creditBalance: displayBalance,
-                    session: quotaWindow(1, 2, 13),
-                    weekly: quotaWindow(3, 4, 14),
+                    session: sessionWindow,
+                    weekly: weeklyWindow,
                     sonnet: sonnet,
                     sonnetLabel: sonnetLabel,
                     extra: aapiExtra ?? extra,
                     secondaryWeekly: secondaryWeekly,
                     secondaryWeeklyLabel: secondaryWeeklyLabel,
-                    sessionTag: isCursor ? "auto" : "5h",
-                    weeklyTag: isCursor ? "premium" : "7d",
-                    sessionLabel: isCursor ? "Cursor Models" : (isAntigravity ? "Gemini 5h" : "Session"),
-                    weeklyLabel: isCursor ? "Other Models" : (isAntigravity ? "Gemini Weekly" : "Weekly"),
+                    sessionTag: sessionTag,
+                    weeklyTag: weeklyTag,
+                    sessionLabel: sessionLabel,
+                    weeklyLabel: weeklyLabel,
                     cursorTotalPct: isCursor ? n(27) : nil)
 }
 
@@ -611,41 +744,77 @@ struct HexColorPicker: View {
 }
 
 // ─── Vendor login / config (mirrors the GNOME "Vendors" tab) ──────────────
-struct VendorAuth {
-    let id, name, kind, cli, login, pkg, env: String
+struct VendorCatalogEntry: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let shortName: String
+    let kind: String
+    let enabled: Bool
+    let configured: Bool
+    let needsCredential: Bool
+    let env: String
+    let login: String
+
+    var cli: String {
+        login.split(separator: " ").first.map(String.init) ?? id
+    }
+
+    var pkg: String {
+        switch id {
+        case "anthropic": return "@anthropic-ai/claude-code"
+        case "openai": return "@openai/codex"
+        default: return ""
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, kind, enabled, configured, env, login
+        case shortName = "short_name"
+        case needsCredential = "needs_credential"
+    }
 }
 
-let VENDOR_AUTH: [VendorAuth] = [
-    VendorAuth(id: "anthropic", name: "Claude", kind: "oauth", cli: "claude", login: "claude", pkg: "@anthropic-ai/claude-code", env: ""),
-    VendorAuth(id: "openai", name: "Codex", kind: "oauth", cli: "codex", login: "codex login", pkg: "@openai/codex", env: ""),
-    VendorAuth(id: "zai", name: "Z.AI (GLM)", kind: "apikey", cli: "", login: "", pkg: "", env: "ZAI_API_KEY"),
-    VendorAuth(id: "openrouter", name: "OpenRouter", kind: "apikey", cli: "", login: "", pkg: "", env: "OPENROUTER_API_KEY"),
-    VendorAuth(id: "deepseek", name: "DeepSeek", kind: "apikey", cli: "", login: "", pkg: "", env: "DEEPSEEK_API_KEY"),
-    VendorAuth(id: "kimi", name: "Kimi", kind: "apikey", cli: "", login: "", pkg: "", env: "KIMI_API_KEY"),
-    VendorAuth(id: "kilo", name: "Kilo", kind: "apikey", cli: "", login: "", pkg: "", env: "KILO_API_KEY"),
-    VendorAuth(id: "novita", name: "Novita", kind: "apikey", cli: "", login: "", pkg: "", env: "NOVITA_API_KEY"),
-    VendorAuth(id: "moonshot", name: "Moonshot", kind: "apikey", cli: "", login: "", pkg: "", env: "MOONSHOT_API_KEY"),
-    VendorAuth(id: "grok", name: "Grok (xAI)", kind: "apikey", cli: "", login: "", pkg: "", env: "XAI_MANAGEMENT_KEY"),
-    VendorAuth(id: "anthropic_api", name: "Anthropic API", kind: "apikey", cli: "", login: "", pkg: "", env: "ANTHROPIC_ADMIN_KEY"),
-    // Cursor has no API key: the binary reads the session token the Cursor IDE
-    // wrote to its own state.vscdb. `kind: "local"` marks the "configured =
-    // signed in to the app" case (like Antigravity below), with no login CLI
-    // or env var of its own.
-    VendorAuth(id: "cursor", name: "Cursor", kind: "local", cli: "", login: "", pkg: "", env: ""),
-    // Antigravity 2.0, the `agy` CLI and the IDE are separate products
-    // sharing one account-wide quota; any combination may be installed and
-    // there is no credential file to check — the binary probes whichever
-    // local server is running. `kind: "local"` mirrors Cursor and the GNOME
-    // extension (gnome-extension/prefs.js).
-    VendorAuth(id: "antigravity", name: "Google Antigravity", kind: "local", cli: "agy", login: "", pkg: "", env: ""),
-    VendorAuth(id: "copilot", name: "GitHub Copilot", kind: "oauth", cli: "gh", login: "gh auth login", pkg: "", env: "GITHUB_COPILOT_TOKEN"),
-    VendorAuth(id: "supergrok", name: "SuperGrok", kind: "local", cli: "grok", login: "", pkg: "", env: ""),
-    VendorAuth(id: "minimax", name: "MiniMax", kind: "apikey", cli: "", login: "", pkg: "", env: "MINIMAX_API_KEY"),
-    VendorAuth(id: "kiro", name: "Kiro", kind: "local", cli: "kiro-cli", login: "kiro-cli login", pkg: "", env: ""),
-    VendorAuth(id: "nous", name: "Nous Research", kind: "oauth", cli: "ai-usagebar", login: "ai-usagebar auth nous login", pkg: "", env: "NOUS_API_KEY"),
-    VendorAuth(id: "opencode-go", name: "OpenCode Go", kind: "apikey", cli: "", login: "", pkg: "", env: "OPENCODE_GO_API_KEY"),
-    VendorAuth(id: "commandcode", name: "Command Code", kind: "oauth", cli: "commandcode", login: "commandcode", pkg: "", env: "COMMANDCODE_API_KEY"),
-]
+typealias VendorAuth = VendorCatalogEntry
+
+struct VendorCatalogPayload: Codable {
+    let vendors: [VendorCatalogEntry]
+}
+
+func parseVendorCatalog(_ data: Data) -> [VendorCatalogEntry]? {
+    guard let payload = try? JSONDecoder().decode(VendorCatalogPayload.self, from: data) else {
+        return nil
+    }
+    return payload.vendors
+}
+
+func fetchVendorCatalog(timeout: TimeInterval = REFRESH_TIMEOUT) -> [VendorCatalogEntry]? {
+    guard let bin = resolveBinary("ai-usagebar") else { return nil }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: bin)
+    p.arguments = ["vendors", "--json"]
+    p.environment = subprocessEnvironment()
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+
+    let watchdog = DispatchWorkItem { if p.isRunning { p.terminate() } }
+    DispatchQueue.global(qos: .utility)
+        .asyncAfter(deadline: .now() + timeout, execute: watchdog)
+    var data = Data()
+    do {
+        try p.run()
+        data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+    } catch {
+        watchdog.cancel()
+        return nil
+    }
+    watchdog.cancel()
+    guard p.terminationStatus == 0 else { return nil }
+    return parseVendorCatalog(data)
+}
+
+var vendorCatalog: [VendorCatalogEntry] = []
 
 // The config file the Rust binary would actually read. On macOS
 // `directories::ProjectDirs` resolves to ~/Library/Application Support, so
@@ -1012,9 +1181,11 @@ func filterOverviewEntries(_ entries: [MenuEntry], requested: [String]?) -> [Men
 /// with Claude and OpenRouter expanded into named accounts (their default
 /// entries kept only per `show_default_account`). `active` stays listed even when
 /// unconfigured — same rule the per-vendor list always had.
-func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [MenuEntry] {
+func vendorEntries(active: String,
+                   usageAccounts: [UsageAccount]? = nil,
+                   catalog: [VendorCatalogEntry] = vendorCatalog) -> [MenuEntry] {
     var out: [MenuEntry] = []
-    for v in VENDOR_AUTH where vendorEnabled(v) {
+    for v in catalog where v.enabled {
         if v.id == "anthropic" {
             // Once account status is available, Rust owns profile-directory
             // resolution and CLI/Desktop dedup. The nil fallback preserves
@@ -1025,7 +1196,7 @@ func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [Men
             let showDefault = showDefaultAccount(
                 configValue: configValueTOML("anthropic", "show_default_account"),
                 hasAccounts: !accounts.isEmpty)
-            if showDefault && (v.id == active || vendorConfigured(v)) {
+            if showDefault && (v.id == active || v.configured) {
                 out.append(MenuEntry(id: v.id, name: v.name))
             }
             out.append(contentsOf: claudeAccountMenuEntries(accounts))
@@ -1034,11 +1205,11 @@ func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [Men
             let showDefault = showDefaultAccount(
                 configValue: configValueTOML("openrouter", "show_default_account"),
                 hasAccounts: !labels.isEmpty)
-            if showDefault && (v.id == active || vendorConfigured(v)) {
+            if showDefault && (v.id == active || v.configured) {
                 out.append(MenuEntry(id: v.id, name: v.name))
             }
             out.append(contentsOf: openRouterAccountMenuEntries(labels))
-        } else if v.id == active || vendorConfigured(v) {
+        } else if v.id == active || v.configured {
             out.append(MenuEntry(id: v.id, name: v.name))
         }
     }
@@ -1046,14 +1217,19 @@ func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [Men
 }
 
 /// Display name for any selectable id (base vendor, account, or overview).
-func entryDisplayName(_ id: String) -> String {
+func entryDisplayName(_ id: String, catalog: [VendorCatalogEntry] = vendorCatalog) -> String {
     if id == "overview" { return "Overview" }
     if let label = accountLabel(of: id) {
         let base = baseVendorId(id)
-        let vendor = VENDOR_AUTH.first { $0.id == base }?.name ?? base
+        let vendor = catalog.first { $0.id == base }?.name
+            ?? (base == "anthropic" ? "Claude" : (base == "openrouter" ? "OpenRouter" : base))
         return "\(vendor) · \(label)"
     }
-    return VENDOR_AUTH.first { $0.id == id }?.name ?? id
+    if let name = catalog.first(where: { $0.id == id })?.name {
+        return name
+    }
+    if id == "anthropic" { return "Claude" }
+    return id
 }
 
 // MARK: - Which account each surface is signed in as
@@ -1205,85 +1381,8 @@ func vendorEnabled(_ v: VendorAuth) -> Bool {
     return defaultEnabled(v.id)
 }
 
-// Cached: the check spawns a `security` subprocess, and it is consulted from the
-// menu-rebuild path (main thread). Signed-in state doesn't change within a run,
-// so compute it at most once — a restart picks up a fresh login.
-var keychainClaudeCache: Bool?
-func keychainHasClaude() -> Bool {
-    if let cached = keychainClaudeCache { return cached }
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-    p.arguments = ["find-generic-password", "-s", "Claude Code-credentials"]
-    p.standardOutput = FileHandle.nullDevice
-    p.standardError = FileHandle.nullDevice
-    let result: Bool
-    do { try p.run(); p.waitUntilExit(); result = p.terminationStatus == 0 } catch { result = false }
-    keychainClaudeCache = result
-    return result
-}
-
-func vendorConfigured(_ v: VendorAuth) -> Bool {
-    guard vendorEnabled(v) else { return false }
-    let home = NSHomeDirectory()
-    let fm = FileManager.default
-    if v.id == "anthropic" {
-        return fm.fileExists(atPath: "\(home)/.claude/.credentials.json") || keychainHasClaude()
-    }
-    if v.id == "openai" {
-        return fm.fileExists(atPath: "\(home)/.codex/auth.json")
-    }
-    if v.id == "cursor" {
-        // Configured == signed in to the Cursor IDE, i.e. its state DB exists.
-        // Honor a [cursor] db_path override the same way the binary does.
-        let dbPath = configValueTOML("cursor", "db_path")
-            ?? "\(home)/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
-        return fm.fileExists(atPath: dbPath)
-    }
-    if v.id == "antigravity" {
-        // Same check as gnome-extension/prefs.js: having any of the three
-        // products' state directories is enough — there is no credential
-        // file, and the binary itself probes whichever local server answers.
-        return ["antigravity", "antigravity-cli", "antigravity-ide"]
-            .contains { d in
-                var isDir: ObjCBool = false
-                return fm.fileExists(atPath: "\(home)/.gemini/\(d)", isDirectory: &isDir) && isDir.boolValue
-            }
-    }
-    if v.id == "copilot" {
-        if let e = ProcessInfo.processInfo.environment["GITHUB_COPILOT_TOKEN"], !e.isEmpty { return true }
-        if configHasApiKeyTOML("copilot") { return true }
-        let ghConfig = ProcessInfo.processInfo.environment["GH_CONFIG_DIR"] ?? "\(home)/.config/gh"
-        if let attrs = try? fm.attributesOfItem(atPath: "\(ghConfig)/hosts.yml"),
-           let size = attrs[.size] as? UInt64, size > 0 {
-            return true
-        }
-        return false
-    }
-    if v.id == "supergrok" {
-        let authPath = configValueTOML("supergrok", "auth_path") ?? "\(home)/.grok/auth.json"
-        return fm.fileExists(atPath: authPath)
-    }
-    if v.id == "kiro" {
-        let dbPath = configValueTOML("kiro", "db_path")
-            ?? "\(home)/Library/Application Support/kiro-cli/data.sqlite3"
-        if fm.fileExists(atPath: dbPath) { return true }
-        return fm.fileExists(atPath: "\(home)/.local/share/kiro-cli/data.sqlite3")
-    }
-    if v.id == "nous" {
-        if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
-        if configHasApiKeyTOML("nous") { return true }
-        let appSupport = "\(home)/Library/Application Support/ai-usagebar/credentials.json"
-        if fm.fileExists(atPath: appSupport) { return true }
-        return fm.fileExists(atPath: "\(home)/.config/ai-usagebar/credentials.json")
-    }
-    if v.id == "commandcode" {
-        if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
-        if configHasApiKeyTOML("commandcode") { return true }
-        return fm.fileExists(atPath: "\(home)/.commandcode/auth.json")
-            || fm.fileExists(atPath: "\(home)/.pi/agent/auth.json")
-    }
-    if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
-    return configHasApiKeyTOML(v.id)
+func vendorConfigured(_ v: VendorCatalogEntry) -> Bool {
+    v.configured
 }
 
 func cliInstalled(_ cli: String) -> Bool {
@@ -1365,6 +1464,7 @@ func openApp(_ name: String) {
 }
 
 struct VendorsSection: View {
+    @State private var catalog: [VendorCatalogEntry] = vendorCatalog
     @State private var configured: [String: Bool] = [:]
     @State private var cliPresent: [String: Bool] = [:]
     @State private var checking = false
@@ -1372,7 +1472,7 @@ struct VendorsSection: View {
     var body: some View {
         GroupBox("Vendors") {
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(VENDOR_AUTH, id: \.id) { v in
+                ForEach(catalog) { v in
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(v.name)
@@ -1394,15 +1494,16 @@ struct VendorsSection: View {
     private func refresh() {
         checking = true
         DispatchQueue.global(qos: .userInitiated).async {
+            let updated = fetchVendorCatalog() ?? vendorCatalog
             var conf: [String: Bool] = [:]
             var cli: [String: Bool] = [:]
-            for v in VENDOR_AUTH {
-                conf[v.id] = vendorConfigured(v)
-                // OAuth vendors need their CLI to log in; apikey vendors are
-                // configured via the TUI.
+            for v in updated {
+                conf[v.id] = v.configured
                 if v.kind == "oauth" { cli[v.id] = cliInstalled(v.cli) }
             }
             DispatchQueue.main.async {
+                self.catalog = updated
+                vendorCatalog = updated
                 self.configured = conf
                 self.cliPresent = cli
                 self.checking = false
@@ -1410,8 +1511,8 @@ struct VendorsSection: View {
         }
     }
 
-    private func statusText(_ v: VendorAuth) -> String {
-        if configured[v.id] == true { return "✓ Configured" }
+    private func statusText(_ v: VendorCatalogEntry) -> String {
+        if configured[v.id] ?? v.configured { return "✓ Configured" }
         if v.kind == "oauth" {
             if cliPresent[v.id] == false { return "⚠ \(v.cli) not installed" }
             return "⚠ Not signed in — \(v.login)"
@@ -1436,9 +1537,9 @@ struct VendorsSection: View {
         return "⚠ No API key — \(apiKeyEnvironment(v))"
     }
 
-    private func buttonLabel(_ v: VendorAuth) -> String {
+    private func buttonLabel(_ v: VendorCatalogEntry) -> String {
         if v.kind == "oauth" {
-            if configured[v.id] == true { return "Re-logar" }
+            if configured[v.id] ?? v.configured { return "Re-logar" }
             if cliPresent[v.id] == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
             return "Sign in"
         }
@@ -1449,7 +1550,7 @@ struct VendorsSection: View {
         return "Configure (TUI)"
     }
 
-    private func action(_ v: VendorAuth) {
+    private func action(_ v: VendorCatalogEntry) {
         if v.kind == "oauth" { runInTerminal(oauthScript(v)) }
         else if v.id == "antigravity" { openApp("Antigravity") }
         else if v.id == "cursor" { openApp("Cursor") }
@@ -1489,7 +1590,7 @@ struct SettingsView: View {
     // accounts appear as their `vendor@<label>` pseudo-ids, same as the
     // "Switch provider" submenu.
     private var vendors: [String] {
-        var ids = VENDOR_AUTH.filter { vendorEnabled($0) }.map { $0.id }
+        var ids = vendorCatalog.filter { $0.enabled }.map { $0.id }
         let labels = claudeAccountLabels()
         if let at = ids.firstIndex(of: "anthropic") {
             ids.insert(contentsOf: labels.map { CLAUDE_ACCOUNT_ID_PREFIX + $0 }, at: at + 1)
@@ -1794,9 +1895,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var lastAccountStatus: AccountStatus?
     var accountStatusFetchedAt = Date.distantPast
     var accountStatusGeneration = 0
+    var vendorCatalogGeneration = 0
     /// A switch runs a subprocess that quits and reopens another app; both
     /// submenus grey out until it returns so it cannot be fired twice.
     var accountSwitchInFlight = false
+    var refreshOverride: (() -> Void)?
+
+    @discardableResult
+    func applyVendorCatalog(_ catalog: [VendorCatalogEntry], generation: Int) -> Bool {
+        guard generation == vendorCatalogGeneration else { return false }
+        vendorCatalog = catalog
+        rebuildVendorSubmenu()
+        if VENDOR == "overview" {
+            refresh()
+        }
+        return true
+    }
+
+    func updateVendorCatalog(fetcher: @escaping () -> [VendorCatalogEntry]? = { fetchVendorCatalog() },
+                             completion: (() -> Void)? = nil) {
+        vendorCatalogGeneration += 1
+        let generation = vendorCatalogGeneration
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let fetched = fetcher() else { return }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.applyVendorCatalog(fetched, generation: generation)
+                completion?()
+            }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DEF.register(defaults: ["swapShortcutEnabled": true, "compactShortcutEnabled": true])
@@ -1804,6 +1932,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.title = "5h …"
         buildMenu()
         rebuildVendorSubmenu()
+        updateVendorCatalog()
         observeAppearanceChanges()
         lastVendor = VENDOR  // so the first settingsChanged isn't mistaken for a swap
         refresh()
@@ -1882,6 +2011,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// full refresh to fetch any newly-added vendor/account. Reads are all fresh
     /// from disk (nothing caches config.toml), so no invalidation is needed.
     @objc func configFileChanged() {
+        updateVendorCatalog()
         rebuildVendorSubmenu()
         // A new [[anthropic.accounts]] entry changes the Claude Code list.
         fetchAccountStatus()
@@ -2082,7 +2212,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(accountsInfoItem)
         // One hidden slot per built-in vendor for Overview mode. Named accounts
         // can take the total higher; renderOverview grows the pool on demand.
-        for _ in 0..<VENDOR_AUTH.count {
+        for _ in 0..<vendorCatalog.count {
             let it = NSMenuItem()
             it.isHidden = true
             overviewRows.append(it)
@@ -2258,14 +2388,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func refresh() {
-        guard let bin = resolveBinary("ai-usagebar") else {
-            setError("ai-usagebar not found (PATH / ~/.cargo/bin / homebrew)")
+        if let custom = refreshOverride {
+            custom()
             return
         }
-        // Coalesce: one subprocess at a time, and remember that another was
-        // asked for so a vendor change during a fetch is not simply dropped.
         if refreshInFlight {
             refreshQueued = true
+            return
+        }
+        guard let bin = resolveBinary("ai-usagebar") else {
+            setError("ai-usagebar not found (PATH / ~/.cargo/bin / homebrew)")
             return
         }
         refreshInFlight = true
@@ -2284,6 +2416,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
             p.arguments = vendorArgs(for: vendor) + ["--format", FORMAT_WITH_SENTINEL]
+            p.environment = subprocessEnvironment()
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
@@ -2355,6 +2488,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: bin)
                 p.arguments = vendorArgs(for: v.id) + ["--format", FORMAT_WITH_SENTINEL]
+                p.environment = subprocessEnvironment()
                 let pipe = Pipe()
                 p.standardOutput = pipe
                 p.standardError = FileHandle.nullDevice
@@ -2396,8 +2530,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return (t, "\(t)%", s.weekly?.reset ?? s.session?.reset, nil)
         }
         let windows = [s.session, s.weekly, s.sonnet, s.secondaryWeekly].compactMap { $0 }
-        if let w = windows.max(by: { $0.pct < $1.pct }) {
+        let finite = windows.filter { !$0.unlimited }
+        if let w = finite.max(by: { $0.pct < $1.pct }) {
             return (w.pct, "\(w.pct)%", w.reset, w.elapsed)
+        }
+        if let w = windows.first(where: { $0.unlimited }) {
+            return (0, "Unlimited", w.reset, nil)
         }
         if let e = s.extra { return (e.pct, "\(e.spent) / \(e.limit)", nil, nil) }
         return (0, "—", nil, nil)
@@ -2430,7 +2568,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let h = overviewHeadline(s)
                 let shortValue = h.reset.flatMap(shortReset)
                 let reset = h.reset.flatMap { resetClockLabel($0, fallback: shortValue) }
-                return ($0.name, h.pct, h.elapsed, "\(h.pct)%", reset)
+                return ($0.name, h.pct, h.elapsed, h.value, reset)
             }
         guard !heads.isEmpty else { return run("ovr", secondary) }
 
@@ -2442,9 +2580,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if i > 0 { t.append(run("   ", secondary)) }
                 t.append(run("\(ovLabel(e.name, 6)) ", secondary))
                 if e.pct >= 0 {
-                    t.append(run("\(e.pct)% ", colorForPct(e.pct)))
-                    t.append(progressAttr(pct: e.pct, width: BAR_WIDTH, elapsed: e.elapsed,
-                                          appearance: appearance))
+                    if e.value == "Unlimited" {
+                        t.append(run("∞", hexColor(COLOR_LOW)))
+                    } else {
+                        t.append(run("\(e.pct)% ", colorForPct(e.pct)))
+                        t.append(progressAttr(pct: e.pct, width: BAR_WIDTH, elapsed: e.elapsed,
+                                              appearance: appearance))
+                    }
                     if let r = e.reset { t.append(run(" \(r)", secondary)) }
                 } else {
                     t.append(run(e.value, .labelColor))  // credit balance
@@ -2459,7 +2601,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for (i, e) in heads.prefix(maxN).enumerated() {
                 if i > 0 { t.append(run("  ", secondary)) }
                 t.append(run("\(ovLabel(e.name, 3)) ", secondary))
-                t.append(run(e.value, e.pct >= 0 ? colorForPct(e.pct) : .labelColor))
+                if e.value == "Unlimited" {
+                    t.append(run("∞", hexColor(COLOR_LOW)))
+                } else {
+                    t.append(run(e.value, e.pct >= 0 ? colorForPct(e.pct) : .labelColor))
+                }
                 if let r = e.reset { t.append(run(" \(r)", secondary)) }
             }
             if heads.count > maxN { t.append(run("  +\(heads.count - maxN)", secondary)) }
@@ -2514,9 +2660,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     a.append(run("cr \(cb)", .labelColor))
                 } else {
                     let h = overviewHeadline(s)
-                    a.append(progressAttr(pct: h.pct, width: MENU_BAR_W, elapsed: h.elapsed,
-                                          menu: true, appearance: appearance))
-                    a.append(run("  \(rpad(h.value, pctW))", colorForPct(h.pct)))
+                    if h.value == "Unlimited" {
+                        a.append(run("Unlimited", hexColor(COLOR_LOW)))
+                    } else {
+                        a.append(progressAttr(pct: h.pct, width: MENU_BAR_W, elapsed: h.elapsed,
+                                              menu: true, appearance: appearance))
+                        a.append(run("  \(rpad(h.value, pctW))", colorForPct(h.pct)))
+                    }
                     if let r = h.reset, !r.isEmpty {
                         a.append(run("   ↺ \(rpad(r, resetW))", .secondaryLabelColor))
                     }
@@ -2566,6 +2716,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             lastSnapshot = nil
             let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
             statusItem.button?.attributedTitle = run(stripMarkup(text), menuBarTextColor(appearance))  // Loading… / ⚠
+            let errorMsg = (obj["tooltip"] as? String).flatMap { $0.isEmpty ? nil : stripMarkup($0) }
+                ?? "\(entryDisplayName(VENDOR)) · \(stripMarkup(text))"
+            headerItem.attributedTitle = run(errorMsg, .labelColor, NSFont.boldSystemFont(ofSize: 13))
             return
         }
         lastSnapshot = snap
@@ -2578,23 +2731,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
         let primaryTextColor = menuBarTextColor(appearance)
         let secondaryTextColor = menuBarTextColor(appearance, secondary: true)
-        func seg(_ tag: String, _ pct: Int, _ value: String, _ elapsed: Int?) {
+        func seg(_ tag: String, _ w: Window) {
+            if title.length > 0 { title.append(run("   ", secondaryTextColor)) }
+            title.append(run("\(tag) ", secondaryTextColor))
+            if w.unlimited {
+                title.append(run("∞", hexColor(COLOR_LOW)))
+                return
+            }
+            if SHOW_PERCENT { title.append(run("\(w.pct)%" + (SHOW_BARS ? " " : ""), colorForPct(w.pct))) }
+            if SHOW_BARS { title.append(progressAttr(pct: w.pct, width: BAR_WIDTH, elapsed: w.elapsed, appearance: appearance)) }
+            if !SHOW_PERCENT && !SHOW_BARS { title.append(run("\(w.pct)%", colorForPct(w.pct))) }
+        }
+        func segExtra(_ tag: String, _ pct: Int, _ value: String) {
             if title.length > 0 { title.append(run("   ", secondaryTextColor)) }
             title.append(run("\(tag) ", secondaryTextColor))
             if SHOW_PERCENT { title.append(run(value + (SHOW_BARS ? " " : ""), colorForPct(pct))) }
-            if SHOW_BARS { title.append(progressAttr(pct: pct, width: BAR_WIDTH, elapsed: elapsed, appearance: appearance)) }
+            if SHOW_BARS { title.append(progressAttr(pct: pct, width: BAR_WIDTH, elapsed: nil, appearance: appearance)) }
             if !SHOW_PERCENT && !SHOW_BARS { title.append(run(value, colorForPct(pct))) }
         }
         if let creditBalance = s.creditBalance {
             title.append(run("cr ", secondaryTextColor))
             title.append(run(creditBalance, primaryTextColor))
-        } else if s.hasUsageWindows && SHOW_SESSION, let session = s.session {
-            seg(s.sessionTag, session.pct, "\(session.pct)%", session.elapsed)
+        } else {
+            let hasFiniteSession = s.session.map { !$0.unlimited } ?? false
+            let hasFiniteWeekly = s.weekly.map { !$0.unlimited } ?? false
+
+            if s.hasUsageWindows && SHOW_SESSION, let session = s.session {
+                if !session.unlimited || !hasFiniteWeekly {
+                    seg(s.sessionTag, session)
+                }
+            }
+            if s.hasUsageWindows && SHOW_WEEKLY, let weekly = s.weekly {
+                if !weekly.unlimited || !hasFiniteSession {
+                    seg(s.weeklyTag, weekly)
+                }
+            }
         }
-        if s.creditBalance == nil && s.hasUsageWindows && SHOW_WEEKLY, let weekly = s.weekly {
-            seg(s.weeklyTag, weekly.pct, "\(weekly.pct)%", weekly.elapsed)
-        }
-        if SHOW_EXTRA, let e = s.extra { seg("ex", e.pct, e.spent, nil) } // $ budget → no meta
+        if SHOW_EXTRA, let e = s.extra { segExtra("ex", e.pct, e.spent) } // $ budget → no meta
         statusItem.button?.attributedTitle = title.length > 0 ? title : run("ai", secondaryTextColor)
     }
 
@@ -2608,7 +2781,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let header = accountLabel(of: VENDOR).map { "\(plan) · \($0)" } ?? plan
         headerItem.attributedTitle = run(header, .labelColor, NSFont.boldSystemFont(ofSize: 13))
 
-        func row(_ key: String, _ name: String, _ pct: Int, _ value: String, _ reset: String?, _ elapsed: Int?) {
+        func row(_ key: String, _ name: String, _ pct: Int, _ value: String, _ reset: String?, _ elapsed: Int?, unlimited: Bool = false) {
             guard let item = rows[key] else { return }
             item.isHidden = false
             let a = NSMutableAttributedString()
@@ -2616,10 +2789,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ? name.padding(toLength: 12, withPad: " ", startingAt: 0)
                 : name
             a.append(run(label, .labelColor))
-            a.append(progressAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed, menu: true, appearance: appearance))
-            a.append(run("  \(value)", colorForPct(pct)))
-            if let r = reset, !r.isEmpty, let display = resetClockLabel(r, fallback: r) {
-                a.append(run("   ↺ \(display)", .secondaryLabelColor))
+            if unlimited {
+                a.append(run("Unlimited", hexColor(COLOR_LOW)))
+            } else {
+                a.append(progressAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed, menu: true, appearance: appearance))
+                a.append(run("  \(value)", colorForPct(pct)))
+                if let r = reset, !r.isEmpty, let display = resetClockLabel(r, fallback: r) {
+                    a.append(run("   ↺ \(display)", .secondaryLabelColor))
+                }
             }
             item.attributedTitle = a
         }
@@ -2630,16 +2807,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             rows["sonnet"]?.isHidden = true
         } else {
             if s.hasUsageWindows, let session = s.session {
-                row("session", s.sessionLabel, session.pct, "\(session.pct)%", session.reset, session.elapsed)
+                row("session", s.sessionLabel, session.pct, "\(session.pct)%", session.reset, session.elapsed, unlimited: session.unlimited)
             } else { rows["session"]?.isHidden = true }
             if s.hasUsageWindows, let weekly = s.weekly {
-                row("weekly", s.weeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed)
+                row("weekly", s.weeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed, unlimited: weekly.unlimited)
             } else { rows["weekly"]?.isHidden = true }
         }
-        if let sn = s.sonnet { row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset, sn.elapsed) }
-        else { rows["sonnet"]?.isHidden = true }
+        if let sn = s.sonnet {
+            row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset, sn.elapsed, unlimited: sn.unlimited)
+        } else {
+            rows["sonnet"]?.isHidden = true
+        }
         if let weekly = s.secondaryWeekly {
-            row("extra", s.secondaryWeeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed)
+            row("extra", s.secondaryWeeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed, unlimited: weekly.unlimited)
         } else if let e = s.extra {
             row("extra", "Extra usage", e.pct, "\(e.spent) / \(e.limit)", nil, nil)
         } else {
@@ -2697,6 +2877,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
             p.arguments = ["account", "status", "--json"]
+            p.environment = subprocessEnvironment()
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
@@ -2890,6 +3071,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
             p.arguments = args
+            p.environment = subprocessEnvironment()
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = pipe
