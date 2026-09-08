@@ -41,6 +41,21 @@ Each release is also published at
   window omits the field rather than guessing — so a frontend that reads the
   report can pace a metric without a per-vendor window table of its own.
 
+- **Custom providers.** `[[custom]]` tables in `config.toml` declare a
+  provider from a JSON endpoint and a static token: `url`, `api_key_env` /
+  `api_key`, optional auth header/scheme and extra headers, a literal or
+  pointed `plan`, and `[[custom.metrics]]` / `[[custom.texts]]` mapped with
+  RFC 6901 JSON Pointers (`used` + `limit` or `percent`, `resets_at` as RFC
+  3339 or epoch seconds/milliseconds, `window_secs`). Each gets a TUI tab and
+  a `usage --json` entry (`custom:<id>`) with the same cache, severity and
+  reset metadata as a built-in vendor, so every frontend that reads
+  `usage --json` shows it. The cache stores the projected snapshot, not the
+  response body. Validation rejects duplicate ids and short names, non-https
+  URLs (unless `allow_http`), bad pointers and header names; the token's env
+  var is scrubbed from child processes. Not covered: OAuth, the Waybar
+  `--vendor` list, the TUI Settings overlay, `[ui] primary` and the `vendors`
+  catalog.
+
 - **Antigravity with the app closed.** When no Antigravity product answers
   locally, the vendor reads the Google OAuth session Antigravity saved in the
   OS keyring (Windows Credential Manager `gemini:antigravity`, macOS

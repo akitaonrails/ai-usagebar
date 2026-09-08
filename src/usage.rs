@@ -369,6 +369,10 @@ pub enum VendorSnapshot {
     NousResearch(crate::nous::types::AccountSnapshot),
     OpenCodeGo(crate::opencode_go::types::Usage),
     CommandCode(crate::commandcode::types::Snapshot),
+    /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
+    /// that fetched it holds the `CustomProviderConfig`, and the cache
+    /// directory is keyed by its `id`.
+    Custom(crate::custom::types::CustomSnapshot),
 }
 
 /// Google Antigravity 2.0 / CLI snapshot. The API groups models into Gemini

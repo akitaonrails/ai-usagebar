@@ -209,7 +209,7 @@ fn status(json: bool) -> i32 {
     // profile paths and CLI/Desktop dedup policy in Swift.
     let usage_accounts: Vec<serde_json::Value> = crate::tui::app::tabs_with_desktop(&config)
         .into_iter()
-        .filter(|tab| tab.vendor == crate::vendor::VendorId::Anthropic)
+        .filter(|tab| tab.vendor_id() == Some(crate::vendor::VendorId::Anthropic))
         .filter_map(|tab| {
             Some(serde_json::json!({
                 "label": tab.account?,
