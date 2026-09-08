@@ -9,6 +9,8 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-09-08
+
 ### Added
 
 - **Custom providers.** `[[custom]]` tables in `config.toml` declare a
