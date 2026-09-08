@@ -554,6 +554,32 @@ func testShortReset() {
     assertEqual(shortReset(""), nil, "empty → nil")
 }
 
+func testResetSeconds() {
+    assertEqual(resetSeconds("4d 1h"), 4 * 86_400 + 3_600, "days+hours")
+    assertEqual(resetSeconds("23h 59m"), 23 * 3_600 + 59 * 60, "hours+minutes")
+    assertEqual(resetSeconds("0h 05m"), 5 * 60, "leading-zero minutes parse")
+    assertEqual(resetSeconds("now"), 0, "already reset → zero seconds")
+    assertEqual(resetSeconds("—"), nil, "em-dash → nil")
+    assertEqual(resetSeconds(""), nil, "empty → nil")
+}
+
+func testResetClockLabel() {
+    let now = Date(timeIntervalSince1970: 1_700_000_000) // fixed instant
+    // Preference off: the countdown passes through unchanged.
+    assertEqual(resetClockLabel("4h 59m", fallback: "4h 59m", showClock: false, now: now),
+                "4h 59m", "preference off returns the fallback untouched")
+    // Preference on, same calendar day: renders a time only.
+    let sameDay = resetClockLabel("1h 00m", fallback: "1h 00m", showClock: true, now: now)
+    assertNotNil(sameDay, "same-day reset renders a clock label")
+    assertEqual(sameDay?.contains("—"), false, "same-day label is not the em-dash")
+    // Preference on, several days out: still renders something (date + time).
+    let daysOut = resetClockLabel("6d 0h", fallback: "6d 0h", showClock: true, now: now)
+    assertNotNil(daysOut, "far-out reset still renders a clock label")
+    // Unreported countdown stays unreported regardless of the preference.
+    assertEqual(resetClockLabel("—", fallback: nil, showClock: true, now: now), nil,
+                "em-dash countdown has no clock label to show")
+}
+
 func testOverviewProviderToggle() {
     // The top-bar summary keeps only providers not toggled off, in order.
     let ids = ["anthropic@struct", "anthropic@gmail", "cursor"]
@@ -734,6 +760,8 @@ struct TestRunner {
         testDesktopAccounts()
         testCompactToggle()
         testShortReset()
+        testResetSeconds()
+        testResetClockLabel()
         testOverviewProviderToggle()
         testAccountStatus()
         testSystemIntegrations()
