@@ -21,6 +21,16 @@
 # Default sidebar (falls back to navbar on narrow terminals).
 # vendor_box = "sidebar"
 
+# Windows tray popover only. Both keys are written by the popover's Settings
+# screen; editing them here works too.
+# [tray]
+# Global shortcut that opens and closes the popover from any window.
+# Ctrl / Alt / Win plus a key; Shift may be added. Omit for none.
+# shortcut = "Ctrl+Shift+U"
+# How often the tray re-reads every provider: 1, 5 or 10 minutes; the footer's
+# Refresh is always immediate.
+# refresh_minutes = 5
+
 # Optional, TUI-only monitor for local Claude Code session context. When
 # enabled, press `c` in ai-usagebar-tui. The scanner reads only bounded tails
 # below ~/.claude/projects, skips subagent transcripts and never follows

@@ -43,6 +43,10 @@ path = "src/bin/ai-usagebar.rs"
 name = "ai-usagebar-tui"
 path = "src/bin/ai-usagebar-tui.rs"
 
+[[bin]]
+name = "ai-usagebar-tray"
+path = "src/bin/ai-usagebar-tray.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time", "fs", "process", "signal", "io-util"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
@@ -83,7 +87,26 @@ rustix = { version = "1", features = ["process"] }
 security-framework = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# Tray popover host: NotifyIcon + WebView2. Linux/macOS never compile these so
+# the AUR source build does not pull GTK/WebKit.
+tao = "0.34"
+wry = "0.53"
+tray-icon = "0.21"
+# Global toggle shortcut for the popover: owns a message-only window and
+# delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.
+global-hotkey = "0.8"
 
 [dev-dependencies]
 mockito = "1"

@@ -64,6 +64,39 @@ Each release is also published at
   otherwise, so a frontend that reads the report can pace a metric without a
   per-vendor window table of its own.
 
+- **Windows system-tray popover.** `ai-usagebar-tray` shows a NotifyIcon whose
+  left-click opens an OpenUsage-style dashboard fed in-process by
+  `usage --json`: a 320 px panel that sizes itself to its content, provider
+  sections with the provider mark, name and plan over a grouped card, capsule
+  meters in blue / yellow / red with a `52% left ⟷ Resets in 4d 17h` line
+  under each bar (click either side to flip Used/Left or countdown/exact time
+  everywhere), spend rows, and a pace note ("~12% spare", "Limit in 1h 53m")
+  with a tick on the meter for every metric whose `window_secs` is known.
+  Right-click the icon for Refresh, Detect Providers, Open TUI, Start with
+  Windows, and Quit; right-click a row to hide it, move it between Always
+  Visible and On Demand, refresh just that provider or open its Customize
+  screen. Customize orders and hides providers and rows; Settings has Launch
+  at Login, **Refresh Every** (1, 5 or 10 minutes), a **Global Shortcut**
+  recorded in place that toggles the popover from any window, Theme, Density,
+  Time Format, Show Usage As, Reset Times and Always Show Pacing. Before its
+  first report the tray runs local provider detection and turns on the
+  vendors that already have a credential on this PC; the first report seeds
+  the layout the way OpenUsage does (providers whose only error is a missing
+  key start hidden behind a welcome card). Errors show a short title and a
+  next step instead of an HTTP status line, and a rate-limited vendor says
+  when it retries. `config.toml` gains a `[tray]` section (`shortcut`,
+  `refresh_minutes`), written by the popover's Settings. The UI is a Vite +
+  React + shadcn app in `windows/popover/` with a Node contract test on its
+  view-model; the host is Windows-only, so Linux and macOS builds never pull
+  WebView2 or GTK. The release workflow gains a Windows job that publishes
+  `ai-usagebar-windows-x86_64.zip` (tray, CLI and TUI) with a `.sha256`.
+  The NotifyIcon is a bar-chart-in-circle mark shipped as anti-aliased
+  rasters at 16/20/24/32/40/48 px and picked by `SM_CXSMICON`, so the shell
+  never resamples it; `node windows/icon/rasterize.js` regenerates them from
+  `windows/tray-icon.svg`. The SuperGrok (`grok agent stdio`) and Copilot
+  (`gh auth token`) children run with `CREATE_NO_WINDOW`, so a refresh from a
+  GUI process no longer flashes a console that takes the foreground.
+
 ### Changed
 
 - The macOS menu bar and the GNOME extension are in English. Both shipped with

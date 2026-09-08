@@ -5,8 +5,9 @@
 //! - the vendor abstraction (`vendor`, `vendors::*`, `usage`)
 //! - bin-specific composition (`widget`, `tui`) which lives next to its binary
 //!
-//! The two binaries (`ai-usagebar` and `ai-usagebar-tui`) are thin: they parse
-//! CLI args, instantiate vendors, and hand off to a renderer in this crate.
+//! The binaries (`ai-usagebar`, `ai-usagebar-tui`, and on Windows
+//! `ai-usagebar-tray`) are thin: they parse CLI args, instantiate vendors,
+//! and hand off to a renderer in this crate.
 
 pub mod account;
 pub mod active;
@@ -45,12 +46,14 @@ pub mod openrouter;
 pub mod outcome;
 pub mod pacing;
 pub mod pango;
+pub mod process;
 pub mod report;
 pub mod safe_storage;
 pub mod serde_helpers;
 pub mod supergrok;
 pub mod theme;
 pub mod tooltip;
+pub mod tray;
 pub mod tui;
 pub mod usage;
 pub mod vendor;

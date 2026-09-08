@@ -45,6 +45,9 @@ rustPlatform.buildRustPackage {
     ++ lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ];
 
   postInstall = ''
+    # Unix stub: the tray binary exists so `cargo build --all-targets` is
+    # uniform, but it only prints and exits. Do not ship it from Nix.
+    rm -f "$out/bin/ai-usagebar-tray"
     install -Dm644 config.example.toml \
       "$out/share/ai-usagebar/config.example.toml"
     install -Dm644 README.md \
