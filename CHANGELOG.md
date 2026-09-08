@@ -9,6 +9,31 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Local provider detection.** `detect::has_local_credentials` is a cheap,
+  local-only probe per vendor (credential files, sqlite stores, saved API keys,
+  env vars, Antigravity's local ports; never the network) that *parses* the
+  credential the way the fetch would, so an empty or unreadable file does not
+  count. `detect::run_once` writes `enabled = true` into `config.toml` for the
+  vendors that have one and are still off — so Cursor, Kiro, Grok, Copilot and
+  friends show up without editing the config by hand. Detection only ever
+  enables, and never overrules an explicit `enabled = false` — that is the
+  user's answer, it lives in the config file, and not even `--all` rewrites it.
+  `detect.json` in the cache dir remembers which vendors were already checked so
+  repeat runs probe nothing; because it is a cache file and may be deleted, it
+  is a shortcut, not the thing protecting a decision.
+  `config::enable_vendors_in` and `VendorId::config_section` are the shared
+  toml_edit write path the TUI Settings overlay now reuses, with a guard test
+  that every section name parses to its own vendor's `enabled` switch.
+
+- `ai-usagebar detect [--all] [--json]` runs that local provider detection
+  from the command line, for the user or for any frontend that reads
+  `usage --json` and wants a first run to show the tools that are actually
+  installed. `--all` re-checks vendors already seen; `--json` prints
+  `{"enabled": [...], "known": [...], "probed": n}` with vendor slugs and no
+  paths or secrets.
+
 ### Fixed
 
 - **Rate-limit backoff.** A vendor that answers HTTP 429 arms a five-minute
