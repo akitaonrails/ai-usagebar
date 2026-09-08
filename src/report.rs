@@ -34,6 +34,8 @@ struct Entry {
     /// The vendor's `{vendor_short}` code. Frontends that want a Waybar-style
     /// provider tag take it from here rather than keeping their own table.
     short_name: String,
+    /// The vendor's bar glyph. Same rule as `short_name`: one table, in Rust.
+    icon: String,
     plan: Option<String>,
     sections: Vec<ReportSection>,
     error: Option<String>,
@@ -132,6 +134,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         name: tab_name(tab),
         display_name: tab_display_name(tab),
         short_name: tab.vendor.short_name().to_string(),
+        icon: tab.vendor.bar_icon().to_string(),
         plan: None,
         sections: Vec::new(),
         error: match &state {
@@ -244,6 +247,7 @@ fn render_json_for_primary(entries: &[Entry], primary: Option<&str>) -> String {
                 "name": entry.name,
                 "display_name": entry.display_name,
                 "short_name": entry.short_name,
+                "icon": entry.icon,
                 "plan": entry.plan,
                 "status": if entry.error.is_some() { "error" } else { "ready" },
                 "error": entry.error,
@@ -352,6 +356,7 @@ mod tests {
             name: name.into(),
             display_name: name.into(),
             short_name: VendorId::Anthropic.short_name().into(),
+            icon: VendorId::Anthropic.bar_icon().into(),
             plan: Some("Claude Max 20x".into()),
             sections,
             error: None,
@@ -405,10 +410,12 @@ mod tests {
 
         let cursor = entry_from_state(&TabId::vendor(VendorId::Cursor), &failed, now);
         assert_eq!(cursor.short_name, "cur");
+        assert_eq!(cursor.icon, VendorId::Cursor.bar_icon());
 
         let rendered = render_json_for_primary(&[cursor], None);
         let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
         assert_eq!(value["entries"][0]["short_name"], "cur");
+        assert_eq!(value["entries"][0]["icon"], VendorId::Cursor.bar_icon());
     }
 
     #[test]
