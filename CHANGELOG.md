@@ -11,6 +11,25 @@ Each release is also published at
 
 ### Added
 
+- **Custom providers.** `[[custom]]` tables in `config.toml` declare a
+  provider from a JSON endpoint and a static token: `url`, `api_key_env` /
+  `api_key`, optional auth header/scheme and extra headers, a literal or
+  pointed `plan`, and `[[custom.metrics]]` / `[[custom.texts]]` mapped with
+  RFC 6901 JSON Pointers (`used` + `limit` or `percent`, `resets_at` as RFC
+  3339 or epoch seconds/milliseconds, `window_secs`). Each gets a TUI tab and
+  a `usage --json` entry (`custom:<id>`) with the same cache, severity and
+  reset metadata as a built-in vendor, so every frontend that reads
+  `usage --json` shows it. The cache stores the projected snapshot, not the
+  response body. Validation rejects duplicate ids and short names, non-https
+  URLs (unless `allow_http`), bad pointers and header names; the token's env
+  var is scrubbed from child processes. Not covered: OAuth, the Waybar
+  `--vendor` list, the TUI Settings overlay, `[ui] primary` and the `vendors`
+  catalog.
+
+## [1.13.0] — 2026-09-08
+
+### Added
+
 - The macOS menu bar can show *when* a window resets — a wall-clock time, or a
   date once the reset is past today — instead of the countdown, under
   **Preferences → Display**. Off by default; the countdown is unchanged unless
@@ -38,21 +57,6 @@ Each release is also published at
   ship an SVG; Command Code (no public mark) falls back to its three-letter
   code rather than a shared robot. The panel hero uses the same mark,
   colored only when that provider is critical. Off by default.
-
-- **Custom providers.** `[[custom]]` tables in `config.toml` declare a
-  provider from a JSON endpoint and a static token: `url`, `api_key_env` /
-  `api_key`, optional auth header/scheme and extra headers, a literal or
-  pointed `plan`, and `[[custom.metrics]]` / `[[custom.texts]]` mapped with
-  RFC 6901 JSON Pointers (`used` + `limit` or `percent`, `resets_at` as RFC
-  3339 or epoch seconds/milliseconds, `window_secs`). Each gets a TUI tab and
-  a `usage --json` entry (`custom:<id>`) with the same cache, severity and
-  reset metadata as a built-in vendor, so every frontend that reads
-  `usage --json` shows it. The cache stores the projected snapshot, not the
-  response body. Validation rejects duplicate ids and short names, non-https
-  URLs (unless `allow_http`), bad pointers and header names; the token's env
-  var is scrubbed from child processes. Not covered: OAuth, the Waybar
-  `--vendor` list, the TUI Settings overlay, `[ui] primary` and the `vendors`
-  catalog.
 
 - `--config <PATH>` on both binaries to read and write an alternate config
   file instead of the default location. Accepted in any position (including
@@ -2110,7 +2114,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
