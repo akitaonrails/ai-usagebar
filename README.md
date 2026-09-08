@@ -414,6 +414,16 @@ The optional config file is `~/.config/ai-usagebar/config.toml`. Claude,
 Codex, Z.AI, and OpenRouter are enabled by default; other providers are
 opt-in.
 
+Both binaries also accept `--config <PATH>` to read and write an alternate
+file instead of the default (`%APPDATA%\ai-usagebar\config.toml` on Windows).
+The file must already exist, and the override applies to every subcommand —
+handy for testing a config side by side with the real one:
+
+```bash
+ai-usagebar usage --json --config ./config.test.toml
+ai-usagebar-tui --config ./config.test.toml
+```
+
 A minimal example:
 
 ```toml
