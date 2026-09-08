@@ -37,6 +37,14 @@ Each release is also published at
   section *string* with a `_ =>` fallback arm — where a new key vendor nobody
   added would silently read the wrong default and report as unconfigured for
   ever. Both match on `VendorId`, so that case now fails to compile.
+
+### Fixed
+
+- The macOS menu bar icon no longer disappears mid-session. `AppMain` held its
+  `AppDelegate` in a `main()` local, and `NSApplication.delegate` is a *weak*
+  reference — so in optimised builds ARC was free to release it after the
+  assignment, since nothing later in the function mentions it, taking the
+  status item with it. The delegate is now held for the program's lifetime.
 ## [1.12.0] — 2026-09-06
 
 ### Added
