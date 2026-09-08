@@ -215,6 +215,7 @@ mod tests {
             unlimited: false,
             on_demand_enabled: false,
             reset_at: Some(now() + chrono::Duration::days(9)),
+            cycle_start: None,
         }
     }
 

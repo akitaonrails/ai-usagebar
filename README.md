@@ -472,7 +472,12 @@ list reads both and needs no provider table of its own — `needs_credential` is
 
 The report also includes the configured `primary` id. Each entry has
 `display_name`, `short_name`, `status`, `stale`, and `fetched_at`; metric rows
-may add `severity` and an absolute `reset_at`. These fields are additive, so
+may add `severity`, an absolute `reset_at`, and `window_secs`, the exact length
+of the reset window in seconds. `window_secs` is present only when the vendor
+states the window (rolling 5h/7d windows; Cursor's billing cycle from
+`billingCycleStart`/`billingCycleEnd`, assumed to be 30 days when the start is
+missing) and is omitted, not `null`, otherwise — a calendar month or an unstated
+window gives a frontend nothing to pace against. These fields are additive, so
 existing consumers remain compatible. `short_name` is the same three-letter
 code `{vendor_short}` prints, so a frontend that wants a compact provider tag
 takes it from the report instead of keeping its own table.

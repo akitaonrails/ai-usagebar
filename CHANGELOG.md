@@ -37,6 +37,13 @@ Each release is also published at
   code rather than a shared robot. The panel hero uses the same mark,
   colored only when that provider is critical. Off by default.
 
+- `usage --json` metrics carry `window_secs`, the exact length of the reset
+  window, for the vendors that know it (Anthropic, Codex, Z.AI, Antigravity,
+  MiniMax, Kimi, SuperGrok weekly, and Cursor from `billingCycleStart` /
+  `billingCycleEnd`, assuming 30 days when the start is missing); absent
+  otherwise, so a frontend that reads the report can pace a metric without a
+  per-vendor window table of its own.
+
 ### Changed
 
 - The macOS menu bar and the GNOME extension are in English. Both shipped with
@@ -61,6 +68,11 @@ Each release is also published at
   reference — so in optimised builds ARC was free to release it after the
   assignment, since nothing later in the function mentions it, taking the
   status item with it. The delegate is now held for the program's lifetime.
+
+- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
+  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
+  plan-less error. Quotas are not invented; only the label from
+  `~/.claude/.credentials.json` is kept.
 
 
 ## [1.12.0] — 2026-09-06
