@@ -34,6 +34,13 @@ Each release is also published at
   `{"enabled": [...], "known": [...], "probed": n}` with vendor slugs and no
   paths or secrets.
 
+- `usage --json` metrics carry `window_secs`, the exact length of the reset
+  window, for the vendors that state it (Anthropic, Codex, Z.AI, Antigravity,
+  MiniMax, Kimi, SuperGrok weekly, and Cursor when the API sends both
+  `billingCycleStart` and `billingCycleEnd`); absent otherwise — an unstated
+  window omits the field rather than guessing — so a frontend that reads the
+  report can pace a metric without a per-vendor window table of its own.
+
 ### Fixed
 
 - **Rate-limit backoff.** A vendor that answers HTTP 429 arms a five-minute
@@ -45,6 +52,11 @@ Each release is also published at
   Nous Research has its own fetch path without the shared cache and is not
   covered. Frontends that read `usage --json` see the same message in the
   vendor's error field.
+
+- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
+  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
+  plan-less error. Quotas are not invented; only the label from
+  `~/.claude/.credentials.json` is kept.
 
 ## [1.13.0] — 2026-09-08
 
