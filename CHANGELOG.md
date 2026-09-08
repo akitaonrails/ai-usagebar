@@ -17,6 +17,7 @@ Each release is also published at
   you turn it on. It follows the system's 12h/24h convention.
 
 
+
 - **`ai-usagebar vendors --json`** — the provider catalog: one row per
   provider with how it authenticates (`oauth` / `apikey` / `local`), whether
   config has it `enabled`, whether this machine holds the credential it needs
@@ -27,6 +28,7 @@ Each release is also published at
   not describe; this is the answer for them. `needs_credential` is `false` only
   for Antigravity, which has no credential to be missing, so a frontend never
   offers to fix one that cannot be.
+
 
 - **Omarchy bar: show every provider at once.** A new **Show all providers in
   the top bar** toggle (and `showAll` widget setting) draws each configured
@@ -52,6 +54,11 @@ Each release is also published at
   `--vendor` list, the TUI Settings overlay, `[ui] primary` and the `vendors`
   catalog.
 
+- `--config <PATH>` on both binaries to read and write an alternate config
+  file instead of the default location. Accepted in any position (including
+  beside a subcommand); the file must already exist, and the override applies
+  to loads, Settings saves, and path hints for the whole process.
+
 ### Changed
 
 - The macOS menu bar and the GNOME extension are in English. Both shipped with
@@ -60,6 +67,7 @@ Each release is also published at
   depending on which surface you opened. Display strings only — no setting key,
   comparison, or stored value changed — and the macOS test that asserted a
   Portuguese label moves with it.
+
 
 
 - `KEY_VENDORS` no longer stores each provider's environment variable name: it
