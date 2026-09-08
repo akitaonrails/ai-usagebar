@@ -57,10 +57,19 @@
 //! - **SuperGrok**: asks the official Grok Build CLI's `x.ai/billing` ACP
 //!   extension, then asserts usage percent and plan. Set
 //!   `SUPERGROK_GROK_BINARY` to the trusted official executable.
+//! - **Antigravity (app closed)**: reads the Google session Antigravity saved
+//!   in the OS keyring and asks the Cloud Code API for the quota summary,
+//!   bypassing local discovery so the remote path is what runs. Asserts the
+//!   snapshot is attributed to the remote source and every reported window
+//!   is a bounded percentage. `antigravity_remote_live` skips when the
+//!   keyring holds no session, or an expired one it cannot renew; set
+//!   `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` to
+//!   exercise the refresh as well.
 
 use std::time::Duration;
 
 use ai_usagebar::anthropic;
+use ai_usagebar::antigravity;
 use ai_usagebar::cache::Cache;
 use ai_usagebar::cursor;
 use ai_usagebar::error::AppError;
@@ -681,5 +690,99 @@ async fn commandcode_live() {
             .map(|w| (w.used, w.cap, w.pct())),
         out.snapshot.credits.as_ref().map(|c| c.remaining()),
         out.snapshot.credit_pool,
+    );
+}
+
+/// Antigravity's remote fallback: the keyring session against the real Cloud
+/// Code API, with local discovery bypassed so this is the path that runs even
+/// while a product happens to be open. Skips when nothing is saved.
+#[tokio::test]
+#[ignore = "live API; run with --ignored"]
+async fn antigravity_remote_live() {
+    use ai_usagebar::usage::AntigravitySource;
+    use antigravity::cloud::OauthClient;
+    use antigravity::fetch::{RemoteOverride, SavedCredential, fetch_snapshot_at};
+
+    match antigravity::credential::read() {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            eprintln!(
+                "antigravity_remote_live: no saved Google session in the OS keyring — skipping \
+                 (sign in to Antigravity once)"
+            );
+            return;
+        }
+        Err(e) => panic!("antigravity keyring read failed: {e}"),
+    }
+
+    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let oauth = OauthClient::from_config(
+        env("ANTIGRAVITY_OAUTH_CLIENT_ID").as_deref(),
+        env("ANTIGRAVITY_OAUTH_CLIENT_SECRET").as_deref(),
+    );
+    let cache = xdg_cache_for("antigravity-remote");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let out = fetch_snapshot_at(
+        &client,
+        &cache,
+        Duration::from_secs(0),
+        oauth.as_ref(),
+        RemoteOverride {
+            credential: SavedCredential::Keyring,
+            endpoints: None,
+            local_bases: Some(vec![]),
+        },
+        chrono::Utc::now(),
+    )
+    .await;
+    let out = match out {
+        Ok(out) => out,
+        // An expired session with nothing to renew it is the user's state, not
+        // drift in the vendor's shape: the message already says what to do.
+        Err(AppError::Credentials(msg)) if msg.contains("sign in again") => {
+            eprintln!("antigravity_remote_live: {msg} — skipping");
+            return;
+        }
+        Err(e) => panic!("antigravity remote fetch should succeed against the real API: {e}"),
+    };
+
+    let snap = out.snapshot;
+    assert_eq!(
+        snap.source,
+        AntigravitySource::Remote,
+        "antigravity: with discovery bypassed the snapshot must come from the API"
+    );
+    assert!(!snap.plan.is_empty(), "antigravity plan label empty");
+    assert!(
+        snap.account.starts_with("acct:"),
+        "antigravity: remote account attribution changed: {}",
+        snap.account
+    );
+    for (label, window) in [
+        ("antigravity.session", snap.session.as_ref()),
+        ("antigravity.weekly", snap.weekly.as_ref()),
+        (
+            "antigravity.third_party_session",
+            snap.third_party_session.as_ref(),
+        ),
+        (
+            "antigravity.third_party_weekly",
+            snap.third_party_weekly.as_ref(),
+        ),
+    ] {
+        if let Some(window) = window {
+            assert_pct(label, window.utilization_pct);
+        }
+    }
+    println!(
+        "✅ antigravity (app closed) — plan={}, session={:?}, weekly={:?}, third-party session={:?}, third-party weekly={:?}",
+        snap.plan,
+        snap.session.as_ref().map(|w| w.utilization_pct),
+        snap.weekly.as_ref().map(|w| w.utilization_pct),
+        snap.third_party_session.as_ref().map(|w| w.utilization_pct),
+        snap.third_party_weekly.as_ref().map(|w| w.utilization_pct),
     );
 }

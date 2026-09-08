@@ -648,9 +648,16 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
             Ok(outcome.into())
         }
         VendorId::Antigravity => {
-            // No credentials: the local Antigravity server is the source.
+            // No API key: the local Antigravity server is the source, and the
+            // saved Google session stands in while nothing is running.
             let cache = crate::cache::Cache::for_vendor("antigravity")?;
-            let outcome = crate::antigravity::fetch_snapshot(client, &cache, DEFAULT_TTL).await?;
+            let oauth = crate::antigravity::cloud::OauthClient::from_config(
+                config.antigravity.oauth_client_id.as_deref(),
+                config.antigravity.oauth_client_secret.as_deref(),
+            );
+            let outcome =
+                crate::antigravity::fetch_snapshot(client, &cache, DEFAULT_TTL, oauth.as_ref())
+                    .await?;
             Ok(outcome.into())
         }
         VendorId::Minimax => {

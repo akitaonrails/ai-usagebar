@@ -284,15 +284,22 @@ async fn commandcode_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> 
 }
 
 /// Antigravity authenticates through whichever local product is running (the
-/// 2.0 app, the `agy` CLI, or the IDE) — there is no API key to resolve.
-async fn antigravity_output(cli: &Cli, _config: &Config) -> Result<WaybarOutput> {
+/// 2.0 app, the `agy` CLI, or the IDE) — there is no API key to resolve. With
+/// none running, the Google session it saved is used instead; the config only
+/// supplies the OAuth client that session is refreshed with.
+async fn antigravity_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
     let cache = vendor_cache(cli, "antigravity")?;
-    let outcome = match antigravity::fetch_snapshot(&client, &cache, DEFAULT_TTL).await {
-        Ok(o) => o,
-        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
-        Err(e) => return Err(e),
-    };
+    let oauth = antigravity::cloud::OauthClient::from_config(
+        config.antigravity.oauth_client_id.as_deref(),
+        config.antigravity.oauth_client_secret.as_deref(),
+    );
+    let outcome =
+        match antigravity::fetch_snapshot(&client, &cache, DEFAULT_TTL, oauth.as_ref()).await {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
 
     let theme = theme_from_cli(cli);
     let snap = outcome.snapshot.clone();

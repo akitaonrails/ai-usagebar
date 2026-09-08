@@ -132,7 +132,11 @@ patch version instead.
 - **No secrets in tracked files.** Inline API keys in config.toml are
   the user's choice (and `chmod 600`ed by the Settings overlay), but
   **never commit** a real key. The `.gitignore` covers `.env`,
-  `*.credentials.json`, and `.claude/`.
+  `*.credentials.json`, and `.claude/`. That includes secret-*shaped*
+  public values: Antigravity's installed-app OAuth client secret is public by
+  Google's definition, yet it lives in the user's config, never in source,
+  because a literal with Google's client-secret prefix trips every secret
+  scanner for ever. Test fixtures use plain words (`test-client`).
 - **One fetch outcome, one fallback policy.** `outcome::Outcome<T>` is the
   four-field record every vendor returns (`VendorOutcome` is
   `Outcome<VendorSnapshot>`; each vendor's `FetchOutcome` is an alias, so
@@ -210,20 +214,32 @@ vendor's response shape drifts:
 - `src/active.rs` — scroll-cycle active vendor state file
 - `src/anthropic/`, `src/openai/`, `src/openrouter/`, `src/zai/`,
   `src/deepseek/` — per-vendor types + fetch + render
-- `src/antigravity/` — Google Antigravity. Unlike every other vendor it has
-  no credential and no remote endpoint: quota comes from whichever local
-  Antigravity product is running (2.0, the IDE, or an interactive `agy`
-  session), over a loopback RPC on a **dynamically assigned** port that is
-  discovered from `/proc` on Linux, `lsof` on macOS, and the process/TCP-table
-  APIs on Windows. `ANTIGRAVITY_LS_ADDRESS` is a *first* candidate, not an
-  exclusive one — discovered ports are still probed behind it, so a stale
-  override degrades to a slower success instead of a hard failure.
+- `src/antigravity/` — Google Antigravity. Two sources, local first: quota
+  comes from whichever local Antigravity product is running (2.0, the IDE, or
+  an interactive `agy` session), over a loopback RPC on a **dynamically
+  assigned** port that is discovered from `/proc` on Linux, `lsof` on macOS,
+  and the process/TCP-table APIs on Windows. `ANTIGRAVITY_LS_ADDRESS` is a
+  *first* candidate, not an exclusive one — discovered ports are still probed
+  behind it, so a stale override degrades to a slower success instead of a
+  hard failure.
   Discovered ports are grouped per pid and emitted rank by rank (`probe_order`),
   so with two products up every RPC listener is probed before any TLS one.
-  Tests must never probe `/proc`, `lsof` or the wall clock — use
-  `candidate_bases_with`, `probe_order`, `matching_windows_ports`,
-  `parse_lsof_pcn` and `parse_cache_at`/`fetch_snapshot_at`, not their
-  production wrappers.
+  With no local server at all (and only then — a server that is up but
+  signed out keeps its own diagnosis), `fetch.rs` falls back to the Google
+  OAuth session Antigravity saved in the OS keyring (`credential.rs`:
+  Credential Manager on Windows, `security` on macOS, `secret-tool` on
+  Linux; read-only) and asks the Cloud Code API (`cloud.rs`) for the same
+  quota summary. A refreshed token goes to the vendor cache's
+  `oauth.json`, keyed by a fingerprint of the refresh token, never back to
+  the keyring. The OAuth client that refresh needs is config-only.
+  Tests must never probe `/proc`, `lsof`, the keyring, Google or the wall
+  clock — use `candidate_bases_with`, `probe_order`,
+  `matching_windows_ports`, `parse_lsof_pcn`, `parse_cache_at`, and
+  `fetch_snapshot_at` with a `RemoteOverride` (`SavedCredential::Blob` /
+  `Absent`, mockito `Endpoints`, `local_bases: Some(vec![])`), not their
+  production wrappers. The two tests that touch the real keyring
+  (`reading_the_real_windows_credential_never_errors`, `antigravity_remote_live`)
+  are `#[ignore]`d.
 - `src/kiro/` — Kiro CLI. Reads kiro-cli's own `data.sqlite3` (read-only) for
   the AWS SSO OIDC session, refreshes the ~1h access token via the documented
   CreateToken API, and calls the undocumented `GetUsageLimits` — same operation

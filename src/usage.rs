@@ -366,6 +366,9 @@ pub struct AntigravitySnapshot {
     /// Fingerprint of the signed-in account. Never displayed — it exists so a
     /// cache written for one Google account is not served for another.
     pub account: String,
+    /// Where the figures came from: a running local product, or the Cloud
+    /// Code API reached with the saved Google session while nothing runs.
+    pub source: AntigravitySource,
     /// Gemini group, 5-hour window.
     pub session: Option<UsageWindow>,
     /// Gemini group, weekly window.
@@ -377,6 +380,35 @@ pub struct AntigravitySnapshot {
 }
 
 impl Eq for AntigravitySnapshot {}
+
+/// Which path produced an [`AntigravitySnapshot`]. The local language server
+/// is the primary source; the remote API is the fallback for when no product
+/// is running, and the panel says so because the two can disagree briefly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AntigravitySource {
+    #[default]
+    Local,
+    Remote,
+}
+
+impl AntigravitySource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AntigravitySource::Local => "local",
+            AntigravitySource::Remote => "remote",
+        }
+    }
+
+    /// Inverse of [`as_str`](Self::as_str); anything unrecognised is `None` so
+    /// a cache reader can fall back to the default rather than guess.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "local" => Some(AntigravitySource::Local),
+            "remote" => Some(AntigravitySource::Remote),
+            _ => None,
+        }
+    }
+}
 
 /// MiniMax Token Plan — `/v1/token_plan/remains` returns one row per model
 /// bucket (`general` for text/coding, `video`), and each row carries its own
