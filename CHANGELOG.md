@@ -9,8 +9,6 @@ Each release is also published at
 
 ## [Unreleased]
 
-## [1.13.0] — 2026-09-08
-
 ### Added
 
 - **Antigravity with the app closed.** When no Antigravity product answers
