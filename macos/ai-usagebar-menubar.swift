@@ -638,6 +638,13 @@ let VENDOR_AUTH: [VendorAuth] = [
     // local server is running. `kind: "local"` mirrors Cursor and the GNOME
     // extension (gnome-extension/prefs.js).
     VendorAuth(id: "antigravity", name: "Google Antigravity", kind: "local", cli: "agy", login: "", pkg: "", env: ""),
+    VendorAuth(id: "copilot", name: "GitHub Copilot", kind: "oauth", cli: "gh", login: "gh auth login", pkg: "", env: "GITHUB_COPILOT_TOKEN"),
+    VendorAuth(id: "supergrok", name: "SuperGrok", kind: "local", cli: "grok", login: "", pkg: "", env: ""),
+    VendorAuth(id: "minimax", name: "MiniMax", kind: "apikey", cli: "", login: "", pkg: "", env: "MINIMAX_API_KEY"),
+    VendorAuth(id: "kiro", name: "Kiro", kind: "local", cli: "kiro-cli", login: "kiro-cli login", pkg: "", env: ""),
+    VendorAuth(id: "nous", name: "Nous Research", kind: "oauth", cli: "ai-usagebar", login: "ai-usagebar auth nous login", pkg: "", env: "NOUS_API_KEY"),
+    VendorAuth(id: "opencode-go", name: "OpenCode Go", kind: "apikey", cli: "", login: "", pkg: "", env: "OPENCODE_GO_API_KEY"),
+    VendorAuth(id: "commandcode", name: "Command Code", kind: "oauth", cli: "commandcode", login: "commandcode", pkg: "", env: "COMMANDCODE_API_KEY"),
 ]
 
 // The config file the Rust binary would actually read. On macOS
@@ -1187,7 +1194,8 @@ func addAccountScript(binary: String, label: String, desktop: Bool) -> String {
 func defaultEnabled(_ id: String) -> Bool {
     switch id {
     case "anthropic", "openai", "zai", "openrouter": return true
-    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity": return false
+    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
+         "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode": return false
     default: return true
     }
 }
@@ -1241,6 +1249,39 @@ func vendorConfigured(_ v: VendorAuth) -> Bool {
                 return fm.fileExists(atPath: "\(home)/.gemini/\(d)", isDirectory: &isDir) && isDir.boolValue
             }
     }
+    if v.id == "copilot" {
+        if let e = ProcessInfo.processInfo.environment["GITHUB_COPILOT_TOKEN"], !e.isEmpty { return true }
+        if configHasApiKeyTOML("copilot") { return true }
+        let ghConfig = ProcessInfo.processInfo.environment["GH_CONFIG_DIR"] ?? "\(home)/.config/gh"
+        if let attrs = try? fm.attributesOfItem(atPath: "\(ghConfig)/hosts.yml"),
+           let size = attrs[.size] as? UInt64, size > 0 {
+            return true
+        }
+        return false
+    }
+    if v.id == "supergrok" {
+        let authPath = configValueTOML("supergrok", "auth_path") ?? "\(home)/.grok/auth.json"
+        return fm.fileExists(atPath: authPath)
+    }
+    if v.id == "kiro" {
+        let dbPath = configValueTOML("kiro", "db_path")
+            ?? "\(home)/Library/Application Support/kiro-cli/data.sqlite3"
+        if fm.fileExists(atPath: dbPath) { return true }
+        return fm.fileExists(atPath: "\(home)/.local/share/kiro-cli/data.sqlite3")
+    }
+    if v.id == "nous" {
+        if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
+        if configHasApiKeyTOML("nous") { return true }
+        let appSupport = "\(home)/Library/Application Support/ai-usagebar/credentials.json"
+        if fm.fileExists(atPath: appSupport) { return true }
+        return fm.fileExists(atPath: "\(home)/.config/ai-usagebar/credentials.json")
+    }
+    if v.id == "commandcode" {
+        if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
+        if configHasApiKeyTOML("commandcode") { return true }
+        return fm.fileExists(atPath: "\(home)/.commandcode/auth.json")
+            || fm.fileExists(atPath: "\(home)/.pi/agent/auth.json")
+    }
     if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
     return configHasApiKeyTOML(v.id)
 }
@@ -1282,6 +1323,18 @@ func runInTerminal(_ script: String) {
 }
 
 func oauthScript(_ v: VendorAuth) -> String {
+    if v.pkg.isEmpty {
+        return """
+        export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+        if command -v \(v.cli) >/dev/null 2>&1; then
+          \(v.login)
+        else
+          echo "\(v.cli) not found. Please install \(v.name)."
+        fi
+        echo
+        read -p "Press Enter to close..."
+        """
+    }
     return """
     export PATH="$HOME/.local/bin:$PATH"
     if command -v \(v.cli) >/dev/null 2>&1; then
@@ -1368,8 +1421,17 @@ struct VendorsSection: View {
         if v.id == "antigravity" {
             return "⚠ Abra o Antigravity (app, IDE ou agy) e ative [antigravity] no config"
         }
-        if v.kind == "local" {
+        if v.id == "cursor" {
             return "⚠ Sign in to the Cursor app and enable [cursor] in the config"
+        }
+        if v.id == "supergrok" {
+            return "⚠ Sign in via Grok Build CLI and enable [supergrok] in the config"
+        }
+        if v.id == "kiro" {
+            return "⚠ Sign in to kiro-cli and enable [kiro] in the config"
+        }
+        if v.kind == "local" {
+            return "⚠ Sign in to \(v.name) and enable [\(v.id)] in the config"
         }
         return "⚠ No API key — \(apiKeyEnvironment(v))"
     }
@@ -1377,18 +1439,22 @@ struct VendorsSection: View {
     private func buttonLabel(_ v: VendorAuth) -> String {
         if v.kind == "oauth" {
             if configured[v.id] == true { return "Re-logar" }
-            if cliPresent[v.id] == false { return "Install + sign in" }
+            if cliPresent[v.id] == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
             return "Sign in"
         }
         if v.id == "antigravity" { return "Open Antigravity" }
-        if v.kind == "local" { return "Open Cursor" }
+        if v.id == "cursor" { return "Open Cursor" }
+        if v.id == "kiro" { return "Sign in" }
+        if v.kind == "local" { return "Configure (TUI)" }
         return "Configure (TUI)"
     }
 
     private func action(_ v: VendorAuth) {
         if v.kind == "oauth" { runInTerminal(oauthScript(v)) }
         else if v.id == "antigravity" { openApp("Antigravity") }
-        else if v.kind == "local" { openApp(v.name) }
+        else if v.id == "cursor" { openApp("Cursor") }
+        else if v.id == "kiro" { runInTerminal("kiro-cli login\necho\nread -p 'Press Enter to close...'") }
+        else if v.kind == "local" { openTuiInTerminal() }
         else { openTuiInTerminal() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { refresh() }
     }

@@ -198,7 +198,8 @@ func testDefaultEnabled() {
     for id in ["anthropic", "openai", "zai", "openrouter"] {
         assertEqual(defaultEnabled(id), true, "\(id) defaults enabled")
     }
-    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity"] {
+    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
+               "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode"] {
         assertEqual(defaultEnabled(id), false, "\(id) defaults disabled (opt-in)")
     }
 }
@@ -372,6 +373,34 @@ func testParserBalances() {
     // A non-Cursor vendor keeps the default time-window labels.
     assertEqual(cld?.sessionLabel, "Session", "anthropic keeps the Session label")
     assertEqual(cld?.weeklyTag, "7d", "anthropic keeps the 7d tag")
+
+    let copilot = snapshot(FORMAT, vendor: "copilot",
+                           fields: fields(through: 16, set: [
+                              0: "Copilot Business", 1: "25", 2: "20d", 3: "50", 4: "20d", 16: "cop"
+                           ]))
+    assertEqual(copilot?.hasUsageWindows, true, "copilot shows windows")
+    assertNil(copilot?.creditBalance, "copilot has no balance")
+    assertEqual(copilot?.session?.pct, 25, "copilot premium pct")
+    assertEqual(copilot?.weekly?.pct, 50, "copilot chat pct")
+
+    let minimax = snapshot(FORMAT, vendor: "minimax",
+                           fields: fields(through: 16, set: [
+                              0: "Standard", 1: "30", 2: "3h", 3: "70", 4: "4d",
+                              13: "15", 14: "45", 16: "mmx"
+                           ]))
+    assertEqual(minimax?.hasUsageWindows, true, "minimax shows windows")
+    assertEqual(minimax?.session?.pct, 30, "minimax session pct")
+    assertEqual(minimax?.weekly?.pct, 70, "minimax weekly pct")
+    assertEqual(minimax?.session?.elapsed, 15, "minimax session elapsed")
+    assertEqual(minimax?.weekly?.elapsed, 45, "minimax weekly elapsed")
+
+    let ocg = snapshot(FORMAT, vendor: "opencode-go",
+                       fields: fields(through: 16, set: [
+                          0: "OpenCode Go", 1: "12", 2: "4h", 3: "45", 4: "6d", 16: "ocg"
+                       ]))
+    assertEqual(ocg?.hasUsageWindows, true, "opencode-go shows windows")
+    assertEqual(ocg?.session?.pct, 12, "opencode-go session pct")
+    assertEqual(ocg?.weekly?.pct, 45, "opencode-go weekly pct")
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────────
@@ -505,6 +534,20 @@ func testClaudeAccounts() {
     assertEqual(vendorArgs(for: "zai").joined(separator: " "), "--vendor zai", "vendor fetch args")
     assertEqual(entryDisplayName("anthropic@gmail"), "Claude · gmail", "account display name")
     assertEqual(entryDisplayName("overview"), "Overview", "overview display name")
+    assertEqual(vendorArgs(for: "copilot").joined(separator: " "), "--vendor copilot", "copilot fetch args")
+    assertEqual(entryDisplayName("copilot"), "GitHub Copilot", "copilot display name")
+    assertEqual(vendorArgs(for: "supergrok").joined(separator: " "), "--vendor supergrok", "supergrok fetch args")
+    assertEqual(entryDisplayName("supergrok"), "SuperGrok", "supergrok display name")
+    assertEqual(vendorArgs(for: "minimax").joined(separator: " "), "--vendor minimax", "minimax fetch args")
+    assertEqual(entryDisplayName("minimax"), "MiniMax", "minimax display name")
+    assertEqual(vendorArgs(for: "kiro").joined(separator: " "), "--vendor kiro", "kiro fetch args")
+    assertEqual(entryDisplayName("kiro"), "Kiro", "kiro display name")
+    assertEqual(vendorArgs(for: "nous").joined(separator: " "), "--vendor nous", "nous fetch args")
+    assertEqual(entryDisplayName("nous"), "Nous Research", "nous display name")
+    assertEqual(vendorArgs(for: "opencode-go").joined(separator: " "), "--vendor opencode-go", "opencode-go fetch args")
+    assertEqual(entryDisplayName("opencode-go"), "OpenCode Go", "opencode-go display name")
+    assertEqual(vendorArgs(for: "commandcode").joined(separator: " "), "--vendor commandcode", "commandcode fetch args")
+    assertEqual(entryDisplayName("commandcode"), "Command Code", "commandcode display name")
 
     let overviewEntries = [
         MenuEntry(id: "anthropic@struct", name: "Claude · struct"),
