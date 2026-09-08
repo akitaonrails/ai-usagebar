@@ -11,24 +11,6 @@ Each release is also published at
 
 ### Added
 
-- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
-  date once the reset is past today — instead of the countdown, under
-  **Preferences → Display**. Off by default; the countdown is unchanged unless
-  you turn it on. It follows the system's 12h/24h convention.
-
-
-
-- **`ai-usagebar vendors --json`** — the provider catalog: one row per
-  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
-  config has it `enabled`, whether this machine holds the credential it needs
-  (`configured`), the environment variable it reads (honoring an `api_key_env`
-  override), and the `login` command that fixes it. It contacts nothing.
-  `usage --json` reports only *enabled* providers, so the switched-off and the
-  never-credentialed were exactly the rows a "is anything broken?" list could
-  not describe; this is the answer for them. `needs_credential` is `false` only
-  for Antigravity, which has no credential to be missing, so a frontend never
-  offers to fix one that cannot be.
-
 - **Local provider detection.** `detect::has_local_credentials` is a cheap,
   local-only probe per vendor (credential files, sqlite stores, saved API keys,
   env vars, Antigravity's local ports; never the network) that *parses* the
@@ -51,6 +33,29 @@ Each release is also published at
   installed. `--all` re-checks vendors already seen; `--json` prints
   `{"enabled": [...], "known": [...], "probed": n}` with vendor slugs and no
   paths or secrets.
+
+## [1.13.0] — 2026-09-08
+
+### Added
+
+- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
+  date once the reset is past today — instead of the countdown, under
+  **Preferences → Display**. Off by default; the countdown is unchanged unless
+  you turn it on. It follows the system's 12h/24h convention.
+
+
+
+- **`ai-usagebar vendors --json`** — the provider catalog: one row per
+  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
+  config has it `enabled`, whether this machine holds the credential it needs
+  (`configured`), the environment variable it reads (honoring an `api_key_env`
+  override), and the `login` command that fixes it. It contacts nothing.
+  `usage --json` reports only *enabled* providers, so the switched-off and the
+  never-credentialed were exactly the rows a "is anything broken?" list could
+  not describe; this is the answer for them. `needs_credential` is `false` only
+  for Antigravity, which has no credential to be missing, so a frontend never
+  offers to fix one that cannot be.
+
 
 - **Omarchy bar: show every provider at once.** A new **Show all providers in
   the top bar** toggle (and `showAll` widget setting) draws each configured
@@ -2117,7 +2122,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
