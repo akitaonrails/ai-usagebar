@@ -30,7 +30,7 @@ jobs:
           fetch-depth: 0
 
       - id: check
-        name: Tag, manifests, changelog and packaging must agree
+        name: Tag and manifests must agree
         env:
           RELEASE_REF: ${{ inputs.ref || github.ref_name }}
         run: |
@@ -66,14 +66,6 @@ jobs:
             "$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)" "$version"
           check "Omarchy plugin version" \
             "$(jq -r '.version' manifest.json)" "$version"
-          check "PKGBUILD pkgver" \
-            "$(grep -m1 '^pkgver=' packaging/aur/PKGBUILD | cut -d= -f2)" "$version"
-          check "PKGBUILD-bin pkgver" \
-            "$(grep -m1 '^pkgver=' packaging/aur/PKGBUILD-bin | cut -d= -f2)" "$version"
-          check ".SRCINFO pkgver" \
-            "$(grep -m1 'pkgver = ' packaging/aur/.SRCINFO | awk '{print $3}')" "$version"
-          check ".SRCINFO-bin pkgver" \
-            "$(grep -m1 'pkgver = ' packaging/aur/.SRCINFO-bin | awk '{print $3}')" "$version"
 
           [ "$fail" -eq 0 ] || exit 1
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -106,8 +98,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Test desktop integration models
-        run: make desktop-test
+      - name: Test Omarchy plugin model
+        run: make plugin-test
 
       - name: Install nasm (x86_64 native build; ring assembles its primitives)
         if: matrix.builder == 'cargo'
@@ -190,11 +182,11 @@ jobs:
 
             echo "## Install"
             echo
-            echo "### Arch (AUR)"
+            echo "### Omarchy"
             echo
             echo '```bash'
-            echo "yay -S ai-usagebar-bin      # prebuilt binary from this release"
-            echo "yay -S ai-usagebar          # compiles from source"
+            echo "omarchy pkg aur add ai-usagebar-bin"
+            echo "omarchy plugin add https://github.com/bradflaugher/ai-usagebar.git --enable"
             echo '```'
             echo
             echo "### Manual"
@@ -233,118 +225,3 @@ jobs:
               --notes-file body.md \
               --latest
           fi
-
-  publish-crates-io:
-    needs: [verify-version, build, release]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.ref != ''
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
-            echo "::warning::Skipping crates.io publish — no CARGO_REGISTRY_TOKEN secret set"
-            exit 0
-          fi
-          log="${RUNNER_TEMP:-/tmp}/cargo-publish.log"
-          set +e
-          cargo publish 2>&1 | tee "$log"
-          status=${PIPESTATUS[0]}
-          set -e
-          if [ "$status" -eq 0 ]; then
-            exit 0
-          fi
-          # Idempotent re-runs: if the version is already on crates.io
-          # (e.g. workflow_dispatch fired against an old tag), skip
-          # quietly instead of failing the workflow.
-          if grep -q "crate ai-usagebar@.* already exists on crates.io index" "$log"; then
-            echo "::warning::Skipping crates.io publish — ${GITHUB_REF_NAME#v} already exists"
-            exit 0
-          fi
-          exit "$status"
-
-  publish-aur:
-    needs: [verify-version, build, release]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.ref != ''
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      # Compute the real sha256s and inject them into both PKGBUILDs so the
-      # AUR deploy action publishes pinned hashes (the in-tree PKGBUILDs
-      # carry `SKIP` between releases by convention — see CLAUDE.md).
-      - name: Pin sha256s in PKGBUILDs
-        env:
-          TAG: ${{ inputs.ref || github.ref_name }}
-        run: |
-          SRC_URL="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz"
-          SRC_SHA=$(curl -fsSL "$SRC_URL" | sha256sum | awk '{print $1}')
-          sed -i "s/^sha256sums=.*/sha256sums=('$SRC_SHA')/" packaging/aur/PKGBUILD
-
-          X86_SHA=$(awk '{print $1}' artifacts/ai-usagebar-linux-x86_64.tar.gz.sha256)
-          ARM_SHA=$(awk '{print $1}' artifacts/ai-usagebar-linux-aarch64.tar.gz.sha256)
-          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$X86_SHA')/" packaging/aur/PKGBUILD-bin
-          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('$ARM_SHA')/" packaging/aur/PKGBUILD-bin
-
-          # deploy-aur copies pkgbuild verbatim (preserves filename). The AUR
-          # bin repo tracks a file literally named `PKGBUILD`, so stage the
-          # `-bin` variant under that name. Without this, makepkg generates
-          # .SRCINFO from the stale PKGBUILD and pushes an empty commit (the
-          # mode that bit us in v0.4.4).
-          mkdir -p staging/bin
-          cp packaging/aur/PKGBUILD-bin staging/bin/PKGBUILD
-
-      - name: Check AUR_SSH_KEY presence
-        id: aur_key
-        env:
-          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
-        run: |
-          if [ -z "$AUR_SSH_KEY" ]; then
-            echo "set=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping AUR push — no AUR_SSH_KEY secret set"
-          else
-            echo "set=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # `KSXGitHub/github-actions-deploy-aur` spins up an Arch container,
-      # regenerates .SRCINFO via makepkg, then commits + pushes via SSH.
-      # Pinned to an immutable revision because this action receives the AUR
-      # SSH private key and executes in the release trust boundary.
-      - name: Publish ai-usagebar (source) to AUR
-        if: steps.aur_key.outputs.set == 'true'
-        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
-        with:
-          pkgname: ai-usagebar
-          pkgbuild: ./packaging/aur/PKGBUILD
-          commit_username: AkitaOnRails (GitHub Actions)
-          commit_email: boss@akitaonrails.com
-          ssh_private_key: ${{ secrets.AUR_SSH_KEY }}
-          commit_message: "ai-usagebar ${{ inputs.ref || github.ref_name }}"
-          ssh_keyscan_types: rsa,ecdsa,ed25519
-          force_push: 'false'
-
-      - name: Publish ai-usagebar-bin to AUR
-        if: steps.aur_key.outputs.set == 'true'
-        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
-        with:
-          pkgname: ai-usagebar-bin
-          pkgbuild: ./staging/bin/PKGBUILD
-          commit_username: AkitaOnRails (GitHub Actions)
-          commit_email: boss@akitaonrails.com
-          ssh_private_key: ${{ secrets.AUR_SSH_KEY }}
-          commit_message: "ai-usagebar-bin ${{ inputs.ref || github.ref_name }}"
-          ssh_keyscan_types: rsa,ecdsa,ed25519
-          force_push: 'false'

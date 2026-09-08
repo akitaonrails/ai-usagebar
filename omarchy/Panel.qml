@@ -10,7 +10,7 @@ import "Model.js" as Model
 // its button as this panel's anchor; collection stays in the Rust binary.
 Panel {
   id: root
-  moduleName: "akitaonrails.ai-usagebar"
+  moduleName: "bradflaugher.ai-usagebar"
   manageIpc: false
 
   property var anchorItem: null
@@ -42,7 +42,7 @@ Panel {
     Number(setting("refreshIntervalSec", 300)) || 300))
   readonly property string configuredProvider: String(setting("provider", "") || "").trim()
   readonly property string rememberedEntryId: String(setting("lastSelectedEntryId", "") || "").trim()
-  readonly property bool showValue: Model.booleanSetting(setting("showValue", true), true)
+  readonly property bool showValue: Model.booleanSetting(setting("showValue", false), false)
   readonly property bool showProvider: Model.booleanSetting(setting("showProvider", false), false)
   readonly property var visibleEntries: Model.filteredEntries(entries, configuredProvider)
   readonly property int entryIndex: Model.selectedIndex(visibleEntries, selectedEntryId)

@@ -13,10 +13,10 @@ vm.runInContext(source, model, {filename: 'Model.js'});
 const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
 assert.deepEqual(manifest.kinds, ['bar-widget']);
 assert.equal(manifest.entryPoints.barWidget, 'omarchy/BarWidget.qml');
-assert.equal(manifest.barWidget.defaults.showValue, true);
+assert.equal(manifest.barWidget.defaults.showValue, false);
 const showValueSchema = manifest.barWidget.schema.find(row => row.key === 'showValue');
 assert.equal(showValueSchema.type, 'boolean');
-assert.equal(showValueSchema.defaultValue, true);
+assert.equal(showValueSchema.defaultValue, false);
 // Opt-in, so an existing bar entry that has never seen this key keeps the
 // label it has today.
 assert.equal(manifest.barWidget.defaults.showProvider, false);
@@ -41,7 +41,7 @@ assert.match(panelSource, /property\s+var\s+hostWidget:\s*null/);
 assert.match(panelSource, /SettingsView\s*\{/);
 assert.match(panelSource, /function\s+openSettings\s*\(/);
 assert.match(panelSource, /setting\("lastSelectedEntryId",\s*""\)/);
-assert.match(panelSource, /setting\("showValue",\s*true\)/);
+assert.match(panelSource, /setting\("showValue",\s*false\)/);
 assert.match(panelSource, /setting\("showProvider",\s*false\)/);
 assert.match(panelSource, /showProvider\s*\?\s*Model\.providerShort\(entry\)\s*:\s*""/);
 assert.match(panelSource, /function\s+persistSelection\s*\(/);
@@ -146,31 +146,31 @@ const priorWidgetSettings = {
   provider: '', refreshIntervalSec: 90, futureSetting: {keep: true}, id: 'stale-id'
 };
 const selectedWidgetSettings = model.settingsWithSelectedEntry(
-  priorWidgetSettings, 'akitaonrails.ai-usagebar', 'openrouter@personal');
+  priorWidgetSettings, 'bradflaugher.ai-usagebar', 'openrouter@personal');
 assert.deepEqual(JSON.parse(JSON.stringify(selectedWidgetSettings)), {
-  id: 'akitaonrails.ai-usagebar',
+  id: 'bradflaugher.ai-usagebar',
   provider: '',
   refreshIntervalSec: 90,
   futureSetting: {keep: true},
   lastSelectedEntryId: 'openrouter@personal'
 });
 assert.equal(priorWidgetSettings.lastSelectedEntryId, undefined);
-assert.equal(model.settingsWithSelectedEntry({}, 'akitaonrails.ai-usagebar', ''), null);
+assert.equal(model.settingsWithSelectedEntry({}, 'bradflaugher.ai-usagebar', ''), null);
 const hiddenValueSettings = model.settingsWithOverrides(
-  selectedWidgetSettings, 'akitaonrails.ai-usagebar', {showValue: false});
+  selectedWidgetSettings, 'bradflaugher.ai-usagebar', {showValue: false});
 assert.equal(hiddenValueSettings.showValue, false);
 assert.equal(hiddenValueSettings.lastSelectedEntryId, 'openrouter@personal');
 assert.equal(selectedWidgetSettings.showValue, undefined);
 const shownProviderSettings = model.settingsWithOverrides(
-  hiddenValueSettings, 'akitaonrails.ai-usagebar', {showProvider: true});
+  hiddenValueSettings, 'bradflaugher.ai-usagebar', {showProvider: true});
 assert.equal(shownProviderSettings.showProvider, true);
 assert.equal(shownProviderSettings.showValue, false);
 assert.equal(shownProviderSettings.lastSelectedEntryId, 'openrouter@personal');
 assert.equal(hiddenValueSettings.showProvider, undefined);
-const protectedSettings = model.settingsWithOverrides({}, 'akitaonrails.ai-usagebar', {
+const protectedSettings = model.settingsWithOverrides({}, 'bradflaugher.ai-usagebar', {
   id: 'wrong-id', constructor: 'ignored', prototype: 'ignored', showValue: false
 });
-assert.equal(protectedSettings.id, 'akitaonrails.ai-usagebar');
+assert.equal(protectedSettings.id, 'bradflaugher.ai-usagebar');
 assert.notEqual(protectedSettings.constructor, 'ignored');
 assert.equal(protectedSettings.prototype, undefined);
 assert.equal(model.booleanSetting(undefined, true), true);

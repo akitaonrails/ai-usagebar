@@ -1,9 +1,9 @@
 # Configuration reference
 
 The config file is `~/.config/ai-usagebar/config.toml`. All fields are optional.
-Claude, Codex, Z.AI, and OpenRouter are enabled by default; other providers are
-opt-in. The commented example shows the defaults and provider-specific
-settings.
+Claude, Codex, Kimi, SuperGrok, and Antigravity are enabled by default; other
+providers are opt-in. The commented example shows the defaults and
+provider-specific settings.
 
 ```toml
 [ui]
@@ -41,13 +41,13 @@ enabled = false           # opt in after `gh auth login --web`
 # Uses `gh auth token`; GITHUB_COPILOT_TOKEN is an optional explicit override.
 
 [zai]
-enabled = true
+enabled = false
 api_key_env = "ZAI_API_KEY"
 # api_key = "..."          # used if ZAI_API_KEY is unset; chmod 600 the file!
 # plan_tier = "lite"       # lite | pro | max — display-only
 
 [openrouter]
-enabled = true
+enabled = false
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
 # show_default_account = false  # hide default when named accounts exist
@@ -63,7 +63,7 @@ api_key_env = "DEEPSEEK_API_KEY"
 # api_key = "sk-..."       # used if DEEPSEEK_API_KEY is unset; chmod 600 the file!
 
 [kimi]
-enabled = true             # disabled by default; a Kimi Code CLI login is enough
+enabled = true             # Kimi Code CLI login is enough; no key to paste
 # Log in with `kimi` and ai-usagebar reads the OAuth session the CLI already
 # stored, refreshing it in place when it expires — no key to create or paste.
 # An API key still wins when one is set; a Kimi For Coding subscription can

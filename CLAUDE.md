@@ -10,82 +10,33 @@ When cutting a new version (patch, minor, or major):
 1. **Bump both versions** — `Cargo.toml` `version` and the root Omarchy
    `manifest.json` `version` must match the release tag.
 2. **Do not add a changelog file.** Release notes are generated from the
-   commits and PR titles between tags. A shared `CHANGELOG.md` serializes
-   parallel PRs and has rewritten shipped history here twice.
-3. **Bump `packaging/aur/PKGBUILD`** — `pkgver=X.Y.Z`, `pkgrel=1`, reset `sha256sums` to `'SKIP'`.
-4. **Bump `packaging/aur/PKGBUILD-bin`** — same `pkgver`, `pkgrel=1`, reset both
-   `sha256sums_x86_64` and `sha256sums_aarch64` to `'SKIP'`.
-5. **Regenerate both `.SRCINFO`s NOW, before tagging** — the release
-   workflow's `verify-version` job rejects the tag if `packaging/aur/.SRCINFO`
-   or `.SRCINFO-bin` still carry the old `pkgver` (learned at v0.17.0, which
-   never shipped for exactly this reason):
+   commits and PR titles between tags.
+3. **Run gate before tagging**:
    ```
-   cd packaging/aur && makepkg --printsrcinfo > .SRCINFO
-   # PKGBUILD-bin must be named PKGBUILD for makepkg — use a scratch dir:
-   t=$(mktemp -d) && cp PKGBUILD-bin "$t/PKGBUILD" &&
-     (cd "$t" && makepkg --printsrcinfo > .SRCINFO-bin) &&
-     cp "$t/.SRCINFO-bin" .SRCINFO-bin && rm -rf "$t"
+   make test                                   # cargo test + Omarchy plugin contract
+   cargo clippy --all-targets -- -D warnings
+   cargo machete
+   omarchy plugin validate .
    ```
-   The committed files keep `sha256sums = SKIP`; CI pins the real hashes later.
-6. **Run gate before tagging**:
-   ```
-   make test                                   # cargo test + the desktop JS gate
-   cargo clippy --all-targets -- -D warnings   # clean
-   cargo machete                               # no unused deps
-   omarchy plugin validate .                   # plugin manifest + entry points
-   ```
-   `make test` rather than `cargo test`: it also runs the GNOME, KDE, and
-   Omarchy frontend contract suites. If `kde-plasmoid/` changed, also bump
-   `KPlugin.Version` in `kde-plasmoid/package/metadata.json`; it is versioned
-   independently of `Cargo.toml`, like the GNOME `metadata.json`.
-7. **Commit, tag, push**:
+4. **Commit, tag, push**:
    ```
    git commit -m "vX.Y.Z — …"
    git tag -a vX.Y.Z -m "vX.Y.Z — …"
    git push origin main && git push origin vX.Y.Z
    ```
-8. **Wait for CI** (3–5 min): the tag push auto-triggers
-   `.github/workflows/release.yml` which builds both x86_64 and
-   aarch64 tarballs and publishes a GitHub Release.
-9. **AUR push is automated via CI** when `AUR_SSH_KEY` is set (since
-   v0.4.4). The `publish-aur` job in `.github/workflows/release.yml`
-   runs after `build` + `release` succeed, pins the real sha256s into
-   both PKGBUILDs (steps 3-4's `'SKIP'`s), regenerates the `.SRCINFO`s,
-   and pushes via `KSXGitHub/github-actions-deploy-aur`. The manual
-   fallback below is for when the secret isn't configured or CI is
-   unavailable.
+5. **Wait for CI**: `.github/workflows/release.yml` builds Linux tarballs and
+   publishes a GitHub Release. This fork does not publish AUR or crates.io.
 
-   **Manual fallback** — pin the real sha256s in both PKGBUILDs first:
-   ```
-   cd packaging/aur
-   # Source:
-   curl -sLO https://github.com/akitaonrails/ai-usagebar/archive/refs/tags/vX.Y.Z.tar.gz
-   sha256sum vX.Y.Z.tar.gz   # paste into PKGBUILD
-   # Bin x86_64:
-   curl -sL https://github.com/akitaonrails/ai-usagebar/releases/download/vX.Y.Z/ai-usagebar-linux-x86_64.tar.gz.sha256
-   # Bin aarch64:
-   curl -sL https://github.com/akitaonrails/ai-usagebar/releases/download/vX.Y.Z/ai-usagebar-linux-aarch64.tar.gz.sha256
-   ```
-   Then regenerate the `.SRCINFO`s exactly as in step 5 (now with the
-   real hashes), and push to the separate AUR git repos:
-   - `~/Projects/aur-ai-usagebar` → `ssh://aur@aur.archlinux.org/ai-usagebar.git`
-   - `~/Projects/aur-ai-usagebar-bin` → `ssh://aur@aur.archlinux.org/ai-usagebar-bin.git`
+This is an Omarchy-only fork. After merging `upstream`, run
+`./scripts/strip-platforms.sh` so GNOME/KDE/macOS/Nix/AUR trees stay gone.
+See [FORK.md](FORK.md).
 
-   **Always `git fetch origin && git reset --hard origin/master` in each
-   AUR clone first.** A previous session may have pushed an intermediate
-   release that your local clone never saw — in which case naively
-   committing on top diverges and produces a non-trivial rebase
-   conflict. The clones are throwaway: reset, then overlay the canonical
-   `packaging/aur/PKGBUILD*` + regen'd `.SRCINFO*` from the main repo,
-   commit, push.
-
-**Anything skipping any of 1–9 is an incomplete release.** Tags are
-immutable; do **not** force-move a tag once it's pushed. Cut a new
+Tags are immutable; do **not** force-move a tag once it's pushed. Cut a new
 patch version instead.
 
 ## Hard invariants — never break these
 
-- **Widget always exits 0.** Waybar hides modules that don't. Wrap
+- **Widget always exits 0.** Consumers hide modules that don't. Wrap
   every error in a fallback `⚠` JSON. See `widget::run::fallback`.
 - **Cache writes are atomic** (tempfile + persist). Multi-monitor
   Waybar instances coexist via per-vendor `flock`.
@@ -172,9 +123,8 @@ vendor's response shape drifts:
 1. Capture the actual response (`curl -sH "Authorization: …" …`).
 2. Update the matching `types.rs` in `src/{anthropic,openai,zai,openrouter,deepseek}/`.
 3. Re-run `make smoke` until green.
-4. **Bump pkgrel (not pkgver) in both PKGBUILDs** — the user-visible
-   functionality is unchanged; it's a packaging update tracking a
-   silent upstream change.
+4. Tag a patch release if the parser change ships. This fork does not
+   publish AUR packages.
 
 ## What lives where
 
@@ -223,21 +173,9 @@ vendor's response shape drifts:
   auto-signals waybar after save)
 - `src/tui/panels.rs` — native ratatui per-vendor panels
 - `src/widget/` — Waybar widget shell (CLI, render, pretty, run)
-- `manifest.json`, `omarchy/` — Omarchy 4 / Quattro plugin manifest, native
-  Quickshell panel, pure report model, and Node contract tests
+- `manifest.json`, `omarchy/` — Omarchy 4 / Quattro plugin (`bradflaugher.ai-usagebar`)
 - `src/tooltip.rs` — shared Pango bordered-box renderer (used by
   every vendor's tooltip)
-- `gnome-extension/marker-logic.js` — pure GNOME formatting helpers and their
-  own Node contract tests.
-- `kde-plasmoid/` — KDE Plasma 6 plasmoid (KPackage). Vendor selection is
-  per applet instance via KConfigXT. Its single `usage --json` request omits
-  `--vendor`; selection happens client-side, so it never reads
-  `~/.cache/ai-usagebar/active_vendor`. The pure report adapter lives in
-  `package/contents/code/plasmoid-logic.mjs` and is not a copy of the GNOME
-  helpers. Test popup work with `plasmawindowed`, not `plasmoidviewer`; the
-  latter never instantiates the full representation.
-- `packaging/aur/PKGBUILD` — source-build AUR pkg
-- `packaging/aur/PKGBUILD-bin` — prebuilt-binary AUR pkg (multi-arch)
-- `.github/workflows/release.yml` — tag-driven release (x86_64 + aarch64)
+- `.github/workflows/release.yml` — tag-driven Linux release (x86_64 + aarch64)
 - `tests/anthropic_e2e.rs` — mockito + insta snapshot tests
 - `tests/live.rs` — `#[ignore]`d smoke tests against real APIs

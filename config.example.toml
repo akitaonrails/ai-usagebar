@@ -125,7 +125,7 @@ enabled = false
 # gh_binary = "/usr/bin/gh"
 
 [zai]
-enabled = true
+enabled = false
 # Credential resolution order: env var → inline api_key → error.
 api_key_env = "ZAI_API_KEY"      # checked first; if set + non-empty, used
 # api_key = "..."                # fallback for users who don't export env vars
@@ -133,7 +133,7 @@ api_key_env = "ZAI_API_KEY"      # checked first; if set + non-empty, used
 # plan_tier = "lite"   # lite | pro | max
 
 [openrouter]
-enabled = true
+enabled = false
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
 # Named keys appear as separate TUI/report entries and use isolated caches.
@@ -154,17 +154,16 @@ api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
 
 [kimi]
-# Disabled by default. Two ways to authenticate:
-#   1. An existing Kimi Code CLI login: log in with `kimi` and just set
-#      `enabled = true` — nothing to create or paste. ai-usagebar reads the
-#      CLI's own OAuth session and refreshes it in place.
+# Enabled by default in this fork. Two ways to authenticate:
+#   1. An existing Kimi Code CLI login: log in with `kimi`. ai-usagebar reads
+#      the CLI's own OAuth session and refreshes it in place.
 #   2. An API key (env var or inline), which takes precedence when set. A Kimi
 #      For Coding subscription can issue one at kimi.com/code/console.
 # Saving a key in the Settings overlay writes the inline fallback AND flips
 # `enabled` to true; clearing the field removes the inline key again.
 # Shows Kimi Code subscription quota (weekly + 5h rolling window) from the
 # undocumented, community-confirmed api.kimi.com/coding/v1/usages endpoint.
-enabled = false
+enabled = true
 api_key_env = "KIMI_API_KEY"      # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
 # credentials_path = "~/.kimi-code/credentials/kimi-code.json"  # CLI login file
@@ -237,9 +236,8 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # Authorization header, never copied or rewritten). The ACP `x.ai/billing`
 # extension is a fallback when the HTTPS billing endpoint is unavailable.
 [supergrok]
-# Disabled by default — enable after installing official Grok Build and running
-# `grok login` at least once.
-enabled = false
+# Enabled by default in this fork after `grok login`.
+enabled = true
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok, avoiding unrelated PATH
 # programs with the same name. Override only for a trusted official install.
 # grok_binary = "/opt/grok/bin/grok"
@@ -255,7 +253,7 @@ enabled = false
 # tried first, not exclusively: if that address is dead — a stale port after a
 # restart, say — discovery still runs and its ports are probed as fallbacks.
 [antigravity]
-enabled = false
+enabled = true
 
 # Cursor. No API key: usage is read from the session token the Cursor IDE
 # already wrote to its own local state database after you signed in there —

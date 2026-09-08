@@ -4,21 +4,17 @@ version = "1.11.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-description = "Omarchy/Waybar widgets + TUI for tracking multi-provider AI plan usage"
+description = "Omarchy plugin + TUI for tracking multi-provider AI plan usage"
 readme = "README.md"
-repository = "https://github.com/akitaonrails/ai-usagebar"
-homepage = "https://github.com/akitaonrails/ai-usagebar"
-documentation = "https://github.com/akitaonrails/ai-usagebar#readme"
-keywords = ["waybar", "claude", "openai", "tui", "usage"]
+repository = "https://github.com/bradflaugher/ai-usagebar"
+homepage = "https://github.com/bradflaugher/ai-usagebar"
+documentation = "https://github.com/bradflaugher/ai-usagebar#readme"
+keywords = ["omarchy", "claude", "openai", "tui", "usage"]
 categories = ["command-line-utilities"]
 
-# Don't ship screenshots (~6 MiB of the package!) or AUR packaging files
-# in the crates.io tarball — they're for the GitHub README and AUR builds,
-# not for consumers of the crate or its binaries.
+# Don't ship screenshots in the crates.io tarball.
 exclude = [
-    "screenshot.png",
     "screenshots/*",
-    "packaging/*",
     ".github/*",
     ".claude/*",
 ]

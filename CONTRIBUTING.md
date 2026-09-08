@@ -10,14 +10,15 @@ Run the gate. It is the same one CI runs, and it catches almost everything a
 review would otherwise send back:
 
 ```
-make test                                   # cargo test + the GNOME, KDE and Omarchy contract suites
+make test                                   # cargo test + the Omarchy contract suite
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo machete                               # no unused dependencies
 ```
 
-`make test` rather than `cargo test`: the frontends have their own Node contract
-tests, and a change to the report shape can break them without touching Rust.
+`make test` rather than `cargo test`: the Omarchy plugin has its own Node
+contract tests, and a change to the report shape can break them without
+touching Rust.
 
 ## Checklist
 
@@ -38,7 +39,7 @@ Most review round-trips come from one of these. None takes long.
 
 These are in `CLAUDE.md` in full. The ones contributors hit most:
 
-- **The widget always exits 0.** Waybar hides a module that doesn't. Errors
+- **The widget always exits 0.** Consumers hide a module that doesn't. Errors
   become a fallback `⚠` payload, never a non-zero exit.
 - **No `PATH` lookups for a trusted binary** without a config override. The
   executable that runs on every refresh should not be an ambient choice — see
@@ -68,7 +69,6 @@ gets pinned to, and a paraphrase is not enough to build against.
 
 ## Platform reality
 
-CI builds Linux, macOS and Windows, but the maintainer works on Linux. macOS
-code paths — the Keychain, Claude Desktop, `safe_storage` — get compiled but
-not exercised. If you are on a Mac and can test a change there, say so in the
-PR; that is worth more than it sounds.
+This fork targets Omarchy on Linux. Provider modules still compile
+macOS/Windows credential paths; CI does not run those jobs. Prefer Linux
+Omarchy for review.

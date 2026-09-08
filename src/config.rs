@@ -616,7 +616,7 @@ pub struct ZaiConfig {
 impl Default for ZaiConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             api_key_env: "ZAI_API_KEY".to_string(),
             api_key: None,
             plan_tier: None,
@@ -642,7 +642,7 @@ pub struct OpenRouterConfig {
 impl Default for OpenRouterConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             accounts: Vec::new(),
             show_default_account: true,
             api_key_env: "OPENROUTER_API_KEY".to_string(),
@@ -744,7 +744,7 @@ pub struct KimiConfig {
 impl Default for KimiConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             api_key_env: "KIMI_API_KEY".to_string(),
             api_key: None,
             credentials_path: None,
@@ -872,9 +872,8 @@ impl Default for GrokConfig {
 /// resets use the `key` already in Grok Build's `auth.json` (read-only).
 /// Login, issuer, proxy, and token rotation stay inside Grok Build.
 ///
-/// Opt-in like Cursor/Kiro (`enabled` defaults to `false`): it requires a
-/// separate official executable and signed-in session, so it stays off until
-/// the user explicitly turns it on.
+/// Enabled by default in this fork: Grok Build's `grok login` is already the
+/// local session. Set `enabled = false` to hide it.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SuperGrokConfig {
@@ -892,7 +891,7 @@ pub struct SuperGrokConfig {
 impl Default for SuperGrokConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             grok_binary: default_grok_binary(),
             auth_path: None,
             config_path: None,
@@ -913,10 +912,16 @@ fn default_grok_binary() -> PathBuf {
 
 /// Antigravity reads its quota from whichever local Antigravity product is
 /// running, so it needs no credentials — only an on/off switch.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AntigravityConfig {
     pub enabled: bool,
+}
+
+impl Default for AntigravityConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 /// Cursor reads its quota through a session token the Cursor IDE already
@@ -1448,29 +1453,30 @@ mod tests {
     }
 
     #[test]
-    fn defaults_enable_only_the_four_core_vendors() {
+    fn defaults_enable_this_forks_vendors() {
         let c = Config::default();
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
-        assert!(c.is_enabled(VendorId::Zai));
-        assert!(c.is_enabled(VendorId::Openrouter));
+        assert!(c.is_enabled(VendorId::Kimi));
+        assert!(c.is_enabled(VendorId::Antigravity));
+        assert!(c.is_enabled(VendorId::Supergrok));
         for opt_in in [
             VendorId::AnthropicApi,
             VendorId::Copilot,
+            VendorId::Zai,
+            VendorId::Openrouter,
             VendorId::Deepseek,
-            VendorId::Kimi,
             VendorId::Kilo,
             VendorId::Novita,
             VendorId::Moonshot,
             VendorId::Grok,
-            VendorId::Supergrok,
             VendorId::Cursor,
             VendorId::Minimax,
             VendorId::Kiro,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
-        assert_eq!(c.enabled_vendors().len(), 4);
+        assert_eq!(c.enabled_vendors().len(), 5);
     }
 
     #[test]
@@ -2086,16 +2092,17 @@ enabled = false
 
     #[test]
     fn enabled_vendors_preserves_canonical_order() {
-        // DeepSeek and Kimi are disabled by default (require explicit API key
-        // config), so they are absent from the enabled list unless enabled.
+        // DeepSeek stays opt-in (needs an API key). Kimi is on by default via
+        // the Kimi Code CLI login.
         let c = Config::default();
         assert_eq!(
             c.enabled_vendors(),
             vec![
                 VendorId::Anthropic,
                 VendorId::Openai,
-                VendorId::Zai,
-                VendorId::Openrouter,
+                VendorId::Kimi,
+                VendorId::Supergrok,
+                VendorId::Antigravity,
             ]
         );
     }
@@ -2257,10 +2264,10 @@ enabled = false
             vec![
                 VendorId::Anthropic,
                 VendorId::Openai,
-                VendorId::Zai,
-                VendorId::Openrouter,
                 VendorId::Deepseek,
                 VendorId::Kimi,
+                VendorId::Supergrok,
+                VendorId::Antigravity,
             ]
         );
     }
@@ -2524,11 +2531,13 @@ enabled = false
         assert!(c.is_enabled(VendorId::Openai));
         assert!(!c.is_enabled(VendorId::AnthropicApi));
         assert!(!c.is_enabled(VendorId::Deepseek));
-        assert!(!c.is_enabled(VendorId::Kimi));
+        assert!(c.is_enabled(VendorId::Kimi));
         assert!(!c.is_enabled(VendorId::Kilo));
         assert!(!c.is_enabled(VendorId::Novita));
         assert!(!c.is_enabled(VendorId::Moonshot));
         assert!(!c.is_enabled(VendorId::Grok));
+        assert!(c.is_enabled(VendorId::Supergrok));
+        assert!(c.is_enabled(VendorId::Antigravity));
         assert!(!c.is_enabled(VendorId::Cursor));
         assert!(!c.is_enabled(VendorId::Minimax));
     }

@@ -16,7 +16,7 @@ first, then install this repository as the plugin:
 
 ```bash
 omarchy pkg aur add ai-usagebar-bin
-omarchy plugin add https://github.com/akitaonrails/ai-usagebar.git --enable
+omarchy plugin add https://github.com/bradflaugher/ai-usagebar.git --enable
 ```
 
 To use AI Usage in place of Quattro's default Agents widget, disable the stock
@@ -32,9 +32,32 @@ button and loads `Panel.qml` inside the same plugin. Update or remove it with
 the normal plugin commands:
 
 ```bash
-omarchy plugin update akitaonrails.ai-usagebar
-omarchy plugin remove akitaonrails.ai-usagebar
+omarchy plugin update bradflaugher.ai-usagebar
+omarchy plugin remove bradflaugher.ai-usagebar
 ```
+
+### Switching from an older plugin id
+
+The plugin id is `bradflaugher.ai-usagebar`. `omarchy plugin update` will not
+rename `akitaonrails.ai-usagebar` or `brad.ai-usagebar`, or copy their
+`shell.json` widget settings. Remove the old id, then add this repo:
+
+```bash
+omarchy plugin remove akitaonrails.ai-usagebar --yes
+omarchy plugin remove brad.ai-usagebar --yes
+omarchy plugin add https://github.com/bradflaugher/ai-usagebar.git --enable --yes
+```
+
+Re-apply any bar options you had set on the old id (`provider`,
+`showValue`, `showProvider`, `refreshIntervalSec`) with
+`omarchy bar set bradflaugher.ai-usagebar …`. `~/.config/ai-usagebar/config.toml`
+does not need to change.
+
+Existing installations of **this** id (`bradflaugher.ai-usagebar`) need no
+migration: `config.toml`, environment-variable precedence, and the TUI
+are unchanged. If the plugin is updated before the `ai-usagebar` package,
+the form offers the terminal settings fallback until the binary has the
+native settings bridge.
 
 ## Controls
 
@@ -52,8 +75,8 @@ omarchy plugin remove akitaonrails.ai-usagebar
   `h`/`l` or Left/Right switches provider, `j`/`k` or Up/Down scrolls, `r`,
   Enter, or Space refreshes, Tab moves to the neighboring bar panel, and Esc
   closes.
-- Shell: `omarchy-shell shell summon akitaonrails.ai-usagebar '{}'` opens the
-  panel and `omarchy-shell shell hide akitaonrails.ai-usagebar` closes it.
+- Shell: `omarchy-shell shell summon bradflaugher.ai-usagebar '{}'` opens the
+  panel and `omarchy-shell shell hide bradflaugher.ai-usagebar` closes it.
 
 The panel keeps the last successful report visible when a refresh fails and
 labels it accordingly. Provider-level stale cache responses and hard errors
@@ -83,30 +106,25 @@ through the fixed `gh auth token` command; it never parses GitHub CLI, editor,
 or browser credential stores and never saves a token. A non-empty
 `GITHUB_COPILOT_TOKEN` is an optional explicit override.
 
-Existing installations need no migration: `config.toml`, environment-variable
-precedence, the TUI, Waybar, macOS, and Windows behavior are unchanged. If the
-plugin is updated before the `ai-usagebar` package, the form offers the terminal
-settings fallback until the binary has the native settings bridge.
-
 The plugin's display-only options remain in `~/.config/omarchy/shell.json` and
 can be changed through Omarchy's bar UI or CLI:
 
 ```bash
 # Show only one entry. Use an id printed by `ai-usagebar usage --json`.
-omarchy bar set akitaonrails.ai-usagebar provider openai
-omarchy bar set akitaonrails.ai-usagebar provider anthropic@work
+omarchy bar set bradflaugher.ai-usagebar provider openai
+omarchy bar set bradflaugher.ai-usagebar provider anthropic@work
 
 # Empty means all configured entries, with switching in the panel.
-omarchy bar set akitaonrails.ai-usagebar provider ''
+omarchy bar set bradflaugher.ai-usagebar provider ''
 
 # Numeric values need --json so shell.json stores a number.
-omarchy bar set akitaonrails.ai-usagebar refreshIntervalSec 300 --json
+omarchy bar set bradflaugher.ai-usagebar refreshIntervalSec 300 --json
 
 # Booleans also need --json. The default is true for drop-in compatibility.
-omarchy bar set akitaonrails.ai-usagebar showValue false --json
+omarchy bar set bradflaugher.ai-usagebar showValue false --json
 
 # Opt in to the Waybar-style provider tag. The default is false.
-omarchy bar set akitaonrails.ai-usagebar showProvider true --json
+omarchy bar set bradflaugher.ai-usagebar showProvider true --json
 ```
 
 The refresh interval is clamped to 30–3600 seconds. The `provider` setting

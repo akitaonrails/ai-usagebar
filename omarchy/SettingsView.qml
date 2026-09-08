@@ -14,7 +14,7 @@ Column {
   property color foreground: Color.foreground
   property color urgent: Color.urgent
   property string fontFamily: Style.font.family
-  property bool showValue: true
+  property bool showValue: false
   property bool showProvider: false
   readonly property color dim: Qt.darker(foreground, 1.45)
 

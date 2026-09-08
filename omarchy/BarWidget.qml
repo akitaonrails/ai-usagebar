@@ -8,7 +8,7 @@ import qs.Ui
 // collection and presentation.
 BarWidget {
   id: root
-  moduleName: "akitaonrails.ai-usagebar"
+  moduleName: "bradflaugher.ai-usagebar"
 
   readonly property var panelItem: panelLoader.item
   readonly property bool opened: panelItem ? panelItem.opened === true : false

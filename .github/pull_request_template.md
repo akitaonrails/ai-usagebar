@@ -18,5 +18,4 @@ otherwise ask for — see CONTRIBUTING.md for the reasoning behind each.
 
 ## Testing
 
-<!-- What you ran, and on which platform. If you tested on macOS or Windows,
-say so — those paths are built by CI but not exercised by the maintainer. -->
+<!-- What you ran. This fork's CI is Linux + the Omarchy plugin contract. -->
