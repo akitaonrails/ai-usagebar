@@ -255,8 +255,9 @@ accounts cannot reuse another account's fresh or stale usage.
 
 Command Code meters spend rather than tokens, so its two rolling windows are
 priced in dollars: `$1.23 of $14.00` for the 5-hour window and `$5.24 of $35.00`
-for the weekly one, alongside the monthly credit that is left. The percentages
-the bar and the meters show are derived from those figures.
+for the weekly one. The monthly credit allowance renders as a third window with
+the derived spend against the plan's pool and a reset countdown from the
+subscription's billing period end.
 
 **There is no key to enter, and no key field in the settings panel.**
 Command Code appears in the provider selector but not in the key list, the same
@@ -441,6 +442,11 @@ ai-usagebar --json
 ai-usagebar usage
 ai-usagebar usage --json | jq '.entries[] | {id, metrics, sections}'
 
+# Every provider that exists — the switched-off and the never-configured
+# included — with how each authenticates and whether it is usable here.
+ai-usagebar vendors
+ai-usagebar vendors --json | jq '.vendors[] | select(.enabled and (.configured|not))'
+
 # Live preview while iterating on --format / --tooltip-format.
 ai-usagebar --vendor openrouter --watch 5
 
@@ -453,6 +459,16 @@ The JSON report has two views of each provider:
 - `metrics` contains percentage gauges only.
 - `sections` preserves the complete ordered display, including balances,
   grouped rows, and spacers. Rows without a percentage do not invent one.
+
+`usage` reports only the providers that are **enabled**, which makes the
+switched-off and the never-credentialed exactly the rows it cannot describe.
+`vendors --json` is the catalog that covers them: one row per provider with its
+`kind` (`oauth` / `apikey` / `local`), whether config has it `enabled`, whether
+this machine has the credential it needs (`configured`), the environment
+variable it reads (honoring an `api_key_env` override), and the `login` command
+that fixes it. It contacts nothing. A frontend drawing a per-provider health
+list reads both and needs no provider table of its own — `needs_credential` is
+`false` only for Antigravity, which has no credential to be missing.
 
 The report also includes the configured `primary` id. Each entry has
 `display_name`, `short_name`, `status`, `stale`, and `fetched_at`; metric rows

@@ -11,6 +11,23 @@ Each release is also published at
 
 ### Added
 
+- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
+  date once the reset is past today — instead of the countdown, under
+  **Preferences → Display**. Off by default; the countdown is unchanged unless
+  you turn it on. It follows the system's 12h/24h convention.
+
+
+- **`ai-usagebar vendors --json`** — the provider catalog: one row per
+  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
+  config has it `enabled`, whether this machine holds the credential it needs
+  (`configured`), the environment variable it reads (honoring an `api_key_env`
+  override), and the `login` command that fixes it. It contacts nothing.
+  `usage --json` reports only *enabled* providers, so the switched-off and the
+  never-credentialed were exactly the rows a "is anything broken?" list could
+  not describe; this is the answer for them. `needs_credential` is `false` only
+  for Antigravity, which has no credential to be missing, so a frontend never
+  offers to fix one that cannot be.
+
 - **Omarchy bar: show every provider at once.** A new **Show all providers in
   the top bar** toggle (and `showAll` widget setting) draws each configured
   provider as its own chip with a brand mark and usage. Claude, Codex,
@@ -20,6 +37,72 @@ Each release is also published at
   code rather than a shared robot. The panel hero uses the same mark,
   colored only when that provider is critical. Off by default.
 
+### Changed
+
+- The macOS menu bar and the GNOME extension are in English. Both shipped with
+  a Brazilian Portuguese UI while the Rust core, the Omarchy panel and the KDE
+  plasmoid were already English, so the project read as two different products
+  depending on which surface you opened. Display strings only — no setting key,
+  comparison, or stored value changed — and the macOS test that asserted a
+  Portuguese label moves with it.
+
+
+- `KEY_VENDORS` no longer stores each provider's environment variable name: it
+  comes from `VendorId::api_key_env`, and `Config::api_key_env_for` /
+  `Config::inline_api_key` replaced two private helpers that matched on a
+  section *string* with a `_ =>` fallback arm — where a new key vendor nobody
+  added would silently read the wrong default and report as unconfigured for
+  ever. Both match on `VendorId`, so that case now fails to compile.
+
+### Fixed
+
+- The macOS menu bar icon no longer disappears mid-session. `AppMain` held its
+  `AppDelegate` in a `main()` local, and `NSApplication.delegate` is a *weak*
+  reference — so in optimised builds ARC was free to release it after the
+  assignment, since nothing later in the function mentions it, taking the
+  status item with it. The delegate is now held for the program's lifetime.
+
+
+## [1.12.0] — 2026-09-06
+
+### Added
+
+- Command Code renders the monthly credit allowance as a full third window:
+  the Quattro panel, TUI, and Overview show a `Monthly` progress row with the
+  derived spend (`$20.72 of $70.00`), a `Resets` countdown from the
+  subscription's billing period end, and the Overview gains a monthly mini
+  bar. New placeholders `{cc_monthly_pct}`, `{cc_monthly_reset}`,
+  `{cc_monthly_used}`, `{cc_monthly_cap}`, and `{cc_credits_reset}`; the bar
+  headline and severity now consider the monthly window when it is the
+  closest to its cap. An unrecognised plan or a missing ledger leaves the
+  row out rather than guessing a denominator.
+
+- The KDE plasmoid offers a **one card per vendor** popup layout beside the
+  existing provider tabs, selectable per applet instance. The cards are drawn
+  entirely from the aggregate `usage --json` report — labels, windows,
+  severities, staleness and error text all come from Rust — so a newly added
+  provider gets a card with no widget change. Provider tabs remain the
+  default and are unchanged.
+
+### Changed
+
+- `make test` fails if a changelog entry appears under two versions, or if one
+  release section repeats a category heading. Both are what a merge produces
+  when a branch predates the last tag, and both had happened here before — the
+  documented remedy was a manual `git diff` that the AUR build cannot run and
+  that a person has to remember.
+
+### Fixed
+
+- **Codex works again on accounts with no extra limits.** 1.11.0 added
+  `additional_rate_limits` and `model_usage` as plain collections, and OpenAI
+  sends `null` — not `[]`/`{}` — when an account has none. `#[serde(default)]`
+  covers a *missing* field but not a present-but-null one, so the whole usage
+  response failed and Waybar showed `⚠ API schema drift … expected a sequence`.
+  Explicit `null` is now read as empty for those two and for
+  `rate_limit_reset_credits.credits`. A wrong *type* is still drift: a string or
+  a number where a collection belongs is refused rather than read as empty.
+  Reported within a day by three people independently — thank you.
 ## [1.11.0] — 2026-09-05
 
 ### Security
@@ -2004,7 +2087,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
 [1.9.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.0...v1.9.1

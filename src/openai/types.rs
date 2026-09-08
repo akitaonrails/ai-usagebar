@@ -41,10 +41,14 @@ pub struct UsageResponse {
     /// model-specific allowance. Each carries its own windows and can be the
     /// binding constraint while `rate_limit` still reads low, which is
     /// precisely when a user needs to see it.
+    /// Null from the API means "none" (observed 2026-09-05: OpenAI returns
+    /// `"additional_rate_limits": null` for accounts with no extra limits).
+    #[serde(default, deserialize_with = "de_null_as_default")]
     pub additional_rate_limits: Vec<AdditionalRateLimit>,
     /// Per-model availability. `available: false` is what "Selected model is
     /// at capacity" looks like in the data — a dispatch-time refusal, not a
     /// quota, so no percentage anywhere else reflects it.
+    #[serde(default, deserialize_with = "de_null_as_default")]
     pub model_usage: BTreeMap<String, ModelUsage>,
 }
 
@@ -106,6 +110,7 @@ pub struct CreditsBlock {
 #[serde(default)]
 pub struct ResetCreditsBlock {
     pub available_count: u32,
+    #[serde(default, deserialize_with = "de_null_as_default")]
     pub credits: Vec<ResetCredit>,
 }
 
@@ -232,6 +237,25 @@ where
             "expected credit balance string, number, or null; got {other:?}"
         ))),
     }
+}
+
+/// OpenAI sends `null` for an empty collection rather than `[]`/`{}` (observed
+/// 2026-09-05 for `additional_rate_limits`). `#[serde(default)]` alone covers a
+/// *missing* field but not a present-but-null one, which fails with "invalid
+/// type: null, expected a sequence" and takes the whole response with it.
+///
+/// This is deliberately not applied to every collection in the codebase. It is
+/// right here because an absent named limit genuinely means "none" and renders
+/// nothing. For a balance or usage array — DeepSeek's `balance_infos`, the
+/// Anthropic API's `data` — an empty list is not the same as a null one, and
+/// silently reading it as empty would render a confident zero for a figure we
+/// never received.
+fn de_null_as_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
 }
 
 const MAX_RESET_TITLE_CHARS: usize = 80;
@@ -935,5 +959,78 @@ mod tests {
                 .unavailable_models
                 .is_empty()
         );
+    }
+
+    /// Live shape observed 2026-09-05: OpenAI returns explicit `null` for
+    /// empty collections instead of omitting them. `#[serde(default)]` alone
+    /// covers a missing field but still rejects `null` with "invalid type:
+    /// null, expected a sequence" — which surfaced as `⚠ API schema drift`
+    /// in Waybar. Null must mean "none", not drift.
+    /// The exact payload from the reports: every optional collection null at
+    /// once, including the nested `rate_limit_reset_credits.credits`. Three
+    /// people hit this within a day of 1.11.0, so the shape earns a test of
+    /// its own rather than only the per-field one below.
+    #[test]
+    fn the_reported_all_null_payload_parses() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{"plan_type":"plus",
+                "rate_limit":{"primary_window":{"used_percent":5,
+                              "limit_window_seconds":604800}},
+                "code_review_rate_limit":null,
+                "additional_rate_limits":null,
+                "model_usage":null,
+                "rate_limit_reset_credits":{"available_count":0,"credits":null}}"#,
+        )
+        .expect("the reported shape must parse");
+
+        let snap = response.into_snapshot(None).unwrap();
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 5);
+        assert!(snap.additional_limits.is_empty());
+        assert!(snap.unavailable_models.is_empty());
+    }
+
+    /// Null means "none", but a wrong *type* is still drift. Reading a string
+    /// or a number as an empty collection would hide a real schema change
+    /// behind a plausible-looking empty panel.
+    #[test]
+    fn a_mistyped_collection_is_still_schema_drift() {
+        for bad in [
+            r#"{"additional_rate_limits": "none"}"#,
+            r#"{"additional_rate_limits": 0}"#,
+            r#"{"model_usage": []}"#,
+            r#"{"model_usage": "none"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<UsageResponse>(bad).is_err(),
+                "{bad} should not be read as empty"
+            );
+        }
+    }
+
+    #[test]
+    fn null_collections_parse_as_empty_rather_than_schema_drift() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{
+                "plan_type": "plus",
+                "rate_limit": {
+                    "primary_window": {"used_percent": 0, "limit_window_seconds": 18000,
+                                       "reset_after_seconds": 18000, "reset_at": 1788646037},
+                    "secondary_window": {"used_percent": 64, "limit_window_seconds": 604800,
+                                         "reset_after_seconds": 152957, "reset_at": 1788780993}
+                },
+                "code_review_rate_limit": null,
+                "additional_rate_limits": null,
+                "model_usage": null,
+                "rate_limit_reset_credits": {"available_count": 3, "credits": null}
+            }"#,
+        )
+        .expect("null collections must parse");
+        let snap = response.into_snapshot(None).unwrap();
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 0);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 64);
+        assert!(snap.additional_limits.is_empty());
+        assert!(snap.unavailable_models.is_empty());
+        assert_eq!(snap.reset_credits.available, 3);
+        assert!(snap.reset_credits.credits.is_empty());
     }
 }

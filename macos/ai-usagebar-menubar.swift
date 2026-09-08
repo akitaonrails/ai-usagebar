@@ -32,6 +32,7 @@ let SETTINGS_DEFAULTS: [String: Any] = [
     "showPercent": true,
     "showBars": true,
     "showMeta": true,
+    "showResetClock": false,
     "barStyle": "block",
     "colorLow": "#98c379",
     "colorMid": "#e5c07b",
@@ -66,6 +67,11 @@ var COLOR_EMPTY: String { DEF.string(forKey: "colorEmpty") ?? "#3e4451" }
 // Meta reference: draw a pace marker at the elapsed-time position and flag the
 // over-meta segment of the fill. Off = plain absolute-usage bars, no marker.
 var SHOW_META: Bool { DEF.bool(forKey: "showMeta") }
+// Off (default) = countdown ("1d 1h", "14h 32m"); on = the wall-clock time the
+// window resets at ("14:32", or "9/7/26, 2:32 PM" beyond today), computed
+// client-side from the countdown the binary already reports — see
+// `resetSeconds`/`resetDate` below.
+var SHOW_RESET_CLOCK: Bool { DEF.bool(forKey: "showResetClock") }
 // The meta marker is a fixed blue, matching the binary's default theme `marker`
 // color and distinct from the over-pace warning fill.
 let COLOR_MARKER = "#61afef"
@@ -162,6 +168,66 @@ func shortReset(_ r: String) -> String? {
         return m == "m" ? "0m" : String(m)
     }
     return String(first)
+}
+
+/// Parse the binary's countdown text ("4d 1h", "23h 59m", "now", "—") back
+/// into seconds remaining. `nil` for "—"/empty/unparseable, matching
+/// `isReported`. The binary's own `countdown::format` drops minutes once a
+/// day is present, so a `>=1d` result only carries hour precision — the same
+/// precision loss the countdown display already has.
+func resetSeconds(_ r: String) -> Int? {
+    guard isReported(r) else { return nil }
+    if r == "now" { return 0 }
+    let parts = r.split(separator: " ")
+    var seconds = 0
+    var matchedAny = false
+    for part in parts {
+        if let h = part.hasSuffix("h") ? Int(part.dropLast()) : nil {
+            seconds += h * 3600
+            matchedAny = true
+        } else if let d = part.hasSuffix("d") ? Int(part.dropLast()) : nil {
+            seconds += d * 86_400
+            matchedAny = true
+        } else if let m = part.hasSuffix("m") ? Int(part.dropLast()) : nil {
+            seconds += m * 60
+            matchedAny = true
+        }
+    }
+    return matchedAny ? seconds : nil
+}
+
+/// The absolute instant a countdown string resolves to, or `nil` when the
+/// countdown itself carries no value.
+func resetDate(_ r: String, now: Date = Date()) -> Date? {
+    resetSeconds(r).map { now.addingTimeInterval(TimeInterval($0)) }
+}
+
+private let resetTimeOnlyFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .none
+    f.timeStyle = .short
+    return f
+}()
+
+private let resetDateTimeFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .short
+    f.timeStyle = .short
+    return f
+}()
+
+/// Wall-clock label for a countdown, honoring `SHOW_RESET_CLOCK`: off returns
+/// the countdown unchanged (`fallback`), on renders the resolved instant —
+/// just the time when it falls today, date + time otherwise. `nil` when the
+/// countdown itself is unreported, same as the value it replaces.
+func resetClockLabel(_ r: String, fallback: String?, showClock: Bool = SHOW_RESET_CLOCK,
+                     now: Date = Date()) -> String? {
+    guard showClock else { return fallback }
+    guard let date = resetDate(r, now: now) else { return nil }
+    let formatter = Calendar.current.isDate(date, inSameDayAs: now)
+        ? resetTimeOnlyFormatter
+        : resetDateTimeFormatter
+    return formatter.string(from: date)
 }
 
 let barFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -974,7 +1040,7 @@ func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [Men
 
 /// Display name for any selectable id (base vendor, account, or overview).
 func entryDisplayName(_ id: String) -> String {
-    if id == "overview" { return "Visão geral" }
+    if id == "overview" { return "Overview" }
     if let label = accountLabel(of: id) {
         let base = baseVendorId(id)
         let vendor = VENDOR_AUTH.first { $0.id == base }?.name ?? base
@@ -1112,7 +1178,7 @@ func addAccountScript(binary: String, label: String, desktop: Bool) -> String {
     func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     return "#!/usr/bin/env bash\n"
         + "\(quote(binary)) account add \(quote(label))\(desktop ? " --desktop" : "")\n"
-        + "echo; read -n 1 -s -r -p 'Pressione qualquer tecla para fechar…'\n"
+        + "echo; read -n 1 -s -r -p 'Press any key to close…'\n"
 }
 
 /// Rust defaults (`src/config.rs`): the OAuth/api-key vendors that ship enabled,
@@ -1222,18 +1288,18 @@ func oauthScript(_ v: VendorAuth) -> String {
       \(v.login)
     else
       echo "\(v.cli) nao encontrado. Instalo em ~/.local sem sudo. Pacote: \(v.pkg)"
-      read -p "Instalar agora? [y/N] " a
+      read -p "Install now? [y/N] " a
       if [ "$a" = y ] || [ "$a" = Y ]; then npm i -g --prefix "$HOME/.local" \(v.pkg) && hash -r && \(v.login); fi
     fi
     echo
-    read -p "Enter para fechar..."
+    read -p "Press Enter to close..."
     """
 }
 
 func openTuiInTerminal() {
     let cargo = "\(NSHomeDirectory())/.cargo/bin/ai-usagebar-tui"
     let tui = FileManager.default.isExecutableFile(atPath: cargo) ? cargo : "ai-usagebar-tui"
-    runInTerminal("\"\(tui)\"\necho\nread -p \"Enter para fechar...\"")
+    runInTerminal("\"\(tui)\"\necho\nread -p \"Press Enter to close...\"")
 }
 
 // Launch a .app by name (e.g. "Cursor") via `open -a`, so a local-kind vendor's
@@ -1292,10 +1358,10 @@ struct VendorsSection: View {
     }
 
     private func statusText(_ v: VendorAuth) -> String {
-        if configured[v.id] == true { return "✓ Configurado" }
+        if configured[v.id] == true { return "✓ Configured" }
         if v.kind == "oauth" {
-            if cliPresent[v.id] == false { return "⚠ \(v.cli) não instalado" }
-            return "⚠ Não logado — \(v.login)"
+            if cliPresent[v.id] == false { return "⚠ \(v.cli) not installed" }
+            return "⚠ Not signed in — \(v.login)"
         }
         // Local vendors have no key: "configured" means signed in to the app
         // AND the vendor's own section enabled in config.
@@ -1311,12 +1377,12 @@ struct VendorsSection: View {
     private func buttonLabel(_ v: VendorAuth) -> String {
         if v.kind == "oauth" {
             if configured[v.id] == true { return "Re-logar" }
-            if cliPresent[v.id] == false { return "Instalar + logar" }
-            return "Logar"
+            if cliPresent[v.id] == false { return "Install + sign in" }
+            return "Sign in"
         }
-        if v.id == "antigravity" { return "Abrir Antigravity" }
-        if v.kind == "local" { return "Abrir Cursor" }
-        return "Configurar (TUI)"
+        if v.id == "antigravity" { return "Open Antigravity" }
+        if v.kind == "local" { return "Open Cursor" }
+        return "Configure (TUI)"
     }
 
     private func action(_ v: VendorAuth) {
@@ -1338,6 +1404,7 @@ struct SettingsView: View {
     @AppStorage("showPercent") private var showPercent = true
     @AppStorage("showBars") private var showBars = true
     @AppStorage("showMeta") private var showMeta = true
+    @AppStorage("showResetClock") private var showResetClock = false
     @AppStorage("barStyle") private var barStyle = "block"
     @AppStorage("swapShortcutEnabled") private var swapShortcutEnabled = true
     @AppStorage("compactShortcutEnabled") private var compactShortcutEnabled = true
@@ -1354,7 +1421,7 @@ struct SettingsView: View {
     // (deepseek/kimi/kilo/novita/moonshot/grok/anthropic_api) as disabled when
     // their `[vendor].enabled` is omitted, and so must this picker. Claude
     // accounts appear as their `vendor@<label>` pseudo-ids, same as the
-    // "Trocar vendor" submenu.
+    // "Switch provider" submenu.
     private var vendors: [String] {
         var ids = VENDOR_AUTH.filter { vendorEnabled($0) }.map { $0.id }
         let labels = claudeAccountLabels()
@@ -1376,56 +1443,57 @@ struct SettingsView: View {
         // a plain Form clipped its top rows with no way to reach them.
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
-                GroupBox("Exibição") {
+                GroupBox("Display") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Mostrar barra de 5h (sessão)", isOn: $showSession)
-                        Toggle("Mostrar barra semanal", isOn: $showWeekly)
-                        Toggle("Mostrar barra de uso extra ($)", isOn: $showExtra)
-                        Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
-                        Toggle("Mostrar barras (off = só números)", isOn: $showBars)
-                        Toggle("Mostrar referência da meta (linha de ritmo)", isOn: $showMeta)
-                        Picker("Estilo do indicador", selection: $barStyle) {
-                            Text("Barras (░█)").tag("block")
-                            Text("Anel (○)").tag("ring")
+                        Toggle("Show 5h (session) bar", isOn: $showSession)
+                        Toggle("Show weekly bar", isOn: $showWeekly)
+                        Toggle("Show extra usage bar ($)", isOn: $showExtra)
+                        Toggle("Show percentage/value", isOn: $showPercent)
+                        Toggle("Show bars (off = numbers only)", isOn: $showBars)
+                        Toggle("Show pace reference line", isOn: $showMeta)
+                        Toggle("Show reset time instead of a countdown", isOn: $showResetClock)
+                        Picker("Indicator style", selection: $barStyle) {
+                            Text("Bars (░█)").tag("block")
+                            Text("Ring (○)").tag("ring")
                         }
-                        Stepper("Largura da barra: \(barWidth)", value: $barWidth, in: 4...20)
+                        Stepper("Bar width: \(barWidth)", value: $barWidth, in: 4...20)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Atalho") {
+                GroupBox("Shortcut") {
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Trocar vendor com ⌥⌘\\ (atalho global)", isOn: $swapShortcutEnabled)
-                        Text("Alterna o vendor ativo a partir de qualquer app.")
+                        Toggle("Switch provider with ⌥⌘\\ (global shortcut)", isOn: $swapShortcutEnabled)
+                        Text("Switches the active provider from any app.")
                             .font(.caption).foregroundColor(.secondary)
-                        Toggle("Compactar/Expandir com ⌥⌘E (atalho global)", isOn: $compactShortcutEnabled)
-                        Text("Alterna a Visão geral entre barras e modo compacto.")
+                        Toggle("Collapse/Expand with ⌥⌘E (global shortcut)", isOn: $compactShortcutEnabled)
+                        Text("Switches the Overview between bars and compact mode.")
                             .font(.caption).foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Cores") {
+                GroupBox("Colours") {
                     VStack(alignment: .leading, spacing: 8) {
-                        HexColorPicker(title: "Baixo (<50%)", hex: $colorLow)
-                        HexColorPicker(title: "Médio (50–74%)", hex: $colorMid)
-                        HexColorPicker(title: "Alto (75–89%)", hex: $colorHigh)
-                        HexColorPicker(title: "Crítico (≥90%)", hex: $colorCritical)
-                        HexColorPicker(title: "Vazio (fundo da barra)", hex: $colorEmpty)
+                        HexColorPicker(title: "Low (<50%)", hex: $colorLow)
+                        HexColorPicker(title: "Medium (50–74%)", hex: $colorMid)
+                        HexColorPicker(title: "High (75–89%)", hex: $colorHigh)
+                        HexColorPicker(title: "Critical (≥90%)", hex: $colorCritical)
+                        HexColorPicker(title: "Empty (bar background)", hex: $colorEmpty)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Dados") {
+                GroupBox("Data") {
                     VStack(alignment: .leading, spacing: 8) {
                         Picker("Vendor", selection: $vendor) {
                             ForEach(vendors, id: \.self) { Text($0) }
                         }
                         Stepper("Intervalo: \(Int(interval))s", value: $interval, in: 5...3600, step: 5)
-                        TextField("Caminho do binário (vazio = auto)", text: $binaryPath)
+                        TextField("Binary path (empty = auto)", text: $binaryPath)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Sistema") {
+                GroupBox("System") {
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Iniciar no login", isOn: Binding(
+                        Toggle("Start at login", isOn: Binding(
                             get: { launchAtLogin },
                             set: { enabled in
                                 do {
@@ -1437,10 +1505,10 @@ struct SettingsView: View {
                                     launchAtLoginError = error.localizedDescription
                                 }
                             }))
-                        Text("Instala um LaunchAgent que sobe o app ao entrar na sua conta.")
+                        Text("Installs a LaunchAgent that starts the app when you log in.")
                             .font(.caption).foregroundColor(.secondary)
                         if let error = launchAtLoginError {
-                            Text("Não foi possível atualizar: \(error)")
+                            Text("Could not refresh: \(error)")
                                 .font(.caption).foregroundColor(.red)
                         }
                     }
@@ -1528,7 +1596,7 @@ let swapHotKeyNotification = Notification.Name("aiusagebar.swapHotKey")
 let compactHotKeyNotification = Notification.Name("aiusagebar.compactHotKey")
 
 /// Default shortcuts: `\` (kVK_ANSI_Backslash) with Command+Option swaps the
-/// vendor; `E` with Command+Option toggles the overview's Compactar/Expandir.
+/// vendor; `E` with Command+Option toggles the overview's Collapse/Expand.
 /// `[ui]` on Linux has no equivalent; this is macOS-only.
 let SWAP_HOTKEY_KEYCODE = UInt32(kVK_ANSI_Backslash)
 let COMPACT_HOTKEY_KEYCODE = UInt32(kVK_ANSI_E)
@@ -1553,7 +1621,7 @@ private func swapHotKeyCallback(
 }
 
 /// Whether the overview status-bar title draws mini bars (vs. the compact
-/// %-text mode). "Compactar" forces the text mode even under the bars-count
+/// %-text mode). "Collapse" forces the text mode even under the bars-count
 /// threshold. Pure + testable — the render path is not.
 func overviewUsesBars(count: Int, barsMax: Int, compact: Bool) -> Bool {
     !compact && count <= barsMax
@@ -1644,10 +1712,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every render so only configured vendors show, and the active
     // one is checked. Kept as a field so the menu owns it for its lifetime.
     let vendorSubmenu = NSMenu()
-    let vendorSubmenuItem = NSMenuItem(title: "Trocar vendor", action: nil, keyEquivalent: "")
+    let vendorSubmenuItem = NSMenuItem(title: "Switch provider", action: nil, keyEquivalent: "")
     /// Overview-only: forces the status-bar title into the compact %-text mode
-    /// ("Compactar"); while compact it reads "Expandir" and turns it back off.
-    let compactItem = NSMenuItem(title: "Compactar", action: nil, keyEquivalent: "")
+    /// ("Collapse"); while compact it reads "Expand" and turns it back off.
+    let compactItem = NSMenuItem(title: "Collapse", action: nil, keyEquivalent: "")
     /// Which account each surface is signed in as. One dim line under the
     /// header, plus a submenu per surface. All three stay hidden until
     /// `account status --json` answers, so an older binary that doesn't know
@@ -1772,7 +1840,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         let enabled = DEF.bool(forKey: "swapShortcutEnabled")
-        // Mirror the swap shortcut as a hint on the "Trocar vendor" item. A native
+        // Mirror the swap shortcut as a hint on the "Switch provider" item. A native
         // keyEquivalent is suppressed by the submenu's disclosure arrow, so paint
         // the hint into the title instead (right-aligned, dimmed). Cleared when off.
         if enabled {
@@ -1782,18 +1850,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // menu whenever the wide overview rows are hidden.
             let font = NSFont.menuFont(ofSize: 0)
             let s = NSMutableAttributedString(
-                string: "Trocar vendor  ", attributes: [.font: font])
+                string: "Switch provider  ", attributes: [.font: font])
             s.append(NSAttributedString(string: "⌥⌘\\", attributes: [
                 .font: font, .foregroundColor: NSColor.tertiaryLabelColor,
             ]))
             vendorSubmenuItem.attributedTitle = s
         } else {
-            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Trocar vendor")
+            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Switch provider")
         }
         guard enabled else { return }
         guard installHotKeyHandlerOnce() else {
             disableFailedShortcut("swapShortcutEnabled", name: "⌥⌘\\")
-            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Trocar vendor")
+            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Switch provider")
             return
         }
         let id = EventHotKeyID(signature: OSType(0x4149_4242), id: SWAP_HOTKEY_ID)  // 'AIBB'
@@ -1804,13 +1872,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard hotKeyRegistrationSucceeded(status), let ref else {
             if let ref { UnregisterEventHotKey(ref) }
             disableFailedShortcut("swapShortcutEnabled", name: "⌥⌘\\", status: status)
-            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Trocar vendor")
+            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Switch provider")
             return
         }
         swapHotKeyRef = ref
     }
 
-    /// (Re)register the global ⌥⌘E Compactar/Expandir hot key to match the
+    /// (Re)register the global ⌥⌘E Collapse/Expand hot key to match the
     /// `compactShortcutEnabled` preference. Idempotent, mirroring
     /// `installSwapHotKey` — including the painted-in hint (a native
     /// keyEquivalent would fire a second time while the menu is open, double-
@@ -1841,10 +1909,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         compactHotKeyRef = ref
     }
 
-    /// Compactar ↔ Expandir label plus the dimmed ⌥⌘E hint when the global
+    /// Collapse ↔ Expand label plus the dimmed ⌥⌘E hint when the global
     /// shortcut is on. Shared by the overview render and the hot-key installer.
     func updateCompactItemTitle() {
-        let label = DEF.bool(forKey: "overviewCompact") ? "Expandir" : "Compactar"
+        let label = DEF.bool(forKey: "overviewCompact") ? "Expand" : "Collapse"
         guard DEF.bool(forKey: "compactShortcutEnabled") else {
             compactItem.attributedTitle = NSAttributedString(string: label)
             return
@@ -1921,7 +1989,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// ⌥⌘E: toggle Compactar/Expandir. Overview-only — flipping a hidden
+    /// ⌥⌘E: toggle Collapse/Expand. Overview-only — flipping a hidden
     /// preference from another view would be invisible and confusing.
     @objc func handleCompactHotKey() {
         guard VENDOR == "overview" else { return }
@@ -1966,8 +2034,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(compactItem)
 
         menu.addItem(.separator())
-        addAction(menu, "Atualizar agora", #selector(refreshAction), "r")
-        addAction(menu, "Abrir TUI", #selector(openTui), "t")
+        addAction(menu, "Refresh now", #selector(refreshAction), "r")
+        addAction(menu, "Open TUI", #selector(openTui), "t")
         vendorSubmenuItem.submenu = vendorSubmenu
         menu.addItem(vendorSubmenuItem)
         for (item, submenu) in [(desktopAccountItem, desktopAccountSubmenu),
@@ -1976,9 +2044,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.isHidden = true
             menu.addItem(item)
         }
-        addAction(menu, "Preferências…", #selector(openPrefs), ",")
+        addAction(menu, "Preferences…", #selector(openPrefs), ",")
         menu.addItem(.separator())
-        addAction(menu, "Sair", #selector(quit), "q")
+        addAction(menu, "Quit", #selector(quit), "q")
 
         // Catches a switch made elsewhere (a terminal, claude-acc) without
         // polling for state that changes at most a few times a day.
@@ -2000,7 +2068,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func quit() { NSApp.terminate(nil) }
 
     /// Flip the overview's compact mode; the UserDefaults observer re-renders,
-    /// which also relabels the item (Compactar ↔ Expandir).
+    /// which also relabels the item (Collapse ↔ Expand).
     @objc func toggleCompact() {
         DEF.set(!DEF.bool(forKey: "overviewCompact"), forKey: "overviewCompact")
     }
@@ -2018,7 +2086,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              backing: .buffered,
                              defer: false)
             w.contentViewController = host
-            w.title = "AI Usage Bar — Preferências"
+            w.title = "AI Usage Bar — Preferences"
             // Resizable so the content can always be reached; a min size keeps
             // it usable, and the initial height is clamped to the visible screen
             // so the top never lands under the menu bar on short displays.
@@ -2125,7 +2193,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func refresh() {
         guard let bin = resolveBinary("ai-usagebar") else {
-            setError("ai-usagebar não encontrado (PATH / ~/.cargo/bin / homebrew)")
+            setError("ai-usagebar not found (PATH / ~/.cargo/bin / homebrew)")
             return
         }
         // Coalesce: one subprocess at a time, and remember that another was
@@ -2294,7 +2362,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard visible.contains($0.id), let s = $0.snap else { return nil }
                 if let cb = s.creditBalance { return ($0.name, -1, nil, "cr \(cb)", nil) }
                 let h = overviewHeadline(s)
-                return ($0.name, h.pct, h.elapsed, "\(h.pct)%", h.reset.flatMap(shortReset))
+                let shortValue = h.reset.flatMap(shortReset)
+                let reset = h.reset.flatMap { resetClockLabel($0, fallback: shortValue) }
+                return ($0.name, h.pct, h.elapsed, "\(h.pct)%", reset)
             }
         guard !heads.isEmpty else { return run("ovr", secondary) }
 
@@ -2336,7 +2406,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastSnapshot = nil
         lastOverview = items
         let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
-        headerItem.attributedTitle = run("Visão geral", .labelColor, NSFont.boldSystemFont(ofSize: 13))
+        headerItem.attributedTitle = run("Overview", .labelColor, NSFont.boldSystemFont(ofSize: 13))
         for key in ["session", "weekly", "sonnet", "extra"] { rows[key]?.isHidden = true }
         ensureOverviewRowCapacity(items.count)
 
@@ -2362,7 +2432,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Click a row to toggle whether this provider shows in the top-bar
             // summary. Checkmark = shown; unchecked + dimmed = hidden from the
             // bar (still listed here so it can be turned back on). Jump-to-vendor
-            // moved to the "Trocar vendor" submenu and ⌥⌘\.
+            // moved to the "Switch provider" submenu and ⌥⌘\.
             let isHidden = hidden.contains(item.id)
             it.state = isHidden ? .off : .on
             it.representedObject = item.id
@@ -2482,7 +2552,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             a.append(run(label, .labelColor))
             a.append(progressAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed, menu: true, appearance: appearance))
             a.append(run("  \(value)", colorForPct(pct)))
-            if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }
+            if let r = reset, !r.isEmpty, let display = resetClockLabel(r, fallback: r) {
+                a.append(run("   ↺ \(display)", .secondaryLabelColor))
+            }
             item.attributedTitle = a
         }
         if let creditBalance = s.creditBalance {
@@ -2534,7 +2606,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // Synthetic overview target — same one the ⌥⌘\ ring ends on.
         vendorSubmenu.addItem(.separator())
-        let ov = NSMenuItem(title: "Visão geral", action: #selector(switchVendor(_:)), keyEquivalent: "")
+        let ov = NSMenuItem(title: "Overview", action: #selector(switchVendor(_:)), keyEquivalent: "")
         ov.target = self
         ov.representedObject = "overview"
         ov.state = (active == "overview") ? .on : .off
@@ -2627,7 +2699,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             submenu.addItem(it)
         }
         submenu.addItem(.separator())
-        let add = NSMenuItem(title: "Adicionar conta…",
+        let add = NSMenuItem(title: "Add account…",
                              action: #selector(addAccount(_:)), keyEquivalent: "")
         add.target = self
         add.representedObject = (submenu === desktopAccountSubmenu)
@@ -2642,18 +2714,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let desktop = sender.representedObject as? Bool,
               let bin = resolveBinary("ai-usagebar") else { return }
         let alert = NSAlert()
-        alert.messageText = desktop ? "Adicionar conta do Claude Desktop"
-                                    : "Adicionar conta do Claude Code"
+        alert.messageText = desktop ? "Add a Claude Desktop account"
+                                    : "Add a Claude Code account"
         alert.informativeText = desktop
-            ? "Escolha um nome. O app será fechado e reaberto na tela de login para você "
-                + "entrar com a conta nova; a atual é restaurada se você cancelar."
-            : "Escolha um nome. O `claude` abrirá no Terminal para você entrar; seu login "
-                + "padrão não é alterado."
+            ? "Choose a name. The app will quit and reopen at its login screen so you can "
+                + "sign in as the new account; the current one is restored if you cancel."
+            : "Choose a name. `claude` opens in Terminal for you to sign in; your default "
+                + "login is left alone."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        field.placeholderString = "trabalho"
+        field.placeholderString = "work"
         alert.accessoryView = field
-        alert.addButton(withTitle: "Continuar")
-        alert.addButton(withTitle: "Cancelar")
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -2668,11 +2740,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func switchDesktopAccount(_ sender: NSMenuItem) {
         guard let label = sender.representedObject as? String else { return }
         let alert = NSAlert()
-        alert.messageText = "Trocar a conta do Claude Desktop para «\(label)»?"
-        alert.informativeText = "O app será fechado e reaberto. Seu histórico local é "
-            + "mesclado nessa conta antes da troca, e uma cópia de segurança é gravada."
-        alert.addButton(withTitle: "Trocar e reiniciar")
-        alert.addButton(withTitle: "Cancelar")
+        alert.messageText = "Switch the Claude Desktop account to “\(label)”?"
+        alert.informativeText = "The app will quit and reopen. Your local history is merged into that "
+            + "account before the switch, and a backup is written."
+        alert.addButton(withTitle: "Switch and restart")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         // Routines deleted in one account but alive in another would be handed
@@ -2690,13 +2762,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let alert = NSAlert()
         alert.messageText = conflicts.count == 1
-            ? "1 item foi apagado em uma conta e ainda existe em outra"
-            : "\(conflicts.count) itens foram apagados em uma conta e ainda existem em outra"
+            ? "1 item was deleted in one account and still exists in another"
+            : "\(conflicts.count) items were deleted in one account and still exist in another"
         alert.informativeText = conflictPreview(conflicts)
-            + "\n\nManter traz de volta os apagados. Apagar remove de todas as contas — uma conversa perde só o índice, a transcrição permanece."
-        alert.addButton(withTitle: "Manter todas")
-        alert.addButton(withTitle: "Apagar em todas")
-        alert.addButton(withTitle: "Escolher…")
+            + "\n\nKeeping restores the deleted ones. Deleting removes them from every account — a chat loses only its index, the transcript stays."
+        alert.addButton(withTitle: "Keep all")
+        alert.addButton(withTitle: "Delete everywhere")
+        alert.addButton(withTitle: "Choose…")
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn: return []
@@ -2728,11 +2800,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scroll.documentView = list
 
         let alert = NSAlert()
-        alert.messageText = "O que manter?"
-        alert.informativeText = "Marcados continuam. Os desmarcados são apagados em todas as contas."
+        alert.messageText = "What should be kept?"
+        alert.informativeText = "Checked items stay. Unchecked ones are deleted in every account."
         alert.accessoryView = scroll
-        alert.addButton(withTitle: "Confirmar")
-        alert.addButton(withTitle: "Cancelar")
+        alert.addButton(withTitle: "Confirm")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         return zip(conflicts, boxes).filter { $0.1.state != .on }.map { $0.0.key }
@@ -2770,7 +2842,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     failure = nil
                 }
             } catch {
-                failure = "Não foi possível iniciar ai-usagebar: \(error.localizedDescription)"
+                failure = "Could not start ai-usagebar: \(error.localizedDescription)"
             }
             DispatchQueue.main.async {
                 guard let me = self else { return }
@@ -2779,7 +2851,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let failure {
                     let alert = NSAlert()
                     alert.alertStyle = .warning
-                    alert.messageText = "Não foi possível trocar a conta"
+                    alert.messageText = "Could not switch account"
                     alert.informativeText = failure
                     alert.addButton(withTitle: "OK")
                     NSApp.activate(ignoringOtherApps: true)
@@ -2816,10 +2888,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 #if !SWIFT_TEST_HARNESS
 @main
 struct AppMain {
+    // NSApplication.delegate is `weak`; in optimized (-O) builds ARC can free a
+    // main()-local delegate before app.run() returns since it sees no later
+    // textual use, taking the status item down with it — the menu bar icon
+    // vanishes, intermittently, mid-session. Retain it here instead.
+    static var delegate: AppDelegate!
+
     static func main() {
         DEF.register(defaults: SETTINGS_DEFAULTS)
         let app = NSApplication.shared
-        let delegate = AppDelegate()
+        delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)   // menu-bar agent, no Dock icon
         app.run()
