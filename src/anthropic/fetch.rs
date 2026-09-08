@@ -125,22 +125,37 @@ pub async fn fetch_snapshot(
                          refresh token is lost — re-run `claude` to log in again"
                     );
                     cache.write_last_error(0, &msg);
-                    return handle_auth_failure(cache, plan_label, false);
+                    return with_oauth_plan(
+                        &plan_label,
+                        handle_auth_failure(cache, plan_label.clone(), false),
+                    );
                 }
             }
             Ok(Err(AppError::Http { status, body })) => {
                 cache.write_last_error(status, &body);
-                return handle_auth_failure(cache, plan_label, false);
+                return with_oauth_plan(
+                    &plan_label,
+                    handle_auth_failure(cache, plan_label.clone(), false),
+                );
             }
             Ok(Err(e)) if e.is_transient() => {
-                return handle_auth_failure(cache, plan_label, true);
+                return with_oauth_plan(
+                    &plan_label,
+                    handle_auth_failure(cache, plan_label.clone(), true),
+                );
             }
             Ok(Err(e)) => {
                 cache.write_last_error(0, &e.to_string());
-                return handle_auth_failure(cache, plan_label, false);
+                return with_oauth_plan(
+                    &plan_label,
+                    handle_auth_failure(cache, plan_label.clone(), false),
+                );
             }
             Err(_elapsed) => {
-                return handle_auth_failure(cache, plan_label, true);
+                return with_oauth_plan(
+                    &plan_label,
+                    handle_auth_failure(cache, plan_label.clone(), true),
+                );
             }
         }
     }
@@ -157,33 +172,48 @@ pub async fn fetch_snapshot(
     .await
     {
         Ok(Ok(bytes)) => {
-            cache.write_payload(&bytes)?;
-            let snap = parse_payload(&bytes, plan_label.clone())?;
+            cache
+                .write_payload(&bytes)
+                .map_err(|e| attach_plan(&plan_label, e))?;
+            let snap = parse_payload(&bytes, plan_label.clone())
+                .map_err(|e| attach_plan(&plan_label, e))?;
             Ok(crate::outcome::Outcome::fresh(snap))
         }
         Ok(Err(AppError::Http { status, body })) => {
             cache.mark_stale();
             let last_error = Some(cache.write_last_error(status, &body));
-            fallback_to_cache(
-                cache,
-                plan_label,
-                last_error,
-                AppError::Http { status, body },
+            with_oauth_plan(
+                &plan_label,
+                fallback_to_cache(
+                    cache,
+                    plan_label.clone(),
+                    last_error,
+                    AppError::Http { status, body },
+                ),
             )
         }
         Ok(Err(e)) if e.is_transient() => {
             // Reuse cache silently; no last_error write.
-            fallback_to_cache_silent(cache, plan_label, e)
+            with_oauth_plan(
+                &plan_label,
+                fallback_to_cache_silent(cache, plan_label.clone(), e),
+            )
         }
         Ok(Err(e)) => {
             cache.mark_stale();
             let last_error = Some(cache.write_last_error(0, &e.to_string()));
-            fallback_to_cache(cache, plan_label, last_error, e)
+            with_oauth_plan(
+                &plan_label,
+                fallback_to_cache(cache, plan_label.clone(), last_error, e),
+            )
         }
-        Err(_elapsed) => fallback_to_cache_silent(
-            cache,
-            plan_label,
-            AppError::Transport("usage request timed out".into()),
+        Err(_elapsed) => with_oauth_plan(
+            &plan_label,
+            fallback_to_cache_silent(
+                cache,
+                plan_label.clone(),
+                AppError::Transport("usage request timed out".into()),
+            ),
         ),
     }
 }
@@ -249,6 +279,21 @@ fn handle_auth_failure(cache: &Cache, plan_label: String, transient: bool) -> Re
 fn parse_payload(bytes: &[u8], plan_label: String) -> Result<AnthropicSnapshot> {
     let resp: UsageResponse = serde_json::from_slice(bytes)?;
     Ok(resp.into_snapshot(plan_label))
+}
+
+/// Keep the OAuth plan on a failed fetch so a 401/429 card can still name
+/// Max/Pro. "Unknown" is the empty-subscription fallback and is not a plan.
+fn attach_plan(plan_label: &str, err: AppError) -> AppError {
+    let name = plan_label.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case("unknown") {
+        err
+    } else {
+        err.with_plan(format!("Claude {name}"))
+    }
+}
+
+fn with_oauth_plan<T>(plan_label: &str, result: Result<T>) -> Result<T> {
+    result.map_err(|err| attach_plan(plan_label, err))
 }
 
 async fn fetch_usage(client: &reqwest::Client, url: &str, creds: &OauthCreds) -> Result<Vec<u8>> {
@@ -629,5 +674,45 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.is_transient(), "expected transient error, got {err:?}");
+        assert_eq!(err.plan(), Some("Claude Max 5x"));
+    }
+
+    #[tokio::test]
+    async fn usage_401_without_cache_keeps_oauth_plan_on_the_error() {
+        // Frontends that read `usage --json` drop the plan when the tab is
+        // an Error with no snapshot. The OAuth blob still knows Max/Pro, so a
+        // 401 must carry that label rather than a plan-less error card.
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/api/oauth/usage")
+            .with_status(401)
+            .with_body(r#"{"error":{"type":"authentication_error","message":"invalid token"}}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let creds = expired_creds_no_refresh();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/api/oauth/usage", server.url()),
+            token: format!("{}/v1/oauth/token", server.url()),
+        };
+        let err = fetch_snapshot(
+            &client,
+            &creds::CredsTarget::Explicit(creds.path().to_path_buf()),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.plan(), Some("Claude Max 5x"));
+        let message = err.user_message();
+        assert!(message.contains("401"), "{message}");
+        assert!(
+            message.contains(crate::error::AUTH_FAILURE_MESSAGE),
+            "{message}"
+        );
+        assert!(!message.contains("invalid token"), "{message}");
     }
 }
