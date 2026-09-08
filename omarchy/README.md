@@ -61,12 +61,17 @@ native settings bridge.
 
 ## Controls
 
-- Bar: left-click opens the native Quattro usage panel; right-click
+- Bar: left-click opens the native Quattro usage panel on an Overview of every
+  configured provider (the same set `ai-usagebar usage` prints); right-click
   intentionally launches `ai-usagebar-tui` in a terminal; middle-click or the
-  mouse wheel switches provider. The exact provider or named account is saved
-  in the widget's inline `shell.json` settings and restored after shell reloads
-  and sleep/unlock cycles. Right-click is not the settings shortcut.
-- Panel: click the gear or press `s` to open the native QML settings page.
+  mouse wheel switches the bar's selected provider. The exact provider or named
+  account for the bar label is saved in the widget's inline `shell.json`
+  settings and restored after shell reloads and sleep/unlock cycles.
+  Right-click is not the settings shortcut.
+- Panel: the Overview lists each provider's plan and headline usage. Click a
+  row or a provider chip for that vendor's full windows; the **all** chip
+  (or `h`/`l` wrapping past the ends) returns to the Overview.
+  Click the gear or press `s` to open the native QML settings page.
   Its **Show usage value in the top bar** toggle switches between the normal
   icon-and-value label and a compact icon-only label without hiding panel or
   tooltip details. Its **Show provider name in the top bar** toggle adds the

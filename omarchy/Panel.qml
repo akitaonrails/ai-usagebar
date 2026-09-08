@@ -37,6 +37,9 @@ Panel {
   property double nowMs: Date.now()
   property bool cursorActive: false
   property bool settingsOpen: false
+  // Left-click lands on the all-provider Overview, matching `ai-usagebar usage`
+  // and the TUI's first tab. A provider chip or row drills into that entry.
+  property bool showingOverview: true
 
   readonly property int refreshIntervalSec: Math.max(30, Math.min(3600,
     Number(setting("refreshIntervalSec", 300)) || 300))
@@ -45,12 +48,15 @@ Panel {
   readonly property bool showValue: Model.booleanSetting(setting("showValue", false), false)
   readonly property bool showProvider: Model.booleanSetting(setting("showProvider", false), false)
   readonly property var visibleEntries: Model.filteredEntries(entries, configuredProvider)
+  readonly property bool overviewAvailable: visibleEntries.length > 1
   readonly property int entryIndex: Model.selectedIndex(visibleEntries, selectedEntryId)
   readonly property var entry: entryIndex >= 0 ? visibleEntries[entryIndex] : null
   readonly property string entryFetchedAt: {
     if (!entry) return ""
     return String(entry.fetched_at || "")
   }
+  readonly property string overviewFetchedAt: Model.latestFetchedAt(visibleEntries)
+  readonly property string panelFetchedAt: showingOverview ? overviewFetchedAt : entryFetchedAt
   readonly property var summary: Model.headline(entry)
   readonly property var entrySections: entry ? entry.sections : []
   readonly property bool filterMiss: configuredProvider !== "" && entries.length > 0 && visibleEntries.length === 0
@@ -112,12 +118,36 @@ Panel {
     persistWidgetSettings({ showProvider: next })
   }
 
+  function showOverview() {
+    if (!overviewAvailable) return
+    showingOverview = true
+    if (panelFlick) panelFlick.contentY = 0
+  }
+
   function selectEntry(index) {
     if (visibleEntries.length === 0) return
     var wrapped = ((index % visibleEntries.length) + visibleEntries.length) % visibleEntries.length
     selectedEntryId = visibleEntries[wrapped].id
+    showingOverview = false
     persistSelection(selectedEntryId)
     if (panelFlick) panelFlick.contentY = 0
+  }
+
+  function moveSelection(delta) {
+    if (visibleEntries.length === 0 || delta === 0) return
+    if (!overviewAvailable) {
+      selectEntry(entryIndex + delta)
+      return
+    }
+    if (showingOverview) {
+      selectEntry(delta > 0 ? 0 : visibleEntries.length - 1)
+    } else if (delta > 0 && entryIndex >= visibleEntries.length - 1) {
+      showOverview()
+    } else if (delta < 0 && entryIndex <= 0) {
+      showOverview()
+    } else {
+      selectEntry(entryIndex + delta)
+    }
   }
 
   function startRefresh() {
@@ -190,19 +220,29 @@ Panel {
 
   function statusMessage() {
     if (filterMiss) return "No configured entry matches ‘" + configuredProvider + "’. Clear the provider setting or use an id from ai-usagebar usage --json."
-    if (entry && entry.error !== "") return entry.error
     if (loadError !== "") return entries.length > 0
       ? "Refresh failed; showing the previous report. " + loadError
       : loadError
+    if (showingOverview) return ""
+    if (entry && entry.error !== "") return entry.error
     if (entry && entry.stale) return "Cached data · the provider could not supply a fresh response."
     return ""
   }
 
   function statusIsUrgent() {
-    return filterMiss || (entry && entry.error !== "") || loadError !== ""
+    if (filterMiss || loadError !== "") return true
+    if (showingOverview) return false
+    return entry && entry.error !== ""
+  }
+
+  function overviewMeta() {
+    if (loading && entries.length === 0) return "Loading providers"
+    var count = visibleEntries.length
+    return count === 1 ? "1 provider" : (count + " providers")
   }
 
   function heroMeta() {
+    if (showingOverview) return overviewMeta()
     if (!entry) return loading ? "Loading providers" : "Usage report"
     if (entry.error !== "") return "Provider unavailable"
     var text = entry.plan || "Usage and limits"
@@ -226,10 +266,12 @@ Panel {
   onEntriesChanged: Qt.callLater(syncSelection)
   onConfiguredProviderChanged: Qt.callLater(syncSelection)
   onRememberedEntryIdChanged: Qt.callLater(restoreRememberedSelection)
+  onVisibleEntriesChanged: if (visibleEntries.length === 1) showingOverview = false
   onOpenedChanged: {
     if (opened) {
       cursorActive = false
       nowMs = Date.now()
+      showingOverview = visibleEntries.length !== 1
       if (panelFlick) panelFlick.contentY = 0
       if (lastSuccessfulMs === 0 || nowMs - lastSuccessfulMs >= refreshIntervalSec * 1000)
         startRefresh()
@@ -299,7 +341,7 @@ Panel {
       onMoveRequested: function(dx, dy) {
         if (!root.settingsOpen && dx !== 0) {
           root.cursorActive = true
-          root.selectEntry(root.entryIndex + dx)
+          root.moveSelection(dx)
         }
         if (dy !== 0)
           panelFlick.contentY = root.clamp(panelFlick.contentY + dy * Style.space(56), 0,
@@ -332,11 +374,13 @@ Panel {
           PanelHero {
             width: parent.width
             title: root.settingsOpen ? "Settings"
-              : (root.entry ? Model.providerName(root.entry) : "AI usage")
+              : (root.showingOverview ? "Overview"
+                : (root.entry ? Model.providerName(root.entry) : "AI usage"))
             meta: root.settingsOpen ? "Display, provider & API keys" : root.heroMeta()
             // A long bordered detail pill next to "Antigravity" was clipping
             // off the trailing edge. Keep this to a short percent, if any.
-            detail: root.settingsOpen ? ""
+            // Overview has no single percent — each provider row carries its own.
+            detail: root.settingsOpen || root.showingOverview ? ""
               : (root.summary.percent !== null && root.summary.percent !== undefined
                 ? String(root.summary.percent) + "%" : "")
             foreground: root.foreground
@@ -396,9 +440,26 @@ Panel {
 
           Flow {
             id: providerList
-            visible: !root.settingsOpen && root.visibleEntries.length > 1
+            visible: !root.settingsOpen && root.overviewAvailable
             width: parent.width
             spacing: Style.space(6)
+
+            Button {
+              text: "all"
+              selected: root.showingOverview
+              hasCursor: root.cursorActive && root.showingOverview
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              horizontalPadding: Style.space(8)
+              verticalPadding: Style.spacing.controlPaddingY
+              onClicked: {
+                root.cursorActive = true
+                root.showOverview()
+              }
+              onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
+            }
 
             Repeater {
               model: root.visibleEntries
@@ -408,8 +469,8 @@ Panel {
                 required property int index
 
                 text: Model.providerChip(modelData)
-                selected: index === root.entryIndex
-                hasCursor: root.cursorActive && index === root.entryIndex
+                selected: !root.showingOverview && index === root.entryIndex
+                hasCursor: root.cursorActive && !root.showingOverview && index === root.entryIndex
                 bordered: true
                 foreground: root.foreground
                 fontFamily: root.fontFamily
@@ -472,8 +533,32 @@ Panel {
           }
 
           Column {
+            id: overviewSection
+            visible: !root.settingsOpen && root.showingOverview && root.visibleEntries.length > 0
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSeparator {
+              width: parent.width
+              foreground: root.foreground
+            }
+
+            Repeater {
+              model: root.visibleEntries
+
+              OverviewCard {
+                required property var modelData
+                required property int index
+                width: overviewSection.width
+                row: modelData
+                rowIndex: index
+              }
+            }
+          }
+
+          Column {
             id: usageSection
-            visible: !root.settingsOpen && root.entrySections.length > 0
+            visible: !root.settingsOpen && !root.showingOverview && root.entrySections.length > 0
             width: parent.width
             spacing: Style.space(8)
 
@@ -528,7 +613,7 @@ Panel {
           }
 
           Text {
-            visible: !root.settingsOpen && !root.loading && !root.entry && root.statusMessage() === ""
+            visible: !root.settingsOpen && !root.loading && root.visibleEntries.length === 0 && root.statusMessage() === ""
             width: parent.width
             topPadding: Style.space(20)
             text: "No configured provider reported usage."
@@ -540,16 +625,123 @@ Panel {
           }
 
           Text {
-            visible: !root.settingsOpen && root.entryFetchedAt !== ""
+            visible: !root.settingsOpen && root.panelFetchedAt !== ""
             width: parent.width
             topPadding: Style.space(2)
-            text: Model.formatUpdated(root.entryFetchedAt, root.nowMs)
+            text: Model.formatUpdated(root.panelFetchedAt, root.nowMs)
               + (usageProcess.running ? " · refreshing…" : "")
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
+          }
+        }
+      }
+    }
+  }
+
+  component OverviewCard: Item {
+    id: card
+    property var row: null
+    property int rowIndex: 0
+    readonly property var summary: Model.headline(row)
+    readonly property bool critical: summary.severity === "critical"
+      || (row && row.error !== "")
+    readonly property string planText: Model.overviewPlan(row)
+    readonly property bool hasBar: summary.percent !== null && summary.percent !== undefined
+      && !(row && row.error !== "")
+
+    implicitHeight: cardColumn.implicitHeight + Style.space(8)
+
+    MouseArea {
+      id: cardMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: {
+        root.cursorActive = true
+        root.selectEntry(card.rowIndex)
+      }
+    }
+
+    Rectangle {
+      anchors.fill: parent
+      radius: Style.cornerRadius
+      color: cardMouse.containsMouse ? root.alpha(root.foreground, 0.08) : "transparent"
+    }
+
+    Column {
+      id: cardColumn
+      width: parent.width
+      spacing: Style.space(6)
+
+      Item {
+        width: parent.width
+        implicitHeight: Math.max(cardName.implicitHeight, cardValue.implicitHeight)
+
+        Text {
+          id: cardName
+          text: Model.providerName(card.row)
+          textFormat: Text.PlainText
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          font.bold: true
+          elide: Text.ElideRight
+          anchors.left: parent.left
+          anchors.right: cardValue.left
+          anchors.rightMargin: Style.spacing.sm
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Text {
+          id: cardValue
+          text: card.row && card.row.error !== "" ? "Error"
+            : (card.summary.text !== "" ? card.summary.text : "")
+          textFormat: Text.PlainText
+          color: card.critical ? root.urgent : root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
+
+      Text {
+        visible: text !== ""
+        width: parent.width
+        text: card.planText
+        textFormat: Text.PlainText
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+      }
+
+      Item {
+        visible: card.hasBar
+        width: parent.width
+        implicitHeight: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.14))
+
+        Rectangle {
+          id: cardTrack
+          anchors.fill: parent
+          radius: height / 2
+          color: root.track
+        }
+
+        Rectangle {
+          anchors.left: cardTrack.left
+          anchors.verticalCenter: cardTrack.verticalCenter
+          height: cardTrack.height
+          radius: cardTrack.radius
+          width: cardTrack.width * root.clamp(card.hasBar ? card.summary.percent / 100 : 0, 0, 1)
+          color: card.critical ? root.urgent : root.foreground
+
+          Behavior on width {
+            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
           }
         }
       }

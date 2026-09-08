@@ -14,7 +14,7 @@ that path is leftover CLI behavior, not a supported frontend here. See
 [FORK.md](FORK.md) for how to pull upstream.
 
 <p align="center">
-  <img src="screenshots/omarchy-quattro-panel.png" width="400" alt="Native Omarchy Quattro panel showing Claude Team 5x with Claude, Codex, Kimi, Grok, and AGY tabs">
+  <img src="screenshots/omarchy-quattro-panel.png" width="400" alt="Native Omarchy Quattro panel Overview listing Claude, Codex, Kimi, SuperGrok, and Antigravity usage">
 </p>
 
 ## Features
@@ -54,9 +54,11 @@ agent status item:
 omarchy plugin disable omarchy.agents
 ```
 
-**Left-click** opens the native panel. **Gear** or `s` opens QML settings.
+**Left-click** opens the native panel on an Overview of every configured
+provider, the same set `ai-usagebar usage` prints. Click a provider (or its
+chip) for that vendor's full windows. **Gear** or `s` opens QML settings.
 **Right-click** opens `ai-usagebar-tui`. Middle-click or the mouse wheel
-switches providers.
+switches the bar's selected provider.
 
 Update or remove:
 
@@ -168,11 +170,13 @@ ai-usagebar-tui
 The widget reads providers already enabled in `config.toml`. It does not keep
 another copy of API keys.
 
-- Left-click opens the native panel.
+- Left-click opens the native panel on the all-provider Overview.
+- Click a provider row or chip for that vendor's detail; the **all** chip
+  returns to the Overview.
 - Gear or `s` opens QML settings.
 - Right-click launches the TUI.
-- Middle-click or the mouse wheel switches providers.
-- The selected provider is remembered across shell reloads. If it is later
+- Middle-click or the mouse wheel switches the bar's selected provider.
+- The bar's selected provider is remembered across shell reloads. If it is later
   disabled, the configured primary is used instead.
 
 The [Omarchy plugin guide](omarchy/README.md) covers keyboard controls,

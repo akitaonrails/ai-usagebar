@@ -49,6 +49,15 @@ assert.match(panelSource, /Model\.settingsWithOverrides\(root\.settings,\s*root\
 assert.match(panelSource, /bar\.shell\.updateEntryInline\(root\.moduleName,\s*entry\)/);
 assert.match(panelSource, /persistSelection\(selectedEntryId\)/);
 assert.match(panelSource, /Model\.barLabel\(/);
+assert.match(panelSource, /property bool showingOverview:\s*true/);
+assert.match(panelSource, /function\s+showOverview\s*\(/);
+assert.match(panelSource, /function\s+moveSelection\s*\(/);
+assert.match(panelSource, /text:\s*"all"/);
+assert.match(panelSource, /showingOverview\s*=\s*visibleEntries\.length\s*!==\s*1/);
+assert.match(panelSource, /OverviewCard/);
+assert.match(panelSource, /Model\.overviewPlan\(/);
+assert.match(panelSource, /title:[\s\S]*showingOverview \? "Overview"/);
+assert.doesNotMatch(panelSource, /Model\.overviewLine\(/);
 
 const settingsViewSource = fs.readFileSync(new URL('./SettingsView.qml', import.meta.url), 'utf8');
 assert.match(settingsViewSource, /command:\s*\["ai-usagebar",\s*"settings",\s*"show"\]/);
@@ -218,6 +227,11 @@ assert.equal(model.providerShort({id: 'x', short_name: '<b>x</b>'}), '‹b›x�
 
 assert.equal(model.headline(parsed.entries[0]).text, '29%');
 assert.equal(model.headline(parsed.entries[1]).severity, 'critical');
+assert.equal(model.overviewPlan(parsed.entries[0]), 'Claude Max 20x · cached');
+assert.equal(model.overviewPlan(parsed.entries[1]), 'Plus');
+assert.equal(model.overviewPlan({id: 'x', error: 'no local server', sections: []}), 'Provider unavailable');
+assert.equal(model.latestFetchedAt(parsed.entries), '2026-08-14T12:00:00Z');
+assert.equal(model.latestFetchedAt([]), '');
 assert.equal(model.isAlarming(parsed.entries[0]), false); // stale is not red
 assert.equal(model.isAlarming(parsed.entries[1]), false); // quota warnings are not red
 // Reset-row fixtures are built from *local* calendar components, not UTC

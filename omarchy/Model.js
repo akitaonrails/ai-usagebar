@@ -274,6 +274,30 @@ function headline(entry) {
   return { text: entry.status === "error" ? "Error" : "Ready", percent: null, severity: "low", label: "" }
 }
 
+function overviewPlan(entry) {
+  if (!entry) return ""
+  if (entry.error !== "") return "Provider unavailable"
+  var text = cleanText(entry.plan, 240).trim()
+  if (entry.stale) text = text === "" ? "cached" : text + " · cached"
+  return autoTextSafe(text)
+}
+
+function latestFetchedAt(entries) {
+  var list = entries && typeof entries.length === "number" ? entries : []
+  var best = ""
+  var bestMs = 0
+  for (var i = 0; i < list.length; i++) {
+    var stamp = list[i] && list[i].fetched_at ? String(list[i].fetched_at) : ""
+    if (stamp === "") continue
+    var ms = Date.parse(stamp)
+    if (isFinite(ms) && ms >= bestMs) {
+      bestMs = ms
+      best = stamp
+    }
+  }
+  return best
+}
+
 function isAlarming(entry) {
   if (!entry) return false
   var summary = headline(entry)
