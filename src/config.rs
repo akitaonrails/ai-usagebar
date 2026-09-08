@@ -1168,6 +1168,68 @@ impl Config {
         }
     }
 
+    /// The environment variable this provider's API key is read from, honoring
+    /// a per-vendor `api_key_env` override; `""` for a provider that takes no
+    /// key. Matching on [`VendorId`] rather than on a section name is
+    /// deliberate: a new key vendor that nobody adds here fails to compile,
+    /// where a `_ =>` arm over `&str` sections would silently hand back the
+    /// wrong default and report the provider as unconfigured for ever.
+    pub fn api_key_env_for(&self, id: VendorId) -> &str {
+        match id {
+            VendorId::AnthropicApi => &self.anthropic_api.api_key_env,
+            VendorId::Zai => &self.zai.api_key_env,
+            VendorId::Openrouter => &self.openrouter.api_key_env,
+            VendorId::Deepseek => &self.deepseek.api_key_env,
+            VendorId::Kimi => &self.kimi.api_key_env,
+            VendorId::Kilo => &self.kilo.api_key_env,
+            VendorId::Novita => &self.novita.api_key_env,
+            VendorId::Moonshot => &self.moonshot.api_key_env,
+            VendorId::Grok => &self.grok.api_key_env,
+            VendorId::Minimax => &self.minimax.api_key_env,
+            VendorId::OpenCodeGo => &self.opencode_go.api_key_env,
+            // Fixed names: OAuth-first providers whose environment override is
+            // not user-renameable, and the providers with no key at all.
+            VendorId::Anthropic
+            | VendorId::Openai
+            | VendorId::Copilot
+            | VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Kiro
+            | VendorId::NousResearch
+            | VendorId::CommandCode => id.api_key_env(),
+        }
+    }
+
+    /// A non-empty inline `api_key` from this provider's config section. An
+    /// empty string counts as unset, the same way the vendors' own
+    /// `resolve_api_key` treats it.
+    pub fn inline_api_key(&self, id: VendorId) -> Option<&str> {
+        let raw = match id {
+            VendorId::AnthropicApi => self.anthropic_api.api_key.as_deref(),
+            VendorId::Zai => self.zai.api_key.as_deref(),
+            VendorId::Openrouter => self.openrouter.api_key.as_deref(),
+            VendorId::Deepseek => self.deepseek.api_key.as_deref(),
+            VendorId::Kimi => self.kimi.api_key.as_deref(),
+            VendorId::Kilo => self.kilo.api_key.as_deref(),
+            VendorId::Novita => self.novita.api_key.as_deref(),
+            VendorId::Moonshot => self.moonshot.api_key.as_deref(),
+            VendorId::Grok => self.grok.api_key.as_deref(),
+            VendorId::Minimax => self.minimax.api_key.as_deref(),
+            VendorId::OpenCodeGo => self.opencode_go.api_key.as_deref(),
+            VendorId::Anthropic
+            | VendorId::Openai
+            | VendorId::Copilot
+            | VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Kiro
+            | VendorId::NousResearch
+            | VendorId::CommandCode => None,
+        };
+        raw.filter(|key| !key.is_empty())
+    }
+
     pub fn enabled_vendors(&self) -> Vec<VendorId> {
         VendorId::all()
             .iter()

@@ -16,6 +16,17 @@ Each release is also published at
   **Preferences → Display**. Off by default; the countdown is unchanged unless
   you turn it on. It follows the system's 12h/24h convention.
 
+- **`ai-usagebar vendors --json`** — the provider catalog: one row per
+  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
+  config has it `enabled`, whether this machine holds the credential it needs
+  (`configured`), the environment variable it reads (honoring an `api_key_env`
+  override), and the `login` command that fixes it. It contacts nothing.
+  `usage --json` reports only *enabled* providers, so the switched-off and the
+  never-credentialed were exactly the rows a "is anything broken?" list could
+  not describe; this is the answer for them. `needs_credential` is `false` only
+  for Antigravity, which has no credential to be missing, so a frontend never
+  offers to fix one that cannot be.
+
 ### Changed
 
 - The macOS menu bar and the GNOME extension are in English. Both shipped with
@@ -25,6 +36,13 @@ Each release is also published at
   comparison, or stored value changed — and the macOS test that asserted a
   Portuguese label moves with it.
 
+- `KEY_VENDORS` no longer stores each provider's environment variable name: it
+  comes from `VendorId::api_key_env`, and `Config::api_key_env_for` /
+  `Config::inline_api_key` replaced two private helpers that matched on a
+  section *string* with a `_ =>` fallback arm — where a new key vendor nobody
+  added would silently read the wrong default and report as unconfigured for
+  ever. Both match on `VendorId`, so that case now fails to compile.
+
 ### Fixed
 
 - The macOS menu bar icon no longer disappears mid-session. `AppMain` held its
@@ -32,6 +50,8 @@ Each release is also published at
   reference — so in optimised builds ARC was free to release it after the
   assignment, since nothing later in the function mentions it, taking the
   status item with it. The delegate is now held for the program's lifetime.
+
+
 ## [1.12.0] — 2026-09-06
 
 ### Added
