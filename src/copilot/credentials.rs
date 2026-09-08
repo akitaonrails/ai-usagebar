@@ -96,6 +96,13 @@ impl GhAuthTokenRunner for SystemGhAuthTokenRunner {
         for variable in &command.env_remove {
             process.env_remove(variable);
         }
+        // Same reason as the SuperGrok ACP child: no console window from the
+        // tray, or the popover loses focus and closes.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            process.creation_flags(crate::process::CREATE_NO_WINDOW);
+        }
         let output = process.output()?;
         Ok(GhAuthTokenOutput {
             success: output.status.success(),

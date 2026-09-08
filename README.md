@@ -22,8 +22,8 @@ codebase.
   60 seconds. Its navigation can use a sidebar, navbar, or no vendor box.
 - An optional Claude Code context view reads recent local session usage without
   scanning entire histories.
-- Native integrations are available for Omarchy, GNOME Shell, KDE Plasma 6, and
-  the macOS menu bar.
+- Native integrations are available for Omarchy, GNOME Shell, KDE Plasma 6,
+  the macOS menu bar, and a Windows system-tray popover.
 - One bar item can cycle through enabled providers. `[ui] primary` controls the
   initial provider in both the widget and TUI.
 - Atomic caches and file locking prevent duplicate requests from multi-monitor
@@ -188,15 +188,36 @@ make install PREFIX=$HOME/.local   # → ~/.local/bin
 
 ### Windows
 
-The **Waybar widget is Wayland-only and does not apply to Windows.** The
-**`ai-usagebar-tui`** binary, however, runs natively, and `ai-usagebar --json`
-/ `--pretty` work too (handy for feeding a custom tray/widget). Build with a
-standard Rust toolchain:
+The **Waybar widget is Wayland-only and does not apply to Windows.** Use the
+**system-tray popover** (`ai-usagebar-tray`) or **`ai-usagebar-tui`**. The tray
+reads the same `usage --json` report as the KDE plasmoid, in-process — no
+console window. `ai-usagebar --json` / `--pretty` still work for scripting.
+
+![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](screenshots/windows-tray-dashboard.png)
+
+Build with a standard Rust toolchain plus **Node.js 20+** (the tray WebView is
+a Vite app; `build.rs` runs `npm run build` on Windows). WebView2 Evergreen
+ships with Windows 11 and recent Windows 10:
 
 ```powershell
 cargo build --release
-# binaries land in target\release\ai-usagebar.exe and ai-usagebar-tui.exe
+# binaries: target\release\ai-usagebar.exe, ai-usagebar-tui.exe, ai-usagebar-tray.exe
+.\target\release\ai-usagebar-tray.exe
 ```
+
+Pin the icon in the Windows 11 notification overflow if it hides behind the
+chevron. Right-click the icon for Refresh, Detect Providers, Open TUI, Start
+with Windows, and Quit; left-click opens the popover. On its first run the
+tray detects which vendors already have a credential on this PC (local files
+and keys only, never the network) and turns exactly those on in
+`config.toml` — it never turns a vendor off. Settings adds a global shortcut
+that toggles the popover from anywhere, the poll interval, and an update mode
+(Automatic / Notify me / Off) that installs new releases from GitHub after
+verifying their `.sha256`; all three live in the `[tray]` section of
+`config.toml` (`shortcut`, `refresh_minutes` = 1, 5 or 10; default 5;
+`updates`). See [windows/README.md](windows/README.md).
+
+![Windows tray icon in the notification area — a bar-chart-in-circle mark next to the clock](screenshots/windows-tray-icon.png)
 
 Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
@@ -611,13 +632,14 @@ The plugin depends only on the `ai-usagebar` executable. It runs the fixed
 only after a right-click. It installs no service, asks for no elevated
 privileges, and does not overwrite user configuration.
 
-### GNOME, KDE and macOS
+### GNOME, KDE, macOS and Windows
 
 | Integration | Supported providers | Notes |
 |---|---|---|
 | [macOS menu bar](macos/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok (xAI), Anthropic API, Cursor, Google Antigravity | Thirteen providers. |
 | [GNOME Shell](gnome-extension/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Google Antigravity | Antigravity's two quota pools appear as grouped rows. |
 | [KDE Plasma 6](kde-plasmoid/README.md) | Whatever `usage --json` reports | Provider tabs in the popup; vendor is per applet instance. |
+| [Windows tray](windows/README.md) | Whatever `usage --json` reports | NotifyIcon + WebView2 popover; left-click the tray icon. |
 
 Cursor is not available in the GNOME extension yet. On GNOME, use
 `ai-usagebar --vendor cursor` or open the TUI.

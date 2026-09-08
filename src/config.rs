@@ -39,6 +39,7 @@ use crate::vendor::VendorId;
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub ui: UiConfig,
+    pub tray: TrayConfig,
     pub context: ContextConfig,
     pub anthropic: AnthropicConfig,
     pub anthropic_api: AnthropicApiConfig,
@@ -84,6 +85,68 @@ pub struct UiConfig {
 impl UiConfig {
     pub fn vendor_box(&self) -> VendorBoxStyle {
         self.vendor_box.unwrap_or_default()
+    }
+}
+
+/// Windows tray popover preferences the host process needs before the
+/// WebView is up: the global shortcut it registers, how often it polls and
+/// how it treats new releases. Screen-only preferences (theme, density, time
+/// format) live in the popover's own storage instead.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TrayConfig {
+    /// Global shortcut that toggles the popover, in the canonical
+    /// "Ctrl+Shift+U" spelling. `None` → no shortcut registered.
+    pub shortcut: Option<String>,
+    /// How often the tray re-reads every provider, in minutes: 1, 5 or 10.
+    /// The footer's Refresh is always immediate. `None` → 5.
+    pub refresh_minutes: Option<u64>,
+    /// What the tray does when a newer release is published.
+    pub updates: Option<UpdateMode>,
+}
+
+/// Poll intervals the tray offers, in minutes. The provider cache TTL is
+/// 60 s regardless; this only decides how often the tray asks.
+pub const TRAY_REFRESH_MINUTES: [u64; 3] = [1, 5, 10];
+const DEFAULT_TRAY_REFRESH_MINUTES: u64 = 5;
+
+impl TrayConfig {
+    pub fn refresh_minutes(&self) -> u64 {
+        self.refresh_minutes.unwrap_or(DEFAULT_TRAY_REFRESH_MINUTES)
+    }
+
+    pub fn updates(&self) -> UpdateMode {
+        self.updates.unwrap_or_default()
+    }
+}
+
+/// How the tray handles a newer release: install it unattended, show a
+/// banner with an Install button, or never check in the background.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateMode {
+    Auto,
+    #[default]
+    Notify,
+    Off,
+}
+
+impl UpdateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Notify => "notify",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "notify" => Some(Self::Notify),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
     }
 }
 
@@ -484,6 +547,57 @@ pub(crate) fn set_bool(
     }
     table.insert(key, toml_edit::value(new_value));
     Ok(())
+}
+
+/// Set, replace or remove a scalar field in a TOML section, preserving
+/// comments and formatting of unaffected nodes. `None` removes the key so a
+/// cleared preference does not linger as an empty string. The value keeps
+/// its own TOML type on disk — an integer preference such as
+/// `refresh_minutes` must not be quoted, or `Config::load_from` rejects it.
+pub(crate) fn set_value(
+    doc: &mut toml_edit::DocumentMut,
+    section: &str,
+    key: &str,
+    new_value: Option<toml_edit::Value>,
+) -> Result<()> {
+    let table = doc
+        .entry(section)
+        .or_insert_with(toml_edit::table)
+        .as_table_mut()
+        .ok_or_else(|| AppError::Other(format!("config.toml: [{section}] is not a table")))?;
+
+    let Some(mut new_value) = new_value else {
+        table.remove(key);
+        return Ok(());
+    };
+    if let Some(item) = table.get_mut(key)
+        && let Some(v) = item.as_value_mut()
+    {
+        let suffix = v.decor().suffix().cloned();
+        new_value.decor_mut().set_prefix(" ");
+        if let Some(suffix) = suffix {
+            new_value.decor_mut().set_suffix(suffix);
+        }
+        *v = new_value;
+        return Ok(());
+    }
+    table.insert(key, toml_edit::Item::Value(new_value));
+    Ok(())
+}
+
+/// Write one `[tray]` preference into the config at `path`, creating the
+/// file when it doesn't exist and leaving every other line as it was.
+/// `None` removes the key. The value keeps the TOML type it is given
+/// (`"notify"` stays a string, `5` stays an integer). The tray host is the
+/// only writer.
+pub fn set_tray_value(path: &Path, key: &str, value: Option<toml_edit::Value>) -> Result<()> {
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    set_value(&mut doc, "tray", key, value)?;
+    if doc.to_string() == before {
+        return Ok(());
+    }
+    write_config_document(path, &doc)
 }
 
 /// Read `path` into a `toml_edit` document with comments intact. A missing
@@ -1712,6 +1826,13 @@ impl Config {
     /// labels are both CLI selectors and TUI tab identities, so duplicates
     /// would make either destination ambiguous.
     pub fn validate(&self) -> Result<()> {
+        if let Some(minutes) = self.tray.refresh_minutes
+            && !TRAY_REFRESH_MINUTES.contains(&minutes)
+        {
+            return Err(AppError::Other(format!(
+                "[tray] refresh_minutes must be one of 1, 5 or 10, got {minutes}"
+            )));
+        }
         if self.context.context_window_tokens == Some(0) {
             return Err(AppError::Other(
                 "[context] context_window_tokens must be greater than zero".into(),
@@ -4035,6 +4156,102 @@ enabled = true
                 vendor.config_section()
             );
         }
+    }
+
+    #[test]
+    fn tray_section_parses_and_defaults_to_notify() {
+        let file = write_toml("[tray]\nshortcut = \"Ctrl+Shift+U\"\nupdates = \"auto\"\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert_eq!(config.tray.shortcut.as_deref(), Some("Ctrl+Shift+U"));
+        assert_eq!(config.tray.updates(), UpdateMode::Auto);
+
+        let empty = Config::load_from(write_toml("[ui]\n").path()).unwrap();
+        assert_eq!(empty.tray, TrayConfig::default());
+        assert_eq!(empty.tray.updates(), UpdateMode::Notify);
+        assert_eq!(UpdateMode::parse(" Off "), Some(UpdateMode::Off));
+        assert_eq!(UpdateMode::parse("weekly"), None);
+        assert_eq!(UpdateMode::Auto.as_str(), "auto");
+    }
+
+    #[test]
+    fn tray_section_rejects_a_misspelled_mode() {
+        let file = write_toml("[tray]\nupdates = \"sometimes\"\n");
+        assert!(Config::load_from(file.path()).is_err());
+    }
+
+    #[test]
+    fn tray_refresh_minutes_defaults_to_five_and_parses() {
+        let empty = Config::load_from(write_toml("[ui]\n").path()).unwrap();
+        assert_eq!(empty.tray.refresh_minutes, None);
+        assert_eq!(empty.tray.refresh_minutes(), 5);
+
+        let file = write_toml("[tray]\nrefresh_minutes = 10\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert_eq!(config.tray.refresh_minutes(), 10);
+    }
+
+    #[test]
+    fn tray_refresh_minutes_rejects_values_outside_the_menu() {
+        for minutes in ["3", "0"] {
+            let file = write_toml(&format!("[tray]\nrefresh_minutes = {minutes}\n"));
+            let error = Config::load_from(file.path()).unwrap_err().to_string();
+            assert!(error.contains("[tray] refresh_minutes"), "{error}");
+            assert!(error.contains("1, 5 or 10"), "{error}");
+        }
+    }
+
+    #[test]
+    fn set_tray_value_writes_refresh_minutes_as_an_integer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[tray]\nrefresh_minutes = 5 # mine\n").unwrap();
+
+        set_tray_value(&path, "refresh_minutes", Some(10i64.into())).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, "[tray]\nrefresh_minutes = 10 # mine\n");
+        assert_eq!(Config::load_from(&path).unwrap().tray.refresh_minutes(), 10);
+
+        set_tray_value(&path, "refresh_minutes", None).unwrap();
+        assert_eq!(Config::load_from(&path).unwrap().tray.refresh_minutes(), 5);
+    }
+
+    #[test]
+    fn set_tray_value_creates_replaces_and_removes_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[ui]\n# primary = \"anthropic\"\n").unwrap();
+
+        set_tray_value(&path, "shortcut", Some("Ctrl+Shift+U".into())).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# primary = \"anthropic\""), "{text}");
+        assert!(
+            text.contains("[tray]\nshortcut = \"Ctrl+Shift+U\""),
+            "{text}"
+        );
+
+        set_tray_value(&path, "shortcut", Some("Alt+F5".into())).unwrap();
+        set_tray_value(&path, "updates", Some("off".into())).unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.tray.shortcut.as_deref(), Some("Alt+F5"));
+        assert_eq!(config.tray.updates(), UpdateMode::Off);
+
+        set_tray_value(&path, "shortcut", None).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("shortcut"), "{text}");
+        assert!(text.contains("updates = \"off\""), "{text}");
+
+        // Idempotent removal does not rewrite the file.
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        set_tray_value(&path, "shortcut", None).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+    }
+
+    #[test]
+    fn set_value_keeps_the_trailing_comment_when_replacing() {
+        let mut doc: toml_edit::DocumentMut =
+            "[tray]\nshortcut = \"Ctrl+U\" # mine\n".parse().unwrap();
+        set_value(&mut doc, "tray", "shortcut", Some("Alt+U".into())).unwrap();
+        assert_eq!(doc.to_string(), "[tray]\nshortcut = \"Alt+U\" # mine\n");
     }
 
     #[test]

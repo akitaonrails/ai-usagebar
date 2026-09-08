@@ -29,3 +29,6 @@ macos/ai-usagebar-menubar
 
 # Local screenshots for PR bodies (not tracked; drag into the PR on GitHub)
 macos/printscreen/
+
+windows/popover/node_modules/
+windows/popover/dist/

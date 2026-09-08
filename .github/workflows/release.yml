@@ -87,14 +87,24 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
             artifact: ai-usagebar-linux-x86_64
             builder: cargo
-          - target: aarch64-unknown-linux-gnu
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
             artifact: ai-usagebar-linux-aarch64
             builder: cross
+          # Windows ships the tray host as well as the CLI/TUI. Besides the
+          # zip, every exe is also published bare with a `.sha256` sidecar:
+          # that is what the tray's self-updater downloads (src/update.rs),
+          # so the bare-exe names here are a contract with `asset_name`.
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: ai-usagebar-windows-x86_64
+            builder: cargo
 
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,26 +120,29 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Test desktop integration models
+        if: runner.os == 'Linux'
         run: make desktop-test
 
       - name: Install nasm (x86_64 native build; ring assembles its primitives)
-        if: matrix.builder == 'cargo'
+        if: runner.os == 'Linux' && matrix.builder == 'cargo'
         run: sudo apt-get update && sudo apt-get install -y nasm
 
       - name: Install cross (aarch64 cross-compile via Docker)
-        if: matrix.builder == 'cross'
+        if: runner.os == 'Linux' && matrix.builder == 'cross'
         uses: taiki-e/install-action@e67fa11c4b9316fa714ddf0abed07a0c3143b95b # v2.87.4
         with:
           tool: cross
 
       - name: Test (native only — aarch64 binaries can't run on x86 runner)
-        if: matrix.builder == 'cargo'
+        if: runner.os == 'Linux' && matrix.builder == 'cargo'
         run: cargo test --release --target ${{ matrix.target }} --locked
 
       - name: Build release binaries
+        if: runner.os == 'Linux'
         run: ${{ matrix.builder }} build --release --target ${{ matrix.target }} --locked
 
       - name: Create tarball (both bins + LICENSE + config example)
+        if: runner.os == 'Linux'
         run: |
           STAGE=$(mktemp -d)
           cp target/${{ matrix.target }}/release/ai-usagebar \
@@ -140,17 +153,100 @@ jobs:
           rm -rf "$STAGE"
 
       - name: Compute SHA256
+        if: runner.os == 'Linux'
         run: |
           SHA=$(sha256sum ${{ matrix.artifact }}.tar.gz | awk '{print $1}')
           echo "$SHA  ${{ matrix.artifact }}.tar.gz" > ${{ matrix.artifact }}.tar.gz.sha256
           echo "Built ${{ matrix.artifact }}.tar.gz sha256=$SHA"
 
+      # --- Windows -------------------------------------------------------
+      # Same nasm requirement as the Linux x86_64 build; the Windows runner
+      # does not ship it on PATH either (mirrors .github/workflows/ci.yml).
+      - name: Install nasm (Windows; ring assembles its primitives)
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1
+
+      # build.rs runs `npm run build` in windows/popover on Windows targets,
+      # so the popover's dependencies must be installed before cargo runs.
+      - name: Set up Node (Windows; the tray popover is a Vite build)
+        if: runner.os == 'Windows'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/popover/package-lock.json
+
+      - name: Install popover dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: windows/popover
+        run: npm ci
+
+      - name: Test desktop integration models (Windows; no make on the runner)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          node gnome-extension/marker-logic.test.mjs
+          node kde-plasmoid/plasmoid-logic.test.mjs
+          node windows/popover/popover.test.mjs
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo test --release --target ${{ matrix.target }} --locked
+
+      - name: Build release binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      # One zip for humans, plus the three bare exes with `.sha256` sidecars
+      # for the tray's self-updater. Sidecars use the `sha256sum` layout
+      # ("<hex>  <name>", two spaces) so the Linux and Windows checksums read
+      # the same and `update::parse_sha256_sidecar` accepts both.
+      - name: Package zip, bare exes and SHA256 sidecars (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $artifact = '${{ matrix.artifact }}'
+          $arch = 'x86_64'
+          $bins = 'target/${{ matrix.target }}/release'
+          $binaries = @('ai-usagebar-tray', 'ai-usagebar', 'ai-usagebar-tui')
+
+          function Write-Sidecar([string]$file) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $file).Hash.ToLowerInvariant()
+            $name = Split-Path -Leaf $file
+            # Two spaces, LF, no BOM: byte-for-byte the `sha256sum` format.
+            [System.IO.File]::WriteAllText("$file.sha256", "$hash  $name`n", [System.Text.UTF8Encoding]::new($false))
+            Write-Host "Built $name sha256=$hash"
+          }
+
+          $stage = Join-Path $env:RUNNER_TEMP 'stage'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          foreach ($bin in $binaries) {
+            Copy-Item "$bins/$bin.exe" (Join-Path $stage "$bin.exe")
+            Copy-Item "$bins/$bin.exe" "$bin-windows-$arch.exe"
+            Write-Sidecar "$bin-windows-$arch.exe"
+          }
+          Copy-Item LICENSE, README.md, config.example.toml $stage
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath "$artifact.zip" -Force
+          Write-Sidecar "$artifact.zip"
+          Remove-Item -Recurse -Force $stage
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}
+          # Linux produces the tarball pair; Windows the zip, the bare exes
+          # and their sidecars. Missing globs are fine (one OS each).
+          if-no-files-found: error
           path: |
             ${{ matrix.artifact }}.tar.gz
             ${{ matrix.artifact }}.tar.gz.sha256
+            ${{ matrix.artifact }}.zip
+            ${{ matrix.artifact }}.zip.sha256
+            *-windows-x86_64.exe
+            *-windows-x86_64.exe.sha256
 
   release:
     needs: [verify-version, build]
@@ -213,8 +309,15 @@ jobs:
             echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/ai-usagebar-linux-x86_64.tar.gz | tar xz -C ~/.local/bin ai-usagebar ai-usagebar-tui"
             echo '```'
             echo
+            echo "### Windows"
+            echo
+            echo "Unzip ai-usagebar-windows-x86_64.zip anywhere and run ai-usagebar-tray.exe (the zip also carries ai-usagebar.exe and ai-usagebar-tui.exe). The bare *-windows-x86_64.exe assets are what the tray's self-updater downloads; they are not needed by hand."
+            echo
             echo "## Checksums (SHA256)"
             echo '```'
+            # Every sidecar: the Linux tarballs, the Windows zip, and the
+            # per-exe ones the self-updater verifies against. All use the
+            # `sha256sum` layout, so they concatenate into one checkable block.
             cat artifacts/*.sha256
             echo '```'
 
@@ -233,11 +336,11 @@ jobs:
           # Replace any pre-existing assets so re-runs (workflow_dispatch on
           # an existing tag) overwrite cleanly.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.sha256 \
+            gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.zip artifacts/*.exe artifacts/*.sha256 \
               --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file body.md
           else
-            gh release create "$TAG" artifacts/*.tar.gz artifacts/*.sha256 \
+            gh release create "$TAG" artifacts/*.tar.gz artifacts/*.zip artifacts/*.exe artifacts/*.sha256 \
               --repo "$GITHUB_REPOSITORY" \
               --title "$TAG" \
               --notes-file body.md \

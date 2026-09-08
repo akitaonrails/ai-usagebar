@@ -414,6 +414,42 @@ impl VendorId {
     /// somewhere this cannot name — a desktop app's own window. The strings
     /// are the ones the vendor modules' own credential errors already print,
     /// so a status row and a failed fetch tell the user to run the same thing.
+    /// One sentence telling the user how to sign this provider in, for a UI
+    /// that has an error card and no room for a manual.
+    ///
+    /// This is product knowledge, so it lives beside [`Self::login_command`]
+    /// rather than in a frontend table. The Windows popover grew its own copy
+    /// first and it disagreed with this one for five of eight providers before
+    /// it had shipped — the match here is exhaustive, so a new provider cannot
+    /// be added without saying how a person signs into it.
+    pub const fn sign_in_hint(self) -> &'static str {
+        match self {
+            VendorId::Anthropic => "Run `claude` in a terminal, then Refresh.",
+            VendorId::Openai => "Run `codex login` in a terminal, then Refresh.",
+            VendorId::Copilot => "Run `gh auth login` in a terminal, then Refresh.",
+            VendorId::Kiro => "Run `kiro-cli login` in a terminal, then Refresh.",
+            VendorId::Kimi => "Run `kimi` in a terminal, or set an API key.",
+            VendorId::CommandCode => "Run `commandcode` in a terminal, then Refresh.",
+            VendorId::NousResearch => {
+                "Run `ai-usagebar auth nous login` in a terminal, then Refresh."
+            }
+            VendorId::Cursor => "Sign in to the Cursor app, then Refresh.",
+            VendorId::Antigravity => "Open Antigravity or run `agy`, then Refresh.",
+            VendorId::Grok | VendorId::Supergrok => "Sign in with `grok`, then Refresh.",
+            // Key-only providers: there is nothing to log into, only a key to
+            // put in the config.
+            VendorId::AnthropicApi
+            | VendorId::Zai
+            | VendorId::Openrouter
+            | VendorId::Deepseek
+            | VendorId::Kilo
+            | VendorId::Novita
+            | VendorId::Moonshot
+            | VendorId::Minimax
+            | VendorId::OpenCodeGo => "Add an API key in Settings, then Refresh.",
+        }
+    }
+
     pub const fn login_command(self) -> &'static str {
         match self {
             VendorId::Anthropic => "claude",

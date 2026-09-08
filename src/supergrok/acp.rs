@@ -43,6 +43,10 @@ async fn fetch_billing_inner(grok_binary: &Path) -> Result<BillingResponse> {
     for var in crate::vendor::vendor_secret_env_vars_to_remove(&["XAI_API_KEY", "GROK_API_KEY"]) {
         command.env_remove(var);
     }
+    // The tray is a GUI process: a console child would open its own window,
+    // take the foreground and close the popover on every refresh.
+    #[cfg(windows)]
+    command.creation_flags(crate::process::CREATE_NO_WINDOW);
 
     let mut child = command.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
