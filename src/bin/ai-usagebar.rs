@@ -33,6 +33,12 @@ fn main() {
     if let Some(Command::Settings { action }) = &cli.command {
         std::process::exit(ai_usagebar::tui::settings::run_cli(action));
     }
+    // Static catalog: it reads config and the filesystem, never the network,
+    // so it needs no tokio runtime and must not go through the always-exit-0
+    // Waybar contract.
+    if let Some(Command::Vendors { json }) = &cli.command {
+        std::process::exit(ai_usagebar::catalog::run(*json));
+    }
     if let Some(Command::Auth { provider }) = &cli.command {
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()

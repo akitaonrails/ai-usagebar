@@ -40,7 +40,6 @@ use crate::vendor::VendorId;
 pub struct KeyVendor {
     pub id: VendorId,
     pub label: &'static str,
-    pub env: &'static str,
     pub section: &'static str,
     /// Config field that stores the credential (`api_key` for most vendors).
     pub config_key: &'static str,
@@ -54,7 +53,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::AnthropicApi,
         label: "Anthropic API",
-        env: "ANTHROPIC_ADMIN_KEY",
         section: "anthropic_api",
         config_key: "api_key",
         secret_label: "API key",
@@ -63,7 +61,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Zai,
         label: "Z.AI",
-        env: "ZAI_API_KEY",
         section: "zai",
         config_key: "api_key",
         secret_label: "API key",
@@ -72,7 +69,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Openrouter,
         label: "OpenRouter",
-        env: "OPENROUTER_API_KEY",
         section: "openrouter",
         config_key: "api_key",
         secret_label: "API key",
@@ -81,7 +77,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Deepseek,
         label: "DeepSeek",
-        env: "DEEPSEEK_API_KEY",
         section: "deepseek",
         config_key: "api_key",
         secret_label: "API key",
@@ -90,7 +85,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Kimi,
         label: "Kimi",
-        env: "KIMI_API_KEY",
         section: "kimi",
         config_key: "api_key",
         secret_label: "API key",
@@ -99,7 +93,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Kilo,
         label: "Kilo",
-        env: "KILO_API_KEY",
         section: "kilo",
         config_key: "api_key",
         secret_label: "API key",
@@ -108,7 +101,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Novita,
         label: "Novita",
-        env: "NOVITA_API_KEY",
         section: "novita",
         config_key: "api_key",
         secret_label: "API key",
@@ -117,7 +109,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Moonshot,
         label: "Moonshot",
-        env: "MOONSHOT_API_KEY",
         section: "moonshot",
         config_key: "api_key",
         secret_label: "API key",
@@ -126,7 +117,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Grok,
         label: "Grok",
-        env: "XAI_MANAGEMENT_KEY",
         section: "grok",
         config_key: "api_key",
         secret_label: "API key",
@@ -135,7 +125,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::Minimax,
         label: "MiniMax",
-        env: "MINIMAX_API_KEY",
         section: "minimax",
         config_key: "api_key",
         secret_label: "API key",
@@ -144,32 +133,12 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     KeyVendor {
         id: VendorId::OpenCodeGo,
         label: "OpenCode Go",
-        env: "OPENCODE_GO_API_KEY",
         section: "opencode-go",
         config_key: "api_key",
         secret_label: "API key",
         note: "usage quota",
     },
 ];
-
-/// Read the inline credential currently in config, so the field opens
-/// pre-filled (masked) when one is already set.
-fn config_inline_key<'a>(cfg: &'a Config, vendor: &KeyVendor) -> Option<&'a str> {
-    match vendor.section {
-        "anthropic_api" => cfg.anthropic_api.api_key.as_deref(),
-        "zai" => cfg.zai.api_key.as_deref(),
-        "openrouter" => cfg.openrouter.api_key.as_deref(),
-        "deepseek" => cfg.deepseek.api_key.as_deref(),
-        "kimi" => cfg.kimi.api_key.as_deref(),
-        "kilo" => cfg.kilo.api_key.as_deref(),
-        "novita" => cfg.novita.api_key.as_deref(),
-        "moonshot" => cfg.moonshot.api_key.as_deref(),
-        "grok" => cfg.grok.api_key.as_deref(),
-        "minimax" => cfg.minimax.api_key.as_deref(),
-        "opencode-go" => cfg.opencode_go.api_key.as_deref(),
-        _ => None,
-    }
-}
 
 /// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,7 +279,7 @@ impl SettingsState {
     pub fn from_config(cfg: &Config) -> Self {
         let keys = KEY_VENDORS
             .iter()
-            .map(|kv| KeyInput::from_config(config_inline_key(cfg, kv)))
+            .map(|kv| KeyInput::from_config(cfg.inline_api_key(kv.id)))
             .collect();
         let mut primary_choices = cfg.enabled_vendors();
         // Copilot credentials belong to GitHub CLI, so a login cannot write a
@@ -677,23 +646,6 @@ const SETTINGS_SCHEMA_VERSION: u8 = 1;
 const MAX_SETTINGS_REQUEST_BYTES: u64 = 64 * 1024;
 const MAX_API_KEY_BYTES: usize = 16 * 1024;
 
-fn configured_key_env<'a>(cfg: &'a Config, section: &str, fallback: &'a str) -> &'a str {
-    match section {
-        "anthropic_api" => &cfg.anthropic_api.api_key_env,
-        "zai" => &cfg.zai.api_key_env,
-        "openrouter" => &cfg.openrouter.api_key_env,
-        "deepseek" => &cfg.deepseek.api_key_env,
-        "kimi" => &cfg.kimi.api_key_env,
-        "kilo" => &cfg.kilo.api_key_env,
-        "novita" => &cfg.novita.api_key_env,
-        "moonshot" => &cfg.moonshot.api_key_env,
-        "grok" => &cfg.grok.api_key_env,
-        "minimax" => &cfg.minimax.api_key_env,
-        "opencode-go" => &cfg.opencode_go.api_key_env,
-        _ => fallback,
-    }
-}
-
 fn snapshot_from_config_with(
     cfg: &Config,
     environment_configured: impl Fn(&str) -> bool,
@@ -710,8 +662,8 @@ fn snapshot_from_config_with(
     let keys = KEY_VENDORS
         .iter()
         .map(|vendor| {
-            let environment = configured_key_env(cfg, vendor.section, vendor.env);
-            let inline_configured = config_inline_key(cfg, vendor).is_some_and(|v| !v.is_empty());
+            let environment = cfg.api_key_env_for(vendor.id);
+            let inline_configured = cfg.inline_api_key(vendor.id).is_some();
             let environment_configured = environment_configured(environment);
             KeyStatus {
                 id: vendor.id.slug().to_string(),
@@ -972,10 +924,11 @@ fn key_row(kv: &KeyVendor, input: &KeyInput, focused: bool, theme: &BubbleTheme)
     let value = value_text(input, focused);
 
     // Env / status suffix: env-var name, whether an env override is set, note.
-    let env_set = std::env::var(kv.env)
+    let env_name = kv.id.api_key_env();
+    let env_set = std::env::var(env_name)
         .map(|v| !v.is_empty())
         .unwrap_or(false);
-    let mut suffix = format!("   {}", kv.env);
+    let mut suffix = format!("   {env_name}");
     if env_set {
         suffix.push_str(" · env set (overrides)");
     }

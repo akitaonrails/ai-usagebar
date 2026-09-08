@@ -155,6 +155,16 @@ pub enum Command {
         json: bool,
     },
 
+    /// Every provider ai-usagebar knows: how each authenticates, whether it is
+    /// switched on, and whether this machine has the credential it needs.
+    /// Unlike `usage`, this lists the switched-off and the never-configured —
+    /// it contacts nothing and is the catalog a frontend lists providers from.
+    Vendors {
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Read or update settings for native desktop frontends.
     Settings {
         #[command(subcommand)]
