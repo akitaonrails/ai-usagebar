@@ -11,6 +11,11 @@ Each release is also published at
 
 ### Added
 
+- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
+  date once the reset is past today — instead of the countdown, under
+  **Preferences → Display**. Off by default; the countdown is unchanged unless
+  you turn it on. It follows the system's 12h/24h convention.
+
 - **`ai-usagebar vendors --json`** — the provider catalog: one row per
   provider with how it authenticates (`oauth` / `apikey` / `local`), whether
   config has it `enabled`, whether this machine holds the credential it needs
@@ -45,6 +50,8 @@ Each release is also published at
   reference — so in optimised builds ARC was free to release it after the
   assignment, since nothing later in the function mentions it, taking the
   status item with it. The delegate is now held for the program's lifetime.
+
+
 ## [1.12.0] — 2026-09-06
 
 ### Added
