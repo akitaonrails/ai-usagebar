@@ -14,11 +14,7 @@ that path is leftover CLI behavior, not a supported frontend here. See
 [FORK.md](FORK.md) for how to pull upstream.
 
 <p align="center">
-  <img src="screenshots/omarchy-quattro-panel.png" width="400" alt="Native Omarchy Quattro panel showing Claude Team 5x with Claude, Codex, Grok, and AGY tabs">
-</p>
-
-<p align="center">
-  <img src="screenshots/omarchy-quattro-settings.png" width="400" alt="Native Omarchy Quattro settings for display, primary provider, and API keys">
+  <img src="screenshots/omarchy-quattro-panel.png" width="400" alt="Native Omarchy Quattro panel showing Claude Team 5x with Claude, Codex, Kimi, Grok, and AGY tabs">
 </p>
 
 ## Features
