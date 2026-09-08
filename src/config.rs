@@ -525,16 +525,39 @@ pub(crate) fn write_config_document(path: &Path, doc: &toml_edit::DocumentMut) -
 /// widens it. A document that comes out textually unchanged (every vendor
 /// already enabled) is not rewritten, so an idempotent call doesn't touch the
 /// file's mtime or race a concurrent editor.
-pub fn enable_vendors_in(path: &Path, vendors: &[VendorId]) -> Result<()> {
+pub fn enable_vendors_in(path: &Path, vendors: &[VendorId]) -> Result<Vec<VendorId>> {
     let mut doc = read_config_document(path)?;
     let before = doc.to_string();
-    for vendor in vendors {
+    let written: Vec<VendorId> = vendors
+        .iter()
+        .copied()
+        .filter(|vendor| !is_explicitly_disabled(&doc, *vendor))
+        .collect();
+    for vendor in &written {
         set_bool(&mut doc, vendor.config_section(), "enabled", true)?;
     }
     if doc.to_string() == before {
-        return Ok(());
+        return Ok(written);
     }
-    write_config_document(path, &doc)
+    write_config_document(path, &doc)?;
+    Ok(written)
+}
+
+/// Whether the config *says* `enabled = false` for this vendor, as opposed to
+/// not mentioning it.
+///
+/// This is the durable record of a user having turned a vendor off. `detect`
+/// also keeps a set of vendors it has already considered, but that lives in the
+/// cache directory, which is by convention safe to delete — so it cannot be the
+/// only thing standing between "the user opted out" and re-enabling a provider
+/// (and resuming requests to it) behind their back. The config file is the one
+/// place that outlives a cache wipe, so the explicit `false` is honored here,
+/// at the write, where no caller can route around it.
+fn is_explicitly_disabled(doc: &toml_edit::DocumentMut, vendor: VendorId) -> bool {
+    doc.get(vendor.config_section())
+        .and_then(|section| section.get("enabled"))
+        .and_then(|enabled| enabled.as_bool())
+        == Some(false)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -3224,27 +3247,38 @@ enabled = true
     }
 
     #[test]
-    fn enable_vendors_in_flips_an_explicit_false_in_place() {
+    fn enable_vendors_in_leaves_an_explicit_false_alone() {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            "[grok]
+        let original = "[grok]
 enabled = false # off
 api_key = \"k\"
-",
-        )
-        .unwrap();
+";
+        std::fs::write(&path, original).unwrap();
 
-        enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+        // `enabled = false` in the file is the user having said no. Only the
+        // automatic path goes through here — the Settings overlay writes with
+        // `set_bool` — so nothing a person does by hand is blocked by this.
+        let written = enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
 
+        assert!(written.is_empty(), "{written:?}");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "[grok]
-enabled = true # off
-api_key = \"k\"
-"
+            original,
+            "the file must not be rewritten at all"
         );
+    }
+
+    #[test]
+    fn enable_vendors_in_adds_the_switch_when_the_config_never_mentioned_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[grok]\napi_key = \"k\"\n").unwrap();
+
+        let written = enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert_eq!(written, vec![VendorId::Grok]);
+        assert!(Config::load_from(&path).unwrap().is_enabled(VendorId::Grok));
     }
 
     #[test]

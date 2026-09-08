@@ -361,18 +361,23 @@ pub fn run_once_with(
     let plan = plan(&config, &state, VendorId::all(), force, |vendor| {
         probe(vendor, &config)
     });
-    if !plan.enable.is_empty() {
+    // What actually got written, which is not always what was planned: a
+    // vendor the user explicitly set to `enabled = false` is left alone by
+    // `enable_vendors_in`, so it must not be reported as enabled either.
+    let enabled = if plan.enable.is_empty() {
+        Vec::new()
+    } else {
         let path = resolved.ok_or_else(|| {
             AppError::Other("could not resolve the config.toml path to enable vendors in".into())
         })?;
-        crate::config::enable_vendors_in(&path, &plan.enable)?;
-    }
+        crate::config::enable_vendors_in(&path, &plan.enable)?
+    };
     DetectState {
         known: plan.known.clone(),
     }
     .save_at(state_path)?;
     Ok(DetectReport {
-        enabled: plan.enable,
+        enabled,
         known: plan.known,
         probed: plan.probed,
     })
@@ -545,11 +550,14 @@ enabled = false
 
         let report = run_once_with(Some(&config_path), &state_path, false, probe).unwrap();
 
-        assert_eq!(report.enabled, vec![VendorId::Zai, VendorId::Cursor]);
+        // Z.AI is detectable and was probed, but the config says `enabled =
+        // false`. That is the user's answer and it outranks detection, so it is
+        // neither written nor reported as enabled.
+        assert_eq!(report.enabled, vec![VendorId::Cursor]);
         assert_eq!(report.known, VendorId::all());
         assert_eq!(report.probed, VendorId::all().len());
         let after = Config::load_from(&config_path).unwrap();
-        assert!(after.is_enabled(VendorId::Zai));
+        assert!(!after.is_enabled(VendorId::Zai), "an opt-out must survive");
         assert!(after.is_enabled(VendorId::Cursor));
         let text = std::fs::read_to_string(&config_path).unwrap();
         assert!(
@@ -581,11 +589,18 @@ enabled = false
                 .is_enabled(VendorId::Cursor)
         );
 
-        // `force` gives every vendor another look, so Cursor comes back. Zai
-        // is on by default in the rewritten config, so it is not re-enabled.
+        // `force` re-probes every vendor, but it still cannot overrule an
+        // explicit `enabled = false`. That makes `detect --all` safe to run at
+        // any time: it can add providers, never silently undo a decision. A
+        // user who wants Cursor back turns it on in Settings or in the file.
         let forced = run_once_with(Some(&config_path), &state_path, true, probe).unwrap();
-        assert_eq!(forced.enabled, vec![VendorId::Cursor]);
+        assert!(forced.enabled.is_empty(), "{forced:?}");
         assert_eq!(forced.probed, VendorId::all().len());
+        assert!(
+            !Config::load_from(&config_path)
+                .unwrap()
+                .is_enabled(VendorId::Cursor)
+        );
     }
 
     #[test]

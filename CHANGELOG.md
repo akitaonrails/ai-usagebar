@@ -36,8 +36,11 @@ Each release is also published at
   count. `detect::run_once` writes `enabled = true` into `config.toml` for the
   vendors that have one and are still off — so Cursor, Kiro, Grok, Copilot and
   friends show up without editing the config by hand. Detection only ever
-  enables; `detect.json` in the cache dir remembers which vendors were already
-  checked, so a vendor the user turned off afterwards stays off.
+  enables, and never overrules an explicit `enabled = false` — that is the
+  user's answer, it lives in the config file, and not even `--all` rewrites it.
+  `detect.json` in the cache dir remembers which vendors were already checked so
+  repeat runs probe nothing; because it is a cache file and may be deleted, it
+  is a shortcut, not the thing protecting a decision.
   `config::enable_vendors_in` and `VendorId::config_section` are the shared
   toml_edit write path the TUI Settings overlay now reuses, with a guard test
   that every section name parses to its own vendor's `enabled` switch.
