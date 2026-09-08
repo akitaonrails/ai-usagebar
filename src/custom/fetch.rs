@@ -358,6 +358,43 @@ mod tests {
         );
     }
 
+    /// The module header promises the cache holds the *projected* snapshot and
+    /// not the response body, because here the schema is whatever the user
+    /// pointed at — a body would park every field they did not select (an
+    /// e-mail, an org id) on disk for `MAX_STALE`. That is a property of what
+    /// `fetch` writes, so nothing but a test keeps a later refactor from
+    /// caching the body "to save a re-parse".
+    #[tokio::test]
+    async fn the_cache_holds_only_the_projection_never_the_body_or_the_key() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/v1/usage")
+            .with_status(200)
+            .with_body(
+                r#"{"requests": {"used": 25, "limit": 100},
+                    "account": {"email": "someone@example.com", "org_id": "org_1a2b"}}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        fetch(&spec_for(&server), KEY, &cache, Duration::ZERO)
+            .await
+            .unwrap();
+
+        let raw = String::from_utf8(std::fs::read(cache.payload_path()).unwrap()).unwrap();
+        assert!(raw.contains("Requests"), "the projection is there: {raw}");
+        for leaked in [
+            KEY,
+            "someone@example.com",
+            "org_1a2b",
+            "account",
+            &server.url(),
+        ] {
+            assert!(!raw.contains(leaked), "cache leaked {leaked:?}: {raw}");
+        }
+    }
+
     #[tokio::test]
     async fn a_non_json_body_is_a_schema_error() {
         let mut server = mockito::Server::new_async().await;
