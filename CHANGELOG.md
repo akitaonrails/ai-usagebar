@@ -9,12 +9,15 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [1.13.0] — 2026-09-08
+
 ### Added
 
 - The macOS menu bar can show *when* a window resets — a wall-clock time, or a
   date once the reset is past today — instead of the countdown, under
   **Preferences → Display**. Off by default; the countdown is unchanged unless
   you turn it on. It follows the system's 12h/24h convention.
+
 
 
 - **`ai-usagebar vendors --json`** — the provider catalog: one row per
@@ -28,6 +31,7 @@ Each release is also published at
   for Antigravity, which has no credential to be missing, so a frontend never
   offers to fix one that cannot be.
 
+
 - **Omarchy bar: show every provider at once.** A new **Show all providers in
   the top bar** toggle (and `showAll` widget setting) draws each configured
   provider as its own chip with a brand mark and usage. Claude, Codex,
@@ -37,6 +41,11 @@ Each release is also published at
   code rather than a shared robot. The panel hero uses the same mark,
   colored only when that provider is critical. Off by default.
 
+- `--config <PATH>` on both binaries to read and write an alternate config
+  file instead of the default location. Accepted in any position (including
+  beside a subcommand); the file must already exist, and the override applies
+  to loads, Settings saves, and path hints for the whole process.
+
 ### Changed
 
 - The macOS menu bar and the GNOME extension are in English. Both shipped with
@@ -45,6 +54,7 @@ Each release is also published at
   depending on which surface you opened. Display strings only — no setting key,
   comparison, or stored value changed — and the macOS test that asserted a
   Portuguese label moves with it.
+
 
 
 - `KEY_VENDORS` no longer stores each provider's environment variable name: it
@@ -2097,7 +2107,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
