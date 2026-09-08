@@ -1184,4 +1184,3 @@ export function sendCommand(cmd, extra) {
     window.ipc.postMessage(msg);
   }
 }
-
