@@ -132,8 +132,8 @@ function oauthCommand(v) {
     return [
         `export PATH="$HOME/.local/bin:$PATH";`,
         `if command -v ${v.cli} >/dev/null 2>&1; then ${v.login};`,
-        `else echo "⚠ ${v.cli} nao encontrado.";`,
-        `echo "Instalo em ~/.local sem sudo (npm --prefix). Pacote: ${v.pkg}"; echo;`,
+        `else echo "⚠ ${v.cli} not found.";`,
+        `echo "I can install it under ~/.local without sudo (npm --prefix). Package: ${v.pkg}"; echo;`,
         `read -p "Install now? [y/N] " a;`,
         `if [ "$a" = y ] || [ "$a" = Y ]; then npm i -g --prefix "$HOME/.local" ${v.pkg} && hash -r && ${v.login}; fi;`,
         `fi;`,
@@ -215,7 +215,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
 
         // Only Antigravity reports two independent pools today; for every other
         // vendor these rows are inert, which the subtitle spells out.
-        const poolLabels = [_('Ambos'), _('Só o primeiro'), _('Só o segundo'), _('Automático')];
+        const poolLabels = [_('Both'), _('First only'), _('Second only'), _('Automatic')];
         const poolValues = ['both', 'primary', 'secondary', 'auto'];
         const pools = new Adw.ComboRow({
             title: _('Pools no painel'),
@@ -226,8 +226,8 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         display.add(pools);
 
         const autoThreshold = new Adw.SpinRow({
-            title: _('Limiar do modo automático (%)'),
-            subtitle: _('troca para o outro pool quando o primeiro passa deste uso'),
+            title: _('Automatic mode threshold (%)'),
+            subtitle: _('switches to the other pool when the first passes this usage'),
             adjustment: new Gtk.Adjustment({lower: 50, upper: 100, step_increment: 1, page_increment: 5}),
         });
         settings.bind('panel-auto-threshold', autoThreshold, 'value', Gio.SettingsBindFlags.DEFAULT);
@@ -266,7 +266,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         colors.add(colorRow(settings, 'color-mid', _('Medium (50–74%)')));
         colors.add(colorRow(settings, 'color-high', _('High (75–89%)')));
         colors.add(colorRow(settings, 'color-critical', _('Critical (≥90%)')));
-        colors.add(colorRow(settings, 'color-empty', _('Vazio (fundo da barra)')));
+        colors.add(colorRow(settings, 'color-empty', _('Empty (bar background)')));
 
         // ── Data ────────────────────────────────────────────────────────
         const data = new Adw.PreferencesGroup({title: _('Data')});
@@ -288,7 +288,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         bindCombo(settings, 'vendor', vendor, vendorList);
         data.add(vendor);
 
-        const binPath = new Adw.EntryRow({title: _('Caminho do binário (vazio = auto)')});
+        const binPath = new Adw.EntryRow({title: _('Binary path (empty = auto)')});
         settings.bind('binary-path', binPath, 'text', Gio.SettingsBindFlags.DEFAULT);
         data.add(binPath);
 
@@ -300,16 +300,16 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         page.add(pos);
 
         const box = new Adw.ComboRow({
-            title: _('Área'),
-            subtitle: _('right = ao lado da rede/relógio'),
+            title: _('Area'),
+            subtitle: _('right = next to the network/clock'),
             model: Gtk.StringList.new(['left', 'center', 'right']),
         });
         bindCombo(settings, 'panel-box', box, ['left', 'center', 'right']);
         pos.add(box);
 
         const index = new Adw.SpinRow({
-            title: _('Índice na área'),
-            subtitle: _('0 = mais à esquerda da área escolhida'),
+            title: _('Index within the area'),
+            subtitle: _('0 = leftmost in the chosen area'),
             adjustment: new Gtk.Adjustment({lower: 0, upper: 20, step_increment: 1, page_increment: 1}),
         });
         settings.bind('panel-index', index, 'value', Gio.SettingsBindFlags.DEFAULT);
@@ -351,7 +351,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
                         } else {
                             row.subtitle = _('open or install the app, the IDE or agy; there is no separate login');
                         }
-                        btn.label = installed ? _('Abrir agy') : _('Sem login separado');
+                        btn.label = installed ? _('Open agy') : _('No separate login');
                         btn.sensitive = installed;
                     });
                     return;
@@ -359,12 +359,12 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
                 btn.sensitive = true;
                 if (v.kind !== 'oauth') {
                     const ok = vendorConfigured(v);
-                    row.subtitle = ok ? _('✓ Configurado') : `⚠ ${_('Sem API key')} — ${v.env}`;
+                    row.subtitle = ok ? _('✓ Configured') : `⚠ ${_('No API key')} — ${v.env}`;
                     btn.label = _('Configurar (TUI)');
                     return;
                 }
                 if (vendorConfigured(v)) {
-                    row.subtitle = _('✓ Configurado');
+                    row.subtitle = _('✓ Configured');
                     btn.label = _('Re-logar');
                     return;
                 }
@@ -372,7 +372,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
                 checkCliInstalled(v.cli, (installed) => {
                     row.subtitle = installed
                         ? `⚠ ${_('Not signed in')} — \`${v.login}\``
-                        : `⚠ ${v.cli} ${_('not installed')} (instala em ~/.local, sem sudo)`;
+                        : `⚠ ${v.cli} ${_('not installed')} (installs under ~/.local, no sudo)`;
                     btn.label = installed ? _('Sign in') : _('Install + sign in');
                 });
             };

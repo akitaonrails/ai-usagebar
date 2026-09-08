@@ -650,7 +650,7 @@ func testAccountStatus() {
     assertEqual(orphan?.cliLabels ?? [], ["work"], "an unmatched active still lists its accounts")
 
     // A Mac with the app installed but nothing captured yet: no summary line,
-    // but `desktopAvailable` keeps the submenu (and "Adicionar conta…") alive.
+    // but `desktopAvailable` keeps the submenu (and "Add account…") alive.
     let fresh = parseAccountStatus(Data(#"{"desktop":{"available":true,"profiles":[]}}"#.utf8))
     assertEqual(fresh?.desktopAvailable, true, "an empty profile list is still available")
     assertEqual(accountsSummaryLine(fresh!), "", "nothing captured renders no line")

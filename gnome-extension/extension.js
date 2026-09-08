@@ -255,7 +255,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             cancellable.cancel();
             if (this._refreshToken === token) {
                 this._busy = false;
-                this._setError('ai-usagebar demorou demais', `timeout após ${REFRESH_TIMEOUT_SECS}s`);
+                this._setError('ai-usagebar took too long', `timed out after ${REFRESH_TIMEOUT_SECS}s`);
                 // Do not strand a request that arrived while this one hung.
                 if (this._refreshPending) {
                     this._refreshPending = false;
@@ -303,7 +303,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                 cleanup();
                 if (current && !(e instanceof GLib.Error &&
                       e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) && !timedOut)
-                    this._setError('erro ao ler a saída', String(e));
+                    this._setError('could not read the output', String(e));
             } finally {
                 // Run whatever was requested while we were busy.
                 if (current && this._refreshPending) {
@@ -319,7 +319,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         try {
             data = JSON.parse(stdout);
         } catch (e) {
-            this._setError('saída inválida', stdout);
+            this._setError('invalid output', stdout);
             return;
         }
         const raw = plainTextFromPango(data.text);
@@ -518,7 +518,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                 // try the next terminal
             }
         }
-        Main.notify('AI Usage Bar', 'Nenhum terminal encontrado (kgx / gnome-terminal / xterm).');
+        Main.notify('AI Usage Bar', 'No terminal found (kgx / gnome-terminal / xterm).');
     }
 
     destroy() {
