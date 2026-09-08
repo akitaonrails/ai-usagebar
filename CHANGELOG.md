@@ -56,6 +56,21 @@ Each release is also published at
   `--vendor` list, the TUI Settings overlay, `[ui] primary` and the `vendors`
   catalog.
 
+- **Antigravity with the app closed.** When no Antigravity product answers
+  locally, the vendor reads the Google OAuth session Antigravity saved in the
+  OS keyring (Windows Credential Manager `gemini:antigravity`, macOS
+  Keychain, `secret-tool` on Linux), refreshes it through Google when it
+  expired (cached in `antigravity/oauth.json`, never written back to the
+  keyring) and asks the Cloud Code API for the same quota summary the local
+  RPC serves, plus the plan from `loadCodeAssist`. The TUI panel and every
+  frontend that reads `usage --json` carry a "Source · Google API (app
+  closed)" row on that path; the "no local server found" error only remains
+  when there is no saved session either, and a server that is up but signed
+  out is still reported as such. Renewing the session needs `[antigravity]
+  oauth_client_id` / `oauth_client_secret` (Antigravity's public
+  installed-app client, not shipped in source); without them the fallback
+  lasts while the saved access token does.
+
 ### Fixed
 
 - **Rate-limit backoff.** A vendor that answers HTTP 429 arms a five-minute

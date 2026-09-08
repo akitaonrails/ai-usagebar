@@ -291,6 +291,13 @@ enabled = false
 # restart, say — discovery still runs and its ports are probed as fallbacks.
 [antigravity]
 enabled = false
+# With the app and `agy` closed, the quota comes from Google's Cloud Code API
+# using the session Antigravity saved in the OS keyring. Renewing that session
+# needs Antigravity's own OAuth client (a public installed-app client; it is
+# not shipped in source). Without it the fallback works only while the saved
+# access token lasts (about an hour after Antigravity last used it).
+# oauth_client_id = "<client id>"
+# oauth_client_secret = "<client secret>"   # chmod 600 the file if you set this
 
 # Cursor. No API key: usage is read from the session token the Cursor IDE
 # already wrote to its own local state database after you signed in there —

@@ -832,6 +832,15 @@ fn antigravity_sections(
             push_window(&mut v, GROUP_THIRD_PARTY, w, now, 5, false);
         }
     }
+    // Figures read off the Cloud Code API while no product runs can lag what
+    // a running product would show; say where they came from.
+    if s.source == crate::usage::AntigravitySource::Remote {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: "Source".into(),
+            value: "Google API (app closed)".into(),
+        });
+    }
     v
 }
 
@@ -2498,6 +2507,49 @@ mod tests {
         assert_eq!(
             http,
             Some(("HTTP 503".into(), "service unavailable".into()))
+        );
+    }
+
+    fn antigravity_snap(source: crate::usage::AntigravitySource) -> VendorSnapshot {
+        VendorSnapshot::Antigravity(crate::usage::AntigravitySnapshot {
+            plan: "Pro".into(),
+            account: "acct:test".into(),
+            source,
+            session: Some(UsageWindow {
+                utilization_pct: 43,
+                resets_at: Some(now() + chrono::Duration::hours(2)),
+                window_duration: chrono::Duration::hours(5),
+            }),
+            weekly: None,
+            third_party_session: None,
+            third_party_weekly: None,
+        })
+    }
+
+    /// Figures read off the API while nothing runs say so; a running product's
+    /// do not, since that is the normal case.
+    #[test]
+    fn antigravity_names_the_remote_source_and_only_that() {
+        use crate::usage::AntigravitySource;
+
+        let remote = sections_for(
+            &ready(antigravity_snap(AntigravitySource::Remote)),
+            now(),
+            5,
+        );
+        let n = remote.len();
+        assert!(matches!(remote[n - 2], Section::Spacer));
+        assert!(matches!(
+            &remote[n - 1],
+            Section::Text { label, value }
+                if label == "Source" && value == "Google API (app closed)"
+        ));
+
+        let local = sections_for(&ready(antigravity_snap(AntigravitySource::Local)), now(), 5);
+        assert!(
+            !local
+                .iter()
+                .any(|s| matches!(s, Section::Text { label, .. } if label == "Source"))
         );
     }
 
