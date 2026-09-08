@@ -1287,7 +1287,7 @@ func oauthScript(_ v: VendorAuth) -> String {
     if command -v \(v.cli) >/dev/null 2>&1; then
       \(v.login)
     else
-      echo "\(v.cli) nao encontrado. Instalo em ~/.local sem sudo. Pacote: \(v.pkg)"
+      echo "\(v.cli) not found. I can install it under ~/.local without sudo. Package: \(v.pkg)"
       read -p "Install now? [y/N] " a
       if [ "$a" = y ] || [ "$a" = Y ]; then npm i -g --prefix "$HOME/.local" \(v.pkg) && hash -r && \(v.login); fi
     fi
@@ -1369,9 +1369,9 @@ struct VendorsSection: View {
             return "⚠ Abra o Antigravity (app, IDE ou agy) e ative [antigravity] no config"
         }
         if v.kind == "local" {
-            return "⚠ Entre no app Cursor e ative [cursor] no config"
+            return "⚠ Sign in to the Cursor app and enable [cursor] in the config"
         }
-        return "⚠ Sem API key — \(apiKeyEnvironment(v))"
+        return "⚠ No API key — \(apiKeyEnvironment(v))"
     }
 
     private func buttonLabel(_ v: VendorAuth) -> String {
@@ -2151,7 +2151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
         let name = entryDisplayName(VENDOR)
         statusItem.button?.attributedTitle = run("\(name) …", menuBarTextColor(appearance))
-        headerItem.attributedTitle = run("\(name) · carregando…", .labelColor,
+        headerItem.attributedTitle = run("\(name) · loading…", .labelColor,
                                          NSFont.boldSystemFont(ofSize: 13))
         for (_, it) in rows { it.isHidden = true }
         for it in overviewRows { it.isHidden = true }
@@ -2238,7 +2238,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } catch {
                 watchdog.cancel()
                 DispatchQueue.main.async {
-                    self?.finishRefresh(generation) { $0.setError("falha ao executar ai-usagebar") }
+                    self?.finishRefresh(generation) { $0.setError("could not run ai-usagebar") }
                 }
                 return
             }
@@ -2493,7 +2493,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let data = output.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = obj["text"] as? String else {
-            setError("saída inválida")
+            setError("invalid output")
             return
         }
         guard let snap = parse(text, vendor: baseVendorId(VENDOR)) else {
@@ -2591,7 +2591,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let entries = vendorEntries(active: active,
                                     usageAccounts: lastAccountStatus?.usageAccounts)
         if entries.isEmpty {
-            let none = NSMenuItem(title: "Nenhum configurado", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: "None configured", action: nil, keyEquivalent: "")
             none.isEnabled = false
             vendorSubmenu.addItem(none)
             vendorSubmenuItem.isHidden = false
@@ -2679,8 +2679,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
              #selector(switchDesktopAccount(_:)))
         fill(cliAccountSubmenu, status.cliLabels, status.cliActive,
              #selector(switchCliAccount(_:)))
-        // Both stay visible with an empty list — that is when "Adicionar
-        // conta…" matters most. Only a machine with no Claude Desktop app at
+        // Both stay visible with an empty list — that is when "Add
+        // account…" matters most. Only a machine with no Claude Desktop app at
         // all loses its submenu.
         desktopAccountItem.isHidden = !status.desktopAvailable
         cliAccountItem.isHidden = false
@@ -2836,7 +2836,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let detail = String(decoding: data, as: UTF8.self)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     failure = detail.isEmpty
-                        ? "ai-usagebar terminou com status \(p.terminationStatus)."
+                        ? "ai-usagebar exited with status \(p.terminationStatus)."
                         : String(detail.prefix(2_000))
                 } else {
                     failure = nil

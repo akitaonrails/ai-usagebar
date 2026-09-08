@@ -5,6 +5,16 @@ Claude, Codex, Z.AI, and OpenRouter are enabled by default; other providers are
 opt-in. The commented example shows the defaults and provider-specific
 settings.
 
+Both binaries accept `--config <PATH>` to use an alternate file instead of the
+default location (`%APPDATA%\ai-usagebar\config.toml` on Windows). The file
+must already exist; loads and the Settings overlay then read and write that
+file for the whole process, so a test config never touches the real one:
+
+```bash
+ai-usagebar --vendor kimi --config ./config.test.toml --watch 5
+ai-usagebar-tui --config ./config.test.toml
+```
+
 ```toml
 [ui]
 # Which vendor the widget shows when --vendor is omitted, AND which tab
