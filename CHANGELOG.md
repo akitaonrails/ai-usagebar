@@ -9,6 +9,18 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Rate-limit backoff.** A vendor that answers HTTP 429 arms a five-minute
+  backoff in its cache dir (`.retry_after`). While it is armed
+  `Cache::fresh_payload` — the one pre-network step every vendor takes —
+  serves the last good snapshot if there is one and otherwise reports
+  `rate limited; next attempt in 4m` without touching the network, so the
+  60-second poll no longer prolongs the block. A successful fetch clears it.
+  Nous Research has its own fetch path without the shared cache and is not
+  covered. Frontends that read `usage --json` see the same message in the
+  vendor's error field.
+
 ## [1.13.0] — 2026-09-08
 
 ### Added
