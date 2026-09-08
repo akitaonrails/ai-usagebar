@@ -13,9 +13,13 @@ KDE, macOS, or Nix frontends, and it does not document Waybar. The
 that path is leftover CLI behavior, not a supported frontend here. See
 [FORK.md](FORK.md) for how to pull upstream.
 
-![Native Omarchy Quattro panel](screenshots/omarchy-quattro-panel.png)
+<p align="center">
+  <img src="screenshots/omarchy-quattro-panel.png" width="400" alt="Native Omarchy Quattro panel showing Claude Team 5x with Claude, Codex, Grok, and AGY tabs">
+</p>
 
-![Native Omarchy Quattro settings](screenshots/omarchy-quattro-settings.png)
+<p align="center">
+  <img src="screenshots/omarchy-quattro-settings.png" width="400" alt="Native Omarchy Quattro settings for display, primary provider, and API keys">
+</p>
 
 ## Features
 
