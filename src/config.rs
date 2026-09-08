@@ -9,6 +9,7 @@
 //! [openrouter] enabled = true
 //! [deepseek]   enabled = false
 //! [kimi]       enabled = false
+//! [[custom]]   id = "mytool"   # user-defined HTTP provider, static token
 //! ```
 //!
 //! Every field is optional with sensible defaults — missing config file is
@@ -60,6 +61,8 @@ pub struct Config {
     #[serde(rename = "opencode-go")]
     pub opencode_go: OpenCodeGoConfig,
     pub commandcode: CommandCodeConfig,
+    /// User-defined providers, one `[[custom]]` table each.
+    pub custom: Vec<CustomProviderConfig>,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -1096,6 +1099,328 @@ impl Default for AnthropicApiConfig {
     }
 }
 
+/// A user-defined HTTP provider: one GET with a static token, projected onto
+/// the shared report shape through RFC 6901 JSON Pointers.
+///
+/// Everything a built-in vendor hard-codes is a field here, which is why this
+/// type validates so much more than the others: a typo in `[deepseek]` hits a
+/// fixed endpoint and fails loudly, while a typo here quietly sends the user's
+/// key to the wrong host. The `id` doubles as the cache directory name and the
+/// `--vendor` selector, so it is held to the character class of the built-in
+/// slugs.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, remote = "Self")]
+pub struct CustomProviderConfig {
+    /// `[a-z0-9][a-z0-9_-]{0,31}`; unique, and never a built-in vendor's slug.
+    pub id: String,
+    /// Display name, 1 to 48 characters. Defaults to `id`.
+    pub name: String,
+    /// Exactly three lowercase ASCII letters, unique across built-in vendors
+    /// and other custom providers — it is the `{vendor_short}` bar tag.
+    pub short_name: String,
+    pub enabled: bool,
+    /// `https://` unless `allow_http`; never carries `user:pass@`.
+    pub url: String,
+    pub allow_http: bool,
+    /// Env var read first; `""` means the inline `api_key` is the only source.
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// The header that carries the key.
+    pub auth_header: String,
+    /// Sent as `"<scheme> <key>"`; `""` sends the bare key.
+    pub auth_scheme: String,
+    /// Extra non-secret headers.
+    pub headers: BTreeMap<String, String>,
+    /// Literal plan label.
+    pub plan: Option<String>,
+    /// Pointer to the plan label in the response; wins over `plan`.
+    pub plan_path: Option<String>,
+    /// Must be within `10..=3600`.
+    pub cache_ttl_secs: u64,
+    pub metrics: Vec<CustomMetricSpec>,
+    pub texts: Vec<CustomTextSpec>,
+}
+
+impl Default for CustomProviderConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            short_name: String::new(),
+            enabled: false,
+            url: String::new(),
+            allow_http: false,
+            api_key_env: String::new(),
+            api_key: None,
+            auth_header: "Authorization".to_string(),
+            auth_scheme: "Bearer".to_string(),
+            headers: BTreeMap::new(),
+            plan: None,
+            plan_path: None,
+            cache_ttl_secs: 60,
+            metrics: Vec::new(),
+            texts: Vec::new(),
+        }
+    }
+}
+
+/// `name` defaults to `id`, which a per-field serde default cannot express (a
+/// default sees no sibling field). The derive is routed through
+/// `remote = "Self"` so the fill-in happens here, on every parse path, rather
+/// than only in `Config::load_from`.
+impl<'de> Deserialize<'de> for CustomProviderConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let mut this = Self::deserialize(deserializer)?;
+        if this.name.is_empty() {
+            this.name = this.id.clone();
+        }
+        Ok(this)
+    }
+}
+
+impl Serialize for CustomProviderConfig {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        Self::serialize(self, serializer)
+    }
+}
+
+/// One percentage row. Either `percent` alone, or `used` and `limit`
+/// together — never a mix, so a row cannot show a percentage from one field
+/// and a footnote from another.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CustomMetricSpec {
+    pub label: String,
+    pub used: Option<String>,
+    pub limit: Option<String>,
+    pub percent: Option<String>,
+    /// Pointer to an RFC 3339 string or a Unix epoch (seconds or milliseconds).
+    pub resets_at: Option<String>,
+    /// Window length for pacing, at least 60.
+    pub window_secs: Option<u64>,
+}
+
+/// One free-text row: a string, number, or boolean at `value`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CustomTextSpec {
+    pub label: String,
+    pub value: String,
+}
+
+impl CustomProviderConfig {
+    /// The TOML locator for error messages: `[[custom]] id = "mytool"`.
+    pub fn section_label(&self) -> String {
+        format!("[[custom]] id = {:?}", self.id)
+    }
+
+    /// Env var (when `api_key_env` is set) → inline `api_key` → a
+    /// `Credentials` error that names the section and never the key.
+    pub fn resolve_api_key(&self) -> Result<String> {
+        if let Some(key) = optional_api_key(&self.api_key_env, self.api_key.as_deref()) {
+            return Ok(key);
+        }
+        let advice = if self.api_key_env.is_empty() {
+            "set `api_key`, or name an environment variable in `api_key_env`".to_string()
+        } else {
+            format!("export {} or set `api_key`", self.api_key_env)
+        };
+        Err(AppError::Credentials(format!(
+            "custom {}: no API key. Either {advice} under {} in {}.",
+            self.id,
+            self.section_label(),
+            config_path_hint()
+        )))
+    }
+
+    pub fn cache_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.cache_ttl_secs)
+    }
+
+    /// Every rule that serde cannot express, each naming the section. Runs
+    /// for disabled entries too: a broken entry is a broken config, and the
+    /// day it is enabled is the wrong day to find out.
+    fn validate(&self, index: usize) -> Result<()> {
+        if !is_valid_custom_id(&self.id) {
+            return Err(AppError::Other(format!(
+                "[[custom]] entry #{}: id {:?} must match [a-z0-9][a-z0-9_-]{{0,31}}",
+                index + 1,
+                self.id
+            )));
+        }
+        let section = self.section_label();
+        let bad = |msg: String| AppError::Other(format!("{section}: {msg}"));
+
+        if VendorId::all().iter().any(|v| v.slug() == self.id) {
+            return Err(bad(format!("id {:?} is a built-in vendor", self.id)));
+        }
+        let name_len = self.name.chars().count();
+        if name_len == 0 || name_len > 48 || self.name.chars().any(char::is_control) {
+            return Err(bad(
+                "name must be 1 to 48 characters without control characters".into(),
+            ));
+        }
+        if self.short_name.len() != 3 || !self.short_name.bytes().all(|b| b.is_ascii_lowercase()) {
+            return Err(bad(format!(
+                "short_name {:?} must be exactly 3 lowercase ASCII letters",
+                self.short_name
+            )));
+        }
+        let url = reqwest::Url::parse(&self.url)
+            .map_err(|_| bad(format!("url {:?} is not a valid URL", self.url)))?;
+        match url.scheme() {
+            "https" => {}
+            "http" if self.allow_http => {}
+            "http" => {
+                return Err(bad(
+                    "url must use https:// (set allow_http = true to permit http://)".into(),
+                ));
+            }
+            other => return Err(bad(format!("url scheme {other:?} is not http or https"))),
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(bad("url must not carry credentials (user:pass@)".into()));
+        }
+        if url.host_str().is_none() {
+            return Err(bad("url has no host".into()));
+        }
+        if !self.api_key_env.is_empty() && !is_valid_env_var_name(&self.api_key_env) {
+            return Err(bad(format!(
+                "api_key_env {:?} is not a valid environment variable name",
+                self.api_key_env
+            )));
+        }
+        validate_header_name(&section, "auth_header", &self.auth_header)?;
+        if reqwest::header::HeaderValue::from_str(&format!("{} k", self.auth_scheme)).is_err() {
+            return Err(bad(
+                "auth_scheme contains characters that are not valid in an HTTP header".into(),
+            ));
+        }
+        for (name, value) in &self.headers {
+            validate_header_name(&section, "headers", name)?;
+            if name.eq_ignore_ascii_case(&self.auth_header) {
+                return Err(bad(format!(
+                    "headers must not repeat auth_header {:?}",
+                    self.auth_header
+                )));
+            }
+            if reqwest::header::HeaderValue::from_str(value).is_err() {
+                return Err(bad(format!(
+                    "header {name:?} has a value that is not valid in an HTTP header"
+                )));
+            }
+        }
+        if let Some(plan) = &self.plan {
+            validate_custom_label(&section, "plan", plan)?;
+        }
+        if let Some(pointer) = &self.plan_path {
+            validate_pointer(&section, "plan_path", pointer)?;
+        }
+        if !(10..=3600).contains(&self.cache_ttl_secs) {
+            return Err(bad(format!(
+                "cache_ttl_secs must be between 10 and 3600, got {}",
+                self.cache_ttl_secs
+            )));
+        }
+        if self.metrics.is_empty() && self.texts.is_empty() {
+            return Err(bad(
+                "needs at least one [[custom.metrics]] or [[custom.texts]] entry".into(),
+            ));
+        }
+        let mut metric_labels = HashSet::new();
+        for metric in &self.metrics {
+            validate_custom_label(&section, "metric label", &metric.label)?;
+            if !metric_labels.insert(metric.label.as_str()) {
+                return Err(bad(format!("duplicate metric label {:?}", metric.label)));
+            }
+            let pair = (metric.used.is_some(), metric.limit.is_some());
+            let well_formed = if metric.percent.is_some() {
+                pair == (false, false)
+            } else {
+                pair == (true, true)
+            };
+            if !well_formed {
+                return Err(bad(format!(
+                    "metric {:?} must set `percent`, or both `used` and `limit` (not a mix)",
+                    metric.label
+                )));
+            }
+            for (field, pointer) in [
+                ("used", &metric.used),
+                ("limit", &metric.limit),
+                ("percent", &metric.percent),
+                ("resets_at", &metric.resets_at),
+            ] {
+                if let Some(pointer) = pointer {
+                    validate_pointer(&section, field, pointer)?;
+                }
+            }
+            if let Some(secs) = metric.window_secs
+                && secs < 60
+            {
+                return Err(bad(format!(
+                    "metric {:?} window_secs must be at least 60, got {secs}",
+                    metric.label
+                )));
+            }
+        }
+        let mut text_labels = HashSet::new();
+        for text in &self.texts {
+            validate_custom_label(&section, "text label", &text.label)?;
+            if !text_labels.insert(text.label.as_str()) {
+                return Err(bad(format!("duplicate text label {:?}", text.label)));
+            }
+            validate_pointer(&section, "value", &text.value)?;
+        }
+        Ok(())
+    }
+}
+
+fn is_valid_custom_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    let Some(&first) = bytes.first() else {
+        return false;
+    };
+    bytes.len() <= 32
+        && (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+}
+
+fn validate_pointer(section: &str, field: &str, pointer: &str) -> Result<()> {
+    if !pointer.starts_with('/') || pointer.chars().any(char::is_control) {
+        return Err(AppError::Other(format!(
+            "{section}: {field} {pointer:?} must be an RFC 6901 JSON Pointer starting with '/'"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_custom_label(section: &str, field: &str, label: &str) -> Result<()> {
+    let len = label.chars().count();
+    if len == 0 || len > 64 || label.chars().any(char::is_control) {
+        return Err(AppError::Other(format!(
+            "{section}: {field} {label:?} must be 1 to 64 characters without control characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_header_name(section: &str, field: &str, name: &str) -> Result<()> {
+    if name.is_empty() || reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err() {
+        return Err(AppError::Other(format!(
+            "{section}: {field} {name:?} is not a valid HTTP header name"
+        )));
+    }
+    Ok(())
+}
+
 /// Resolve an API key for a vendor: a valid env-var name wins, then inline
 /// config, then a clear error naming both fields. Used by every API-key vendor.
 pub fn resolve_api_key(
@@ -1144,7 +1469,7 @@ fn resolve_api_key_in_section(
     )))
 }
 
-fn is_valid_env_var_name(name: &str) -> bool {
+pub(crate) fn is_valid_env_var_name(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -1174,6 +1499,10 @@ impl Config {
                 config.validate()?;
                 #[cfg(unix)]
                 config.protect_inline_secrets(path)?;
+                // A custom provider's token variable is as secret as any
+                // built-in one; subprocesses (`gh`, `grok`, `claude`) must
+                // not inherit it.
+                crate::vendor::register_secret_env_vars(&config.custom_secret_env_vars());
                 Ok(config)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
@@ -1227,7 +1556,26 @@ impl Config {
                 .iter()
                 .map(|account| account.api_key.as_deref()),
         )
+        .chain(self.custom.iter().map(|c| c.api_key.as_deref()))
         .any(|key| key.is_some_and(|key| !key.is_empty()))
+    }
+
+    fn custom_secret_env_vars(&self) -> Vec<String> {
+        self.custom
+            .iter()
+            .filter(|c| !c.api_key_env.is_empty())
+            .map(|c| c.api_key_env.clone())
+            .collect()
+    }
+
+    /// The `[[custom]]` providers that are switched on, in config order.
+    pub fn enabled_custom(&self) -> impl Iterator<Item = &CustomProviderConfig> {
+        self.custom.iter().filter(|c| c.enabled)
+    }
+
+    /// A `[[custom]]` provider by `id`, enabled or not.
+    pub fn custom_by_id(&self, id: &str) -> Option<&CustomProviderConfig> {
+        self.custom.iter().find(|c| c.id == id)
     }
 
     #[cfg(unix)]
@@ -1440,6 +1788,32 @@ impl Config {
                 return Err(AppError::Credentials(format!(
                     "openrouter account {:?} must set api_key_env or api_key",
                     account.label
+                )));
+            }
+        }
+        self.validate_custom()
+    }
+
+    /// Per-entry rules live on `CustomProviderConfig`; the cross-entry ones —
+    /// `id` and `short_name` uniqueness, including against the built-in
+    /// vendors — need the whole list and live here.
+    fn validate_custom(&self) -> Result<()> {
+        let mut ids = HashSet::new();
+        let mut short_names: HashSet<&str> =
+            VendorId::all().iter().map(|v| v.short_name()).collect();
+        for (index, custom) in self.custom.iter().enumerate() {
+            custom.validate(index)?;
+            if !ids.insert(custom.id.as_str()) {
+                return Err(AppError::Other(format!(
+                    "{}: duplicate id",
+                    custom.section_label()
+                )));
+            }
+            if !short_names.insert(custom.short_name.as_str()) {
+                return Err(AppError::Other(format!(
+                    "{}: short_name {:?} is already used by a built-in vendor or another [[custom]] entry",
+                    custom.section_label(),
+                    custom.short_name
                 )));
             }
         }
@@ -3144,6 +3518,441 @@ credentials_path = "~/w/.credentials.json"
         assert_eq!(
             default_account_credentials_path(cfg, "work"),
             Path::new("/home/u/.config/ai-usagebar/accounts/work/.credentials.json"),
+        );
+    }
+    // ----- [[custom]] providers -----
+
+    const CUSTOM_BLOCK: &str = r#"
+[[custom]]
+id = "mytool"
+name = "My Tool"
+short_name = "myt"
+enabled = true
+url = "https://api.example.test/v1/usage"
+api_key_env = "MYTOOL_API_KEY"
+auth_header = "Authorization"
+auth_scheme = "Bearer"
+plan = "Pro"
+cache_ttl_secs = 120
+[custom.headers]
+X-Org = "org_1"
+[[custom.metrics]]
+label = "Requests"
+used = "/requests/used"
+limit = "/requests/limit"
+resets_at = "/requests/reset"
+window_secs = 3600
+[[custom.texts]]
+label = "Tier"
+value = "/tier"
+"#;
+
+    fn custom_with(from: &str, to: &str) -> String {
+        assert!(CUSTOM_BLOCK.contains(from), "fixture has no {from:?}");
+        CUSTOM_BLOCK.replace(from, to)
+    }
+
+    fn custom_error(toml: &str) -> String {
+        Config::load_from(write_toml(toml).path())
+            .unwrap_err()
+            .to_string()
+    }
+
+    fn assert_custom_rejected(toml: &str, needle: &str) {
+        let msg = custom_error(toml);
+        assert!(msg.contains(needle), "expected {needle:?} in: {msg}");
+        assert!(
+            msg.contains("[[custom]]"),
+            "the error must locate the section: {msg}"
+        );
+    }
+
+    #[test]
+    fn custom_block_parses_every_field() {
+        let config = Config::load_from(write_toml(CUSTOM_BLOCK).path()).unwrap();
+        assert_eq!(config.custom.len(), 1);
+        let c = &config.custom[0];
+        assert_eq!(c.id, "mytool");
+        assert_eq!(c.name, "My Tool");
+        assert_eq!(c.short_name, "myt");
+        assert!(c.enabled);
+        assert_eq!(c.url, "https://api.example.test/v1/usage");
+        assert!(!c.allow_http);
+        assert_eq!(c.api_key_env, "MYTOOL_API_KEY");
+        assert_eq!(c.api_key, None);
+        assert_eq!(c.auth_header, "Authorization");
+        assert_eq!(c.auth_scheme, "Bearer");
+        assert_eq!(c.headers.get("X-Org").map(String::as_str), Some("org_1"));
+        assert_eq!(c.plan.as_deref(), Some("Pro"));
+        assert_eq!(c.plan_path, None);
+        assert_eq!(c.cache_ttl(), std::time::Duration::from_secs(120));
+        assert_eq!(c.metrics.len(), 1);
+        assert_eq!(c.metrics[0].label, "Requests");
+        assert_eq!(c.metrics[0].used.as_deref(), Some("/requests/used"));
+        assert_eq!(c.metrics[0].limit.as_deref(), Some("/requests/limit"));
+        assert_eq!(c.metrics[0].percent, None);
+        assert_eq!(c.metrics[0].resets_at.as_deref(), Some("/requests/reset"));
+        assert_eq!(c.metrics[0].window_secs, Some(3600));
+        assert_eq!(c.texts.len(), 1);
+        assert_eq!(c.texts[0].label, "Tier");
+        assert_eq!(c.texts[0].value, "/tier");
+        assert_eq!(c.section_label(), r#"[[custom]] id = "mytool""#);
+    }
+
+    #[test]
+    fn custom_defaults_are_the_documented_ones_and_name_falls_back_to_id() {
+        let config: Config = toml::from_str(
+            r#"
+            [[custom]]
+            id = "bare"
+            short_name = "bre"
+            url = "https://example.test/u"
+            [[custom.metrics]]
+            label = "Q"
+            percent = "/pct"
+            "#,
+        )
+        .unwrap();
+        let c = &config.custom[0];
+        assert_eq!(c.name, "bare", "name must default to id on a plain parse");
+        assert!(!c.enabled);
+        assert!(!c.allow_http);
+        assert_eq!(c.api_key_env, "");
+        assert_eq!(c.auth_header, "Authorization");
+        assert_eq!(c.auth_scheme, "Bearer");
+        assert_eq!(c.cache_ttl_secs, 60);
+        assert!(config.validate().is_ok());
+        assert!(Config::default().custom.is_empty());
+    }
+
+    #[test]
+    fn custom_rejects_a_malformed_id() {
+        let long = "a".repeat(33);
+        for id in ["", "My Tool", "-lead", "UPPER", long.as_str()] {
+            let msg = custom_error(&custom_with(r#"id = "mytool""#, &format!("id = {id:?}")));
+            assert!(msg.contains("[[custom]] entry #1"), "{id:?}: {msg}");
+            assert!(msg.contains("must match"), "{id:?}: {msg}");
+        }
+    }
+
+    #[test]
+    fn custom_rejects_a_builtin_slug_as_id() {
+        assert_custom_rejected(
+            &custom_with(r#"id = "mytool""#, r#"id = "deepseek""#),
+            "is a built-in vendor",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"id = "mytool""#, r#"id = "opencode-go""#),
+            "is a built-in vendor",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_duplicate_ids() {
+        let twice = format!(
+            "{}{}",
+            CUSTOM_BLOCK,
+            custom_with(r#"short_name = "myt""#, r#"short_name = "myu""#)
+        );
+        assert_custom_rejected(&twice, "duplicate id");
+    }
+
+    #[test]
+    fn custom_rejects_a_name_over_48_chars() {
+        let long = "n".repeat(49);
+        assert_custom_rejected(
+            &custom_with(r#"name = "My Tool""#, &format!("name = {long:?}")),
+            "name must be 1 to 48 characters",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_short_name_that_is_not_three_lowercase_letters() {
+        for short in ["my", "myto", "MYT", "m1t"] {
+            assert_custom_rejected(
+                &custom_with(r#"short_name = "myt""#, &format!("short_name = {short:?}")),
+                "exactly 3 lowercase ASCII letters",
+            );
+        }
+    }
+
+    #[test]
+    fn custom_rejects_a_short_name_taken_by_a_builtin_or_another_entry() {
+        assert_custom_rejected(
+            &custom_with(r#"short_name = "myt""#, r#"short_name = "dsk""#),
+            "already used by a built-in vendor",
+        );
+        let twice = format!(
+            "{}{}",
+            CUSTOM_BLOCK,
+            custom_with(r#"id = "mytool""#, r#"id = "othertool""#)
+        );
+        assert_custom_rejected(&twice, "already used by a built-in vendor");
+    }
+
+    #[test]
+    fn custom_rejects_http_unless_allowed() {
+        let plain = custom_with(
+            r#"url = "https://api.example.test/v1/usage""#,
+            r#"url = "http://localhost:8080/usage""#,
+        );
+        assert_custom_rejected(&plain, "url must use https://");
+        let allowed = plain.replace(
+            r#"url = "http://localhost:8080/usage""#,
+            "url = \"http://localhost:8080/usage\"\nallow_http = true",
+        );
+        assert!(
+            Config::load_from(write_toml(&allowed).path()).is_ok(),
+            "allow_http must permit http://"
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_url_with_userinfo_or_a_bad_scheme_or_garbage() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"url = "https://api.example.test/v1/usage""#,
+                r#"url = "https://user:pw@api.example.test/v1/usage""#,
+            ),
+            "must not carry credentials",
+        );
+        assert_custom_rejected(
+            &custom_with(
+                r#"url = "https://api.example.test/v1/usage""#,
+                r#"url = "not a url""#,
+            ),
+            "is not a valid URL",
+        );
+        assert_custom_rejected(
+            &custom_with(
+                r#"url = "https://api.example.test/v1/usage""#,
+                r#"url = "ftp://api.example.test/v1/usage""#,
+            ),
+            "is not http or https",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_an_invalid_api_key_env() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"api_key_env = "MYTOOL_API_KEY""#,
+                r#"api_key_env = "1BAD-NAME""#,
+            ),
+            "is not a valid environment variable name",
+        );
+        let none = custom_with(r#"api_key_env = "MYTOOL_API_KEY""#, r#"api_key_env = """#);
+        assert!(
+            Config::load_from(write_toml(&none).path()).is_ok(),
+            "an empty api_key_env means inline-only and is valid"
+        );
+    }
+
+    #[test]
+    fn custom_rejects_an_invalid_auth_header_name() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"auth_header = "Authorization""#,
+                r#"auth_header = "X Api Key""#,
+            ),
+            "auth_header \"X Api Key\" is not a valid HTTP header name",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_control_char_in_auth_scheme() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"auth_scheme = "Bearer""#,
+                "auth_scheme = \"Bearer\\u0007\"",
+            ),
+            "auth_scheme contains characters that are not valid",
+        );
+        let bare = custom_with(r#"auth_scheme = "Bearer""#, r#"auth_scheme = """#);
+        assert!(
+            Config::load_from(write_toml(&bare).path()).is_ok(),
+            "an empty scheme (bare key) is valid"
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_bad_extra_header() {
+        assert_custom_rejected(
+            &custom_with(r#"X-Org = "org_1""#, r#"authorization = "Bearer other""#),
+            "headers must not repeat auth_header",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"X-Org = "org_1""#, r#""X Org" = "org_1""#),
+            "is not a valid HTTP header name",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"X-Org = "org_1""#, "X-Org = \"org\\u0001\""),
+            "has a value that is not valid in an HTTP header",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_cache_ttl_outside_10_to_3600() {
+        for ttl in ["9", "3601"] {
+            assert_custom_rejected(
+                &custom_with("cache_ttl_secs = 120", &format!("cache_ttl_secs = {ttl}")),
+                "cache_ttl_secs must be between 10 and 3600",
+            );
+        }
+    }
+
+    #[test]
+    fn custom_rejects_an_entry_with_no_metrics_or_texts() {
+        let toml = r#"
+[[custom]]
+id = "empty"
+short_name = "emp"
+url = "https://example.test/u"
+"#;
+        assert_custom_rejected(toml, "at least one [[custom.metrics]] or [[custom.texts]]");
+    }
+
+    #[test]
+    fn custom_rejects_a_metric_mixing_percent_with_used_or_limit() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"limit = "/requests/limit""#,
+                "limit = \"/requests/limit\"\npercent = \"/requests/pct\"",
+            ),
+            "must set `percent`, or both `used` and `limit`",
+        );
+        assert_custom_rejected(
+            &custom_with("limit = \"/requests/limit\"\n", ""),
+            "must set `percent`, or both `used` and `limit`",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_pointer_without_a_leading_slash() {
+        assert_custom_rejected(
+            &custom_with(r#"used = "/requests/used""#, r#"used = "requests.used""#),
+            "used \"requests.used\" must be an RFC 6901 JSON Pointer",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"value = "/tier""#, r#"value = "tier""#),
+            "value \"tier\" must be an RFC 6901 JSON Pointer",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"plan = "Pro""#, r#"plan_path = "plan""#),
+            "plan_path \"plan\" must be an RFC 6901 JSON Pointer",
+        );
+        assert_custom_rejected(
+            &custom_with(
+                r#"resets_at = "/requests/reset""#,
+                "resets_at = \"/re\\u001bset\"",
+            ),
+            "resets_at",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_label_outside_1_to_64_chars() {
+        let long = "l".repeat(65);
+        assert_custom_rejected(
+            &custom_with(r#"label = "Requests""#, &format!("label = {long:?}")),
+            "metric label",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"label = "Tier""#, r#"label = """#),
+            "text label \"\" must be 1 to 64 characters",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_window_secs_under_60() {
+        assert_custom_rejected(
+            &custom_with("window_secs = 3600", "window_secs = 59"),
+            "window_secs must be at least 60",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_duplicate_metric_and_text_labels() {
+        let metric_twice = custom_with(
+            "window_secs = 3600\n",
+            "window_secs = 3600\n[[custom.metrics]]\nlabel = \"Requests\"\npercent = \"/pct\"\n",
+        );
+        assert_custom_rejected(&metric_twice, "duplicate metric label \"Requests\"");
+        let text_twice =
+            format!("{CUSTOM_BLOCK}[[custom.texts]]\nlabel = \"Tier\"\nvalue = \"/other\"\n");
+        assert_custom_rejected(&text_twice, "duplicate text label \"Tier\"");
+    }
+
+    #[test]
+    fn enabled_custom_and_custom_by_id_select_entries() {
+        let two = format!(
+            "{}{}",
+            CUSTOM_BLOCK,
+            custom_with(r#"id = "mytool""#, r#"id = "off""#)
+                .replace(r#"short_name = "myt""#, r#"short_name = "off""#)
+                .replace("enabled = true", "enabled = false")
+        );
+        let config = Config::load_from(write_toml(&two).path()).unwrap();
+        let enabled: Vec<&str> = config.enabled_custom().map(|c| c.id.as_str()).collect();
+        assert_eq!(enabled, ["mytool"]);
+        assert_eq!(
+            config.custom_by_id("off").map(|c| c.name.as_str()),
+            Some("My Tool")
+        );
+        assert!(config.custom_by_id("nope").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn has_inline_secrets_sees_a_custom_inline_key() {
+        let without: Config = toml::from_str(CUSTOM_BLOCK).unwrap();
+        assert!(!without.has_inline_secrets());
+        let with: Config = toml::from_str(&custom_with(
+            r#"api_key_env = "MYTOOL_API_KEY""#,
+            "api_key_env = \"MYTOOL_API_KEY\"\napi_key = \"sk-inline\"",
+        ))
+        .unwrap();
+        assert!(with.has_inline_secrets());
+    }
+
+    #[test]
+    fn custom_resolve_api_key_prefers_env_then_inline_then_errors_without_the_key() {
+        let var = "AI_USAGEBAR_CUSTOM_TEST_KEY_51C2";
+        let mut spec = CustomProviderConfig {
+            id: "mytool".into(),
+            api_key_env: var.into(),
+            api_key: Some("sk-inline-secret".into()),
+            ..CustomProviderConfig::default()
+        };
+        unsafe { std::env::set_var(var, "sk-env-secret") };
+        let from_env = spec.resolve_api_key();
+        unsafe { std::env::remove_var(var) };
+        assert_eq!(from_env.unwrap(), "sk-env-secret");
+
+        assert_eq!(spec.resolve_api_key().unwrap(), "sk-inline-secret");
+
+        spec.api_key = Some(String::new());
+        let err = spec.resolve_api_key().unwrap_err();
+        assert!(matches!(err, AppError::Credentials(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains(r#"[[custom]] id = "mytool""#), "{msg}");
+        assert!(msg.contains(var), "{msg}");
+        assert!(!msg.contains("secret"), "{msg}");
+
+        spec.api_key_env = String::new();
+        let msg = spec.resolve_api_key().unwrap_err().to_string();
+        assert!(msg.contains("set `api_key`"), "{msg}");
+    }
+
+    #[test]
+    fn loading_a_config_registers_custom_env_vars_for_scrubbing() {
+        let var = "AI_USAGEBAR_CUSTOM_SCRUB_TEST_9B1D";
+        assert!(!crate::vendor::vendor_secret_env_vars_to_remove(&[]).contains(&var));
+        let file = write_toml(&custom_with("MYTOOL_API_KEY", var));
+        Config::load_from(file.path()).unwrap();
+        assert!(
+            crate::vendor::vendor_secret_env_vars_to_remove(&[]).contains(&var),
+            "a custom provider's env var must be scrubbed from subprocesses"
         );
     }
 

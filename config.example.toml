@@ -21,6 +21,41 @@
 # Default sidebar (falls back to navbar on narrow terminals).
 # vendor_box = "sidebar"
 
+# Custom providers: any HTTP endpoint that answers a GET with a JSON document,
+# authenticated with a static token. One [[custom]] table per provider; each
+# gets a TUI tab and a `usage --json` entry (`custom:<id>`) next to the
+# built-in vendors, so every frontend that reads `usage --json` shows it.
+# Values are read from the response with RFC 6901 JSON Pointers ("/a/b/0").
+# OAuth, token refresh, request bodies and pagination are NOT supported — a
+# static key in one header is the whole contract. Not in the Waybar widget's
+# `--vendor` list, the TUI Settings overlay, `[ui] primary`, or `vendors`.
+# [[custom]]
+# id = "mytool"                  # [a-z0-9][a-z0-9_-]{0,31}; unique; not a built-in name
+# name = "My Tool"               # display name, up to 48 chars; defaults to id
+# short_name = "myt"             # exactly 3 lowercase letters; unique across all vendors
+# enabled = true
+# url = "https://api.example.com/v1/usage"  # https:// unless allow_http; no user:pass@
+# allow_http = false             # permit http:// (localhost / LAN only)
+# api_key_env = "MYTOOL_API_KEY" # env var checked first; "" = inline api_key only
+# api_key = "..."                # inline fallback; chmod 600 the file if you use it
+# auth_header = "Authorization"  # header that carries the key
+# auth_scheme = "Bearer"         # sent as "<scheme> <key>"; "" sends the bare key
+# plan = "Pro"                   # literal plan label...
+# plan_path = "/plan/name"       # ...or a pointer to one (wins over `plan`)
+# cache_ttl_secs = 60            # 10..=3600
+# [custom.headers]               # extra non-secret headers
+# X-Org = "org_123"
+# [[custom.metrics]]             # a percentage row; at least one metric or text is required
+# label = "Requests"
+# used = "/requests/used"        # used + limit → "used of limit" under the bar...
+# limit = "/requests/limit"
+# # percent = "/requests/pct"    # ...or a ready-made percentage instead of both
+# resets_at = "/requests/reset"  # RFC 3339 string, or epoch seconds / milliseconds
+# window_secs = 3600             # window length for pacing (>= 60)
+# [[custom.texts]]               # a free-text row
+# label = "Tier"
+# value = "/account/tier"        # string, number or boolean
+
 # Optional, TUI-only monitor for local Claude Code session context. When
 # enabled, press `c` in ai-usagebar-tui. The scanner reads only bounded tails
 # below ~/.claude/projects, skips subagent transcripts and never follows
