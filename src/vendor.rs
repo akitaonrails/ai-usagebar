@@ -3,6 +3,8 @@
 //! Snapshots remain a discriminated `VendorSnapshot` enum because the vendors
 //! have genuinely different shapes — see `usage.rs`.
 
+use std::collections::BTreeSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use clap::ValueEnum;
@@ -42,10 +44,48 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "GITHUB_TOKEN",
 ];
 
+/// Env var names a `[[custom]]` provider reads its token from. They are not
+/// known until the config is parsed, so they cannot sit in the static list
+/// above, but they are exactly as secret as `DEEPSEEK_API_KEY` and must be
+/// scrubbed from every subprocess the same way.
+fn registered_secret_env_vars() -> &'static Mutex<BTreeSet<&'static str>> {
+    static REGISTERED: OnceLock<Mutex<BTreeSet<&'static str>>> = OnceLock::new();
+    REGISTERED.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+/// Extra env var names (custom providers' `api_key_env`) that must be
+/// scrubbed from every child process. Additive and idempotent; names that are
+/// not valid env var names, or already in [`VENDOR_SECRET_ENV_VARS`], are
+/// ignored.
+///
+/// A name is interned once, on first registration, so the removal list keeps
+/// its `&'static str` element type and the three call sites and their tests
+/// stay untouched. The set is bounded by the user's config, and re-loading
+/// the same config registers nothing new, so the leak is a handful of short
+/// strings for the life of the process.
+pub fn register_secret_env_vars(names: &[String]) {
+    let mut registered = registered_secret_env_vars()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for name in names {
+        if !crate::config::is_valid_env_var_name(name)
+            || VENDOR_SECRET_ENV_VARS.contains(&name.as_str())
+            || registered.contains(name.as_str())
+        {
+            continue;
+        }
+        registered.insert(Box::leak(name.clone().into_boxed_str()));
+    }
+}
+
 pub(crate) fn vendor_secret_env_vars_to_remove(keep: &[&str]) -> Vec<&'static str> {
+    let registered = registered_secret_env_vars()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     VENDOR_SECRET_ENV_VARS
         .iter()
         .copied()
+        .chain(registered.iter().copied())
         .filter(|var| !keep.contains(var))
         .collect()
 }
@@ -604,7 +644,34 @@ mod tests {
         assert!(!removed.contains(&"GROK_API_KEY"));
         assert!(removed.contains(&"ANTHROPIC_ADMIN_KEY"));
         assert!(removed.contains(&"OPENROUTER_API_KEY"));
-        assert_eq!(removed.len(), VENDOR_SECRET_ENV_VARS.len() - 2);
+        // Counted against the static list: another test in this process may
+        // have registered a custom provider's env var, which belongs here too.
+        let builtins = removed
+            .iter()
+            .filter(|var| VENDOR_SECRET_ENV_VARS.contains(var))
+            .count();
+        assert_eq!(builtins, VENDOR_SECRET_ENV_VARS.len() - 2);
+    }
+
+    #[test]
+    fn a_registered_custom_env_var_is_scrubbed_like_a_builtin_one() {
+        let name = "AI_USAGEBAR_TEST_CUSTOM_TOKEN_7F3A";
+        assert!(!vendor_secret_env_vars_to_remove(&[]).contains(&name));
+
+        register_secret_env_vars(&[name.to_string(), "not a name!".to_string()]);
+        register_secret_env_vars(&[name.to_string()]);
+
+        let removed = vendor_secret_env_vars_to_remove(&[]);
+        assert_eq!(
+            removed.iter().filter(|var| **var == name).count(),
+            1,
+            "registering twice must not list it twice: {removed:?}"
+        );
+        assert!(!removed.contains(&"not a name!"), "{removed:?}");
+        assert!(
+            !vendor_secret_env_vars_to_remove(&[name]).contains(&name),
+            "`keep` applies to registered names too"
+        );
     }
 
     #[test]

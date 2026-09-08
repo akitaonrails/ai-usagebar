@@ -11,24 +11,6 @@ Each release is also published at
 
 ### Added
 
-- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
-  date once the reset is past today — instead of the countdown, under
-  **Preferences → Display**. Off by default; the countdown is unchanged unless
-  you turn it on. It follows the system's 12h/24h convention.
-
-
-
-- **`ai-usagebar vendors --json`** — the provider catalog: one row per
-  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
-  config has it `enabled`, whether this machine holds the credential it needs
-  (`configured`), the environment variable it reads (honoring an `api_key_env`
-  override), and the `login` command that fixes it. It contacts nothing.
-  `usage --json` reports only *enabled* providers, so the switched-off and the
-  never-credentialed were exactly the rows a "is anything broken?" list could
-  not describe; this is the answer for them. `needs_credential` is `false` only
-  for Antigravity, which has no credential to be missing, so a frontend never
-  offers to fix one that cannot be.
-
 - **Local provider detection.** `detect::has_local_credentials` is a cheap,
   local-only probe per vendor (credential files, sqlite stores, saved API keys,
   env vars, Antigravity's local ports; never the network) that *parses* the
@@ -36,8 +18,11 @@ Each release is also published at
   count. `detect::run_once` writes `enabled = true` into `config.toml` for the
   vendors that have one and are still off — so Cursor, Kiro, Grok, Copilot and
   friends show up without editing the config by hand. Detection only ever
-  enables; `detect.json` in the cache dir remembers which vendors were already
-  checked, so a vendor the user turned off afterwards stays off.
+  enables, and never overrules an explicit `enabled = false` — that is the
+  user's answer, it lives in the config file, and not even `--all` rewrites it.
+  `detect.json` in the cache dir remembers which vendors were already checked so
+  repeat runs probe nothing; because it is a cache file and may be deleted, it
+  is a shortcut, not the thing protecting a decision.
   `config::enable_vendors_in` and `VendorId::config_section` are the shared
   toml_edit write path the TUI Settings overlay now reuses, with a guard test
   that every section name parses to its own vendor's `enabled` switch.
@@ -49,21 +34,27 @@ Each release is also published at
   `{"enabled": [...], "known": [...], "probed": n}` with vendor slugs and no
   paths or secrets.
 
-- **Omarchy bar: show every provider at once.** A new **Show all providers in
-  the top bar** toggle (and `showAll` widget setting) draws each configured
-  provider as its own chip with a brand mark and usage. Claude, Codex,
-  Copilot, Grok/SuperGrok, DeepSeek, Kimi, Cursor, OpenRouter, MiniMax,
-  Moonshot, Z.AI, Kilo, Novita, Antigravity, Kiro, Nous, and OpenCode Go
-  ship an SVG; Command Code (no public mark) falls back to its three-letter
-  code rather than a shared robot. The panel hero uses the same mark,
-  colored only when that provider is critical. Off by default.
-
 - `usage --json` metrics carry `window_secs`, the exact length of the reset
-  window, for the vendors that know it (Anthropic, Codex, Z.AI, Antigravity,
-  MiniMax, Kimi, SuperGrok weekly, and Cursor from `billingCycleStart` /
-  `billingCycleEnd`, assuming 30 days when the start is missing); absent
-  otherwise, so a frontend that reads the report can pace a metric without a
-  per-vendor window table of its own.
+  window, for the vendors that state it (Anthropic, Codex, Z.AI, Antigravity,
+  MiniMax, Kimi, SuperGrok weekly, and Cursor when the API sends both
+  `billingCycleStart` and `billingCycleEnd`); absent otherwise — an unstated
+  window omits the field rather than guessing — so a frontend that reads the
+  report can pace a metric without a per-vendor window table of its own.
+
+- **Custom providers.** `[[custom]]` tables in `config.toml` declare a
+  provider from a JSON endpoint and a static token: `url`, `api_key_env` /
+  `api_key`, optional auth header/scheme and extra headers, a literal or
+  pointed `plan`, and `[[custom.metrics]]` / `[[custom.texts]]` mapped with
+  RFC 6901 JSON Pointers (`used` + `limit` or `percent`, `resets_at` as RFC
+  3339 or epoch seconds/milliseconds, `window_secs`). Each gets a TUI tab and
+  a `usage --json` entry (`custom:<id>`) with the same cache, severity and
+  reset metadata as a built-in vendor, so every frontend that reads
+  `usage --json` shows it. The cache stores the projected snapshot, not the
+  response body. Validation rejects duplicate ids and short names, non-https
+  URLs (unless `allow_http`), bad pointers and header names; the token's env
+  var is scrubbed from child processes. Not covered: OAuth, the Waybar
+  `--vendor` list, the TUI Settings overlay, `[ui] primary` and the `vendors`
+  catalog.
 
 - **Windows system-tray popover.** `ai-usagebar-tray` shows a NotifyIcon whose
   left-click opens an OpenUsage-style dashboard fed in-process by
@@ -113,6 +104,55 @@ Each release is also published at
   exes and their sidecars next to the zip; the first release cut after this
   change is the first one the tray can install.
 
+### Fixed
+
+- **Rate-limit backoff.** A vendor that answers HTTP 429 arms a five-minute
+  backoff in its cache dir (`.retry_after`). While it is armed
+  `Cache::fresh_payload` — the one pre-network step every vendor takes —
+  serves the last good snapshot if there is one and otherwise reports
+  `rate limited; next attempt in 4m` without touching the network, so the
+  60-second poll no longer prolongs the block. A successful fetch clears it.
+  Nous Research has its own fetch path without the shared cache and is not
+  covered. Frontends that read `usage --json` see the same message in the
+  vendor's error field.
+
+- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
+  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
+  plan-less error. Quotas are not invented; only the label from
+  `~/.claude/.credentials.json` is kept.
+
+## [1.13.0] — 2026-09-08
+
+### Added
+
+- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
+  date once the reset is past today — instead of the countdown, under
+  **Preferences → Display**. Off by default; the countdown is unchanged unless
+  you turn it on. It follows the system's 12h/24h convention.
+
+
+
+- **`ai-usagebar vendors --json`** — the provider catalog: one row per
+  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
+  config has it `enabled`, whether this machine holds the credential it needs
+  (`configured`), the environment variable it reads (honoring an `api_key_env`
+  override), and the `login` command that fixes it. It contacts nothing.
+  `usage --json` reports only *enabled* providers, so the switched-off and the
+  never-credentialed were exactly the rows a "is anything broken?" list could
+  not describe; this is the answer for them. `needs_credential` is `false` only
+  for Antigravity, which has no credential to be missing, so a frontend never
+  offers to fix one that cannot be.
+
+
+- **Omarchy bar: show every provider at once.** A new **Show all providers in
+  the top bar** toggle (and `showAll` widget setting) draws each configured
+  provider as its own chip with a brand mark and usage. Claude, Codex,
+  Copilot, Grok/SuperGrok, DeepSeek, Kimi, Cursor, OpenRouter, MiniMax,
+  Moonshot, Z.AI, Kilo, Novita, Antigravity, Kiro, Nous, and OpenCode Go
+  ship an SVG; Command Code (no public mark) falls back to its three-letter
+  code rather than a shared robot. The panel hero uses the same mark,
+  colored only when that provider is critical. Off by default.
+
 - `--config <PATH>` on both binaries to read and write an alternate config
   file instead of the default location. Accepted in any position (including
   beside a subcommand); the file must already exist, and the override applies
@@ -143,11 +183,6 @@ Each release is also published at
   reference — so in optimised builds ARC was free to release it after the
   assignment, since nothing later in the function mentions it, taking the
   status item with it. The delegate is now held for the program's lifetime.
-
-- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
-  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
-  plan-less error. Quotas are not invented; only the label from
-  `~/.claude/.credentials.json` is kept.
 
 
 ## [1.12.0] — 2026-09-06
@@ -2174,7 +2209,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0
