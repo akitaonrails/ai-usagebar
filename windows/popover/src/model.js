@@ -10,6 +10,8 @@
 /** @typedef {import("./lib/types").RowPrefs} RowPrefs */
 /** @typedef {import("./lib/types").ExplainedError} ExplainedError */
 /** @typedef {import("./lib/types").Pace} Pace */
+/** @typedef {import("./lib/types").UpdateInfo} UpdateInfo */
+/** @typedef {import("./lib/types").UpdateMode} UpdateMode */
 /** @typedef {import("./lib/types").TimeFormat} TimeFormat */
 
 export const LAYOUT_KEY = "aiub.tray.layout.v1";
@@ -38,6 +40,9 @@ export function emptyPayload(hostError) {
     refreshMinutes: 5,
     shortcut: "",
     shortcutError: "",
+    updates: "notify",
+    update: null,
+    updateCheckedAt: 0,
   };
 }
 
@@ -70,6 +75,9 @@ function normalizePayload(parsed) {
     refreshMinutes: normalizeRefreshMinutes(parsed.refresh_minutes),
     shortcut: clean(parsed.shortcut, 64),
     shortcutError: clean(parsed.shortcut_error, 300),
+    updates: normalizeUpdateMode(parsed.updates),
+    update: normalizeUpdate(parsed.update),
+    updateCheckedAt: finiteNumber(parsed.update_checked_at),
   };
 }
 
@@ -91,6 +99,29 @@ const REFRESH_MINUTES = [1, 5, 10];
 function normalizeRefreshMinutes(value) {
   const minutes = Number(value);
   return REFRESH_MINUTES.indexOf(minutes) < 0 ? 5 : minutes;
+}
+
+/** @returns {UpdateMode} */
+function normalizeUpdateMode(value) {
+  return value === "auto" || value === "off" ? value : "notify";
+}
+
+const UPDATE_STATES = ["checking", "available", "downloading", "installing", "failed"];
+const UPDATE_URL_PREFIX = "https://github.com/";
+
+// The host's in-flight update, if any. Only a GitHub URL survives: it is the
+// one origin the release workflow publishes to, and the banner opens it.
+/** @returns {UpdateInfo|null} */
+function normalizeUpdate(raw) {
+  if (!isPlainObject(raw)) return null;
+  const state = String(raw.state || "");
+  const url = clean(raw.url, 400);
+  return {
+    error: clean(raw.error, 300),
+    state: UPDATE_STATES.indexOf(state) < 0 ? "available" : state,
+    url: url.startsWith(UPDATE_URL_PREFIX) ? url : "",
+    version: clean(raw.version, 32),
+  };
 }
 
 function normalizeEntry(raw) {
@@ -1004,6 +1035,58 @@ export function nextUpdateLabel(payload, nowMs) {
   const remaining = (Number(payload.nextRefreshAt) || 0) - (Number(nowMs) || 0);
   if (!(remaining > 0)) return "Updating…";
   return "Next update in " + formatDuration(remaining);
+}
+
+// "just now", "5m ago", "2h ago", "3d ago".
+export function formatAgo(milliseconds) {
+  const ms = Number(milliseconds) || 0;
+  if (ms < 60_000) return "just now";
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return minutes + "m ago";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + "h ago";
+  return Math.floor(hours / 24) + "d ago";
+}
+
+// The Settings row under the update-mode picker.
+export function updateStatusLabel(payload, nowMs) {
+  const update = payload && payload.update;
+  if (!update) {
+    const checkedAt = finiteNumber(payload && payload.updateCheckedAt);
+    if (checkedAt === 0) return "Not checked yet";
+    return "Up to date · checked " + formatAgo((Number(nowMs) || 0) - checkedAt);
+  }
+  const version = update.version ? "v" + String(update.version).replace(/^v/i, "") : "";
+  switch (update.state) {
+    case "checking":
+      return "Checking…";
+    case "downloading":
+      return "Downloading " + (version || "update") + "…";
+    case "installing":
+      return "Installing…";
+    case "failed":
+      return update.error ? "Couldn't update: " + update.error : "Couldn't update";
+    default:
+      return (version || "An update") + " available";
+  }
+}
+
+// The dashboard shows an update banner while the host has one in hand.
+// A check in flight is Settings feedback, not something to install.
+export function updateBannerPending(payload) {
+  const update = payload && payload.update;
+  return !!update && update.state !== "checking";
+}
+
+export function updateModeLabel(mode) {
+  switch (normalizeUpdateMode(mode)) {
+    case "auto":
+      return "Automatic";
+    case "off":
+      return "Off";
+    default:
+      return "Notify me";
+  }
 }
 
 // Physical-key names for the shortcut recorder, keyed by `KeyboardEvent.code`.

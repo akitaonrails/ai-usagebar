@@ -14,8 +14,8 @@ use crate::display::sanitize_untrusted_field;
 pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Everything the host knows that is not part of the usage report: its own
-/// version, the Run-key state, the registered shortcut and the poll interval.
-/// One struct so a new fact does not grow `wrap_report`'s arity.
+/// version, the Run-key state, the registered shortcut and the update
+/// machinery. One struct so a new fact does not grow `wrap_report`'s arity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostFacts {
     /// Seconds between full reports; `[tray] refresh_minutes` × 60.
@@ -25,6 +25,25 @@ pub struct HostFacts {
     /// Why the last `set-shortcut` was refused (already taken, unparsable), or empty.
     pub shortcut_error: String,
     pub startup_enabled: bool,
+    /// Latest known release when it is newer than `version`.
+    pub update: Option<UpdateFact>,
+    /// Wall-clock ms of the last successful or failed release check, 0 = never.
+    pub update_checked_at: i64,
+    /// "auto" | "notify" | "off".
+    pub updates: String,
+    pub version: String,
+}
+
+/// State of a newer release as the popover renders it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpdateFact {
+    /// Human-readable reason when `state` is "failed", or empty.
+    pub error: String,
+    /// "checking" | "available" | "downloading" | "installing" | "failed".
+    pub state: String,
+    /// Release page for the human; never opened by the host itself.
+    pub url: String,
+    /// Bare "X.Y.Z".
     pub version: String,
 }
 
@@ -32,6 +51,7 @@ impl HostFacts {
     pub fn new(version: &str, startup_enabled: bool) -> Self {
         Self {
             startup_enabled,
+            updates: "notify".into(),
             version: version.into(),
             ..Self::default()
         }
@@ -45,6 +65,9 @@ impl Default for HostFacts {
             shortcut: String::new(),
             shortcut_error: String::new(),
             startup_enabled: false,
+            update: None,
+            update_checked_at: 0,
+            updates: String::new(),
             version: String::new(),
         }
     }
@@ -60,6 +83,14 @@ pub fn wrap_report(
     let poll_ms = i64::try_from(facts.refresh_secs)
         .unwrap_or(i64::MAX / 1_000)
         .saturating_mul(1_000);
+    let update = facts.update.as_ref().map(|u| {
+        json!({
+            "version": sanitize_untrusted_field(&u.version),
+            "url": sanitize_untrusted_field(&u.url),
+            "state": u.state,
+            "error": sanitize_untrusted_field(&u.error),
+        })
+    });
     let mut payload = json!({
         "version": facts.version,
         "generated_at": now_ms,
@@ -68,6 +99,9 @@ pub fn wrap_report(
         "startup_enabled": facts.startup_enabled,
         "shortcut": facts.shortcut,
         "shortcut_error": sanitize_untrusted_field(&facts.shortcut_error),
+        "updates": facts.updates,
+        "update": update,
+        "update_checked_at": facts.update_checked_at,
         "host_error": host_error.map(sanitize_untrusted_field),
         "primary": Value::Null,
         "entries": [],
@@ -214,18 +248,27 @@ mod tests {
         assert_eq!(payload["startup_enabled"], true);
         assert_eq!(payload["shortcut"], "");
         assert_eq!(payload["shortcut_error"], "");
-        assert!(payload.get("updates").is_none());
-        assert!(payload.get("update").is_none());
+        assert_eq!(payload["updates"], "notify");
+        assert!(payload["update"].is_null());
+        assert_eq!(payload["update_checked_at"], 0);
         assert!(payload["host_error"].is_null());
         assert_eq!(payload["primary"], "anthropic");
         assert_eq!(payload["entries"][0]["short_name"], "cld");
     }
 
     #[test]
-    fn wrap_carries_shortcut_facts_sanitized() {
+    fn wrap_carries_shortcut_and_update_facts_sanitized() {
         let mut host = facts("1.10.0", false);
         host.shortcut = "Ctrl+Shift+U".into();
         host.shortcut_error = "already taken\u{1b}[31m".into();
+        host.updates = "auto".into();
+        host.update_checked_at = 42;
+        host.update = Some(UpdateFact {
+            error: String::new(),
+            state: "available".into(),
+            url: "https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.11.0".into(),
+            version: "1.11.0".into(),
+        });
         let payload = wrap_report(&sample_report(), &host, 0, None);
         assert_eq!(payload["shortcut"], "Ctrl+Shift+U");
         assert!(
@@ -234,7 +277,11 @@ mod tests {
                 .unwrap()
                 .contains('\u{1b}')
         );
-        assert_eq!(payload["shortcut_error"], "already taken[31m");
+        assert_eq!(payload["updates"], "auto");
+        assert_eq!(payload["update_checked_at"], 42);
+        assert_eq!(payload["update"]["version"], "1.11.0");
+        assert_eq!(payload["update"]["state"], "available");
+        assert_eq!(payload["update"]["error"], "");
     }
 
     #[test]

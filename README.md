@@ -207,9 +207,11 @@ with Windows, and Quit; left-click opens the popover. On its first run the
 tray detects which vendors already have a credential on this PC (local files
 and keys only, never the network) and turns exactly those on in
 `config.toml` — it never turns a vendor off. Settings adds a global shortcut
-that toggles the popover from anywhere and the poll interval; both live in
-the `[tray]` section of `config.toml` (`shortcut`, `refresh_minutes` = 1, 5
-or 10; default 5). See [windows/README.md](windows/README.md).
+that toggles the popover from anywhere, the poll interval, and an update mode
+(Automatic / Notify me / Off) that installs new releases from GitHub after
+verifying their `.sha256`; all three live in the `[tray]` section of
+`config.toml` (`shortcut`, `refresh_minutes` = 1, 5 or 10; default 5;
+`updates`). See [windows/README.md](windows/README.md).
 
 ![Windows tray icon in the notification area — a bar-chart-in-circle mark next to the clock](screenshots/windows-tray-icon.png)
 

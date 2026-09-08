@@ -48,7 +48,7 @@ visible.
 | Click `Resets in …` | Flip countdown ⟷ exact time everywhere |
 | Options → Customize (or Return) | Provider list: toggle, drag the grip to reorder, open a provider |
 | Provider Customize | Always Visible vs On Demand rows (toggle + drag across the divider); Reset in the top bar |
-| Options → Settings | Launch at Login, Refresh Every (1/5/10 min), Global Shortcut, Theme, Density (Default/Compact), Time Format, Show Usage As, Reset Times, Always Show Pacing |
+| Options → Settings | Launch at Login, Refresh Every (1/5/10 min), Global Shortcut, Theme, Density (Default/Compact), Time Format, Show Usage As, Reset Times, Always Show Pacing, Updates |
 | Provider header icons (right) | Customize that provider's rows, or reset them to the defaults |
 | Right-click a row | Hide row · Always show / Show on demand · Refresh provider · Customize provider |
 | Drag a provider header | Reorder provider sections |
@@ -81,6 +81,32 @@ severity, not the pace verdict.
 Exact reset times ("Resets today at 6:38 PM") follow the Windows locale by
 default. **Settings → Time Format** pins them to 12-hour or 24-hour clocks
 regardless of the system setting.
+
+## Updates
+
+The tray checks GitHub Releases of the repository named in `Cargo.toml`'s
+`repository` field (`CARGO_PKG_REPOSITORY` at build time) for a newer build, so
+a fork that builds its own tray updates from its own releases. **Settings → Updates**
+picks the mode: **Automatic** downloads and installs a release as soon as it
+is found, **Notify** only shows a banner at the top of the dashboard with an
+"Install Update" button (✕ snoozes it; a blue dot next to the version in the
+footer remembers it is waiting), and **Off** stops the hourly background
+check. **Check Now** runs a check on demand in every mode and the line under
+it says when the last one ran. Once a release is known the same button reads
+**Update** and installs it. The mode is the `updates` key of the `[tray]`
+section in `config.toml`, next to the shortcut and the poll interval.
+
+![Settings screen — General (Launch at Login, Refresh Every, Global Shortcut), Appearance (Theme, Density, Time Format), Usage Display (Show Usage As, Reset Times, Always Show Pacing) and Updates (mode picker, Check for Updates with "Up to date · checked 33m ago" and a Check Now button)](../screenshots/windows-tray-settings.png)
+
+The download is verified against the release's `.sha256` sidecar, which
+proves the file arrived intact — integrity, not authenticity: anyone who can
+publish a release can publish a matching sidecar. Installing swaps the
+running executable for the new one and leaves the previous build as
+`ai-usagebar-tray.exe.old`, which the next start removes. Debug builds
+(`cargo build` without `--release`) check but refuse to install. The release
+assets it looks for (`ai-usagebar-<bin>-windows-x86_64.exe` + `.sha256`) are
+produced by the Windows job in `.github/workflows/release.yml`, so the first
+release cut after this change is the first one the tray can install.
 
 ## When the popover closes
 
@@ -159,9 +185,9 @@ providers from `config.toml` (see the root README, "Custom providers").
 The tray re-reads every provider every 5 minutes by default (**Settings →
 Refresh Every**: 1, 5 or 10; `[tray] refresh_minutes`). The cache TTL stays
 60 s, so the footer's Refresh is always allowed to fetch. A stale or failed vendor is
-shown on its card. The global shortcut and the poll interval are the two keys
-of the `[tray]` section in `config.toml`; the popover's Settings screen writes
-them. The NotifyIcon is a bar-chart-in-circle mark, three bars inside a ring
+shown on its card. The global shortcut, the poll interval and the update mode
+are the keys of the `[tray]` section in `config.toml`; the popover's Settings
+screen writes them. The NotifyIcon is a bar-chart-in-circle mark, three bars inside a ring
 (source in `windows/tray-icon.svg`), shipped as anti-aliased rasters
 at 16/20/24/32/40/48 px so the shell gets the exact size for the current DPI.
 It has no hover tip; the popover is the readout.

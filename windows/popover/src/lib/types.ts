@@ -131,6 +131,18 @@ export interface Entry {
   status: string;
 }
 
+export type UpdateMode = "auto" | "notify" | "off";
+
+export type UpdateState = "available" | "checking" | "downloading" | "failed" | "installing";
+
+export interface UpdateInfo {
+  error: string;
+  state: UpdateState;
+  /** Release page; only a `https://github.com/` URL is kept, else "". */
+  url: string;
+  version: string;
+}
+
 export interface Payload {
   entries: Entry[];
   generatedAt: number;
@@ -142,6 +154,9 @@ export interface Payload {
   shortcut: string;
   shortcutError: string;
   startupEnabled: boolean;
+  update: UpdateInfo | null;
+  updateCheckedAt: number;
+  updates: UpdateMode;
   version: string;
 }
 

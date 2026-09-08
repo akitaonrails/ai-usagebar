@@ -59,20 +59,22 @@ interface FooterProps {
   nowMs: number;
   optionsOpen: boolean;
   payload: Payload;
+  updatePending: boolean;
   onOpenCustomize: () => void;
   onOpenSettings: () => void;
   onOptionsOpenChange: (open: boolean) => void;
 }
 
 /**
- * PopoverFooter: app identity + next-refresh countdown on the left, the Options ▾ capsule on the
- * right.
+ * PopoverFooter: app identity + next-update countdown on the left, the Options ▾ capsule on the
+ * right. A blue dot after the version says a newer build is waiting (the banner may be snoozed).
  */
 export function Footer({
   locked,
   nowMs,
   optionsOpen,
   payload,
+  updatePending,
   onOpenCustomize,
   onOpenSettings,
   onOptionsOpenChange,
@@ -83,6 +85,14 @@ export function Footer({
       <div className="flex min-w-0 flex-col text-[10px] leading-[14px] text-label-2">
         <span className="flex items-center gap-[5px]">
           {payload.version ? `AI Usage ${payload.version}` : "AI Usage"}
+          {updatePending ? (
+            <span
+              aria-label="Update available"
+              className="inline-block size-[6px] shrink-0 rounded-full bg-meter-blue"
+              role="img"
+              title="Update available"
+            />
+          ) : null}
         </span>
         <button
           type="button"

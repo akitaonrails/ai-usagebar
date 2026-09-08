@@ -97,6 +97,21 @@ Each release is also published at
   (`gh auth token`) children run with `CREATE_NO_WINDOW`, so a refresh from a
   GUI process no longer flashes a console that takes the foreground.
 
+- **Windows tray: in-app updates.** **Settings → Updates** (Automatic /
+  Notify me / Off; `[tray] updates`, default `notify`) checks GitHub Releases
+  of the repository in `Cargo.toml` (`CARGO_PKG_REPOSITORY`) once an hour.
+  Notify shows a dashboard banner with an Install button (✕ snoozes that
+  version; a blue dot by the footer version remembers it) and **Check Now**
+  in Settings says when the last check ran; Automatic installs unattended.
+  Installing downloads the bare `*-windows-x86_64.exe` assets, verifies each
+  against its `.sha256` sidecar (integrity, not authenticity), swaps the
+  binaries beside the running exe leaving `ai-usagebar-tray.exe.old` for the
+  next start to remove, and relaunches — the relaunched process waits for
+  the old one to release the single-instance mutex. Debug builds check but
+  refuse to install. The Windows release job now also publishes the bare
+  exes and their sidecars next to the zip; the first release cut after this
+  change is the first one the tray can install.
+
 ### Changed
 
 - The macOS menu bar and the GNOME extension are in English. Both shipped with

@@ -14,6 +14,8 @@ mod host;
 mod startup;
 #[cfg(windows)]
 mod tui_launch;
+#[cfg(windows)]
+mod update_flow;
 
 pub use icon::{Severity, tray_icon_rgba};
 pub use payload::{POLL_INTERVAL, host_payload, worst_severity, wrap_report};

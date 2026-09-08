@@ -86,9 +86,9 @@ impl UiConfig {
 }
 
 /// Windows tray popover preferences the host process needs before the
-/// WebView is up: the global shortcut it registers and how often it polls.
-/// Screen-only preferences (theme, density, time format) live in the
-/// popover's own storage instead.
+/// WebView is up: the global shortcut it registers, how often it polls and
+/// how it treats new releases. Screen-only preferences (theme, density, time
+/// format) live in the popover's own storage instead.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct TrayConfig {
@@ -98,6 +98,8 @@ pub struct TrayConfig {
     /// How often the tray re-reads every provider, in minutes: 1, 5 or 10.
     /// The footer's Refresh is always immediate. `None` → 5.
     pub refresh_minutes: Option<u64>,
+    /// What the tray does when a newer release is published.
+    pub updates: Option<UpdateMode>,
 }
 
 /// Poll intervals the tray offers, in minutes. The provider cache TTL is
@@ -108,6 +110,40 @@ const DEFAULT_TRAY_REFRESH_MINUTES: u64 = 5;
 impl TrayConfig {
     pub fn refresh_minutes(&self) -> u64 {
         self.refresh_minutes.unwrap_or(DEFAULT_TRAY_REFRESH_MINUTES)
+    }
+
+    pub fn updates(&self) -> UpdateMode {
+        self.updates.unwrap_or_default()
+    }
+}
+
+/// How the tray handles a newer release: install it unattended, show a
+/// banner with an Install button, or never check in the background.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateMode {
+    Auto,
+    #[default]
+    Notify,
+    Off,
+}
+
+impl UpdateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Notify => "notify",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "notify" => Some(Self::Notify),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
     }
 }
 
@@ -549,8 +585,8 @@ pub(crate) fn set_value(
 /// Write one `[tray]` preference into the config at `path`, creating the
 /// file when it doesn't exist and leaving every other line as it was.
 /// `None` removes the key. The value keeps the TOML type it is given
-/// (`"Ctrl+Shift+U"` stays a string, `5` stays an integer). The tray host is
-/// the only writer.
+/// (`"notify"` stays a string, `5` stays an integer). The tray host is the
+/// only writer.
 pub fn set_tray_value(path: &Path, key: &str, value: Option<toml_edit::Value>) -> Result<()> {
     let mut doc = read_config_document(path)?;
     let before = doc.to_string();
@@ -3063,14 +3099,24 @@ enabled = true
     }
 
     #[test]
-    fn tray_section_parses_and_defaults_to_empty() {
-        let file = write_toml("[tray]\nshortcut = \"Ctrl+Shift+U\"\n");
+    fn tray_section_parses_and_defaults_to_notify() {
+        let file = write_toml("[tray]\nshortcut = \"Ctrl+Shift+U\"\nupdates = \"auto\"\n");
         let config = Config::load_from(file.path()).unwrap();
         assert_eq!(config.tray.shortcut.as_deref(), Some("Ctrl+Shift+U"));
+        assert_eq!(config.tray.updates(), UpdateMode::Auto);
 
         let empty = Config::load_from(write_toml("[ui]\n").path()).unwrap();
         assert_eq!(empty.tray, TrayConfig::default());
-        assert_eq!(empty.tray.shortcut, None);
+        assert_eq!(empty.tray.updates(), UpdateMode::Notify);
+        assert_eq!(UpdateMode::parse(" Off "), Some(UpdateMode::Off));
+        assert_eq!(UpdateMode::parse("weekly"), None);
+        assert_eq!(UpdateMode::Auto.as_str(), "auto");
+    }
+
+    #[test]
+    fn tray_section_rejects_a_misspelled_mode() {
+        let file = write_toml("[tray]\nupdates = \"sometimes\"\n");
+        assert!(Config::load_from(file.path()).is_err());
     }
 
     #[test]
@@ -3124,15 +3170,15 @@ enabled = true
         );
 
         set_tray_value(&path, "shortcut", Some("Alt+F5".into())).unwrap();
-        set_tray_value(&path, "refresh_minutes", Some(1i64.into())).unwrap();
+        set_tray_value(&path, "updates", Some("off".into())).unwrap();
         let config = Config::load_from(&path).unwrap();
         assert_eq!(config.tray.shortcut.as_deref(), Some("Alt+F5"));
-        assert_eq!(config.tray.refresh_minutes(), 1);
+        assert_eq!(config.tray.updates(), UpdateMode::Off);
 
         set_tray_value(&path, "shortcut", None).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("shortcut"), "{text}");
-        assert!(text.contains("refresh_minutes = 1"), "{text}");
+        assert!(text.contains("updates = \"off\""), "{text}");
 
         // Idempotent removal does not rewrite the file.
         let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();

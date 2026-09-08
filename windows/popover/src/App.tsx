@@ -359,6 +359,7 @@ export default function App() {
           {screen === "settings" ? (
             <Settings
               layout={layout}
+              nowMs={nowMs}
               payload={payload}
               onAlwaysShowPace={(alwaysShowPace) => commit({ ...layout, alwaysShowPace })}
               onDensity={(density) => commit({ ...layout, density })}
@@ -377,6 +378,7 @@ export default function App() {
           nowMs={nowMs}
           optionsOpen={optionsOpen}
           payload={payload}
+          updatePending={payload.update !== null}
           onOpenCustomize={() => {
             setOptionsOpen(false);
             go("customize");

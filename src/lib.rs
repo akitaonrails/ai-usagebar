@@ -55,6 +55,7 @@ pub mod theme;
 pub mod tooltip;
 pub mod tray;
 pub mod tui;
+pub mod update;
 pub mod usage;
 pub mod vendor;
 pub mod waybar;

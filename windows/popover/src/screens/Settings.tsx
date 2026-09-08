@@ -5,10 +5,12 @@ import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { Layout, Payload } from "@/lib/types";
-import { sendCommand } from "../model.js";
+import { useBusyLabel } from "@/lib/useBusyLabel";
+import { sendCommand, updateModeLabel, updateStatusLabel } from "../model.js";
 
 interface SettingsProps {
   layout: Layout;
+  nowMs: number;
   payload: Payload;
   onAlwaysShowPace: (on: boolean) => void;
   onDensity: (density: string) => void;
@@ -19,9 +21,10 @@ interface SettingsProps {
   onTimeFormat: (timeFormat: Layout["timeFormat"]) => void;
 }
 
-/** SettingsScreen: General / Appearance / Usage Display sections, then the Customize cross-link. */
+/** SettingsScreen: General / Appearance / Usage Display / Updates sections, then the Customize cross-link. */
 export function Settings({
   layout,
+  nowMs,
   payload,
   onAlwaysShowPace,
   onDensity,
@@ -31,6 +34,18 @@ export function Settings({
   onTheme,
   onTimeFormat,
 }: SettingsProps) {
+  const [busy, startBusy] = useBusyLabel();
+
+  const hostButton = updateButtonFor(payload.update);
+  const updateButton = busy ? { ...hostButton, disabled: true, label: busy } : hostButton;
+  // The button already says what is happening; the line keeps the last known state.
+  const updateStatus = updateStatusLabel(payload, nowMs);
+
+  function onUpdateClick() {
+    startBusy(hostButton.cmd === "check-update" ? "Checking…" : "Updating…");
+    sendCommand(hostButton.cmd);
+  }
+
   return (
     <div className="flex flex-col gap-[var(--section-gap)]">
       <Section title="General">
@@ -128,6 +143,35 @@ export function Settings({
           />
         </SettingRow>
       </Section>
+      <Section title="Updates">
+        <SettingRow label="Updates">
+          <Picker
+            options={[
+              ["auto", updateModeLabel("auto")],
+              ["notify", updateModeLabel("notify")],
+              ["off", updateModeLabel("off")],
+            ]}
+            value={payload.updates}
+            onChange={(mode) => sendCommand("set-updates", { mode })}
+          />
+        </SettingRow>
+        <div className="flex items-start gap-[10px] px-3 py-[var(--pad-control)]">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span>Check for Updates</span>
+            <span className="text-[length:var(--sz-badge)] leading-[1.35] break-words text-label-2 [overflow-wrap:anywhere]">
+              {updateStatus}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="h-6 shrink-0 rounded-[6px] bg-[var(--control-fill)] px-2.5 text-[length:var(--sz-support)] hover:bg-[var(--control-fill-hover)] disabled:opacity-60"
+            disabled={updateButton.disabled}
+            onClick={onUpdateClick}
+          >
+            {updateButton.label}
+          </button>
+        </div>
+      </Section>
       <ScreenCrossLinkRow
         icon={<MdiTune />}
         subtitle="Choose what's visible and where"
@@ -199,4 +243,31 @@ function Picker<T extends string>({ options, value, onChange }: PickerProps<T>) 
       </SelectContent>
     </Select>
   );
+}
+
+interface UpdateButton {
+  cmd: string;
+  disabled: boolean;
+  label: string;
+}
+
+/**
+ * "Check Now" only while nothing is known; once a release is found the same
+ * button installs it, so the row never asks the user to check again for an
+ * answer it already has.
+ */
+function updateButtonFor(update: Payload["update"]): UpdateButton {
+  switch (update?.state) {
+    case "checking":
+      return { cmd: "check-update", disabled: true, label: "Checking…" };
+    case "available":
+      return { cmd: "install-update", disabled: false, label: "Update" };
+    case "downloading":
+    case "installing":
+      return { cmd: "install-update", disabled: true, label: "Updating…" };
+    case "failed":
+      return { cmd: "install-update", disabled: false, label: "Try Again" };
+    default:
+      return { cmd: "check-update", disabled: false, label: "Check Now" };
+  }
 }

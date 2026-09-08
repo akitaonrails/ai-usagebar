@@ -52,6 +52,10 @@ import {
   paceTickPercent,
   paceVisible,
   shortcutFromKeyEvent,
+  formatAgo,
+  updateStatusLabel,
+  updateBannerPending,
+  updateModeLabel,
 } from './src/model.js';
 
 const report = {
@@ -454,14 +458,17 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(cleaned.alwaysShowPace, false);
 }
 
-// --- host payload: shortcut / window_secs --------------------------------------
+// --- host payload: shortcut / updates / update / window_secs ------------------
 
 {
-  // ARRANGE: every host key populated
+  // ARRANGE: every new host key populated, with a GitHub release URL
   const full = parseHostPayload({
     version: '1.11.0',
     shortcut: 'Ctrl+Shift+U',
     shortcut_error: 'already taken',
+    updates: 'auto',
+    update: { state: 'downloading', version: 'v1.12.0', url: 'https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.12.0', error: '' },
+    update_checked_at: 1_700_000_000_000,
     entries: [{
       id: 'anthropic',
       display_name: 'Claude',
@@ -475,6 +482,14 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   // ASSERT: the camelCase fields
   assert.equal(full.shortcut, 'Ctrl+Shift+U');
   assert.equal(full.shortcutError, 'already taken');
+  assert.equal(full.updates, 'auto');
+  assert.deepEqual(full.update, {
+    error: '',
+    state: 'downloading',
+    url: 'https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.12.0',
+    version: 'v1.12.0',
+  });
+  assert.equal(full.updateCheckedAt, 1_700_000_000_000);
   assert.equal(full.entries[0].sections[0].window, 18000);
   assert.equal(full.entries[0].sections[1].window, 0);
   assert.equal(full.entries[0].sections[2].window, 0);
@@ -484,16 +499,31 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(rows[1].window, 0);
 
   // ASSERT: defensive fallbacks
+  const loose = parseHostPayload({
+    updates: 'sometimes',
+    update: { state: 'exploding', version: 'x'.repeat(50), url: 'https://evil.example/x', error: 'e'.repeat(400) },
+    update_checked_at: 'yesterday',
+  });
+  assert.equal(loose.updates, 'notify');
+  assert.equal(loose.update.state, 'available');
+  assert.equal(loose.update.url, '');
+  assert.equal(loose.update.version.length, 32);
+  assert.equal(loose.update.error.length, 300);
+  assert.equal(loose.updateCheckedAt, 0);
+  assert.equal(parseHostPayload({ update: 'soon' }).update, null);
+  assert.equal(parseHostPayload({ update: ['x'] }).update, null);
+  assert.equal(parseHostPayload({ update_checked_at: Infinity }).updateCheckedAt, 0);
   assert.equal(parseHostPayload({ shortcut: 's'.repeat(80) }).shortcut.length, 64);
-  assert.equal(parseHostPayload({ shortcut_error: 'e'.repeat(400) }).shortcutError.length, 300);
-  // Keys the host does not send stay off the payload (no updater in the tray).
-  assert.equal('update' in parseHostPayload({ update: { state: 'available' } }), false);
-  assert.equal('updates' in emptyPayload(), false);
 
   // ASSERT: emptyPayload carries the defaults
   const empty = emptyPayload();
   assert.equal(empty.shortcut, '');
   assert.equal(empty.shortcutError, '');
+  assert.equal(empty.updates, 'notify');
+  assert.equal(empty.update, null);
+  assert.equal(empty.updateCheckedAt, 0);
+  assert.equal(payload.updates, 'notify');
+  assert.equal(payload.update, null);
 
   // ASSERT: refresh_minutes keeps only the offered intervals, else the 5-minute default
   assert.equal(parseHostPayload({ refresh_minutes: 10 }).refreshMinutes, 10);
@@ -666,6 +696,49 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(shortcutFromKeyEvent(press('', { ctrl: true }, '')), null);
   assert.equal(shortcutFromKeyEvent(press('toString', { ctrl: true }, '')), null);
   assert.equal(shortcutFromKeyEvent(null), null);
+}
+
+// --- update status helpers -------------------------------------------------------
+
+{
+  const now = 1_700_000_000_000;
+  assert.equal(formatAgo(0), 'just now');
+  assert.equal(formatAgo(59_000), 'just now');
+  assert.equal(formatAgo(5 * 60_000), '5m ago');
+  assert.equal(formatAgo(2 * 3600_000 + 5 * 60_000), '2h ago');
+  assert.equal(formatAgo(3 * 86_400_000 + 3600_000), '3d ago');
+  assert.equal(formatAgo(-5), 'just now');
+
+  const noUpdate = (checkedAt) => ({ ...emptyPayload(), updateCheckedAt: checkedAt });
+  assert.equal(updateStatusLabel(noUpdate(0), now), 'Not checked yet');
+  assert.equal(updateStatusLabel(noUpdate(now - 5 * 60_000), now), 'Up to date · checked 5m ago');
+  assert.equal(updateStatusLabel(noUpdate(now - 10_000), now), 'Up to date · checked just now');
+
+  const withUpdate = (state, extra) => ({
+    ...emptyPayload(),
+    updateCheckedAt: now,
+    update: { error: '', state, url: '', version: '1.11.0', ...extra },
+  });
+  assert.equal(updateStatusLabel(withUpdate('available'), now), 'v1.11.0 available');
+  assert.equal(updateStatusLabel(withUpdate('available', { version: 'v1.11.0' }), now), 'v1.11.0 available');
+  assert.equal(updateStatusLabel(withUpdate('downloading'), now), 'Downloading v1.11.0…');
+  assert.equal(updateStatusLabel(withUpdate('installing'), now), 'Installing…');
+  assert.equal(updateStatusLabel(withUpdate('failed', { error: 'checksum mismatch' }), now), "Couldn't update: checksum mismatch");
+  assert.equal(updateStatusLabel(withUpdate('failed'), now), "Couldn't update");
+  assert.equal(updateStatusLabel(withUpdate('checking'), now), 'Checking…');
+  assert.equal(parseHostPayload({ update: { state: 'checking', version: '' } }).update.state, 'checking');
+
+  assert.equal(updateBannerPending(emptyPayload()), false);
+  assert.equal(updateBannerPending(withUpdate('available')), true);
+  assert.equal(updateBannerPending(withUpdate('failed')), true);
+  assert.equal(updateBannerPending(withUpdate('checking')), false);
+  assert.equal(updateBannerPending(null), false);
+
+  assert.equal(updateModeLabel('auto'), 'Automatic');
+  assert.equal(updateModeLabel('notify'), 'Notify me');
+  assert.equal(updateModeLabel('off'), 'Off');
+  assert.equal(updateModeLabel('whenever'), 'Notify me');
+  assert.equal(updateModeLabel(undefined), 'Notify me');
 }
 
 // --- SuperGrok labels / displayPlan equality ----------------------------------
