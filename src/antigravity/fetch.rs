@@ -13,14 +13,22 @@
 //! `GetUserStatus` carries only the plan name; its per-model `quotaInfo` mirrors
 //! whichever bucket is scarcest and must not be read as a window in its own
 //! right.
+//!
+//! When no product is running there is still a way to answer: Antigravity
+//! keeps the Google session it signed in with in the OS keyring, and the same
+//! quota summary is served by the Cloud Code API. That is the *fallback*, taken
+//! only when no local server was found at all — a server that is up but signed
+//! out, or answering on the wrong protocol, keeps its own diagnosis.
 
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
+use super::cloud;
+use super::credential::{self, StoredToken};
 use crate::cache::{Cache, acquire_lock_async};
 use crate::error::{AppError, Result};
-use crate::usage::{AntigravitySnapshot, UsageWindow};
+use crate::usage::{AntigravitySnapshot, AntigravitySource, UsageWindow};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(15);
@@ -29,6 +37,19 @@ const QUOTA_RPC: &str = "exa.language_server_pb.LanguageServerService/RetrieveUs
 const STATUS_RPC: &str = "exa.language_server_pb.LanguageServerService/GetUserStatus";
 
 const DEFAULT_PLAN: &str = "Antigravity";
+
+const NO_LOCAL_SERVER: &str = "Antigravity: no local server found. Quota is only served while \
+                               Antigravity is running — open the Antigravity app, or an interactive \
+                               `agy` session, or point ANTIGRAVITY_LS_ADDRESS at a host:port.";
+
+/// Appended to [`NO_LOCAL_SERVER`] once the remote fallback has also come up
+/// empty: the user has a second way out that the local-only message does not
+/// mention.
+const NO_SAVED_SESSION: &str = "Or sign in to Antigravity once, so its saved Google session can \
+                                be used while it is closed.";
+
+const SESSION_EXPIRED: &str =
+    "Antigravity's saved Google session expired; open Antigravity to sign in again";
 
 /// This vendor's [`Outcome`](crate::outcome::Outcome) — the shared shape,
 /// specialised to its snapshot.
@@ -40,20 +61,61 @@ impl From<FetchOutcome> for crate::vendor::VendorOutcome {
     }
 }
 
+/// The keyring blob, or a stand-in for it. `Absent` exists so a test can
+/// exercise "nothing saved" without asking the real keyring, which is what
+/// `None` would have to mean otherwise.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum SavedCredential<'a> {
+    /// Read the OS keyring, as production does.
+    #[default]
+    Keyring,
+    /// Use this raw blob.
+    Blob(&'a str),
+    /// Behave as if the keyring held nothing.
+    Absent,
+}
+
+/// Test seam for the remote fallback. Production passes
+/// [`RemoteOverride::default`], which reads the OS keyring, talks to Google,
+/// and probes the local ports discovery finds; a test supplies each of those
+/// instead so it never touches the real keyring, the network, or `/proc`.
+#[derive(Default)]
+pub struct RemoteOverride<'a> {
+    /// Where the saved Google session comes from.
+    pub credential: SavedCredential<'a>,
+    /// Cloud Code endpoints, in place of [`cloud::Endpoints::default`].
+    pub endpoints: Option<&'a cloud::Endpoints>,
+    /// Local base URLs to probe, in place of discovery. `Some(vec![])` means
+    /// "no local server", which is what sends the fetch down the remote path.
+    pub local_bases: Option<Vec<String>>,
+}
+
 pub async fn fetch_snapshot(
     client: &reqwest::Client,
     cache: &Cache,
     cache_ttl: Duration,
+    oauth: Option<&cloud::OauthClient>,
 ) -> Result<FetchOutcome> {
-    fetch_snapshot_at(client, cache, cache_ttl, Utc::now()).await
+    fetch_snapshot_at(
+        client,
+        cache,
+        cache_ttl,
+        oauth,
+        RemoteOverride::default(),
+        Utc::now(),
+    )
+    .await
 }
 
 /// Clock seam for [`fetch_snapshot`], so window expiry can be exercised at
-/// fixed instants instead of against the wall clock.
+/// fixed instants instead of against the wall clock, and the seam for
+/// everything the remote fallback would otherwise read from the machine.
 pub async fn fetch_snapshot_at(
     client: &reqwest::Client,
     cache: &Cache,
     cache_ttl: Duration,
+    oauth: Option<&cloud::OauthClient>,
+    remote: RemoteOverride<'_>,
     now: DateTime<Utc>,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
@@ -63,16 +125,31 @@ pub async fn fetch_snapshot_at(
     // Unlike Grok — where the same check would cost a remote round-trip on
     // every poll — this is loopback, and it is the call that would supply the
     // plan name anyway, so verification is effectively free.
-    let session = open_session(client).await;
-    let account = session.as_ref().ok().map(|s| s.account.as_str());
+    //
+    // With no local server at all, the saved Google session identifies the
+    // account just as cheaply: reading the keyring is local, and only the
+    // quota call itself goes to the network — after the fresh-cache check,
+    // like the local RPC.
+    let origin = match open_session(client, remote.local_bases.as_deref()).await {
+        Err(e) if is_no_local_server(&e) => Origin::Remote(saved_session(remote.credential)),
+        session => Origin::Local(session),
+    };
+    let account = origin.account();
 
     if let Some(bytes) = cache.fresh_payload(cache_ttl)?
-        && let Ok(outcome) = reuse_cache(bytes, cache, false, account, now)
+        && let Ok(outcome) = reuse_cache(bytes, cache, false, account.as_deref(), now)
     {
         return Ok(outcome);
     }
 
-    match fetch_live(client, session).await {
+    let default_endpoints = cloud::Endpoints::default();
+    let endpoints = remote.endpoints.unwrap_or(&default_endpoints);
+    let live = match origin {
+        Origin::Local(session) => fetch_live(client, session).await,
+        Origin::Remote(token) => fetch_remote(client, cache, oauth, endpoints, token, now).await,
+    };
+
+    match live {
         Ok(snap) => {
             let bytes = serde_json::to_vec(&snap_to_json(&snap))?;
             cache.write_payload(&bytes)?;
@@ -102,18 +179,44 @@ struct Session {
     account: String,
 }
 
+/// Which source this fetch will draw on, decided before the cache is consulted
+/// so a fresh payload can be checked against the right account.
+enum Origin {
+    Local(Result<Session>),
+    Remote(Result<StoredToken>),
+}
+
+impl Origin {
+    /// The account fingerprint, when the source identified one.
+    fn account(&self) -> Option<String> {
+        match self {
+            Origin::Local(Ok(session)) => Some(session.account.clone()),
+            Origin::Remote(Ok(token)) => Some(remote_account(&token.fingerprint)),
+            Origin::Local(Err(_)) | Origin::Remote(Err(_)) => None,
+        }
+    }
+}
+
+fn no_local_server() -> AppError {
+    AppError::Credentials(NO_LOCAL_SERVER.into())
+}
+
+/// The one local failure the remote fallback is allowed to answer. A server
+/// that was found but rejected the probe — signed out, or a TLS listener —
+/// is a diagnosis in its own right and must not be papered over.
+fn is_no_local_server(e: &AppError) -> bool {
+    matches!(e, AppError::Credentials(msg) if msg == NO_LOCAL_SERVER)
+}
+
 /// Walk every candidate language server until one identifies itself. A machine
 /// can host more than one — the desktop app, the IDE and an interactive `agy`
 /// session each run their own — and only some of them are signed in.
-async fn open_session(client: &reqwest::Client) -> Result<Session> {
-    let bases = candidate_bases();
+///
+/// `bases` replaces discovery when given; see [`RemoteOverride::local_bases`].
+async fn open_session(client: &reqwest::Client, bases: Option<&[String]>) -> Result<Session> {
+    let bases = bases.map_or_else(candidate_bases, <[String]>::to_vec);
     if bases.is_empty() {
-        return Err(AppError::Credentials(
-            "Antigravity: no local server found. Quota is only served while Antigravity is \
-             running — open the Antigravity app, or an interactive `agy` session, or point \
-             ANTIGRAVITY_LS_ADDRESS at a host:port."
-                .into(),
-        ));
+        return Err(no_local_server());
     }
 
     let mut errors = Vec::new();
@@ -200,6 +303,178 @@ async fn fetch_live(
     let quota = post_rpc(client, &session.base, session.csrf.as_deref(), QUOTA_RPC).await?;
     let mut snap = parse_quota_summary(&quota, session.plan)?;
     snap.account = session.account;
+    Ok(snap)
+}
+
+// ---------------------------------------------------------------------------
+// Remote fallback — the saved Google session against the Cloud Code API
+// ---------------------------------------------------------------------------
+
+/// The saved Google session, or why there is none. `credential` is the test
+/// seam for the keyring blob.
+///
+/// No saved session leaves the user exactly where the local probe left them,
+/// plus the one thing they can now do about it.
+fn saved_session(credential: SavedCredential<'_>) -> Result<StoredToken> {
+    let raw = match credential {
+        SavedCredential::Keyring => credential::read()?,
+        SavedCredential::Blob(blob) => Some(blob.to_string()),
+        SavedCredential::Absent => None,
+    };
+    let Some(raw) = raw else {
+        return Err(AppError::Credentials(format!(
+            "{NO_LOCAL_SERVER} {NO_SAVED_SESSION}"
+        )));
+    };
+    credential::parse_keyring_blob(&raw)
+}
+
+/// Cache attribution for a remote snapshot. Deliberately not the local
+/// fingerprint's format: the two are computed from different inputs and a
+/// collision would let one source's cache stand in for the other's.
+fn remote_account(fingerprint: &str) -> String {
+    format!("acct:{fingerprint}")
+}
+
+fn session_expired() -> AppError {
+    AppError::Credentials(SESSION_EXPIRED.into())
+}
+
+/// The saved session can only be renewed with Antigravity's OAuth client,
+/// which this program does not ship (a secret-shaped literal in source trips
+/// every secret scanner); the config names the two keys that provide it.
+fn refresh_unconfigured() -> AppError {
+    AppError::Credentials(
+        "Antigravity's saved Google session expired and ai-usagebar has no OAuth client to \
+         refresh it; open Antigravity to sign in again, or set [antigravity] oauth_client_id \
+         and oauth_client_secret in config.toml"
+            .into(),
+    )
+}
+
+fn is_auth_rejection(e: &AppError) -> bool {
+    matches!(
+        e,
+        AppError::Http {
+            status: 401 | 403,
+            ..
+        }
+    )
+}
+
+/// An access token to present, and whether it was minted just now — a `401`
+/// against a token this fresh is the session itself being gone, not a stale
+/// token worth refreshing again.
+struct AccessToken {
+    value: String,
+    just_refreshed: bool,
+}
+
+/// Pick the freshest usable access token without going to the network: the
+/// one this program persisted after its last refresh, if it outlives the
+/// keyring's and is not about to expire; else the keyring's own while it
+/// lasts. Only when both are spent does this refresh.
+async fn resolve_access_token(
+    client: &reqwest::Client,
+    oauth: Option<&cloud::OauthClient>,
+    endpoints: &cloud::Endpoints,
+    oauth_path: &std::path::Path,
+    token: &StoredToken,
+    now: DateTime<Utc>,
+) -> Result<AccessToken> {
+    if let Some(persisted) = cloud::read_persisted(oauth_path, &token.fingerprint)
+        && token
+            .expires_at
+            .is_none_or(|keyring| persisted.expires_at > keyring)
+        && !cloud::needs_refresh(Some(persisted.expires_at), now)
+    {
+        return Ok(AccessToken {
+            value: persisted.access_token,
+            just_refreshed: false,
+        });
+    }
+    if !cloud::needs_refresh(token.expires_at, now) {
+        return Ok(AccessToken {
+            value: token.access_token.clone(),
+            just_refreshed: false,
+        });
+    }
+    refresh_and_persist(client, oauth, endpoints, oauth_path, token).await
+}
+
+/// Mint a new access token off the saved refresh token and remember it, so
+/// the next poll does not spend another round-trip on the same refresh. A
+/// session with no refresh token cannot be renewed here at all.
+async fn refresh_and_persist(
+    client: &reqwest::Client,
+    oauth: Option<&cloud::OauthClient>,
+    endpoints: &cloud::Endpoints,
+    oauth_path: &std::path::Path,
+    token: &StoredToken,
+) -> Result<AccessToken> {
+    let Some(refresh_token) = token.refresh_token.as_deref() else {
+        return Err(session_expired());
+    };
+    let Some(oauth) = oauth else {
+        return Err(refresh_unconfigured());
+    };
+    let refreshed = cloud::refresh(client, &endpoints.token, oauth, refresh_token).await?;
+    cloud::write_persisted(
+        oauth_path,
+        &cloud::PersistedOAuth {
+            fingerprint: token.fingerprint.clone(),
+            access_token: refreshed.access_token.clone(),
+            expires_at: refreshed.expires_at,
+        },
+    )?;
+    Ok(AccessToken {
+        value: refreshed.access_token,
+        just_refreshed: true,
+    })
+}
+
+/// Quota through the Cloud Code API, as the signed-in Google account.
+///
+/// A rejected token gets one refresh and one retry, unless it was refreshed a
+/// moment ago — then the rejection is Google's verdict on the session, and
+/// the user has to sign in again. The plan name is best-effort: the summary is
+/// the figure, and a missing name must not cost it.
+async fn fetch_remote(
+    client: &reqwest::Client,
+    cache: &Cache,
+    oauth: Option<&cloud::OauthClient>,
+    endpoints: &cloud::Endpoints,
+    token: Result<StoredToken>,
+    now: DateTime<Utc>,
+) -> Result<AntigravitySnapshot> {
+    let token = token?;
+    let oauth_path = cloud::oauth_cache_path(cache);
+    let mut access =
+        resolve_access_token(client, oauth, endpoints, &oauth_path, &token, now).await?;
+
+    let quota = match cloud::fetch_quota(client, endpoints, &access.value).await {
+        Err(e) if is_auth_rejection(&e) && !access.just_refreshed => {
+            access = refresh_and_persist(client, oauth, endpoints, &oauth_path, &token).await?;
+            cloud::fetch_quota(client, endpoints, &access.value)
+                .await
+                .map_err(|e| {
+                    if is_auth_rejection(&e) {
+                        session_expired()
+                    } else {
+                        e
+                    }
+                })?
+        }
+        Err(e) if is_auth_rejection(&e) => return Err(session_expired()),
+        other => other?,
+    };
+
+    let plan = cloud::fetch_plan(client, endpoints, &access.value)
+        .await
+        .unwrap_or_else(|| DEFAULT_PLAN.to_string());
+    let mut snap = parse_quota_summary(&quota, plan)?;
+    snap.account = remote_account(&token.fingerprint);
+    snap.source = AntigravitySource::Remote;
     Ok(snap)
 }
 
@@ -397,8 +672,10 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
 
     Ok(AntigravitySnapshot {
         plan,
-        // Stamped by the caller, which is what knows the session's identity.
+        // Stamped by the caller, which is what knows the session's identity
+        // and which path it came through.
         account: String::new(),
+        source: AntigravitySource::Local,
         session: gemini_5h,
         weekly: gemini_weekly,
         third_party_session: tp_5h,
@@ -1058,6 +1335,11 @@ pub fn parse_cache_at(
     let snap = AntigravitySnapshot {
         plan: v["plan"].as_str().unwrap_or(DEFAULT_PLAN).to_string(),
         account: cached_account.unwrap_or_default().to_string(),
+        // Payloads written before the remote path existed were all local.
+        source: v["source"]
+            .as_str()
+            .and_then(AntigravitySource::parse)
+            .unwrap_or_default(),
         session: optional("session_pct", "session_reset", false)?,
         weekly: optional("weekly_pct", "weekly_reset", true)?,
         third_party_session: optional("tp_session_pct", "tp_session_reset", false)?,
@@ -1088,6 +1370,7 @@ pub fn snap_to_json(snap: &AntigravitySnapshot) -> serde_json::Value {
     serde_json::json!({
         "plan": snap.plan,
         "account": snap.account,
+        "source": snap.source.as_str(),
         "session_pct": snap.session.as_ref().map(|w| w.utilization_pct),
         "session_reset": snap.session.as_ref().and_then(|w| w.resets_at.map(|dt| dt.to_rfc3339())),
         "weekly_pct": snap.weekly.as_ref().map(|w| w.utilization_pct),
@@ -2191,6 +2474,399 @@ mod tests {
         assert_eq!(
             candidate_bases_with(Some("   "), vec![4242]),
             vec!["http://127.0.0.1:4242".to_string()]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Remote fallback
+    // -----------------------------------------------------------------------
+
+    fn fixture() -> (tempfile::TempDir, Cache) {
+        let td = tempfile::TempDir::new().unwrap();
+        let cache = Cache::at(td.path().join("antigravity"));
+        (td, cache)
+    }
+
+    fn endpoints(server: &mockito::Server) -> cloud::Endpoints {
+        let base = server.url();
+        cloud::Endpoints {
+            quota: vec![format!("{base}/daily/quota"), format!("{base}/prod/quota")],
+            load_code_assist: vec![format!("{base}/daily/plan"), format!("{base}/prod/plan")],
+            token: format!("{base}/token"),
+        }
+    }
+
+    /// A keyring blob as Antigravity writes it, expiring at `expiry`.
+    fn keyring_blob(expiry: &str, with_refresh: bool) -> String {
+        let mut token = serde_json::json!({
+            "access_token": "KEYRING-AT",
+            "expiry": expiry,
+        });
+        if with_refresh {
+            token["refresh_token"] = serde_json::json!("KEYRING-RT");
+        }
+        serde_json::json!({ "token": token }).to_string()
+    }
+
+    /// Well before the fixture's `now()`.
+    const EXPIRED: &str = "2026-07-22T11:00:00Z";
+    /// Comfortably after it.
+    const VALID: &str = "2026-07-22T13:00:00Z";
+
+    /// No local server, this blob, these endpoints.
+    fn remote<'a>(blob: &'a str, eps: &'a cloud::Endpoints) -> RemoteOverride<'a> {
+        RemoteOverride {
+            credential: SavedCredential::Blob(blob),
+            endpoints: Some(eps),
+            local_bases: Some(vec![]),
+        }
+    }
+
+    /// The bare summary the API returns: the RPC's payload without its
+    /// `{"response": …}` envelope.
+    fn bare_summary() -> String {
+        let v: serde_json::Value = serde_json::from_str(QUOTA_JSON).unwrap();
+        v["response"].to_string()
+    }
+
+    fn quota_mock(server: &mut mockito::Server, bearer: &str) -> mockito::Mock {
+        server
+            .mock("POST", "/daily/quota")
+            .match_header("authorization", format!("Bearer {bearer}").as_str())
+            .with_status(200)
+            .with_body(bare_summary())
+    }
+
+    fn token_mock(server: &mut mockito::Server) -> mockito::Mock {
+        server
+            .mock("POST", "/token")
+            .with_status(200)
+            .with_body(r#"{"access_token":"NEW-AT","expires_in":3600}"#)
+    }
+
+    fn test_oauth() -> cloud::OauthClient {
+        cloud::OauthClient {
+            id: "test-client".into(),
+            secret: "test-client-secret".into(),
+        }
+    }
+
+    async fn run(cache: &Cache, remote: RemoteOverride<'_>, ttl: Duration) -> Result<FetchOutcome> {
+        fetch_snapshot_at(
+            &reqwest::Client::new(),
+            cache,
+            ttl,
+            Some(&test_oauth()),
+            remote,
+            now(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn with_no_local_server_the_saved_session_answers_from_the_api() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let quota = quota_mock(&mut server, "KEYRING-AT")
+            .expect(1)
+            .create_async()
+            .await;
+        let plan = server
+            .mock("POST", "/daily/plan")
+            .match_header("authorization", "Bearer KEYRING-AT")
+            .with_status(200)
+            .with_body(r#"{"currentTier":{"name":"google_ai_pro"}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        // A token this fresh is used as it is.
+        let token = token_mock(&mut server).expect(0).create_async().await;
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+
+        let outcome = run(&cache, remote(&blob, &eps), Duration::from_secs(60))
+            .await
+            .expect("remote path yields a snapshot");
+
+        quota.assert_async().await;
+        plan.assert_async().await;
+        token.assert_async().await;
+        let snap = outcome.snapshot;
+        assert!(!outcome.stale);
+        assert_eq!(snap.source, AntigravitySource::Remote);
+        assert_eq!(snap.plan, "Pro");
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 43);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 8);
+        assert_eq!(snap.third_party_session.unwrap().utilization_pct, 75);
+        assert_eq!(snap.third_party_weekly.unwrap().utilization_pct, 0);
+        let fingerprint = credential::parse_keyring_blob(&blob).unwrap().fingerprint;
+        assert_eq!(snap.account, format!("acct:{fingerprint}"));
+        assert!(!snap.account.contains("KEYRING"), "{}", snap.account);
+
+        // What was cached is attributed to the remote path too.
+        let cached = parse_cache_at(
+            &cache
+                .fresh_payload(Duration::from_secs(60))
+                .unwrap()
+                .unwrap(),
+            None,
+            now(),
+        )
+        .unwrap();
+        assert_eq!(cached.source, AntigravitySource::Remote);
+        assert_eq!(cached.account, snap.account);
+    }
+
+    /// The refreshed token is persisted under the session's fingerprint, so
+    /// the next poll spends no round-trip on the same refresh.
+    #[tokio::test]
+    async fn an_expired_keyring_token_is_refreshed_once_and_the_refresh_is_reused() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let _quota = quota_mock(&mut server, "NEW-AT")
+            .expect(2)
+            .create_async()
+            .await;
+        let token = token_mock(&mut server).expect(1).create_async().await;
+        let blob = keyring_blob(EXPIRED, true);
+        let (_td, cache) = fixture();
+
+        let first = run(&cache, remote(&blob, &eps), Duration::ZERO)
+            .await
+            .expect("refresh, then quota");
+        assert_eq!(first.snapshot.source, AntigravitySource::Remote);
+        token.assert_async().await;
+
+        let fingerprint = credential::parse_keyring_blob(&blob).unwrap().fingerprint;
+        let persisted = cloud::read_persisted(&cloud::oauth_cache_path(&cache), &fingerprint)
+            .expect("refreshed token persisted under the keyring session's fingerprint");
+        assert_eq!(persisted.access_token, "NEW-AT");
+
+        // A zero TTL forces the network again; the token endpoint stays at one hit.
+        run(&cache, remote(&blob, &eps), Duration::ZERO)
+            .await
+            .expect("persisted token reused");
+        token.assert_async().await;
+    }
+
+    /// The API rejecting a token that was not just minted is the token being
+    /// stale, not the session: one refresh, one retry.
+    #[tokio::test]
+    async fn a_stale_token_the_api_rejects_gets_one_refresh_and_one_retry() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let rejected = server
+            .mock("POST", "/daily/quota")
+            .match_header("authorization", "Bearer KEYRING-AT")
+            .with_status(401)
+            .expect(1)
+            .create_async()
+            .await;
+        let accepted = quota_mock(&mut server, "NEW-AT")
+            .expect(1)
+            .create_async()
+            .await;
+        let token = token_mock(&mut server).expect(1).create_async().await;
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+
+        let outcome = run(&cache, remote(&blob, &eps), Duration::ZERO)
+            .await
+            .expect("retry with the refreshed token succeeds");
+
+        rejected.assert_async().await;
+        accepted.assert_async().await;
+        token.assert_async().await;
+        assert_eq!(outcome.snapshot.source, AntigravitySource::Remote);
+    }
+
+    /// A refresh Google refuses is the session being gone. The error is
+    /// actionable and carries no token material.
+    #[tokio::test]
+    async fn a_refused_refresh_is_a_credentials_error_without_the_token() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let _token = server
+            .mock("POST", "/token")
+            .with_status(400)
+            .with_body(r#"{"error":"invalid_grant"}"#)
+            .create_async()
+            .await;
+        let blob = keyring_blob(EXPIRED, true);
+        let (_td, cache) = fixture();
+
+        let err = run(&cache, remote(&blob, &eps), Duration::ZERO)
+            .await
+            .expect_err("no cache to fall back on");
+
+        assert!(matches!(err, AppError::Credentials(_)), "{err}");
+        let rendered = err.to_string();
+        assert!(!rendered.contains("KEYRING-RT"), "{rendered}");
+        assert!(!rendered.contains("KEYRING-AT"), "{rendered}");
+    }
+
+    /// A `401` against a token minted a moment ago is Google's verdict on the
+    /// session; refreshing again would only repeat it.
+    #[tokio::test]
+    async fn a_rejection_right_after_a_refresh_asks_to_sign_in_again() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let _quota = server
+            .mock("POST", "/daily/quota")
+            .with_status(401)
+            .create_async()
+            .await;
+        let token = token_mock(&mut server).expect(1).create_async().await;
+        let blob = keyring_blob(EXPIRED, true);
+        let (_td, cache) = fixture();
+
+        let err = run(&cache, remote(&blob, &eps), Duration::ZERO)
+            .await
+            .expect_err("rejected after refresh");
+
+        token.assert_async().await;
+        assert!(matches!(err, AppError::Credentials(_)), "{err}");
+        assert!(err.to_string().contains("sign in again"), "{err}");
+    }
+
+    /// A session saved without a refresh token cannot be renewed here.
+    #[tokio::test]
+    async fn an_expired_session_without_a_refresh_token_asks_to_sign_in_again() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let token = token_mock(&mut server).expect(0).create_async().await;
+        let blob = keyring_blob(EXPIRED, false);
+        let (_td, cache) = fixture();
+
+        let err = run(&cache, remote(&blob, &eps), Duration::ZERO)
+            .await
+            .expect_err("nothing to refresh with");
+
+        token.assert_async().await;
+        assert!(matches!(err, AppError::Credentials(_)), "{err}");
+        assert!(err.to_string().contains("sign in again"), "{err}");
+    }
+
+    /// Nothing running and nothing saved: the local diagnosis stands, plus
+    /// the one thing the user can now do about it.
+    #[tokio::test]
+    async fn no_saved_session_extends_the_no_local_server_error() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let quota = quota_mock(&mut server, "KEYRING-AT")
+            .expect(0)
+            .create_async()
+            .await;
+        let (_td, cache) = fixture();
+
+        let err = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Absent,
+                endpoints: Some(&eps),
+                local_bases: Some(vec![]),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("no source at all");
+
+        quota.assert_async().await;
+        assert!(matches!(err, AppError::Credentials(_)), "{err}");
+        let rendered = err.to_string();
+        assert!(rendered.contains("no local server found"), "{rendered}");
+        assert!(rendered.contains("saved Google session"), "{rendered}");
+    }
+
+    /// A local server that is up but signed out is its own diagnosis; the
+    /// saved session must not paper over it.
+    #[tokio::test]
+    async fn a_signed_out_local_server_is_reported_rather_than_bypassed() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let status_path = format!("/{STATUS_RPC}");
+        let _status = server
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .create_async()
+            .await;
+        let quota = quota_mock(&mut server, "KEYRING-AT")
+            .expect(0)
+            .create_async()
+            .await;
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+
+        let err = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Blob(&blob),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![server.url()]),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("signed-out local server");
+
+        quota.assert_async().await;
+        assert!(matches!(err, AppError::Http { status: 401, .. }), "{err}");
+    }
+
+    /// The remote path falls back exactly like the local one: the last good
+    /// payload is served stale, with the failure attached.
+    #[tokio::test]
+    async fn a_cached_remote_snapshot_is_served_when_the_api_fails() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        for path in ["/daily/quota", "/prod/quota"] {
+            server
+                .mock("POST", path)
+                .with_status(500)
+                .with_body("boom")
+                .create_async()
+                .await;
+        }
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+        cache.ensure_dir().unwrap();
+        let mut earlier = parsed();
+        earlier.source = AntigravitySource::Remote;
+        earlier.account = "acct:earlier".into();
+        cache
+            .write_payload(&serde_json::to_vec(&snap_to_json(&earlier)).unwrap())
+            .unwrap();
+
+        let outcome = run(&cache, remote(&blob, &eps), Duration::ZERO)
+            .await
+            .expect("stale cache stands in");
+
+        assert!(outcome.stale);
+        assert_eq!(outcome.snapshot, earlier);
+        assert!(
+            matches!(outcome.last_error, Some((500, _))),
+            "{:?}",
+            outcome.last_error
+        );
+    }
+
+    #[test]
+    fn source_round_trips_through_the_cache_and_defaults_to_local() {
+        let mut snap = parsed();
+        snap.source = AntigravitySource::Remote;
+        let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
+        assert_eq!(
+            parse_cache_at(&bytes, None, now()).unwrap().source,
+            AntigravitySource::Remote
+        );
+
+        // A payload from before the field existed is a local one.
+        let mut legacy = snap_to_json(&snap);
+        legacy.as_object_mut().unwrap().remove("source");
+        let legacy = serde_json::to_vec(&legacy).unwrap();
+        assert_eq!(
+            parse_cache_at(&legacy, None, now()).unwrap().source,
+            AntigravitySource::Local
         );
     }
 }

@@ -1139,11 +1139,22 @@ fn default_grok_binary() -> PathBuf {
 }
 
 /// Antigravity reads its quota from whichever local Antigravity product is
-/// running, so it needs no credentials — only an on/off switch.
+/// running, so it needs no credentials of its own. When no product is up it
+/// falls back to the Google session Antigravity saved in the OS keyring and
+/// talks to Cloud Code directly. Renewing that session needs Antigravity's
+/// OAuth client id and secret, which are not shipped in source: set them here
+/// (they are public installed-app credentials) or the fallback only lasts as
+/// long as the saved access token does.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AntigravityConfig {
     pub enabled: bool,
+    /// OAuth client id used to refresh the keyring session.
+    pub oauth_client_id: Option<String>,
+    /// OAuth client secret paired with `oauth_client_id`. An
+    /// installed-app secret is not confidential by Google's definition, but
+    /// it is still treated as an inline credential for file-permission purposes.
+    pub oauth_client_secret: Option<String>,
 }
 
 /// Cursor reads its quota through a session token the Cursor IDE already
@@ -1662,6 +1673,7 @@ impl Config {
             self.grok.api_key.as_deref(),
             self.anthropic_api.api_key.as_deref(),
             self.opencode_go.api_key.as_deref(),
+            self.antigravity.oauth_client_secret.as_deref(),
         ]
         .into_iter()
         .chain(
@@ -2223,6 +2235,45 @@ mod tests {
     fn inline_credentials_are_protected() {
         let mut config = Config::default();
         config.opencode_go.api_key = Some("<redacted>".to_string());
+        assert!(config.has_inline_secrets());
+    }
+
+    #[test]
+    fn antigravity_oauth_client_overrides_parse() {
+        let config: Config = toml::from_str(
+            "[antigravity]
+enabled = true
+oauth_client_id = \"test-client\"
+oauth_client_secret = \"test-client-secret\"
+",
+        )
+        .unwrap();
+        assert!(config.antigravity.enabled);
+        assert_eq!(
+            config.antigravity.oauth_client_id.as_deref(),
+            Some("test-client")
+        );
+        assert_eq!(
+            config.antigravity.oauth_client_secret.as_deref(),
+            Some("test-client-secret")
+        );
+        let bare: Config = toml::from_str(
+            "[antigravity]
+enabled = true
+",
+        )
+        .unwrap();
+        assert!(bare.antigravity.oauth_client_id.is_none());
+        assert!(bare.antigravity.oauth_client_secret.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_inline_oauth_secret_receives_config_file_protection() {
+        let mut config = Config::default();
+        config.antigravity.oauth_client_id = Some("test-client".into());
+        assert!(!config.has_inline_secrets());
+        config.antigravity.oauth_client_secret = Some("<redacted>".into());
         assert!(config.has_inline_secrets());
     }
 
