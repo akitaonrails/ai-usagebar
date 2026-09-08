@@ -86,6 +86,7 @@ function normalizeEntry(raw) {
     name: cleanText(raw.name, 240),
     display_name: cleanText(raw.display_name, 240),
     short_name: cleanText(raw.short_name, 24),
+    icon: cleanText(raw.icon, 8).trim(),
     plan: cleanText(raw.plan, 240),
     status: error !== "" || raw.status === "error" ? "error" : "ready",
     error: error,
@@ -134,6 +135,12 @@ function providerShort(entry) {
   var code = cleanText(entry.short_name, 24).trim()
   if (code === "") code = baseProvider(entry.id).replace(/_/g, "-")
   return autoTextSafe(code).trim()
+}
+
+function providerIcon(entry) {
+  if (!entry) return "󰚩"
+  var icon = autoTextSafe(cleanText(entry.icon, 8).trim())
+  return icon === "" ? "󰚩" : icon
 }
 
 function filteredEntries(entries, configuredProvider) {
@@ -205,8 +212,8 @@ function booleanSetting(value, fallback) {
 // who never turns it on. A vertical bar has no width for either field and
 // keeps showing the icon alone.
 function barLabel(alarming, vertical, showValue, loading, hasEntry, summaryText,
-                  providerLabel) {
-  var icon = "󰚩"
+                  providerLabel, icon) {
+  icon = autoTextSafe(icon || "").trim() || "󰚩"
   if (vertical) return alarming ? "󰅙" : icon
   if (loading && !hasEntry) return icon + "  …"
   if (!hasEntry) return alarming ? "󰅙" : icon
@@ -217,6 +224,122 @@ function barLabel(alarming, vertical, showValue, loading, hasEntry, summaryText,
   // `{vendor_short} {session_pct}%`; the wider gap stays next to the icon.
   return summary === "" ? icon + "  " + provider
     : icon + "  " + provider + " " + summary
+}
+
+function barChip(entry, showValue, showProvider) {
+  if (!entry) return ""
+  var icon = providerIcon(entry)
+  var provider = showProvider ? providerShort(entry) : ""
+  var summary = ""
+  if (showValue) {
+    if (entry.error) summary = "!"
+    else summary = autoTextSafe(headline(entry).text).trim()
+  }
+  if (provider === "") return summary === "" ? icon : icon + "  " + summary
+  return summary === "" ? icon + "  " + provider : icon + "  " + provider + " " + summary
+}
+
+// Every visible entry as its own icon+value chip. A vertical bar has no
+// width for the strip and keeps a single glyph, same as `barLabel`.
+function barStrip(entries, alarming, vertical, showValue, showProvider, loading) {
+  var list = Array.isArray(entries) ? entries : []
+  if (vertical) return alarming ? "󰅙" : "󰚩"
+  if (loading && list.length === 0) return "󰚩  …"
+  if (list.length === 0) return alarming ? "󰅙" : "󰚩"
+  var chips = []
+  for (var i = 0; i < list.length; i++) {
+    var chip = barChip(list[i], showValue, showProvider)
+    if (chip !== "") chips.push(chip)
+  }
+  return chips.length === 0 ? "󰚩" : chips.join("  ")
+}
+
+function anyAlarming(entries) {
+  var list = Array.isArray(entries) ? entries : []
+  for (var i = 0; i < list.length; i++) {
+    if (isAlarming(list[i])) return true
+  }
+  return false
+}
+
+// Official brand marks shipped next to this file. A missing file falls back
+// to the nerd-font glyph from the Rust report — the table is asset lookup,
+// not a second copy of provider names.
+function brandIconFile(entry) {
+  switch (baseProvider(entry && entry.id)) {
+    case "anthropic":
+      return "claude.svg"
+    case "anthropic_api":
+      return "anthropic.svg"
+    case "openai":
+      return "openai.svg"
+    case "copilot":
+      return "copilot.svg"
+    case "zai":
+      return "zhipu.svg"
+    case "openrouter":
+      return "openrouter.svg"
+    case "deepseek":
+      return "deepseek.svg"
+    case "kimi":
+      return "kimi.svg"
+    case "kilo":
+      return "kilo.svg"
+    case "novita":
+      return "novita.svg"
+    case "moonshot":
+      return "moonshot.svg"
+    case "grok":
+    case "supergrok":
+      return "grok.svg"
+    case "antigravity":
+      return "antigravity.svg"
+    case "cursor":
+      return "cursor.svg"
+    case "minimax":
+      return "minimax.svg"
+    case "kiro":
+      return "kiro.svg"
+    case "nous":
+      return "nous.svg"
+    case "opencode-go":
+      return "opencode.svg"
+    default:
+      return ""
+  }
+}
+
+function barChips(entries, selected, showAll, showValue, showProvider, loading, alarming, vertical) {
+  var list = Array.isArray(entries) ? entries : []
+  if (vertical) {
+    return [{ brand: "", icon: alarming ? "󰅙" : "󰚩", label: "", alarming: alarming === true }]
+  }
+  if (loading && list.length === 0) {
+    return [{ brand: "", icon: "󰚩", label: "…", alarming: false }]
+  }
+  if (list.length === 0) {
+    return [{ brand: "", icon: alarming ? "󰅙" : "󰚩", label: "", alarming: alarming === true }]
+  }
+  var shown = showAll ? list : list.filter(function(entry) { return selected && entry.id === selected.id })
+  if (shown.length === 0) shown = [list[0]]
+  var chips = []
+  for (var i = 0; i < shown.length; i++) {
+    var entry = shown[i]
+    var label = ""
+    if (showProvider) label = providerShort(entry)
+    if (showValue) {
+      var summary = entry.error ? "!" : autoTextSafe(headline(entry).text).trim()
+      label = label === "" ? summary : (summary === "" ? label : label + " " + summary)
+    }
+    var brand = brandIconFile(entry)
+    chips.push({
+      brand: brand,
+      icon: brand !== "" ? providerIcon(entry) : providerShort(entry),
+      label: label,
+      alarming: isAlarming(entry)
+    })
+  }
+  return chips
 }
 
 function headline(entry) {
