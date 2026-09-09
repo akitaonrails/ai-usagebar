@@ -102,8 +102,7 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{copilot_completions_pct};;{copilot_reset};;" +
              "{sgk_period};;{minimax_video_pct};;{minimax_video_reset};;" +
              "{minimax_video_elapsed};;{minimax_video_weekly_pct};;{minimax_video_weekly_reset};;{minimax_video_weekly_elapsed};;" +
-             "{copilot_chat_limit};;{copilot_completions_limit};;{copilot_premium_limit};;" +
-             "{ocg_monthly_elapsed}"
+             "{copilot_chat_limit};;{copilot_completions_limit};;{copilot_premium_limit}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -547,7 +546,7 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     } else if !sonnetReset.isEmpty, sonnetReset != "—", let p = n(5) {
         sonnet = Window(pct: p, reset: sonnetReset, elapsed: nil)
     } else if vendor == "opencode-go" {
-        if isReported(t(35)), let w = quotaWindow(34, 35, 50) {
+        if isReported(t(35)), let w = quotaWindow(34, 35, -1) {
             sonnet = w
             sonnetLabel = "Monthly"
         }

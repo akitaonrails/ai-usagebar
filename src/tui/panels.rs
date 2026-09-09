@@ -999,7 +999,7 @@ fn opencode_go_sections(
     now: DateTime<Utc>,
     tol: u32,
 ) -> SectionBuilder {
-    use crate::opencode_go::vendor::{MONTHLY_WINDOW, ROLLING_WINDOW, WEEKLY_WINDOW};
+    use crate::opencode_go::vendor::{ROLLING_WINDOW, WEEKLY_WINDOW};
 
     let mut sections = SectionBuilder::new(vec![Section::Title {
         left: "OpenCode Go".into(),
@@ -1009,7 +1009,6 @@ fn opencode_go_sections(
     for (label, window, duration) in [
         ("Rolling (5h)", s.rolling.as_ref(), ROLLING_WINDOW),
         ("Weekly (7d)", s.weekly.as_ref(), WEEKLY_WINDOW),
-        ("Monthly (30d)", s.monthly.as_ref(), MONTHLY_WINDOW),
     ] {
         let Some(window) = window else {
             continue;
@@ -1022,6 +1021,27 @@ fn opencode_go_sections(
             window_duration: duration,
         };
         push_window(&mut sections, label, &projected, now, tol, true);
+    }
+    // Monthly keeps its reset countdown but no pacing and no `window_secs`:
+    // the cycle follows the subscription date (28/29/31-day months), so no
+    // fixed denominator is exact. `push_metric` (not `push_metric_in_window`)
+    // is what withholds the window from machine-readable frontends.
+    if let Some(window) = s.monthly.as_ref() {
+        any = true;
+        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        sections.push_metric(
+            Section::Metric {
+                label: "Monthly".into(),
+                pct: pct as u16,
+                severity: severity_for(pct),
+                value_label: format!("{pct}%"),
+                footnote: format!(
+                    "Resets in {}",
+                    countdown::format(Some(window.resets_at), now)
+                ),
+            },
+            Some(window.resets_at),
+        );
     }
     if !any {
         sections.push(Section::Spacer);

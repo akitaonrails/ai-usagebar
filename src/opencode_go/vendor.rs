@@ -22,19 +22,21 @@ const UNAVAILABLE: &str = "—";
 
 /// Window lengths for pacing math. The usage endpoint reports only `status`,
 /// `percent`, and `resetsAt` — never a duration — so these are constants with
-/// a recorded provenance, mirroring Anthropic (`5h`/`7d`) and Z.AI (`5h`/`7d`/
-/// `30d`):
+/// a recorded provenance:
 /// - `rolling` is the 5-hour limit (`packages/console/app/src/routes/zen/go/v1/usage.ts`
 ///   `formatUsage` + `packages/console/app/src/routes/zen/util/handler.ts` and
 ///   `i18n/en.ts` "5-hour usage limit reached", validated live via
 ///   `GET https://opencode.ai/zen/go/v1/usage`).
 /// - `weekly` resets Monday 00:00 UTC (7 days, same response capture).
-/// - `monthly` follows the subscription cycle (`getMonthlyBounds(now,
-///   timeSubscribed)` upstream); 30 days is the pacing approximation the other
-///   monthly windows in this codebase use.
+///
+/// There is deliberately no monthly constant: the monthly window follows the
+/// subscription cycle (`getMonthlyBounds(now, timeSubscribed)` upstream —
+/// 28/29/31-day months depending on the subscriber), so any fixed length
+/// would pace against a wrong denominator and publish a wrong `window_secs`.
+/// The monthly reset is still shown; only pacing is omitted until the API
+/// reports real cycle bounds.
 pub const ROLLING_WINDOW: chrono::Duration = chrono::Duration::hours(5);
 pub const WEEKLY_WINDOW: chrono::Duration = chrono::Duration::days(7);
-pub const MONTHLY_WINDOW: chrono::Duration = chrono::Duration::days(30);
 
 impl From<FetchOutcome> for VendorOutcome {
     fn from(outcome: FetchOutcome) -> Self {
@@ -78,7 +80,6 @@ fn build_placeholders_with_plan_and_tolerance(
     let monthly = window_values(usage.monthly.as_ref(), now);
     let rolling_pace = window_pacing(usage.rolling.as_ref(), ROLLING_WINDOW, pace_tolerance, now);
     let weekly_pace = window_pacing(usage.weekly.as_ref(), WEEKLY_WINDOW, pace_tolerance, now);
-    let monthly_pace = window_pacing(usage.monthly.as_ref(), MONTHLY_WINDOW, pace_tolerance, now);
 
     placeholders([
         (
@@ -108,9 +109,13 @@ fn build_placeholders_with_plan_and_tolerance(
         ("ocg_monthly_pct", monthly.percent),
         ("ocg_monthly_reset", monthly.reset),
         ("ocg_monthly_status", monthly.status),
-        ("ocg_monthly_elapsed", monthly_pace.elapsed),
-        ("ocg_monthly_pace", monthly_pace.ratio_pace),
-        ("ocg_monthly_pace_indicator", monthly_pace.point_pace),
+        // No monthly pacing: the cycle length is subscriber-dependent (see
+        // the `ROLLING_WINDOW` provenance note), so any elapsed/pace figure
+        // would pace against a guessed denominator. Empty strings, matching
+        // what an absent window yields on the Z.AI renderer.
+        ("ocg_monthly_elapsed", String::new()),
+        ("ocg_monthly_pace", String::new()),
+        ("ocg_monthly_pace_indicator", String::new()),
     ])
 }
 
@@ -299,7 +304,6 @@ fn render_tooltip(
     for (label, window, duration) in [
         ("  Rolling (5h)", snap.rolling.as_ref(), ROLLING_WINDOW),
         ("  Weekly (7d)", snap.weekly.as_ref(), WEEKLY_WINDOW),
-        ("  Monthly (30d)", snap.monthly.as_ref(), MONTHLY_WINDOW),
     ] {
         let Some(window) = window else {
             continue;
@@ -307,6 +311,27 @@ fn render_tooltip(
         present = true;
         let projected = as_usage_window(window, duration);
         push_window_with_row(&mut lines, label, &projected, theme, now, row(&projected));
+    }
+    // Monthly keeps its reset countdown but no pace glyph: the cycle length
+    // is subscriber-dependent, so there is no exact denominator to pace
+    // against (same reason the report carries no `window_secs` for it).
+    if let Some(window) = snap.monthly.as_ref() {
+        present = true;
+        let pct = utilization_pct(window);
+        let color = severity_color(severity_for(pct), theme);
+        let bar = crate::pango::progress_bar(pct, color, theme, None);
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{}'>  Monthly</span>",
+            theme.fg
+        )));
+        lines.push(TooltipLine::Body(format!(
+            "   {bar}  <span font_weight='bold' foreground='{color}'>{pct}%</span>"
+        )));
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{}'>  ⏱  Resets in {}</span>",
+            theme.dim,
+            escape(&countdown::format(Some(window.resets_at), now))
+        )));
     }
     if !present {
         lines.push(TooltipLine::Body(format!(
@@ -451,8 +476,7 @@ mod tests {
 
     #[test]
     fn elapsed_placeholders_follow_window_progress() {
-        // 2h left of a 5h window → 60% elapsed; 3d left of a 7d window → 57%;
-        // 15d left of a 30d window → 50%.
+        // 2h left of a 5h window → 60% elapsed; 3d left of a 7d window → 57%.
         let now = at("2026-08-16T18:00:00Z");
         let usage = Usage {
             rolling: Some(Window {
@@ -476,13 +500,11 @@ mod tests {
         assert_eq!(values["weekly_elapsed"], "57");
         assert_eq!(values["ocg_rolling_elapsed"], "60");
         assert_eq!(values["ocg_weekly_elapsed"], "57");
-        assert_eq!(values["ocg_monthly_elapsed"], "50");
     }
 
     #[test]
     fn pace_placeholders_follow_usage_vs_elapsed() {
         // Rolling: 80% used vs 60% elapsed → ahead. Weekly: 15% vs 57% → under.
-        // Monthly: 70% vs 50% → ahead.
         let now = at("2026-08-16T18:00:00Z");
         let usage = Usage {
             rolling: Some(Window {
@@ -506,8 +528,30 @@ mod tests {
         assert_eq!(values["ocg_rolling_pace_indicator"], "↑");
         assert_eq!(values["ocg_weekly_pace"], "↓");
         assert_eq!(values["ocg_weekly_pace_indicator"], "↓");
-        assert_eq!(values["ocg_monthly_pace"], "↑");
-        assert_eq!(values["ocg_monthly_pace_indicator"], "↑");
+    }
+
+    #[test]
+    fn monthly_keeps_reset_but_omits_pacing_until_cycle_bounds_are_known() {
+        // The monthly cycle is subscriber-dependent (28/29/31 days), so no
+        // fixed denominator may pace it and no `window_secs` may describe it.
+        // The reset countdown and status still report.
+        let now = at("2026-08-16T18:00:00Z");
+        let usage = Usage {
+            rolling: None,
+            weekly: None,
+            monthly: Some(Window {
+                status: "ok".into(),
+                percent: 70.0,
+                resets_at: at("2026-08-31T18:00:00Z"),
+            }),
+        };
+        let values = build_placeholders(&usage, now);
+        assert_eq!(values["ocg_monthly_pct"], "70");
+        assert_eq!(values["ocg_monthly_reset"], "15d 0h");
+        assert_eq!(values["ocg_monthly_status"], "ok");
+        assert_eq!(values["ocg_monthly_elapsed"], "");
+        assert_eq!(values["ocg_monthly_pace"], "");
+        assert_eq!(values["ocg_monthly_pace_indicator"], "");
     }
 
     #[test]
@@ -591,6 +635,35 @@ mod tests {
             now,
         );
         assert!(out.tooltip.contains("80% ↑"), "{}", out.tooltip);
+    }
+
+    #[test]
+    fn tooltip_monthly_row_keeps_reset_without_a_pace_glyph() {
+        let now = at("2026-08-16T18:00:00Z");
+        let usage = Usage {
+            rolling: None,
+            weekly: None,
+            monthly: Some(Window {
+                status: "ok".into(),
+                percent: 70.0,
+                resets_at: at("2026-08-31T18:00:00Z"),
+            }),
+        };
+        let out = render(
+            &outcome_for(&usage),
+            &usage,
+            &Theme::default(),
+            &opts(),
+            now,
+        );
+        assert!(out.tooltip.contains("Monthly"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("70%"), "{}", out.tooltip);
+        assert!(
+            !out.tooltip.contains('↑') && !out.tooltip.contains('→') && !out.tooltip.contains('↓'),
+            "monthly row must not grow a pace glyph: {}",
+            out.tooltip
+        );
+        assert!(out.tooltip.contains("Resets in 15d 0h"), "{}", out.tooltip);
     }
 
     #[test]

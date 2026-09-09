@@ -130,14 +130,17 @@ uses elapsed `0` and the neutral `→` pace marker.
 
 `{ocg_plan}`, `{ocg_rolling_pct}`, `{ocg_rolling_reset}`,
 `{ocg_rolling_elapsed}`, `{ocg_rolling_pace}`,
-`{ocg_rolling_pace_indicator}`, `{ocg_weekly_*}`, `{ocg_monthly_*}`,
+`{ocg_rolling_pace_indicator}`, `{ocg_weekly_pct}`, `{ocg_weekly_reset}`,
+`{ocg_weekly_elapsed}`, `{ocg_weekly_pace}`,
+`{ocg_weekly_pace_indicator}`, `{ocg_monthly_pct}`, `{ocg_monthly_reset}`,
 `{ocg_rolling_status}`, `{ocg_weekly_status}`, `{ocg_monthly_status}`
 
 `{session_elapsed}` and `{weekly_elapsed}` are cross-provider aliases for the
 rolling (5h) and weekly (7d) windows. An absent window returns empty elapsed
-and pace values. Window lengths are constants (rolling 5h, weekly 7d, monthly
-30d): the usage endpoint reports only `percent` and `resetsAt`, never a
-duration.
+and pace values. The monthly window keeps `pct`/`reset`/`status` but has no
+pace family: its cycle follows the subscription date, so no fixed length is
+exact. Rolling (5h) and weekly (7d) lengths are constants: the usage endpoint
+reports only `percent` and `resetsAt`, never a duration.
 
 ## OpenRouter
 
