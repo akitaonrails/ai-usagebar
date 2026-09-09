@@ -9,6 +9,14 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
+  instead of a fixed-width horizontal `ListView`. With five or more providers
+  enabled the list overflowed the panel's edge and the extra entries were
+  simply unreachable — no scrollbar, no way to click them. They now wrap onto
+  additional rows.
+
 ## [1.14.0] — 2026-09-08
 
 ### Added

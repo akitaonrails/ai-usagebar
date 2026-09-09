@@ -53,6 +53,15 @@ assert.match(panelSource, /Model\.barStrip\(/);
 assert.match(panelSource, /Model\.providerIcon\(entry\)/);
 assert.match(panelSource, /BrandMark\s*\{/);
 assert.match(panelSource, /Model\.brandIconFile\(root\.entry\)/);
+
+// Provider tabs must wrap into additional rows instead of being clipped by
+// the panel edge when more providers are configured than fit on one line.
+assert.match(panelSource, /Flow\s*\{[\s\S]*?id:\s*providerList/);
+assert.match(panelSource, /flow:\s*Flow\.LeftToRight/);
+assert.match(panelSource, /height:\s*visible\s*\?\s*childrenRect\.height\s*:\s*0/);
+assert.match(panelSource, /width:\s*implicitWidth/);
+assert.doesNotMatch(panelSource, /orientation:\s*ListView\.Horizontal/);
+assert.match(panelSource, /providerList\.forceLayout\(\)/);
 assert.match(panelSource, /foreground:\s*root\.entryAlarming\s*\?\s*root\.urgent/);
 assert.doesNotMatch(panelSource, /BrandMark[\s\S]*foreground:\s*root\.alarming\s*\?/m);
 const brandMarkSource = fs.readFileSync(new URL('./BrandMark.qml', import.meta.url), 'utf8');
