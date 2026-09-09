@@ -126,7 +126,7 @@ Panel {
     var wrapped = ((index % visibleEntries.length) + visibleEntries.length) % visibleEntries.length
     selectedEntryId = visibleEntries[wrapped].id
     persistSelection(selectedEntryId)
-    if (providerList.visible) providerList.positionViewAtIndex(wrapped, ListView.Contain)
+    if (providerList.visible) providerList.forceLayout()
     if (panelFlick) panelFlick.contentY = 0
   }
 
@@ -423,36 +423,41 @@ Panel {
             onCloseRequested: root.closeSettings()
           }
 
-          ListView {
+          // Providers wrap into additional rows instead of being clipped by
+          // the panel edge once there are more configured entries than fit
+          // on one line — a fixed-width ListView silently hid entries past
+          // the visible edge, with no way to reach them (see #173).
+          Flow {
             id: providerList
             visible: !root.settingsOpen && root.visibleEntries.length > 1
             width: parent.width
-            height: visible ? Style.spacing.controlHeight : 0
-            orientation: ListView.Horizontal
+            height: visible ? childrenRect.height : 0
+            flow: Flow.LeftToRight
             spacing: Style.spacing.md
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            model: root.visibleEntries
-            currentIndex: root.entryIndex
 
-            delegate: Button {
-              required property var modelData
-              required property int index
+            Repeater {
+              model: root.visibleEntries
 
-              height: providerList.height
-              text: Model.providerName(modelData)
-              selected: index === root.entryIndex
-              hasCursor: root.cursorActive && index === root.entryIndex
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.spacing.controlPaddingY
-              onClicked: {
-                root.cursorActive = true
-                root.selectEntry(index)
+              delegate: Button {
+                required property var modelData
+                required property int index
+
+                height: Style.spacing.controlHeight
+                width: implicitWidth
+                text: Model.providerName(modelData)
+                selected: index === root.entryIndex
+                hasCursor: root.cursorActive && index === root.entryIndex
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                verticalPadding: Style.spacing.controlPaddingY
+                onClicked: {
+                  root.cursorActive = true
+                  root.selectEntry(index)
+                }
+                onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
               }
-              onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
             }
           }
 
