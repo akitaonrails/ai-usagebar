@@ -15,11 +15,15 @@ A single Swift file (`NSStatusItem` + `NSAttributedString`); no Xcode project.
 
 ## Vendor scope
 
-The selector supports **thirteen vendors** that ship in the binary:
+The selector dynamically discovers **all providers** that ship in the binary via `ai-usagebar vendors --json`:
 
-- **Rate-limit windows (5h / weekly):** Claude, Codex,
-  Z.AI (GLM), and Google Antigravity (two independent pools — Gemini, and
-  Claude & GPT OSS — each with its own 5h/weekly pair).
+- **Rate-limit windows (session / weekly / monthly):** Claude, Codex,
+  Z.AI (GLM), Google Antigravity (two independent pools — Gemini, and
+  Claude & GPT OSS — each with its own 5h/weekly pair), MiniMax (chat and video
+  pools, each with 5h/weekly tracking), GitHub Copilot (premium finite pool,
+  with unlimited chat and completions reported cleanly), SuperGrok, Kiro,
+  Nous Research, OpenCode Go (session, weekly, and monthly pools), and Command Code
+  (session, weekly, and monthly pools).
 - **Included-usage pools:** Cursor (Cursor Models and Other Models, both reset
   on the billing cycle).
 - **Balance-only:** OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok
@@ -28,8 +32,9 @@ The selector supports **thirteen vendors** that ship in the binary:
   session/weekly rows. Anthropic API additionally renders a spend-vs-limit
   bar when a monthly limit is configured.
 
-Only **enabled** vendors appear in the selector. The opt-in vendors (DeepSeek,
-Kimi, Kilo, Novita, Moonshot, Grok, Anthropic API, Cursor, Antigravity) default
+The app uses `ai-usagebar vendors --json` as its canonical metadata source so
+vendor availability, authentication status, and CLI requirements always match the
+backend without duplicated static tables. Only **enabled** vendors appear in the selector. The opt-in vendors default
 to disabled in the Rust config, matching `src/config.rs`; set
 `[vendor].enabled = true` (or save an API key via the TUI) to turn one on.
 
@@ -84,7 +89,7 @@ Settings persist in `UserDefaults` and apply **live, no rebuild**.
 | Bar width | 8 | cells per menu-bar bar (4–20) |
 | Colors (low/mid/high/critical/empty) | One Dark | bar color per severity (≥90 / ≥75 / ≥50 / else) |
 | Refresh interval | 30 s | 5–3600 |
-| Vendor | anthropic | selectors: only enabled vendors (see [Vendor scope](#vendor-scope)). Claude, Codex, and Z.AI expose session/weekly windows — Z.AI adds its monthly MCP-tools pool as a fourth row when the account has one; balance-only vendors show a credit balance instead. |
+| Vendor | anthropic | selectors: only enabled vendors (see [Vendor scope](#vendor-scope)). Vendors expose rate-limit windows (session, weekly, monthly, or video pools); balance-only vendors show a credit balance instead. |
 | Binary path | auto | empty = `~/.cargo/bin`, Homebrew, then `PATH` |
 | Global vendor shortcut | on | **⌥⌘\\** cycles every configured vendor/account and Overview; turns itself back off if macOS cannot register it |
 | Global compact shortcut | on | **⌥⌘E** toggles Overview between mini bars and compact text; turns itself back off if unavailable |
