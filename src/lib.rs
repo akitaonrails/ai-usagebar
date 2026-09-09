@@ -41,6 +41,7 @@ pub mod minimax;
 pub mod moonshot;
 pub mod nous;
 pub mod novita;
+pub mod ollama;
 pub mod openai;
 pub mod opencode_go;
 pub mod openrouter;

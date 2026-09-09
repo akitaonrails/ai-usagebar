@@ -42,6 +42,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "GITHUB_COPILOT_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "OLLAMA_API_KEY",
 ];
 
 /// Env var names a `[[custom]]` provider reads its token from. They are not
@@ -175,6 +176,7 @@ pub enum VendorId {
     OpenCodeGo,
     #[serde(rename = "commandcode")]
     CommandCode,
+    Ollama,
 }
 
 /// How a provider authenticates. Drives what a frontend offers a provider that
@@ -225,6 +227,7 @@ impl VendorId {
             VendorId::NousResearch => "nous",
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
+            VendorId::Ollama => "ollama",
         }
     }
 
@@ -253,6 +256,7 @@ impl VendorId {
             VendorId::NousResearch => "Nous Research",
             VendorId::OpenCodeGo => "OpenCode Go",
             VendorId::CommandCode => "Command Code",
+            VendorId::Ollama => "Ollama Cloud",
         }
     }
 
@@ -280,6 +284,9 @@ impl VendorId {
             VendorId::NousResearch => VendorId::NousResearch.short_name(),
             VendorId::OpenCodeGo => VendorId::OpenCodeGo.short_name(),
             VendorId::CommandCode => VendorId::CommandCode.short_name(),
+            // No distinct Nerd Font mark for Ollama Cloud; the `oll` short
+            // name is unique by construction and cannot render as tofu.
+            VendorId::Ollama => VendorId::Ollama.short_name(),
         }
     }
 
@@ -309,6 +316,7 @@ impl VendorId {
             VendorId::NousResearch => "nrs",
             VendorId::OpenCodeGo => "ocg",
             VendorId::CommandCode => "cmc",
+            VendorId::Ollama => "oll",
         }
     }
 
@@ -341,6 +349,7 @@ impl VendorId {
             VendorId::NousResearch => "nous",
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
+            VendorId::Ollama => "ollama",
         }
     }
 
@@ -366,7 +375,8 @@ impl VendorId {
             | VendorId::Moonshot
             | VendorId::Grok
             | VendorId::Minimax
-            | VendorId::OpenCodeGo => AuthKind::ApiKey,
+            | VendorId::OpenCodeGo
+            | VendorId::Ollama => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
             // the login. Antigravity has no credential file at all (the binary
             // probes whichever local server answers), Cursor and Kiro read the
@@ -395,6 +405,7 @@ impl VendorId {
             VendorId::Grok => "XAI_MANAGEMENT_KEY",
             VendorId::Minimax => "MINIMAX_API_KEY",
             VendorId::OpenCodeGo => "OPENCODE_GO_API_KEY",
+            VendorId::Ollama => "OLLAMA_API_KEY",
             // OAuth-first, with an environment override for CI and headless
             // use. Neither name is configurable, so neither has an
             // `api_key_env` field in its config section.
@@ -437,7 +448,9 @@ impl VendorId {
             VendorId::Antigravity => "Open Antigravity or run `agy`, then Refresh.",
             VendorId::Grok | VendorId::Supergrok => "Sign in with `grok`, then Refresh.",
             // Key-only providers: there is nothing to log into, only a key to
-            // put in the config.
+            // put in the config. Ollama Cloud's key is minted at
+            // ollama.com/settings/keys; the local `ollama` CLI's Ed25519 key
+            // is a registry credential, not a quota one, and is never read.
             VendorId::AnthropicApi
             | VendorId::Zai
             | VendorId::Openrouter
@@ -446,7 +459,8 @@ impl VendorId {
             | VendorId::Novita
             | VendorId::Moonshot
             | VendorId::Minimax
-            | VendorId::OpenCodeGo => "Add an API key in Settings, then Refresh.",
+            | VendorId::OpenCodeGo
+            | VendorId::Ollama => "Add an API key in Settings, then Refresh.",
         }
     }
 
@@ -473,7 +487,8 @@ impl VendorId {
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Minimax
-            | VendorId::OpenCodeGo => "",
+            | VendorId::OpenCodeGo
+            | VendorId::Ollama => "",
         }
     }
 
@@ -499,6 +514,7 @@ impl VendorId {
             VendorId::NousResearch,
             VendorId::OpenCodeGo,
             VendorId::CommandCode,
+            VendorId::Ollama,
         ]
     }
 }

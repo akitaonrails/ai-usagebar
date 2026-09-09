@@ -847,6 +847,25 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
             .await?;
             Ok(outcome.into())
         }
+        VendorId::Ollama => {
+            let api_key = crate::config::resolve_api_key(
+                "Ollama",
+                &config.ollama.api_key_env,
+                config.ollama.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("ollama")?;
+            let endpoints = crate::ollama::fetch::Endpoints::default();
+            let outcome = crate::ollama::fetch_snapshot(
+                client,
+                &api_key,
+                &config.ollama.plan,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
     }
 }
 

@@ -20,7 +20,7 @@ ai-usagebar-tui --config ./config.test.toml
 # Which vendor the widget shows when --vendor is omitted, AND which tab
 # is selected when the TUI opens. Defaults to anthropic when not set.
 # Only a vendor that is enabled can be primary.
-# primary = "anthropic"   # anthropic | anthropic_api | openai | copilot
+# primary = "anthropic"   # anthropic | anthropic_api | openai | copilot | ollama
 #                         # | zai | openrouter | deepseek | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
@@ -102,6 +102,13 @@ api_key_env = "KILO_API_KEY"
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "NOVITA_API_KEY"
 # api_key = "..."          # used if NOVITA_API_KEY is unset; chmod 600 the file!
+
+[ollama]
+# Disabled by default; enable after minting a key at
+# https://ollama.com/settings/keys (Bearer for https://ollama.com/api/usage).
+enabled = true
+api_key_env = "OLLAMA_API_KEY"
+# api_key = "..."          # used if OLLAMA_API_KEY is unset; chmod 600 the file!
 
 [moonshot]
 enabled = true             # disabled by default; enable once you add an API key
