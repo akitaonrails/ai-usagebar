@@ -429,9 +429,9 @@ func testParserBalances() {
     assertEqual(minimax?.secondaryWeeklyLabel, "Video Weekly", "minimax video weekly label")
 
     let ocg = snapshot(FORMAT, vendor: "opencode-go",
-                       fields: fields(through: 35, set: [
+                       fields: fields(through: 50, set: [
                           0: "OpenCode Go", 1: "0", 2: "1h 29m", 3: "0", 4: "5d 4h", 16: "ocg",
-                          34: "34", 35: "24d 0h"
+                          34: "34", 35: "24d 0h", 50: "17"
                        ]))
     assertEqual(ocg?.hasUsageWindows, true, "opencode-go shows windows")
     assertEqual(ocg?.session?.pct, 0, "opencode-go session pct")
@@ -441,6 +441,7 @@ func testParserBalances() {
     assertEqual(ocg?.weeklyLabel, "Weekly", "opencode-go weekly label")
     assertEqual(ocg?.sonnet?.pct, 34, "opencode-go monthly pct")
     assertEqual(ocg?.sonnet?.reset, "24d 0h", "opencode-go monthly reset")
+    assertEqual(ocg?.sonnet?.elapsed, 17, "opencode-go monthly elapsed")
     assertEqual(ocg?.sonnetLabel, "Monthly", "opencode-go monthly label")
 
     let ocgFloat = snapshot(FORMAT, vendor: "opencode-go",
