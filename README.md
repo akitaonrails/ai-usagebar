@@ -217,7 +217,7 @@ verifying their `.sha256`; all three live in the `[tray]` section of
 `config.toml` (`shortcut`, `refresh_minutes` = 1, 5 or 10; default 5;
 `updates`). See [windows/README.md](windows/README.md).
 
-![Windows tray icon in the notification area — a bar-chart-in-circle mark next to the clock](screenshots/windows-tray-icon.png)
+![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](screenshots/windows-tray-icon.png)
 
 Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
