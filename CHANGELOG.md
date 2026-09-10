@@ -23,6 +23,16 @@ Each release is also published at
   `/usr/local/bin`, and `~/.cargo/bin` into subprocess environments for vendor
   tools.
 
+- **OpenCode Go pacing.** The rolling (5h) and weekly (7d) windows now expose
+  `{ocg_rolling|weekly_elapsed}`, `{ocg_rolling|weekly_pace}`, and
+  `{ocg_rolling|weekly_pace_indicator}` placeholders plus `{session_elapsed}`
+  / `{weekly_elapsed}` aliases, pace arrows in the Waybar tooltip, and paced
+  rows in the TUI panel and `usage --json` report footnotes. The monthly
+  window keeps its reset countdown but is not paced: its cycle follows the
+  subscription date, so no fixed length is exact and no `window_secs` is
+  published for it. Window lengths are constants: the usage endpoint reports
+  only `percent` and `resetsAt`.
+
 ### Fixed
 
 - **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again

@@ -410,7 +410,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Minimax(s) => minimax_sections(s, now, pace_tolerance),
                 VendorSnapshot::Kiro(s) => kiro_sections(s, now),
                 VendorSnapshot::NousResearch(s) => nous_sections(s, now),
-                VendorSnapshot::OpenCodeGo(s) => opencode_go_sections(s, now),
+                VendorSnapshot::OpenCodeGo(s) => opencode_go_sections(s, now, pace_tolerance),
                 VendorSnapshot::CommandCode(s) => commandcode_sections(s, now),
                 VendorSnapshot::Custom(s) => custom_sections(s),
             };
@@ -997,33 +997,58 @@ fn commandcode_sections(
 fn opencode_go_sections(
     s: &crate::opencode_go::types::Usage,
     now: DateTime<Utc>,
+    tol: u32,
 ) -> SectionBuilder {
+    use crate::opencode_go::vendor::{ROLLING_WINDOW, WEEKLY_WINDOW};
+
     let mut sections = SectionBuilder::new(vec![Section::Title {
         left: "OpenCode Go".into(),
         right: None,
     }]);
-    for (label, window) in [
-        ("Rolling", s.rolling.as_ref()),
-        ("Weekly", s.weekly.as_ref()),
-        ("Monthly", s.monthly.as_ref()),
+    let mut any = false;
+    for (label, window, duration) in [
+        ("Rolling (5h)", s.rolling.as_ref(), ROLLING_WINDOW),
+        ("Weekly (7d)", s.weekly.as_ref(), WEEKLY_WINDOW),
     ] {
-        if let Some(window) = window {
-            let pct = window.percent.round().clamp(0.0, 100.0) as i32;
-            sections.push_metric(
-                Section::Metric {
-                    label: label.into(),
-                    pct: pct as u16,
-                    severity: severity_for(pct),
-                    value_label: format!("{pct}%"),
-                    footnote: String::new(),
-                },
-                Some(window.resets_at),
-            );
-            sections.push(Section::Text {
-                label: "Resets".into(),
-                value: countdown::format(Some(window.resets_at), now),
-            });
-        }
+        let Some(window) = window else {
+            continue;
+        };
+        any = true;
+        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        let projected = crate::usage::UsageWindow {
+            utilization_pct: pct,
+            resets_at: Some(window.resets_at),
+            window_duration: duration,
+        };
+        push_window(&mut sections, label, &projected, now, tol, true);
+    }
+    // Monthly keeps its reset countdown but no pacing and no `window_secs`:
+    // the cycle follows the subscription date (28/29/31-day months), so no
+    // fixed denominator is exact. `push_metric` (not `push_metric_in_window`)
+    // is what withholds the window from machine-readable frontends.
+    if let Some(window) = s.monthly.as_ref() {
+        any = true;
+        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        sections.push_metric(
+            Section::Metric {
+                label: "Monthly".into(),
+                pct: pct as u16,
+                severity: severity_for(pct),
+                value_label: format!("{pct}%"),
+                footnote: format!(
+                    "Resets in {}",
+                    countdown::format(Some(window.resets_at), now)
+                ),
+            },
+            Some(window.resets_at),
+        );
+    }
+    if !any {
+        sections.push(Section::Spacer);
+        sections.push(Section::Text {
+            label: "".into(),
+            value: "  no usage windows reported".into(),
+        });
     }
     sections
 }
