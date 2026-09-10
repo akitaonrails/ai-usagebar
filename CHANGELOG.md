@@ -23,6 +23,23 @@ Each release is also published at
   `/usr/local/bin`, and `~/.cargo/bin` into subprocess environments for vendor
   tools.
 
+- **Ollama Cloud vendor.** `ollama.com/api/usage`, the quota route the
+  official settings page itself uses, behind a Bearer key minted at
+  <https://ollama.com/settings/keys>. The local daemon at
+  `127.0.0.1:11434` has no quota route, and the Ed25519 key the `ollama`
+  CLI keeps in `~/.ollama/id_ed25519` is the registry's signing key, not
+  a quota credential — the widget never reads it. The native Rust
+  provider adds an `Ollama Cloud` tab, a `[ollama]` config block
+  (disabled by default, opt in with `enabled = true` or via the TUI
+  Settings overlay), `{oll_session_pct}` / `{oll_weekly_pct}` placeholders
+  with the usual pace and reset aliases, a per-model breakdown of the
+  five heaviest models in each window in the tooltip, and a
+  `usage --json` entry keyed `ollama`. Plan label comes from config; the
+  API itself does not report one. `tests/fixtures/ollama/good_full.json`
+  pins the real shape, and `tests::live::ollama_live` is the live smoke
+  against the real API. The cache stores the projected snapshot only —
+  the raw body, and the Bearer key with it, is never written to disk.
+
 ### Fixed
 
 - **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
@@ -40,25 +57,6 @@ Each release is also published at
   overlay now treats a present env var as a sufficient signal that the
   vendor is reachable, surfaces it in the primary list and writes
   `enabled = true` on save like the inline-key path did.
-
-### Added
-
-- **Ollama Cloud vendor.** `ollama.com/api/usage`, the quota route the
-  official settings page itself uses, behind a Bearer key minted at
-  <https://ollama.com/settings/keys>. The local daemon at
-  `127.0.0.1:11434` has no quota route, and the Ed25519 key the `ollama`
-  CLI keeps in `~/.ollama/id_ed25519` is the registry's signing key, not
-  a quota credential — the widget never reads it. The native Rust
-  provider adds an `Ollama Cloud` tab, a `[ollama]` config block
-  (disabled by default, opt in with `enabled = true` or via the TUI
-  Settings overlay), `{oll_session_pct}` / `{oll_weekly_pct}` placeholders
-  with the usual pace and reset aliases, a per-model breakdown of the
-  five heaviest models in each window in the tooltip, and a
-  `usage --json` entry keyed `ollama`. Plan label comes from config; the
-  API itself does not report one. `tests/fixtures/ollama/good_full.json`
-  pins the real shape, and `tests::live::ollama_live` is the live smoke
-  against the real API. The cache stores the projected snapshot only —
-  the raw body, and the Bearer key with it, is never written to disk.
 
 ## [1.14.0] — 2026-09-08
 
