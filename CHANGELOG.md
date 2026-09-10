@@ -35,6 +35,15 @@ Each release is also published at
 
 ### Fixed
 
+- **`detect` sees Antigravity with the app closed.** Since v1.14.0 Antigravity
+  reports from the Google session it saved, with every product shut — but
+  detection still looked only for a *running* local server, so `detect` skipped
+  a provider that works, and because a vendor is considered once the miss stuck
+  until `--all`. It now also counts the token in our own vendor cache. The
+  keyring is deliberately not read: that can raise a Keychain prompt on macOS,
+  and a background probe must not pop a dialog. The trade is the very first
+  run, before any fetch has persisted a token.
+
 - **Windows tray: "Open TUI" works.** The menu item launched Windows Terminal
   with `wt -e <command>`, but `-e` is wezterm's flag, not Windows Terminal's:
   `wt` rejected it, printed its usage page and exited, so the TUI never
