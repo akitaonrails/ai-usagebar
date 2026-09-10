@@ -104,7 +104,7 @@ windows-sys = { version = "0.61.2", features = [
 # the AUR source build does not pull GTK/WebKit.
 tao = "0.34"
 wry = "0.53"
-tray-icon = "0.21"
+tray-icon = "0.24"
 # Global toggle shortcut for the popover: owns a message-only window and
 # delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.
 global-hotkey = "0.8"
