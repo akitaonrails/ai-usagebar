@@ -9,6 +9,14 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS Claude Code Keychain prompts.** Write normal-sized refreshed OAuth
+  credentials through `/usr/bin/security -i` so the item keeps the
+  `apple-tool:` partition that Claude Code can read, while retaining the native
+  Security.framework write only as the oversized fallback. Existing affected
+  users can clear the bad partition by running a fresh `claude` + `/login`.
+
 ## [1.15.0] — 2026-09-10
 
 ### Added

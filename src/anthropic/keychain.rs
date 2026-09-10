@@ -6,8 +6,8 @@
 //! password item in the login Keychain (service `Claude Code-credentials`), so
 //! the file never exists and a naive read fails with an I/O error.
 //!
-//! Reads, writes and deletes all go through the built-in `security(1)` tool,
-//! because the *writer's* code identity is what macOS stamps onto the item's
+//! Reads, deletes and normal-sized writes go through the built-in `security(1)`
+//! tool, because the *writer's* code identity is what macOS stamps onto the item's
 //! XARA partition list. A native `SecItemAdd`/`SecItemUpdate` from this
 //! process leaves the item owned by `cdhash:<ai-usagebar>`, and every later
 //! read by `/usr/bin/security` — ours *and* Claude Code's — then trips
@@ -19,7 +19,7 @@
 //! Credential JSON still never enters process arguments: the command is fed to
 //! `security -i` on **stdin**, so argv is just `["/usr/bin/security", "-i"]`.
 //! That interactive reader truncates an over-long line *and stores the
-//! truncated value*, so [`SECURITY_STDIN_MAX_LINE`] keeps us clear of the cap
+//! truncated value*, so [`SECURITY_STDIN_SAFE_MAX`] keeps us clear of the cap
 //! and an oversized blob falls back to the native API — the one case where the
 //! cdhash partition can still appear, and one no realistic credential reaches.
 //! The `security-framework` dependency is macOS-gated, keeping Linux builds
@@ -178,12 +178,14 @@ pub fn delete_raw_for(config_dir: &Path) -> Result<()> {
     delete_raw_service(&service_name_for(config_dir)?)
 }
 
-/// `security -i` reads one command per line into a fixed buffer. A longer line
-/// is truncated and the truncated command still *runs*, storing a corrupted
-/// credential and exiting non-zero — measured at 4032 bytes on macOS 26.0, so
-/// stay comfortably under it rather than at it. Compact Claude credential JSON
-/// is ~2.8 KB today, which composes to a ~2.9 KB line.
-const SECURITY_STDIN_MAX_LINE: usize = 4000;
+/// Undocumented truncation cap measured for `security -i` on macOS 26.0.
+const SECURITY_STDIN_MEASURED_CAP: usize = 4032;
+
+/// Operational maximum for a fully composed stdin command. The 32-byte margin
+/// below the measured, undocumented cap avoids relying on its exact boundary.
+const SECURITY_STDIN_SAFE_MAX: usize = 4000;
+
+const _: () = assert!(SECURITY_STDIN_SAFE_MAX < SECURITY_STDIN_MEASURED_CAP);
 
 /// Quote one value for `security -i`'s line tokenizer, which honours backslash
 /// escapes inside a double-quoted token (single quotes do not protect
@@ -219,6 +221,17 @@ fn compose_write_command(service: &str, account: &str, json: &str) -> Option<Str
         quote_for_security_stdin(service)?,
         quote_for_security_stdin(json)?,
     ))
+}
+
+fn command_fits_security_stdin(command: &str) -> bool {
+    command.len() <= SECURITY_STDIN_SAFE_MAX
+}
+
+/// Quote every component first, then apply the operational limit to the final
+/// command bytes that the interactive reader will actually consume.
+fn command_for_security_stdin(service: &str, account: &str, json: &str) -> Option<String> {
+    let command = compose_write_command(service, account, json)?;
+    command_fits_security_stdin(&command).then_some(command)
 }
 
 /// Feed one composed command to `security -i` over stdin, keeping the secret
@@ -282,10 +295,8 @@ fn write_raw_service(service: &str, json: &str) -> Result<()> {
         ));
     };
 
-    match compose_write_command(service, &acct, json) {
-        Some(command) if command.len() <= SECURITY_STDIN_MAX_LINE => {
-            write_via_security_stdin(&command)
-        }
+    match command_for_security_stdin(service, &acct, json) {
+        Some(command) => write_via_security_stdin(&command),
         _ => write_via_native_api(service, &acct, json),
     }
 }
@@ -315,6 +326,135 @@ fn delete_raw_service(service: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    use security_framework::item::{ItemClass, ItemSearchOptions, Limit};
+    #[cfg(target_os = "macos")]
+    use security_framework::os::macos::keychain::SecKeychain;
+    #[cfg(target_os = "macos")]
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    #[cfg(target_os = "macos")]
+    use std::sync::atomic::{AtomicU64, Ordering};
+    #[cfg(target_os = "macos")]
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(target_os = "macos")]
+    const TEST_ACCOUNT: &str = "alice";
+    #[cfg(target_os = "macos")]
+    const ERR_SEC_ITEM_NOT_FOUND_OSSTATUS: i32 = -25300;
+
+    #[cfg(target_os = "macos")]
+    fn unique_test_service(test_name: &str) -> String {
+        static NONCE: AtomicU64 = AtomicU64::new(0);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time is after the Unix epoch")
+            .as_nanos();
+        let nonce = NONCE.fetch_add(1, Ordering::Relaxed);
+        format!(
+            "ai-usagebar-keychain-selftest-{test_name}-{}-{timestamp}-{nonce}",
+            std::process::id()
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    fn matching_item_count(service: &str, account: &str) -> usize {
+        let keychain = SecKeychain::default().expect("default Keychain");
+        let result = ItemSearchOptions::new()
+            .keychains(std::slice::from_ref(&keychain))
+            .class(ItemClass::generic_password())
+            .service(service)
+            .account(account)
+            .limit(Limit::All)
+            .load_attributes(true)
+            .search();
+
+        match result {
+            Ok(items) => items.len(),
+            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND_OSSTATUS => 0,
+            Err(error) => panic!("restricted Keychain count failed: {error}"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn delete_test_item(service: &str, account: &str) -> std::io::Result<()> {
+        let out = Command::new("/usr/bin/security")
+            .args(["delete-generic-password", "-a", account, "-s", service])
+            .output()?;
+        if out.status.success() || out.status.code() == Some(ERR_SEC_ITEM_NOT_FOUND) {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!(
+                "security delete failed with exit code {}",
+                out.status.code().unwrap_or(-1)
+            )))
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct KeychainTestCleanup {
+        service: String,
+        account: &'static str,
+        armed: bool,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl KeychainTestCleanup {
+        fn new(service: String) -> Self {
+            Self {
+                service,
+                account: TEST_ACCOUNT,
+                armed: true,
+            }
+        }
+
+        fn delete_now(&self) -> std::io::Result<()> {
+            delete_test_item(&self.service, self.account)
+        }
+
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for KeychainTestCleanup {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = delete_test_item(&self.service, self.account);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn write_test_item(service: &str, blob: &str) {
+        let command = command_for_security_stdin(service, TEST_ACCOUNT, blob)
+            .expect("synthetic test command is within the safe stdin limit");
+        write_via_security_stdin(&command).expect("write synthetic Keychain item");
+    }
+
+    #[cfg(target_os = "macos")]
+    fn read_test_item_through_security(service: &str) -> Vec<u8> {
+        let out = Command::new("/usr/bin/security")
+            .args([
+                "find-generic-password",
+                "-a",
+                TEST_ACCOUNT,
+                "-s",
+                service,
+                "-w",
+            ])
+            .output()
+            .expect("run security find-generic-password");
+        assert!(
+            out.status.success(),
+            "security read failed with exit code {}",
+            out.status.code().unwrap_or(-1)
+        );
+        out.stdout
+            .strip_suffix(b"\n")
+            .unwrap_or(&out.stdout)
+            .to_vec()
+    }
 
     #[test]
     fn quoting_wraps_and_escapes_backslash_and_quote() {
@@ -340,7 +480,17 @@ mod tests {
     }
 
     #[test]
-    fn quoting_refuses_newlines() {
+    fn composition_fails_closed_on_cr_or_lf_in_every_component() {
+        for line_break in ['\r', '\n'] {
+            let service = format!("service{line_break}injected");
+            let account = format!("alice{line_break}injected");
+            let json = format!("{{\"value\":\"before{line_break}after\"}}");
+
+            assert!(compose_write_command(&service, "alice", "{}").is_none());
+            assert!(compose_write_command(SERVICE, &account, "{}").is_none());
+            assert!(compose_write_command(SERVICE, "alice", &json).is_none());
+        }
+
         // A newline would end the line early and let the rest be read as a
         // further `security` command.
         assert!(quote_for_security_stdin("a\nb").is_none());
@@ -358,9 +508,26 @@ mod tests {
     }
 
     #[test]
-    fn composition_fails_closed_on_an_unquotable_component() {
-        assert!(compose_write_command(SERVICE, "alice", "{\n}").is_none());
-        assert!(compose_write_command("svc\nevil", "alice", "{}").is_none());
+    fn stdin_limits_preserve_the_measured_cap_and_operational_margin() {
+        let safe_boundary = "x".repeat(4000);
+        let over_safe_boundary = "x".repeat(4001);
+        let measured_cap = "x".repeat(4032);
+
+        assert_eq!(safe_boundary.len(), SECURITY_STDIN_SAFE_MAX);
+        assert_eq!(measured_cap.len(), SECURITY_STDIN_MEASURED_CAP);
+        assert!(command_fits_security_stdin(&safe_boundary));
+        assert!(!command_fits_security_stdin(&over_safe_boundary));
+        assert!(!command_fits_security_stdin(&measured_cap));
+    }
+
+    #[test]
+    fn stdin_limit_is_applied_after_quoting_and_escaping() {
+        let raw_json = "\\".repeat(2100);
+        assert!(raw_json.len() < SECURITY_STDIN_SAFE_MAX);
+
+        let composed = compose_write_command("service", "alice", &raw_json).unwrap();
+        assert!(composed.len() > SECURITY_STDIN_SAFE_MAX);
+        assert!(command_for_security_stdin("service", "alice", &raw_json).is_none());
     }
 
     #[test]
@@ -375,12 +542,12 @@ mod tests {
             "r".repeat(1300),
         );
         assert!(json.len() > 2600, "guard is only meaningful on a real blob");
-        let cmd = compose_write_command(SERVICE, "robertopirozzi", &json).unwrap();
+        let cmd = command_for_security_stdin(SERVICE, "alice", &json).unwrap();
         assert!(
-            cmd.len() <= SECURITY_STDIN_MAX_LINE,
+            cmd.len() <= SECURITY_STDIN_SAFE_MAX,
             "a realistic blob composed to {} bytes, over the {} cap",
             cmd.len(),
-            SECURITY_STDIN_MAX_LINE
+            SECURITY_STDIN_SAFE_MAX
         );
     }
 
@@ -395,32 +562,48 @@ mod tests {
     #[ignore = "writes to the real login Keychain"]
     #[cfg(target_os = "macos")]
     fn keychain_round_trip_keeps_one_item_readable_by_security() {
-        const TEST_SERVICE: &str = "ai-usagebar-keychain-selftest";
-        let acct = account().expect("USER is set");
-        let _ = delete_raw_service(TEST_SERVICE);
+        let service = unique_test_service("round-trip");
+        let mut cleanup = KeychainTestCleanup::new(service.clone());
+        assert_eq!(matching_item_count(&service, TEST_ACCOUNT), 0);
 
         let blob = format!(
-            r#"{{"claudeAiOauth":{{"accessToken":"{}","refreshToken":"tok\"with\\quotes","expiresAt":1}}}}"#,
-            "a".repeat(1200)
+            r#"{{"claudeAiOauth":{{"accessToken":"synthetic-{}","refreshToken":"synthetic-with-\"quotes\"-and-\\slashes","expiresAt":1}}}}"#,
+            "a".repeat(1200),
         );
 
         for pass in 0..2 {
-            write_raw_service(TEST_SERVICE, &blob).expect("write");
-            let got = read_raw_service(TEST_SERVICE).expect("read");
-            assert_eq!(got.as_deref(), Some(blob.as_str()), "pass {pass}");
+            write_test_item(&service, &blob);
+            let got = read_test_item_through_security(&service);
+            assert_eq!(got, blob.as_bytes(), "pass {pass}");
         }
 
-        let out = Command::new("/usr/bin/security")
-            .args(["find-generic-password", "-a", &acct, "-s", TEST_SERVICE])
-            .output()
-            .expect("security");
-        let listed = String::from_utf8_lossy(&out.stdout);
         assert_eq!(
-            listed.matches("\"acct\"<blob>").count(),
+            matching_item_count(&service, TEST_ACCOUNT),
             1,
             "-U must update in place, not add a second item"
         );
 
-        delete_raw_service(TEST_SERVICE).expect("cleanup");
+        cleanup.delete_now().expect("cleanup");
+        assert_eq!(matching_item_count(&service, TEST_ACCOUNT), 0);
+        cleanup.disarm();
+    }
+
+    #[test]
+    #[ignore = "writes to the real login Keychain"]
+    #[cfg(target_os = "macos")]
+    fn keychain_round_trip_cleanup_guard_runs_during_panic() {
+        let service = unique_test_service("panic-cleanup");
+        let unwind = catch_unwind(AssertUnwindSafe({
+            let service = service.clone();
+            move || {
+                let _cleanup = KeychainTestCleanup::new(service.clone());
+                write_test_item(&service, r#"{"synthetic":"panic-cleanup"}"#);
+                assert_eq!(matching_item_count(&service, TEST_ACCOUNT), 1);
+                panic!("deliberate panic to exercise RAII cleanup");
+            }
+        }));
+
+        assert!(unwind.is_err(), "the deliberate panic must be caught");
+        assert_eq!(matching_item_count(&service, TEST_ACCOUNT), 0);
     }
 }

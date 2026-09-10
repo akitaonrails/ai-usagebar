@@ -266,8 +266,8 @@ vendor's response shape drifts:
   auth file and pass the paths in; never touch the real ones.
 - `src/anthropic/keychain.rs` — macOS-only Keychain fallback when
   `~/.claude/.credentials.json` is absent (Claude Code on macOS stores
-  the OAuth blob in the login Keychain). Reads, writes and deletes all use
-  `security(1)`: the writer's code identity is what macOS stamps onto the item's
+  the OAuth blob in the login Keychain). Reads, deletes and normal-sized writes
+  use `security(1)`: the writer's code identity is what macOS stamps onto the item's
   XARA partition list, so a native write left the item owned by
   `cdhash:<ai-usagebar>` and made every `/usr/bin/security` read — ours and
   Claude Code's — raise a Keychain dialog (#148). OAuth JSON still never enters
