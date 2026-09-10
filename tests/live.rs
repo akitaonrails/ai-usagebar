@@ -76,6 +76,7 @@ use ai_usagebar::error::AppError;
 use ai_usagebar::kimi;
 use ai_usagebar::kiro;
 use ai_usagebar::minimax;
+use ai_usagebar::ollama;
 use ai_usagebar::openai;
 use ai_usagebar::openrouter;
 use ai_usagebar::supergrok;
@@ -784,5 +785,45 @@ async fn antigravity_remote_live() {
         snap.weekly.as_ref().map(|w| w.utilization_pct),
         snap.third_party_session.as_ref().map(|w| w.utilization_pct),
         snap.third_party_weekly.as_ref().map(|w| w.utilization_pct),
+    );
+}
+
+#[tokio::test]
+#[ignore = "live API"]
+async fn ollama_live() {
+    let Ok(api_key) = std::env::var("OLLAMA_API_KEY") else {
+        eprintln!("OLLAMA_API_KEY not set — skipping ollama_live");
+        return;
+    };
+
+    let cache = xdg_cache_for("ollama");
+    let client = reqwest::Client::new();
+    let endpoints = ollama::fetch::Endpoints::default();
+    let out = ollama::fetch_snapshot(
+        &client,
+        &api_key,
+        "pro",
+        &cache,
+        &endpoints,
+        Duration::from_secs(0),
+    )
+    .await
+    .expect("ollama fetch should succeed against the real API");
+
+    let snap = &out.snapshot;
+    if let Some(w) = snap.session.as_ref() {
+        assert_pct("ollama.session", w.utilization_pct);
+    }
+    if let Some(w) = snap.weekly.as_ref() {
+        assert_pct("ollama.weekly", w.utilization_pct);
+    }
+    assert!(!snap.plan.is_empty(), "ollama plan label empty");
+    println!(
+        "\u{2705} ollama — plan={}, session={:?}, weekly={:?}, session models={}, weekly models={}",
+        snap.plan,
+        snap.session.as_ref().map(|w| w.utilization_pct),
+        snap.weekly.as_ref().map(|w| w.utilization_pct),
+        snap.session_models.len(),
+        snap.weekly_models.len(),
     );
 }

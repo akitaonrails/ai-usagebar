@@ -28,7 +28,9 @@ use ratatui_bubbletea_theme::BubbleTheme;
 use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, value};
 
-use crate::config::{Config, read_config_document, set_bool, write_config_document};
+use crate::config::{
+    Config, is_valid_env_var_name, read_config_document, set_bool, write_config_document,
+};
 use crate::error::{AppError, Result};
 use crate::theme::Theme;
 use crate::tui::style::bubble_theme;
@@ -137,6 +139,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         config_key: "api_key",
         secret_label: "API key",
         note: "usage quota",
+    },
+    KeyVendor {
+        id: VendorId::Ollama,
+        label: "Ollama Cloud",
+        section: VendorId::Ollama.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "ollama.com/settings/keys",
     },
 ];
 
@@ -277,6 +287,20 @@ pub struct SettingsState {
 
 impl SettingsState {
     pub fn from_config(cfg: &Config) -> Self {
+        Self::from_config_with(cfg, |name| {
+            std::env::var_os(name).is_some_and(|v| !v.is_empty())
+        })
+    }
+
+    /// [`Self::from_config`] with an injected environment lookup.
+    ///
+    /// The overlay offers a key-only vendor whose env var is already exported,
+    /// so a user need not hand-edit `config.toml` to select it. That is a read
+    /// of ambient state, which a test must never depend on: the AUR `check()`
+    /// runs `cargo test` during `makepkg`, so a test that branched on the real
+    /// environment would fail the install for anyone who exports, say,
+    /// `OLLAMA_API_KEY`. Tests pass their own lookup here.
+    pub fn from_config_with(cfg: &Config, env_set: impl Fn(&str) -> bool) -> Self {
         let keys = KEY_VENDORS
             .iter()
             .map(|kv| KeyInput::from_config(cfg.inline_api_key(kv.id)))
@@ -287,6 +311,23 @@ impl SettingsState {
         // selecting it persists both the primary and `enabled = true`.
         if !primary_choices.contains(&VendorId::Copilot) {
             primary_choices.push(VendorId::Copilot);
+        }
+        // Key-only vendors are opt-in: without an inline `api_key` and with
+        // the env var empty, the fetch would fail on the first cycle. A user
+        // who already exported the env var (e.g. `OLLAMA_API_KEY`) and wants
+        // to flip `enabled = true` from inside the TUI has to be able to
+        // select the vendor here — otherwise they'd have to hand-edit
+        // `config.toml`, which is the workflow this overlay exists to avoid.
+        // We treat a non-empty env var as a sufficient signal of reachability.
+        for kv in KEY_VENDORS {
+            if primary_choices.contains(&kv.id) {
+                continue;
+            }
+            let env = cfg.api_key_env_for(kv.id);
+            let exported = is_valid_env_var_name(env) && env_set(env);
+            if cfg.inline_api_key(kv.id).is_some() || exported {
+                primary_choices.push(kv.id);
+            }
         }
         // A configured but disabled primary is ineffective. Display the first
         // enabled vendor instead; when none are enabled retain the historical
@@ -479,12 +520,18 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
     }
 
     // Only Copilot is deliberately offered before it is enabled: choosing it
-    // is the explicit opt-in after the GitHub CLI login. All other choices
-    // remain enabled-only, so no failed provider is persisted as primary.
+    // is the explicit opt-in after the GitHub CLI login. The env-only key
+    // vendors (any `KEY_VENDORS` entry whose credential the user reached via
+    // `OLLAMA_API_KEY` or another env var) are also offered before they are
+    // enabled, and selecting them is the explicit opt-in for that vendor —
+    // otherwise a user could pick a vendor in the overlay and the fetch
+    // would still fail because `enabled = false`. Every other choice remains
+    // enabled-only, so no failed provider is persisted as primary.
     if state.primary_choices.contains(&state.primary) {
         set_string(&mut doc, "ui", "primary", state.primary.slug())?;
-        if state.primary == VendorId::Copilot {
-            set_bool(&mut doc, "copilot", "enabled", true)?;
+        if state.primary == VendorId::Copilot || KEY_VENDORS.iter().any(|kv| kv.id == state.primary)
+        {
+            set_bool(&mut doc, state.primary.config_section(), "enabled", true)?;
         }
     }
 
@@ -1071,10 +1118,30 @@ mod tests {
         );
     }
 
+    /// The exported-env-var path is real behaviour and deserves a test of its
+    /// own — just not one that reads the machine it runs on.
+    #[test]
+    fn a_key_vendor_with_its_env_var_exported_is_offered() {
+        let cfg = Config::default();
+        let env = cfg.api_key_env_for(VendorId::Ollama).to_string();
+
+        let without = SettingsState::from_config_with(&cfg, |_| false);
+        assert!(!without.primary_choices.contains(&VendorId::Ollama));
+
+        let with = SettingsState::from_config_with(&cfg, |name| name == env);
+        assert!(
+            with.primary_choices.contains(&VendorId::Ollama),
+            "a key vendor whose env var is exported must be selectable: {:?}",
+            with.primary_choices
+        );
+    }
+
     #[test]
     fn from_config_offers_enabled_vendors_only() {
         let cfg = Config::default();
-        let s = SettingsState::from_config(&cfg);
+        // No ambient environment: this must not depend on whether the machine
+        // running `cargo test` happens to export OLLAMA_API_KEY or friends.
+        let s = SettingsState::from_config_with(&cfg, |_| false);
         let mut expected = cfg.enabled_vendors();
         expected.push(VendorId::Copilot);
         assert_eq!(s.primary_choices, expected);

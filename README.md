@@ -40,6 +40,9 @@ codebase.
 ## Reference guides
 
 - [Configuration](docs/configuration.md)
+- [Development guide](DEVELOPMENT.md)
+- [Windows build guide](docs/windows-build.md)
+- [Ollama Cloud integration](docs/ollama-setup.md)
 - [Claude accounts](docs/claude-accounts.md)
 - [Format placeholders](docs/format-placeholders.md)
 - [Provider endpoints and live tests](docs/vendor-endpoints.md)
@@ -825,6 +828,9 @@ Native desktop coverage varies by integration. The
 reported metric, desktop selector, stability note, and live-test command.
 
 Run `make smoke` to check live response shapes.
+
+For Ollama Cloud setup (Bearer key from ollama.com/settings/keys), see the
+[Ollama integration guide](docs/ollama-setup.md).
 
 ## Format placeholders
 

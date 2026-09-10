@@ -86,6 +86,7 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::CommandCode => {
             crate::commandcode::creds::resolve(config.commandcode.auth_paths.as_deref()).is_ok()
         }
+        VendorId::Ollama => key_present(config, vendor),
     }
 }
 

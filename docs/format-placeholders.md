@@ -19,6 +19,7 @@ metrics expand to an empty string unless noted otherwise.
 | Cursor | `cur` | MiniMax | `mmx` |
 | Kiro CLI | `kir` | Nous Research | `nrs` |
 | OpenCode Go | `ocg` | Command Code | `cmc` |
+| Ollama Cloud | `oll` | | |
 
 The same codes ride the `ai-usagebar usage --json` report as each entry's
 `short_name`, so a native frontend can draw a Waybar-style provider tag without
@@ -290,3 +291,19 @@ derived from the credit ledger against the plan pool, and
 ledger refills. A plan the release does not know, or a response without the
 credit ledger, leaves the monthly family and `{cc_credits_reset}` at `—`.
 `{session_pct}` and `{weekly_pct}` alias the 5-hour and weekly windows.
+
+
+## Ollama Cloud
+
+`{oll_session_pct}`, `{oll_session_reset}`, `{oll_session_pace}`,
+`{oll_weekly_pct}`, `{oll_weekly_reset}`, `{oll_weekly_pace}`,
+`{oll_plan}`, `{oll_cost}`
+
+Ollama Cloud reports the 5-hour session and weekly windows as a fraction of
+the plan limit, so both percentage placeholders are whole numbers after
+clamping to 0..=100. The API does not publish reset timestamps, pace
+deltas, or a plan label: `{oll_plan}` falls back to the `plan` string from
+your config, and the reset/pace families render neutral values when the
+window projection is unavailable. `{oll_cost}` is the dollar figure the
+settings page reports for the last four weeks of activity. `{session_pct}`
+and `{weekly_pct}` alias the two windows.

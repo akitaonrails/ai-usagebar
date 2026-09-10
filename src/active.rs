@@ -119,6 +119,7 @@ fn parse_slug(s: &str) -> Option<VendorId> {
         "nous" => Some(VendorId::NousResearch),
         "opencode-go" => Some(VendorId::OpenCodeGo),
         "commandcode" => Some(VendorId::CommandCode),
+        "ollama" => Some(VendorId::Ollama),
         _ => None,
     }
 }
