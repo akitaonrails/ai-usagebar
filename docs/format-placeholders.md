@@ -32,7 +32,7 @@ and Other Models to the weekly slot; both reset with the billing cycle. Kiro
 has one pool, so it maps `kiro_pct` to both percentage slots.
 
 Claude and Codex also provide `*_elapsed`, `*_pace`, and `*_bar` families.
-Z.AI and MiniMax provide elapsed aliases plus provider-specific pace families.
+Z.AI, MiniMax, and OpenCode Go provide elapsed aliases plus provider-specific pace families.
 Antigravity provides elapsed values plus `{session_model}`, `{weekly_model}`,
 `{scoped_model}`, and `{extra_model}` for whichever of its four windows the
 running product reports — a product that exposes only weekly buckets leaves the
@@ -126,6 +126,22 @@ its reset uses the shared neutral pacing values: elapsed `0` and arrow `→`.
 `{session_elapsed}` and `{weekly_elapsed}` alias the text pool. Optional video
 windows return `—` when absent. As with Z.AI, a present window without a reset
 uses elapsed `0` and the neutral `→` pace marker.
+
+## OpenCode Go
+
+`{ocg_plan}`, `{ocg_rolling_pct}`, `{ocg_rolling_reset}`,
+`{ocg_rolling_elapsed}`, `{ocg_rolling_pace}`,
+`{ocg_rolling_pace_indicator}`, `{ocg_weekly_pct}`, `{ocg_weekly_reset}`,
+`{ocg_weekly_elapsed}`, `{ocg_weekly_pace}`,
+`{ocg_weekly_pace_indicator}`, `{ocg_monthly_pct}`, `{ocg_monthly_reset}`,
+`{ocg_rolling_status}`, `{ocg_weekly_status}`, `{ocg_monthly_status}`
+
+`{session_elapsed}` and `{weekly_elapsed}` are cross-provider aliases for the
+rolling (5h) and weekly (7d) windows. An absent window returns empty elapsed
+and pace values. The monthly window keeps `pct`/`reset`/`status` but has no
+pace family: its cycle follows the subscription date, so no fixed length is
+exact. Rolling (5h) and weekly (7d) lengths are constants: the usage endpoint
+reports only `percent` and `resetsAt`, never a duration.
 
 ## OpenRouter
 

@@ -39,8 +39,25 @@ Each release is also published at
   pins the real shape, and `tests::live::ollama_live` is the live smoke
   against the real API. The cache stores the projected snapshot only —
   the raw body, and the Bearer key with it, is never written to disk.
+- **OpenCode Go pacing.** The rolling (5h) and weekly (7d) windows now expose
+  `{ocg_rolling|weekly_elapsed}`, `{ocg_rolling|weekly_pace}`, and
+  `{ocg_rolling|weekly_pace_indicator}` placeholders plus `{session_elapsed}`
+  / `{weekly_elapsed}` aliases, pace arrows in the Waybar tooltip, and paced
+  rows in the TUI panel and `usage --json` report footnotes. The monthly
+  window keeps its reset countdown but is not paced: its cycle follows the
+  subscription date, so no fixed length is exact and no `window_secs` is
+  published for it. Window lengths are constants: the usage endpoint reports
+  only `percent` and `resetsAt`.
 
 ### Fixed
+
+- **Windows tray: "Open TUI" works.** The menu item launched Windows Terminal
+  with `wt -e <command>`, but `-e` is wezterm's flag, not Windows Terminal's:
+  `wt` rejected it, printed its usage page and exited, so the TUI never
+  started and the user saw a flash of help text. It now uses
+  `wt new-tab -- <command>`. `spawn()` reports only that the process started,
+  which is why the wrong flag looked like a success and fell through to no
+  fallback.
 
 - **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
   instead of a fixed-width horizontal `ListView`. With five or more providers
