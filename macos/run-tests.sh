@@ -14,7 +14,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "› Compiling + running tests…"
-swiftc -O -parse-as-library -D SWIFT_TEST_HARNESS \
+mkdir -p "$TMP/cache"
+swiftc -module-cache-path "$TMP/cache" -O -parse-as-library -D SWIFT_TEST_HARNESS \
   "$DIR/ai-usagebar-menubar.swift" \
   "$DIR/ai-usagebar-tests.swift" \
   -o "$TMP/ai-usagebar-tests"

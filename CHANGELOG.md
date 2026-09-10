@@ -9,6 +9,20 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **macOS menu bar support for remaining CLI vendors.** Copilot, SuperGrok,
+  MiniMax, Kiro, Nous Research, OpenCode Go, and Command Code are now available
+  in the macOS menu bar, resolving metadata dynamically via `ai-usagebar vendors --json`.
+
+- **macOS specific quota pools.** Support monthly usage windows, MiniMax video
+  quotas, Copilot completions, and explicit unlimited quota display without
+  misleading 0% progress bars.
+
+- **macOS environment PATH injection.** Injects `/opt/homebrew/bin`,
+  `/usr/local/bin`, and `~/.cargo/bin` into subprocess environments for vendor
+  tools.
+
 ### Fixed
 
 - **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
