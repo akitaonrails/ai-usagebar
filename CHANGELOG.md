@@ -35,6 +35,14 @@ Each release is also published at
 
 ### Fixed
 
+- **Windows tray: "Open TUI" works.** The menu item launched Windows Terminal
+  with `wt -e <command>`, but `-e` is wezterm's flag, not Windows Terminal's:
+  `wt` rejected it, printed its usage page and exited, so the TUI never
+  started and the user saw a flash of help text. It now uses
+  `wt new-tab -- <command>`. `spawn()` reports only that the process started,
+  which is why the wrong flag looked like a success and fell through to no
+  fallback.
+
 - **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
   instead of a fixed-width horizontal `ListView`. With five or more providers
   enabled the list overflowed the panel's edge and the extra entries were
