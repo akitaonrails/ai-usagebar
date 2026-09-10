@@ -199,7 +199,7 @@ func testDefaultEnabled() {
         assertEqual(defaultEnabled(id), true, "\(id) defaults enabled")
     }
     for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
-               "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode"] {
+               "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode", "ollama"] {
         assertEqual(defaultEnabled(id), false, "\(id) defaults disabled (opt-in)")
     }
 }
@@ -465,6 +465,20 @@ func testParserBalances() {
     assertEqual(cmd?.weeklyLabel, "Weekly", "commandcode weekly label")
     assertEqual(cmd?.sonnet?.pct, 65, "commandcode monthly pct")
     assertEqual(cmd?.sonnetLabel, "Monthly", "commandcode monthly label")
+
+    let ollama = snapshot(FORMAT, vendor: "ollama",
+                          fields: fields(through: 16, set: [
+                             0: "pro", 1: "82", 2: "4h 59m", 3: "23", 4: "6d 0h",
+                             13: "10", 14: "45", 16: "oll"
+                          ]))
+    assertEqual(ollama?.hasUsageWindows, true, "ollama shows windows")
+    assertEqual(ollama?.session?.pct, 82, "ollama session pct")
+    assertEqual(ollama?.sessionLabel, "Session", "ollama session label")
+    assertEqual(ollama?.sessionTag, "5h", "ollama session tag")
+    assertEqual(ollama?.session?.elapsed, 10, "ollama session elapsed")
+    assertEqual(ollama?.weekly?.pct, 23, "ollama weekly pct")
+    assertEqual(ollama?.weeklyLabel, "Weekly", "ollama weekly label")
+    assertEqual(ollama?.weekly?.elapsed, 45, "ollama weekly elapsed")
 
     let sgk = snapshot(FORMAT, vendor: "supergrok",
                        fields: fields(through: 40, set: [
