@@ -103,7 +103,7 @@ windows-sys = { version = "0.61.2", features = [
 # Tray popover host: NotifyIcon + WebView2. Linux/macOS never compile these so
 # the AUR source build does not pull GTK/WebKit.
 tao = "0.37"
-wry = "0.53"
+wry = "0.56"
 tray-icon = "0.24"
 # Global toggle shortcut for the popover: owns a message-only window and
 # delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.
