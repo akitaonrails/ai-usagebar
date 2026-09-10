@@ -287,6 +287,20 @@ pub struct SettingsState {
 
 impl SettingsState {
     pub fn from_config(cfg: &Config) -> Self {
+        Self::from_config_with(cfg, |name| {
+            std::env::var_os(name).is_some_and(|v| !v.is_empty())
+        })
+    }
+
+    /// [`Self::from_config`] with an injected environment lookup.
+    ///
+    /// The overlay offers a key-only vendor whose env var is already exported,
+    /// so a user need not hand-edit `config.toml` to select it. That is a read
+    /// of ambient state, which a test must never depend on: the AUR `check()`
+    /// runs `cargo test` during `makepkg`, so a test that branched on the real
+    /// environment would fail the install for anyone who exports, say,
+    /// `OLLAMA_API_KEY`. Tests pass their own lookup here.
+    pub fn from_config_with(cfg: &Config, env_set: impl Fn(&str) -> bool) -> Self {
         let keys = KEY_VENDORS
             .iter()
             .map(|kv| KeyInput::from_config(cfg.inline_api_key(kv.id)))
@@ -310,9 +324,8 @@ impl SettingsState {
                 continue;
             }
             let env = cfg.api_key_env_for(kv.id);
-            let env_set =
-                is_valid_env_var_name(env) && std::env::var_os(env).is_some_and(|v| !v.is_empty());
-            if cfg.inline_api_key(kv.id).is_some() || env_set {
+            let exported = is_valid_env_var_name(env) && env_set(env);
+            if cfg.inline_api_key(kv.id).is_some() || exported {
                 primary_choices.push(kv.id);
             }
         }
@@ -1105,10 +1118,30 @@ mod tests {
         );
     }
 
+    /// The exported-env-var path is real behaviour and deserves a test of its
+    /// own — just not one that reads the machine it runs on.
+    #[test]
+    fn a_key_vendor_with_its_env_var_exported_is_offered() {
+        let cfg = Config::default();
+        let env = cfg.api_key_env_for(VendorId::Ollama).to_string();
+
+        let without = SettingsState::from_config_with(&cfg, |_| false);
+        assert!(!without.primary_choices.contains(&VendorId::Ollama));
+
+        let with = SettingsState::from_config_with(&cfg, |name| name == env);
+        assert!(
+            with.primary_choices.contains(&VendorId::Ollama),
+            "a key vendor whose env var is exported must be selectable: {:?}",
+            with.primary_choices
+        );
+    }
+
     #[test]
     fn from_config_offers_enabled_vendors_only() {
         let cfg = Config::default();
-        let s = SettingsState::from_config(&cfg);
+        // No ambient environment: this must not depend on whether the machine
+        // running `cargo test` happens to export OLLAMA_API_KEY or friends.
+        let s = SettingsState::from_config_with(&cfg, |_| false);
         let mut expected = cfg.enabled_vendors();
         expected.push(VendorId::Copilot);
         assert_eq!(s.primary_choices, expected);
