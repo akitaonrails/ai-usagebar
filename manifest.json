@@ -5,7 +5,7 @@
   "version": "1.15.0",
   "author": "AkitaOnRails",
   "license": "MIT",
-  "description": "Multi-provider AI plan usage and balances in a native Omarchy Quattro panel.",
+  "description": "Multi-provider AI plan usage and balances in a native Omarchy Quattro panel. Needs the ai-usagebar binary as well as this plugin: omarchy pkg aur add ai-usagebar-bin",
   "kinds": [
     "bar-widget"
   ],
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "AI Usage",
-    "description": "Usage windows, reset countdowns, balances, and provider switching for every provider configured in ai-usagebar.",
+    "description": "Usage windows, reset countdowns, balances, and provider switching for every provider configured in ai-usagebar. This is the display frontend only — install the binary with omarchy pkg aur add ai-usagebar-bin.",
     "category": "AI",
     "aliases": [
       "ai-usage",
