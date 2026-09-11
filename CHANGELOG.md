@@ -23,6 +23,17 @@ Each release is also published at
   not offer falls back to the highest percent rather than blanking the bar.
   Panel rows and alert state still follow the highest percent regardless.
 
+### Changed
+
+- **Omarchy install is one paste, and the marketplace card says what it needs.**
+  The plugin is the display frontend; it reads the `ai-usagebar` binary, which
+  installs through a different manager (the binary is a system package, the
+  plugin is per-user config under `~/.config/omarchy/plugins/`), so the two
+  steps cannot become one command. They are now one copy-paste, and the
+  manifest description — which plugins.omarchy.org shows verbatim on the card —
+  names the binary requirement, because the marketplace's Install button copies
+  only the `omarchy plugin add` half.
+
 ## [1.15.0] — 2026-09-10
 
 ### Added
