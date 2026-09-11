@@ -9,7 +9,6 @@ Each release is also published at
 
 ## [Unreleased]
 
-
 ### Changed
 
 - **Omarchy install is one paste, and the marketplace card says what it needs.**
@@ -20,6 +19,16 @@ Each release is also published at
   manifest description — which plugins.omarchy.org shows verbatim on the card —
   names the binary requirement, because the marketplace's Install button copies
   only the `omarchy plugin add` half.
+
+### Fixed
+
+- **macOS menu bar knew the wrong default for Ollama Cloud.**
+  `defaultEnabled("ollama")` fell through to `true` while Rust ships
+  `[ollama] enabled = false` (opt-in), so the menu bar could treat Ollama
+  as enabled when the config omits the flag. It now returns `false`,
+  matching `src/config.rs`, and the Swift contract test pins it alongside
+  the other opt-in vendors. Ollama's Session/Weekly bars already rendered
+  through the generic `parse()` path — no format change.
 
 ## [1.15.0] — 2026-09-10
 

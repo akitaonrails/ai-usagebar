@@ -1365,13 +1365,13 @@ func addAccountScript(binary: String, label: String, desktop: Bool) -> String {
 }
 
 /// Rust defaults (`src/config.rs`): the OAuth/api-key vendors that ship enabled,
-/// versus the opt-in balance vendors that default to disabled. An omitted
+/// versus the opt-in vendors that default to disabled. An omitted
 /// `[vendor].enabled` must reproduce these, not silently enable everything.
 func defaultEnabled(_ id: String) -> Bool {
     switch id {
     case "anthropic", "openai", "zai", "openrouter": return true
     case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
-         "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode": return false
+         "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode", "ollama": return false
     default: return true
     }
 }
@@ -1584,9 +1584,9 @@ struct SettingsView: View {
     @State private var launchAtLogin = launchAgentIsInstalled()
     @State private var launchAtLoginError: String?
 
-    // Only enabled vendors appear in the selector: Rust treats opt-in vendors
-    // (deepseek/kimi/kilo/novita/moonshot/grok/anthropic_api) as disabled when
-    // their `[vendor].enabled` is omitted, and so must this picker. Claude
+    // Only vendors marked enabled by the Rust catalog appear in the selector.
+    // Currently, anthropic/openai/zai/openrouter default to enabled; the remaining
+    // built-in vendors are opt-in. Claude
     // accounts appear as their `vendor@<label>` pseudo-ids, same as the
     // "Switch provider" submenu.
     private var vendors: [String] {
