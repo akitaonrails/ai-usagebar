@@ -193,6 +193,10 @@ fn parse_cache_at(bytes: &[u8], account: &str, now: DateTime<Utc>) -> Result<Cur
             .as_bool()
             .ok_or_else(|| AppError::Schema("cursor cache: invalid on-demand flag".into()))?,
         reset_at: Some(reset_at),
+        cycle_start: v
+            .get("cycle_start")
+            .and_then(|c| parse_cache_datetime(c).ok())
+            .flatten(),
     })
 }
 
@@ -218,6 +222,7 @@ fn snap_to_json(snap: &CursorSnapshot, account: &str) -> serde_json::Value {
         "unlimited": snap.unlimited,
         "on_demand_enabled": snap.on_demand_enabled,
         "reset_at": snap.reset_at.map(|dt| dt.to_rfc3339()),
+        "cycle_start": snap.cycle_start.map(|dt| dt.to_rfc3339()),
     })
 }
 

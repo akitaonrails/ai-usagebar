@@ -22,20 +22,27 @@ codebase.
   60 seconds. Its navigation can use a sidebar, navbar, or no vendor box.
 - An optional Claude Code context view reads recent local session usage without
   scanning entire histories.
-- Native integrations are available for Omarchy, GNOME Shell, KDE Plasma 6, and
-  the macOS menu bar.
+- Native integrations are available for Omarchy, GNOME Shell, KDE Plasma 6,
+  the macOS menu bar, and a Windows system-tray popover.
 - One bar item can cycle through enabled providers. `[ui] primary` controls the
   initial provider in both the widget and TUI.
 - Atomic caches and file locking prevent duplicate requests from multi-monitor
   Waybar setups.
 - Network failures keep the previous data visible; HTTP errors appear in the
   tooltip.
+- A vendor that answers HTTP 429 is left alone for five minutes: the last good
+  snapshot keeps showing, or the entry reads "rate limited; next attempt in 4m"
+  and no request is made until then (every vendor on the shared cache; Nous
+  Research has its own path).
 - `--pretty`, `--watch N`, and `make smoke` help with local testing and API
   response changes.
 
 ## Reference guides
 
 - [Configuration](docs/configuration.md)
+- [Development guide](DEVELOPMENT.md)
+- [Windows build guide](docs/windows-build.md)
+- [Ollama Cloud integration](docs/ollama-setup.md)
 - [Claude accounts](docs/claude-accounts.md)
 - [Format placeholders](docs/format-placeholders.md)
 - [Provider endpoints and live tests](docs/vendor-endpoints.md)
@@ -184,15 +191,36 @@ make install PREFIX=$HOME/.local   # → ~/.local/bin
 
 ### Windows
 
-The **Waybar widget is Wayland-only and does not apply to Windows.** The
-**`ai-usagebar-tui`** binary, however, runs natively, and `ai-usagebar --json`
-/ `--pretty` work too (handy for feeding a custom tray/widget). Build with a
-standard Rust toolchain:
+The **Waybar widget is Wayland-only and does not apply to Windows.** Use the
+**system-tray popover** (`ai-usagebar-tray`) or **`ai-usagebar-tui`**. The tray
+reads the same `usage --json` report as the KDE plasmoid, in-process — no
+console window. `ai-usagebar --json` / `--pretty` still work for scripting.
+
+![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](screenshots/windows-tray-dashboard.png)
+
+Build with a standard Rust toolchain plus **Node.js 20+** (the tray WebView is
+a Vite app; `build.rs` runs `npm run build` on Windows). WebView2 Evergreen
+ships with Windows 11 and recent Windows 10:
 
 ```powershell
 cargo build --release
-# binaries land in target\release\ai-usagebar.exe and ai-usagebar-tui.exe
+# binaries: target\release\ai-usagebar.exe, ai-usagebar-tui.exe, ai-usagebar-tray.exe
+.\target\release\ai-usagebar-tray.exe
 ```
+
+Pin the icon in the Windows 11 notification overflow if it hides behind the
+chevron. Right-click the icon for Refresh, Detect Providers, Open TUI, Start
+with Windows, and Quit; left-click opens the popover. On its first run the
+tray detects which vendors already have a credential on this PC (local files
+and keys only, never the network) and turns exactly those on in
+`config.toml` — it never turns a vendor off. Settings adds a global shortcut
+that toggles the popover from anywhere, the poll interval, and an update mode
+(Automatic / Notify me / Off) that installs new releases from GitHub after
+verifying their `.sha256`; all three live in the `[tray]` section of
+`config.toml` (`shortcut`, `refresh_minutes` = 1, 5 or 10; default 5;
+`updates`). See [windows/README.md](windows/README.md).
+
+![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](screenshots/windows-tray-icon.png)
 
 Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
@@ -222,7 +250,7 @@ come from environment variables or `config.toml`.
 | Grok (xAI) | Management key | Opt in with `XAI_MANAGEMENT_KEY` or config. An inference key does not work. |
 | SuperGrok | Existing `grok login` (its `auth.json` key, or its ACP extension) | Opt in, install Grok Build, and run `grok login`. This reports subscription usage, not the Management API balance. |
 | MiniMax | Token Plan subscription key | Opt in with `MINIMAX_API_KEY` or config. Choose the matching global or China region; pay-as-you-go keys do not work. |
-| Google Antigravity | Local Antigravity server | Opt in and keep Antigravity or an interactive `agy` session running. |
+| Google Antigravity | Local Antigravity server, or the saved Google session | Opt in. With Antigravity or an interactive `agy` session running the quota comes from its local server; when both are closed ai-usagebar reads the Google OAuth session Antigravity saved in the OS keyring (`gemini` / `antigravity`) and asks the Cloud Code API directly, refreshing the token through Google when it expired. |
 | Cursor | Existing Cursor IDE or `cursor-agent` login | Opt in and sign in once. `cursor-agent` is the headless fallback. |
 | Kiro CLI | Existing kiro-cli login | Opt in and run `kiro-cli login` once. ai-usagebar refreshes the session when needed. |
 | Nous Research | OAuth device flow | Enable `[nous]`, click **Log in with Nous Research** in the Omarchy settings panel, or run `ai-usagebar auth nous login`. Credentials are kept in ai-usagebar's separate platform config directory (`~/.config/ai-usagebar/credentials.json` on Linux). |
@@ -256,8 +284,9 @@ accounts cannot reuse another account's fresh or stale usage.
 
 Command Code meters spend rather than tokens, so its two rolling windows are
 priced in dollars: `$1.23 of $14.00` for the 5-hour window and `$5.24 of $35.00`
-for the weekly one, alongside the monthly credit that is left. The percentages
-the bar and the meters show are derived from those figures.
+for the weekly one. The monthly credit allowance renders as a third window with
+the derived spend against the plan's pool and a reset countdown from the
+subscription's billing period end.
 
 **There is no key to enter, and no key field in the settings panel.**
 Command Code appears in the provider selector but not in the key list, the same
@@ -324,6 +353,54 @@ stores, editor state, or browser state, and never writes the token to config or
 cache. `GITHUB_COPILOT_TOKEN` is an optional explicit environment override and
 takes precedence over GitHub CLI OAuth.
 
+### Custom providers (static token)
+
+A service ai-usagebar does not know can still get a TUI tab and a
+`usage --json` entry — and so a card in every frontend that reads
+`usage --json` — when it exposes a JSON endpoint and accepts a static token.
+Declare it as a `[[custom]]` table in `config.toml`; the JSON is mapped with
+[RFC 6901 JSON Pointers](https://datatracker.ietf.org/doc/html/rfc6901):
+
+```toml
+[[custom]]
+id = "mytool"                    # slug; the entry id becomes custom:mytool
+name = "My Tool"                 # header / tab label
+short_name = "myt"               # three lowercase letters, unique
+enabled = true
+url = "https://api.example.com/v1/usage"   # https unless allow_http = true
+api_key_env = "MYTOOL_API_KEY"   # env var first, inline api_key second
+# api_key = "..."
+# auth_header = "Authorization"  # default; auth_scheme = "Bearer" (empty sends the raw key)
+# headers = { "X-Org" = "acme" } # extra non-secret headers
+# plan = "Pro"                   # literal, or plan_path = "/subscription/tier"
+# cache_ttl_secs = 60
+
+[[custom.metrics]]
+label = "Requests"
+used = "/usage/requests/used"    # numbers or numeric strings
+limit = "/usage/requests/limit"  # or percent = "/usage/pct" instead of used + limit
+resets_at = "/usage/requests/reset_at"   # RFC 3339, epoch seconds or epoch ms
+window_secs = 86400              # window length; reported as `window_secs` for pacing
+
+[[custom.texts]]
+label = "Balance"
+value = "/balance/display"
+```
+
+Each metric renders as a meter with the usual severity colours; texts render
+as one-line rows. The cache under `<cache>/ai-usagebar/custom/<id>` holds the
+projected snapshot (only the values the pointers selected, never the response
+body) with the same stale-while-revalidate rules as the built-in vendors, and
+an error names the failing pointer, never the response body or the key. The
+`api_key_env` variable is scrubbed from every child process ai-usagebar
+spawns, like the built-in ones.
+
+Limits by design: static tokens only (no OAuth or refresh flows); GET
+requests; no scripting. Custom providers appear in the TUI, in `usage --json`,
+and in every frontend that reads `usage --json`, but not in the Waybar
+widget's `--vendor` list, the TUI Settings overlay, `[ui] primary`, or the
+`vendors` catalog.
+
 ### Credential resolution order (for API-key vendors)
 
 For each API-key vendor, ai-usagebar checks in this order:
@@ -338,10 +415,20 @@ For each API-key vendor, ai-usagebar checks in this order:
   Redact them before committing that file to dotfiles. Environment variables
   remain the default and avoid storing keys in the config.
 - Claude and Codex credentials stay in files managed by their official CLIs.
-- SuperGrok credentials stay inside Grok Build. ai-usagebar receives a
-  credential-free billing result and hashes auth/config files only to separate
-  caches between logins.
+- SuperGrok credentials stay inside Grok Build. ai-usagebar reads the login's
+  `key` from `auth.json` and uses it in the outgoing `Authorization` headers
+  of the billing request and the remaining-resets RPC; it never copies,
+  caches, refreshes, or writes that key back. Auth/config files are also
+  hashed as opaque bytes to separate caches between logins.
 - Cursor's `state.vscdb` and `cursor-agent` fallback `auth.json` are read-only.
+- Antigravity's keyring entry is read-only. A refreshed access token goes to
+  `antigravity/oauth.json` in the cache dir (mode `600` on Unix), keyed by a
+  fingerprint of the refresh token so a different login never reuses it.
+  Renewing the session needs Antigravity's own OAuth client id and secret in
+  `[antigravity] oauth_client_id` / `oauth_client_secret`; they are public
+  installed-app credentials, but nothing secret-shaped ships in this
+  repository, so without them the fallback lasts only as long as the saved
+  access token.
 - kiro-cli's `data.sqlite3` is read-only. Refreshed credentials go to an
   account-scoped `kiro/oauth.json` file, mode `600` on Unix.
 
@@ -358,11 +445,61 @@ macOS's `security` tool to read and refresh the `Claude Code-credentials` item.
 - Named accounts use the scoped Keychain item on macOS and fall back to their
   credentials file on Linux.
 
+## Known issues
+
+### macOS: repeated Keychain prompts for Claude Code (#148)
+
+**Affects every release up to and including 1.10.0, on macOS only.**
+
+When ai-usagebar refreshes the Claude OAuth token it writes the result back to
+the login Keychain through the native Security.framework API. That marks the
+`Claude Code-credentials` item as belonging to ai-usagebar's own code signature
+(`cdhash:…`). Claude Code reads the same item with `/usr/bin/security`, whose
+partition is `apple-tool:`, so from the next launch onward every read raises a
+Keychain permission dialog — once per `claude` process, which means bursts of
+them across subagents, `claude -p` jobs and IDE integrations.
+
+`securityd` logs it as `ACL partition mismatch`. **"Always Allow" does not
+help**: it edits the trusted-application list, not the partition list.
+
+To clear it, sign in to Claude Code again:
+
+```
+claude
+/login
+```
+
+Claude Code recreates the item through `security`, restoring the `apple-tool:`
+partition. Note that ai-usagebar's next token write-back reintroduces the
+problem, so this is relief rather than a cure.
+
+To stop it recurring until the fix ships, set `enabled = false` under
+`[anthropic]` in `config.toml`. That removes Claude from the panel and from the
+automatic refresh cycle, so nothing writes to the Keychain. An explicit
+`ai-usagebar --vendor anthropic` still fetches — `--vendor` overrides the
+enabled flag by design — so avoid that too while the workaround is in place.
+
+A fix — writing through `security(1)` so the writer and reader share a
+partition — is being worked on in [#148]. Linux is unaffected: there the
+credential is a file, not a Keychain item.
+
+[#148]: https://github.com/akitaonrails/ai-usagebar/issues/148
+
 ## Configuration
 
 The optional config file is `~/.config/ai-usagebar/config.toml`. Claude,
 Codex, Z.AI, and OpenRouter are enabled by default; other providers are
 opt-in.
+
+Both binaries also accept `--config <PATH>` to read and write an alternate
+file instead of the default (`%APPDATA%\ai-usagebar\config.toml` on Windows).
+The file must already exist, and the override applies to every subcommand —
+handy for testing a config side by side with the real one:
+
+```bash
+ai-usagebar usage --json --config ./config.test.toml
+ai-usagebar-tui --config ./config.test.toml
+```
 
 A minimal example:
 
@@ -400,6 +537,19 @@ ai-usagebar --json
 ai-usagebar usage
 ai-usagebar usage --json | jq '.entries[] | {id, metrics, sections}'
 
+# Turn on every vendor that already has a credential on this machine
+# (local files, keychains, saved keys, env vars — never the network).
+# Only vendors never checked before are probed; --all re-checks everything.
+# Detection only ever sets enabled = true; it never turns a vendor off, and
+# never overrules an `enabled = false` you wrote yourself — not even --all.
+ai-usagebar detect
+ai-usagebar detect --all --json
+
+# Every provider that exists — the switched-off and the never-configured
+# included — with how each authenticates and whether it is usable here.
+ai-usagebar vendors
+ai-usagebar vendors --json | jq '.vendors[] | select(.enabled and (.configured|not))'
+
 # Live preview while iterating on --format / --tooltip-format.
 ai-usagebar --vendor openrouter --watch 5
 
@@ -413,9 +563,24 @@ The JSON report has two views of each provider:
 - `sections` preserves the complete ordered display, including balances,
   grouped rows, and spacers. Rows without a percentage do not invent one.
 
+`usage` reports only the providers that are **enabled**, which makes the
+switched-off and the never-credentialed exactly the rows it cannot describe.
+`vendors --json` is the catalog that covers them: one row per provider with its
+`kind` (`oauth` / `apikey` / `local`), whether config has it `enabled`, whether
+this machine has the credential it needs (`configured`), the environment
+variable it reads (honoring an `api_key_env` override), and the `login` command
+that fixes it. It contacts nothing. A frontend drawing a per-provider health
+list reads both and needs no provider table of its own — `needs_credential` is
+`false` only for Antigravity, which has no credential to be missing.
+
 The report also includes the configured `primary` id. Each entry has
 `display_name`, `short_name`, `status`, `stale`, and `fetched_at`; metric rows
-may add `severity` and an absolute `reset_at`. These fields are additive, so
+may add `severity`, an absolute `reset_at`, and `window_secs`, the exact length
+of the reset window in seconds. `window_secs` is present only when the vendor
+states the window (rolling 5h/7d windows; Cursor's billing cycle from
+`billingCycleStart`/`billingCycleEnd`, assumed to be 30 days when the start is
+missing) and is omitted, not `null`, otherwise — a calendar month or an unstated
+window gives a frontend nothing to pace against. These fields are additive, so
 existing consumers remain compatible. `short_name` is the same three-letter
 code `{vendor_short}` prints, so a frontend that wants a compact provider tag
 takes it from the report instead of keeping its own table.
@@ -471,13 +636,14 @@ The plugin depends only on the `ai-usagebar` executable. It runs the fixed
 only after a right-click. It installs no service, asks for no elevated
 privileges, and does not overwrite user configuration.
 
-### GNOME, KDE and macOS
+### GNOME, KDE, macOS and Windows
 
 | Integration | Supported providers | Notes |
 |---|---|---|
-| [macOS menu bar](macos/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok (xAI), Anthropic API, Cursor, Google Antigravity, Tavily | Fourteen providers. |
+| [macOS menu bar](macos/README.md) | All providers supported by the binary (`vendors --json`) | Rate-limit windows, monthly & video pools, balances, multiple accounts, Overview. |
 | [GNOME Shell](gnome-extension/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Google Antigravity | Antigravity's two quota pools appear as grouped rows. |
 | [KDE Plasma 6](kde-plasmoid/README.md) | Whatever `usage --json` reports | Provider tabs in the popup; vendor is per applet instance. |
+| [Windows tray](windows/README.md) | Whatever `usage --json` reports | NotifyIcon + WebView2 popover; left-click the tray icon. |
 
 Cursor is not available in the GNOME extension yet. On GNOME, use
 `ai-usagebar --vendor cursor` or open the TUI.
@@ -664,6 +830,9 @@ reported metric, desktop selector, stability note, and live-test command.
 
 Run `make smoke` to check live response shapes.
 
+For Ollama Cloud setup (Bearer key from ollama.com/settings/keys), see the
+[Ollama integration guide](docs/ollama-setup.md).
+
 ## Format placeholders
 
 Use placeholders in `--format` and `--tooltip-format`:
@@ -675,6 +844,11 @@ ai-usagebar --vendor openrouter --format '${or_balance} remaining'
 
 Shared claudebar placeholders and every provider-specific field are listed in
 the [format placeholder reference](docs/format-placeholders.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the pre-PR gate, the checklist,
+and the bar a new provider has to clear.
 
 ## Local development
 

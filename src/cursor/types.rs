@@ -61,6 +61,10 @@ pub struct UsageSummary {
     /// schema drift, not a "no reset" state.
     #[serde(rename = "billingCycleEnd")]
     pub billing_cycle_end: String,
+    /// RFC3339 start of the current billing cycle. Optional: it only feeds
+    /// the pace window, so a response without it still parses.
+    #[serde(rename = "billingCycleStart", default)]
+    pub billing_cycle_start: Option<String>,
     #[serde(rename = "individualUsage")]
     pub individual_usage: Option<IndividualUsage>,
     /// Team-account usage. Present (possibly `{}`) whether or not the caller
@@ -151,6 +155,12 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
             ))
         })?
         .with_timezone(&Utc);
+    // Best-effort: an unparsable start only costs the exact pace window.
+    let cycle_start = resp
+        .billing_cycle_start
+        .as_deref()
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
 
     let plan = title_case(&resp.membership_type);
 
@@ -166,6 +176,7 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
             unlimited: true,
             on_demand_enabled: false,
             reset_at: Some(reset_at),
+            cycle_start,
         });
     }
 
@@ -189,6 +200,7 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
             unlimited: false,
             on_demand_enabled,
             reset_at: Some(reset_at),
+            cycle_start,
         });
     }
 
@@ -221,6 +233,7 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
             unlimited: false,
             on_demand_enabled,
             reset_at: Some(reset_at),
+            cycle_start,
         });
     }
 
@@ -358,6 +371,7 @@ mod tests {
             membership_type: "pro".into(),
             is_unlimited: false,
             billing_cycle_end: "2026-08-04T00:00:00Z".into(),
+            billing_cycle_start: None,
             individual_usage: Some(IndividualUsage {
                 plan: Some(PlanUsage {
                     auto_percent_used: f64::NAN,

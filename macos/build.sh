@@ -4,7 +4,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 command -v swiftc >/dev/null || {
-    echo "swiftc não encontrado. Instale as Command Line Tools:" >&2
+    echo "swiftc not found. Install the Command Line Tools:" >&2
     echo "  xcode-select --install" >&2
     exit 1
 }

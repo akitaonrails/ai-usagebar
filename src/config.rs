@@ -9,6 +9,7 @@
 //! [openrouter] enabled = true
 //! [deepseek]   enabled = false
 //! [kimi]       enabled = false
+//! [[custom]]   id = "mytool"   # user-defined HTTP provider, static token
 //! ```
 //!
 //! Every field is optional with sensible defaults — missing config file is
@@ -38,6 +39,7 @@ use crate::vendor::VendorId;
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub ui: UiConfig,
+    pub tray: TrayConfig,
     pub context: ContextConfig,
     pub anthropic: AnthropicConfig,
     pub anthropic_api: AnthropicApiConfig,
@@ -61,6 +63,9 @@ pub struct Config {
     pub opencode_go: OpenCodeGoConfig,
     pub commandcode: CommandCodeConfig,
     pub tavily: TavilyConfig,
+    pub ollama: OllamaConfig,
+    /// User-defined providers, one `[[custom]]` table each.
+    pub custom: Vec<CustomProviderConfig>,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -82,6 +87,68 @@ pub struct UiConfig {
 impl UiConfig {
     pub fn vendor_box(&self) -> VendorBoxStyle {
         self.vendor_box.unwrap_or_default()
+    }
+}
+
+/// Windows tray popover preferences the host process needs before the
+/// WebView is up: the global shortcut it registers, how often it polls and
+/// how it treats new releases. Screen-only preferences (theme, density, time
+/// format) live in the popover's own storage instead.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TrayConfig {
+    /// Global shortcut that toggles the popover, in the canonical
+    /// "Ctrl+Shift+U" spelling. `None` → no shortcut registered.
+    pub shortcut: Option<String>,
+    /// How often the tray re-reads every provider, in minutes: 1, 5 or 10.
+    /// The footer's Refresh is always immediate. `None` → 5.
+    pub refresh_minutes: Option<u64>,
+    /// What the tray does when a newer release is published.
+    pub updates: Option<UpdateMode>,
+}
+
+/// Poll intervals the tray offers, in minutes. The provider cache TTL is
+/// 60 s regardless; this only decides how often the tray asks.
+pub const TRAY_REFRESH_MINUTES: [u64; 3] = [1, 5, 10];
+const DEFAULT_TRAY_REFRESH_MINUTES: u64 = 5;
+
+impl TrayConfig {
+    pub fn refresh_minutes(&self) -> u64 {
+        self.refresh_minutes.unwrap_or(DEFAULT_TRAY_REFRESH_MINUTES)
+    }
+
+    pub fn updates(&self) -> UpdateMode {
+        self.updates.unwrap_or_default()
+    }
+}
+
+/// How the tray handles a newer release: install it unattended, show a
+/// banner with an Install button, or never check in the background.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateMode {
+    Auto,
+    #[default]
+    Notify,
+    Off,
+}
+
+impl UpdateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Notify => "notify",
+            Self::Off => "off",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "notify" => Some(Self::Notify),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
     }
 }
 
@@ -451,6 +518,167 @@ pub fn add_anthropic_account_to_doc(
     Ok(())
 }
 
+/// Set or update a boolean field in a TOML section, preserving comments and
+/// formatting of unaffected nodes. Shared by the Settings overlay and
+/// [`enable_vendors_in`] so both writers shape `enabled = true` identically.
+pub(crate) fn set_bool(
+    doc: &mut toml_edit::DocumentMut,
+    section: &str,
+    key: &str,
+    new_value: bool,
+) -> Result<()> {
+    let table = doc
+        .entry(section)
+        .or_insert_with(toml_edit::table)
+        .as_table_mut()
+        .ok_or_else(|| AppError::Other(format!("config.toml: [{section}] is not a table")))?;
+
+    if let Some(item) = table.get_mut(key)
+        && let Some(v) = item.as_value_mut()
+    {
+        // Keep a trailing `# comment` on the line being rewritten: the value
+        // is the only thing that changed, and the note beside it is the
+        // user's.
+        let suffix = v.decor().suffix().cloned();
+        *v = toml_edit::Value::from(new_value);
+        v.decor_mut().set_prefix(" ");
+        if let Some(suffix) = suffix {
+            v.decor_mut().set_suffix(suffix);
+        }
+        return Ok(());
+    }
+    table.insert(key, toml_edit::value(new_value));
+    Ok(())
+}
+
+/// Set, replace or remove a scalar field in a TOML section, preserving
+/// comments and formatting of unaffected nodes. `None` removes the key so a
+/// cleared preference does not linger as an empty string. The value keeps
+/// its own TOML type on disk — an integer preference such as
+/// `refresh_minutes` must not be quoted, or `Config::load_from` rejects it.
+pub(crate) fn set_value(
+    doc: &mut toml_edit::DocumentMut,
+    section: &str,
+    key: &str,
+    new_value: Option<toml_edit::Value>,
+) -> Result<()> {
+    let table = doc
+        .entry(section)
+        .or_insert_with(toml_edit::table)
+        .as_table_mut()
+        .ok_or_else(|| AppError::Other(format!("config.toml: [{section}] is not a table")))?;
+
+    let Some(mut new_value) = new_value else {
+        table.remove(key);
+        return Ok(());
+    };
+    if let Some(item) = table.get_mut(key)
+        && let Some(v) = item.as_value_mut()
+    {
+        let suffix = v.decor().suffix().cloned();
+        new_value.decor_mut().set_prefix(" ");
+        if let Some(suffix) = suffix {
+            new_value.decor_mut().set_suffix(suffix);
+        }
+        *v = new_value;
+        return Ok(());
+    }
+    table.insert(key, toml_edit::Item::Value(new_value));
+    Ok(())
+}
+
+/// Write one `[tray]` preference into the config at `path`, creating the
+/// file when it doesn't exist and leaving every other line as it was.
+/// `None` removes the key. The value keeps the TOML type it is given
+/// (`"notify"` stays a string, `5` stays an integer). The tray host is the
+/// only writer.
+pub fn set_tray_value(path: &Path, key: &str, value: Option<toml_edit::Value>) -> Result<()> {
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    set_value(&mut doc, "tray", key, value)?;
+    if doc.to_string() == before {
+        return Ok(());
+    }
+    write_config_document(path, &doc)
+}
+
+/// Read `path` into a `toml_edit` document with comments intact. A missing
+/// file is an empty document, so a writer can create the config from nothing;
+/// any other I/O failure or a parse error is reported rather than clobbered.
+pub(crate) fn read_config_document(path: &Path) -> Result<toml_edit::DocumentMut> {
+    let original = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(AppError::io_at(path, error)),
+    };
+    if original.trim().is_empty() {
+        return Ok(toml_edit::DocumentMut::new());
+    }
+    original.parse().map_err(|e: toml_edit::TomlError| {
+        AppError::Other(format!("config.toml not parseable: {e}"))
+    })
+}
+
+/// Persist an edited config document: parent dir created, atomic
+/// tempfile-and-rename write, and `chmod 600` on Unix because the file may
+/// carry inline credentials. The one write path for every config editor.
+pub(crate) fn write_config_document(path: &Path, doc: &toml_edit::DocumentMut) -> Result<()> {
+    let bytes = doc.to_string();
+    crate::cache::atomic_write(path, bytes.as_bytes())?;
+
+    #[cfg(unix)]
+    {
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o600);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+    Ok(())
+}
+
+/// Flip `enabled = true` for each vendor's section in the config at `path`,
+/// creating the file when it doesn't exist and leaving every other line —
+/// comments, keys, unrelated sections — exactly as it was. Never writes
+/// `false`: `config.toml` stays the user's source of truth and this only ever
+/// widens it. A document that comes out textually unchanged (every vendor
+/// already enabled) is not rewritten, so an idempotent call doesn't touch the
+/// file's mtime or race a concurrent editor.
+pub fn enable_vendors_in(path: &Path, vendors: &[VendorId]) -> Result<Vec<VendorId>> {
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    let written: Vec<VendorId> = vendors
+        .iter()
+        .copied()
+        .filter(|vendor| !is_explicitly_disabled(&doc, *vendor))
+        .collect();
+    for vendor in &written {
+        set_bool(&mut doc, vendor.config_section(), "enabled", true)?;
+    }
+    if doc.to_string() == before {
+        return Ok(written);
+    }
+    write_config_document(path, &doc)?;
+    Ok(written)
+}
+
+/// Whether the config *says* `enabled = false` for this vendor, as opposed to
+/// not mentioning it.
+///
+/// This is the durable record of a user having turned a vendor off. `detect`
+/// also keeps a set of vendors it has already considered, but that lives in the
+/// cache directory, which is by convention safe to delete — so it cannot be the
+/// only thing standing between "the user opted out" and re-enabling a provider
+/// (and resuming requests to it) behind their back. The config file is the one
+/// place that outlives a cache wipe, so the explicit `false` is honored here,
+/// at the write, where no caller can route around it.
+fn is_explicitly_disabled(doc: &toml_edit::DocumentMut, vendor: VendorId) -> bool {
+    doc.get(vendor.config_section())
+        .and_then(|section| section.get("enabled"))
+        .and_then(|enabled| enabled.as_bool())
+        == Some(false)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct OpenAiConfig {
@@ -589,6 +817,32 @@ pub struct OpenCodeGoConfig {
 pub struct CommandCodeConfig {
     pub enabled: bool,
     pub auth_paths: Option<Vec<PathBuf>>,
+}
+
+/// Ollama Cloud (`ollama.com/api/usage`). Disabled by default: the local
+/// `ollama` daemon is the product most users reach for, and it has no quota
+/// route to query. Cloud quota is opt-in, with the key taken from
+/// `OLLAMA_API_KEY` (or `api_key` as a fallback for `chmod 600` configs).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct OllamaConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// Display label for the plan row. The API itself does not report a plan
+    /// name; "pro" is what an Ollama Cloud Pro account shows in the UI.
+    pub plan: String,
+}
+
+impl Default for OllamaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "OLLAMA_API_KEY".to_string(),
+            api_key: None,
+            plan: "pro".to_string(),
+        }
+    }
 }
 
 impl Default for OpenCodeGoConfig {
@@ -897,9 +1151,9 @@ impl Default for GrokConfig {
     }
 }
 
-/// SuperGrok subscription auth — no API key. Asks the official Grok Build
-/// CLI for billing through its `x.ai/billing` ACP extension, leaving every
-/// credential, issuer, proxy, and token-rotation decision inside Grok Build.
+/// SuperGrok subscription auth — no API key of its own. Billing and banked
+/// resets use the `key` already in Grok Build's `auth.json` (read-only).
+/// Login, issuer, proxy, and token rotation stay inside Grok Build.
 ///
 /// Opt-in like Cursor/Kiro (`enabled` defaults to `false`): it requires a
 /// separate official executable and signed-in session, so it stays off until
@@ -941,11 +1195,22 @@ fn default_grok_binary() -> PathBuf {
 }
 
 /// Antigravity reads its quota from whichever local Antigravity product is
-/// running, so it needs no credentials — only an on/off switch.
+/// running, so it needs no credentials of its own. When no product is up it
+/// falls back to the Google session Antigravity saved in the OS keyring and
+/// talks to Cloud Code directly. Renewing that session needs Antigravity's
+/// OAuth client id and secret, which are not shipped in source: set them here
+/// (they are public installed-app credentials) or the fallback only lasts as
+/// long as the saved access token does.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AntigravityConfig {
     pub enabled: bool,
+    /// OAuth client id used to refresh the keyring session.
+    pub oauth_client_id: Option<String>,
+    /// OAuth client secret paired with `oauth_client_id`. An
+    /// installed-app secret is not confidential by Google's definition, but
+    /// it is still treated as an inline credential for file-permission purposes.
+    pub oauth_client_secret: Option<String>,
 }
 
 /// Cursor reads its quota through a session token the Cursor IDE already
@@ -1015,6 +1280,328 @@ impl Default for AnthropicApiConfig {
     }
 }
 
+/// A user-defined HTTP provider: one GET with a static token, projected onto
+/// the shared report shape through RFC 6901 JSON Pointers.
+///
+/// Everything a built-in vendor hard-codes is a field here, which is why this
+/// type validates so much more than the others: a typo in `[deepseek]` hits a
+/// fixed endpoint and fails loudly, while a typo here quietly sends the user's
+/// key to the wrong host. The `id` doubles as the cache directory name and the
+/// `--vendor` selector, so it is held to the character class of the built-in
+/// slugs.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default, remote = "Self")]
+pub struct CustomProviderConfig {
+    /// `[a-z0-9][a-z0-9_-]{0,31}`; unique, and never a built-in vendor's slug.
+    pub id: String,
+    /// Display name, 1 to 48 characters. Defaults to `id`.
+    pub name: String,
+    /// Exactly three lowercase ASCII letters, unique across built-in vendors
+    /// and other custom providers — it is the `{vendor_short}` bar tag.
+    pub short_name: String,
+    pub enabled: bool,
+    /// `https://` unless `allow_http`; never carries `user:pass@`.
+    pub url: String,
+    pub allow_http: bool,
+    /// Env var read first; `""` means the inline `api_key` is the only source.
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// The header that carries the key.
+    pub auth_header: String,
+    /// Sent as `"<scheme> <key>"`; `""` sends the bare key.
+    pub auth_scheme: String,
+    /// Extra non-secret headers.
+    pub headers: BTreeMap<String, String>,
+    /// Literal plan label.
+    pub plan: Option<String>,
+    /// Pointer to the plan label in the response; wins over `plan`.
+    pub plan_path: Option<String>,
+    /// Must be within `10..=3600`.
+    pub cache_ttl_secs: u64,
+    pub metrics: Vec<CustomMetricSpec>,
+    pub texts: Vec<CustomTextSpec>,
+}
+
+impl Default for CustomProviderConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            short_name: String::new(),
+            enabled: false,
+            url: String::new(),
+            allow_http: false,
+            api_key_env: String::new(),
+            api_key: None,
+            auth_header: "Authorization".to_string(),
+            auth_scheme: "Bearer".to_string(),
+            headers: BTreeMap::new(),
+            plan: None,
+            plan_path: None,
+            cache_ttl_secs: 60,
+            metrics: Vec::new(),
+            texts: Vec::new(),
+        }
+    }
+}
+
+/// `name` defaults to `id`, which a per-field serde default cannot express (a
+/// default sees no sibling field). The derive is routed through
+/// `remote = "Self"` so the fill-in happens here, on every parse path, rather
+/// than only in `Config::load_from`.
+impl<'de> Deserialize<'de> for CustomProviderConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let mut this = Self::deserialize(deserializer)?;
+        if this.name.is_empty() {
+            this.name = this.id.clone();
+        }
+        Ok(this)
+    }
+}
+
+impl Serialize for CustomProviderConfig {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        Self::serialize(self, serializer)
+    }
+}
+
+/// One percentage row. Either `percent` alone, or `used` and `limit`
+/// together — never a mix, so a row cannot show a percentage from one field
+/// and a footnote from another.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CustomMetricSpec {
+    pub label: String,
+    pub used: Option<String>,
+    pub limit: Option<String>,
+    pub percent: Option<String>,
+    /// Pointer to an RFC 3339 string or a Unix epoch (seconds or milliseconds).
+    pub resets_at: Option<String>,
+    /// Window length for pacing, at least 60.
+    pub window_secs: Option<u64>,
+}
+
+/// One free-text row: a string, number, or boolean at `value`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CustomTextSpec {
+    pub label: String,
+    pub value: String,
+}
+
+impl CustomProviderConfig {
+    /// The TOML locator for error messages: `[[custom]] id = "mytool"`.
+    pub fn section_label(&self) -> String {
+        format!("[[custom]] id = {:?}", self.id)
+    }
+
+    /// Env var (when `api_key_env` is set) → inline `api_key` → a
+    /// `Credentials` error that names the section and never the key.
+    pub fn resolve_api_key(&self) -> Result<String> {
+        if let Some(key) = optional_api_key(&self.api_key_env, self.api_key.as_deref()) {
+            return Ok(key);
+        }
+        let advice = if self.api_key_env.is_empty() {
+            "set `api_key`, or name an environment variable in `api_key_env`".to_string()
+        } else {
+            format!("export {} or set `api_key`", self.api_key_env)
+        };
+        Err(AppError::Credentials(format!(
+            "custom {}: no API key. Either {advice} under {} in {}.",
+            self.id,
+            self.section_label(),
+            config_path_hint()
+        )))
+    }
+
+    pub fn cache_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.cache_ttl_secs)
+    }
+
+    /// Every rule that serde cannot express, each naming the section. Runs
+    /// for disabled entries too: a broken entry is a broken config, and the
+    /// day it is enabled is the wrong day to find out.
+    fn validate(&self, index: usize) -> Result<()> {
+        if !is_valid_custom_id(&self.id) {
+            return Err(AppError::Other(format!(
+                "[[custom]] entry #{}: id {:?} must match [a-z0-9][a-z0-9_-]{{0,31}}",
+                index + 1,
+                self.id
+            )));
+        }
+        let section = self.section_label();
+        let bad = |msg: String| AppError::Other(format!("{section}: {msg}"));
+
+        if VendorId::all().iter().any(|v| v.slug() == self.id) {
+            return Err(bad(format!("id {:?} is a built-in vendor", self.id)));
+        }
+        let name_len = self.name.chars().count();
+        if name_len == 0 || name_len > 48 || self.name.chars().any(char::is_control) {
+            return Err(bad(
+                "name must be 1 to 48 characters without control characters".into(),
+            ));
+        }
+        if self.short_name.len() != 3 || !self.short_name.bytes().all(|b| b.is_ascii_lowercase()) {
+            return Err(bad(format!(
+                "short_name {:?} must be exactly 3 lowercase ASCII letters",
+                self.short_name
+            )));
+        }
+        let url = reqwest::Url::parse(&self.url)
+            .map_err(|_| bad(format!("url {:?} is not a valid URL", self.url)))?;
+        match url.scheme() {
+            "https" => {}
+            "http" if self.allow_http => {}
+            "http" => {
+                return Err(bad(
+                    "url must use https:// (set allow_http = true to permit http://)".into(),
+                ));
+            }
+            other => return Err(bad(format!("url scheme {other:?} is not http or https"))),
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(bad("url must not carry credentials (user:pass@)".into()));
+        }
+        if url.host_str().is_none() {
+            return Err(bad("url has no host".into()));
+        }
+        if !self.api_key_env.is_empty() && !is_valid_env_var_name(&self.api_key_env) {
+            return Err(bad(format!(
+                "api_key_env {:?} is not a valid environment variable name",
+                self.api_key_env
+            )));
+        }
+        validate_header_name(&section, "auth_header", &self.auth_header)?;
+        if reqwest::header::HeaderValue::from_str(&format!("{} k", self.auth_scheme)).is_err() {
+            return Err(bad(
+                "auth_scheme contains characters that are not valid in an HTTP header".into(),
+            ));
+        }
+        for (name, value) in &self.headers {
+            validate_header_name(&section, "headers", name)?;
+            if name.eq_ignore_ascii_case(&self.auth_header) {
+                return Err(bad(format!(
+                    "headers must not repeat auth_header {:?}",
+                    self.auth_header
+                )));
+            }
+            if reqwest::header::HeaderValue::from_str(value).is_err() {
+                return Err(bad(format!(
+                    "header {name:?} has a value that is not valid in an HTTP header"
+                )));
+            }
+        }
+        if let Some(plan) = &self.plan {
+            validate_custom_label(&section, "plan", plan)?;
+        }
+        if let Some(pointer) = &self.plan_path {
+            validate_pointer(&section, "plan_path", pointer)?;
+        }
+        if !(10..=3600).contains(&self.cache_ttl_secs) {
+            return Err(bad(format!(
+                "cache_ttl_secs must be between 10 and 3600, got {}",
+                self.cache_ttl_secs
+            )));
+        }
+        if self.metrics.is_empty() && self.texts.is_empty() {
+            return Err(bad(
+                "needs at least one [[custom.metrics]] or [[custom.texts]] entry".into(),
+            ));
+        }
+        let mut metric_labels = HashSet::new();
+        for metric in &self.metrics {
+            validate_custom_label(&section, "metric label", &metric.label)?;
+            if !metric_labels.insert(metric.label.as_str()) {
+                return Err(bad(format!("duplicate metric label {:?}", metric.label)));
+            }
+            let pair = (metric.used.is_some(), metric.limit.is_some());
+            let well_formed = if metric.percent.is_some() {
+                pair == (false, false)
+            } else {
+                pair == (true, true)
+            };
+            if !well_formed {
+                return Err(bad(format!(
+                    "metric {:?} must set `percent`, or both `used` and `limit` (not a mix)",
+                    metric.label
+                )));
+            }
+            for (field, pointer) in [
+                ("used", &metric.used),
+                ("limit", &metric.limit),
+                ("percent", &metric.percent),
+                ("resets_at", &metric.resets_at),
+            ] {
+                if let Some(pointer) = pointer {
+                    validate_pointer(&section, field, pointer)?;
+                }
+            }
+            if let Some(secs) = metric.window_secs
+                && secs < 60
+            {
+                return Err(bad(format!(
+                    "metric {:?} window_secs must be at least 60, got {secs}",
+                    metric.label
+                )));
+            }
+        }
+        let mut text_labels = HashSet::new();
+        for text in &self.texts {
+            validate_custom_label(&section, "text label", &text.label)?;
+            if !text_labels.insert(text.label.as_str()) {
+                return Err(bad(format!("duplicate text label {:?}", text.label)));
+            }
+            validate_pointer(&section, "value", &text.value)?;
+        }
+        Ok(())
+    }
+}
+
+fn is_valid_custom_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    let Some(&first) = bytes.first() else {
+        return false;
+    };
+    bytes.len() <= 32
+        && (first.is_ascii_lowercase() || first.is_ascii_digit())
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-'))
+}
+
+fn validate_pointer(section: &str, field: &str, pointer: &str) -> Result<()> {
+    if !pointer.starts_with('/') || pointer.chars().any(char::is_control) {
+        return Err(AppError::Other(format!(
+            "{section}: {field} {pointer:?} must be an RFC 6901 JSON Pointer starting with '/'"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_custom_label(section: &str, field: &str, label: &str) -> Result<()> {
+    let len = label.chars().count();
+    if len == 0 || len > 64 || label.chars().any(char::is_control) {
+        return Err(AppError::Other(format!(
+            "{section}: {field} {label:?} must be 1 to 64 characters without control characters"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_header_name(section: &str, field: &str, name: &str) -> Result<()> {
+    if name.is_empty() || reqwest::header::HeaderName::from_bytes(name.as_bytes()).is_err() {
+        return Err(AppError::Other(format!(
+            "{section}: {field} {name:?} is not a valid HTTP header name"
+        )));
+    }
+    Ok(())
+}
+
 /// Resolve an API key for a vendor: a valid env-var name wins, then inline
 /// config, then a clear error naming both fields. Used by every API-key vendor.
 pub fn resolve_api_key(
@@ -1063,7 +1650,7 @@ fn resolve_api_key_in_section(
     )))
 }
 
-fn is_valid_env_var_name(name: &str) -> bool {
+pub(crate) fn is_valid_env_var_name(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -1093,6 +1680,10 @@ impl Config {
                 config.validate()?;
                 #[cfg(unix)]
                 config.protect_inline_secrets(path)?;
+                // A custom provider's token variable is as secret as any
+                // built-in one; subprocesses (`gh`, `grok`, `claude`) must
+                // not inherit it.
+                crate::vendor::register_secret_env_vars(&config.custom_secret_env_vars());
                 Ok(config)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
@@ -1139,6 +1730,7 @@ impl Config {
             self.anthropic_api.api_key.as_deref(),
             self.opencode_go.api_key.as_deref(),
             self.tavily.api_key.as_deref(),
+            self.antigravity.oauth_client_secret.as_deref(),
         ]
         .into_iter()
         .chain(
@@ -1147,7 +1739,26 @@ impl Config {
                 .iter()
                 .map(|account| account.api_key.as_deref()),
         )
+        .chain(self.custom.iter().map(|c| c.api_key.as_deref()))
         .any(|key| key.is_some_and(|key| !key.is_empty()))
+    }
+
+    fn custom_secret_env_vars(&self) -> Vec<String> {
+        self.custom
+            .iter()
+            .filter(|c| !c.api_key_env.is_empty())
+            .map(|c| c.api_key_env.clone())
+            .collect()
+    }
+
+    /// The `[[custom]]` providers that are switched on, in config order.
+    pub fn enabled_custom(&self) -> impl Iterator<Item = &CustomProviderConfig> {
+        self.custom.iter().filter(|c| c.enabled)
+    }
+
+    /// A `[[custom]]` provider by `id`, enabled or not.
+    pub fn custom_by_id(&self, id: &str) -> Option<&CustomProviderConfig> {
+        self.custom.iter().find(|c| c.id == id)
     }
 
     #[cfg(unix)]
@@ -1196,69 +1807,102 @@ impl Config {
             VendorId::OpenCodeGo => self.opencode_go.enabled,
             VendorId::CommandCode => self.commandcode.enabled,
             VendorId::Tavily => self.tavily.enabled,
+            VendorId::Ollama => self.ollama.enabled,
         }
     }
 
-    /// Whether `vendor` has a resolvable credential today, independent of
-    /// whether it is enabled. API-key vendors check the configured env var or
-    /// inline key without erroring; OAuth/local vendors are considered
-    /// configured whenever enabled, because their credential probing happens
-    /// at fetch time (files, local servers, CLI logins).
-    ///
-    /// Used by the TUI to keep unconfigured providers out of the vendor menu
-    /// and Overview: a vendor enabled in config but with no key anywhere is
-    /// not configured, so it must not appear as a selectable entry.
+    /// Whether a vendor has a credential the TUI can resolve without fetching.
     pub fn is_configured(&self, vendor: VendorId) -> bool {
-        let env_or_inline = |env: &str, inline: Option<&str>| {
-            std::env::var(env).map(|v| !v.is_empty()).unwrap_or(false)
-                || inline.map(|v| !v.is_empty()).unwrap_or(false)
+        let env_or_inline = || {
+            let env = self.api_key_env_for(vendor);
+            (!env.is_empty() && std::env::var(env).is_ok_and(|value| !value.is_empty()))
+                || self.inline_api_key(vendor).is_some()
         };
-        match vendor {
-            VendorId::AnthropicApi => env_or_inline(
-                &self.anthropic_api.api_key_env,
-                self.anthropic_api.api_key.as_deref(),
-            ),
-            VendorId::Zai => env_or_inline(&self.zai.api_key_env, self.zai.api_key.as_deref()),
-            VendorId::Openrouter => {
-                // A key for the default account, or any named account, counts.
-                env_or_inline(
-                    &self.openrouter.api_key_env,
-                    self.openrouter.api_key.as_deref(),
-                ) || self.openrouter.accounts.iter().any(|account| {
-                    let env_ok = account
+
+        if vendor == VendorId::Openrouter {
+            return env_or_inline()
+                || self.openrouter.accounts.iter().any(|account| {
+                    account
                         .api_key_env
                         .as_deref()
-                        .map(|name| std::env::var(name).map(|v| !v.is_empty()).unwrap_or(false))
-                        .unwrap_or(false);
-                    env_ok || account.api_key.as_deref().is_some_and(|k| !k.is_empty())
-                })
-            }
-            VendorId::Deepseek => {
-                env_or_inline(&self.deepseek.api_key_env, self.deepseek.api_key.as_deref())
-            }
-            VendorId::Kimi => env_or_inline(&self.kimi.api_key_env, self.kimi.api_key.as_deref()),
-            VendorId::Kilo => env_or_inline(&self.kilo.api_key_env, self.kilo.api_key.as_deref()),
-            VendorId::Novita => {
-                env_or_inline(&self.novita.api_key_env, self.novita.api_key.as_deref())
-            }
-            VendorId::Moonshot => {
-                env_or_inline(&self.moonshot.api_key_env, self.moonshot.api_key.as_deref())
-            }
-            VendorId::Grok => env_or_inline(&self.grok.api_key_env, self.grok.api_key.as_deref()),
-            VendorId::Minimax => {
-                env_or_inline(&self.minimax.api_key_env, self.minimax.api_key.as_deref())
-            }
-            VendorId::OpenCodeGo => env_or_inline(
-                &self.opencode_go.api_key_env,
-                self.opencode_go.api_key.as_deref(),
-            ),
-            VendorId::Tavily => {
-                env_or_inline(&self.tavily.api_key_env, self.tavily.api_key.as_deref())
-            }
-            // OAuth / local-state vendors (Claude, Codex, Nous, Cursor, Kiro,
-            // Antigravity, SuperGrok) resolve their credential at fetch time.
-            _ => true,
+                        .is_some_and(|env| std::env::var(env).is_ok_and(|value| !value.is_empty()))
+                        || account
+                            .api_key
+                            .as_deref()
+                            .is_some_and(|key| !key.is_empty())
+                });
         }
+
+        match vendor.auth_kind() {
+            crate::vendor::AuthKind::ApiKey => env_or_inline(),
+            crate::vendor::AuthKind::Oauth | crate::vendor::AuthKind::Local => true,
+        }
+    }
+
+    /// The environment variable this provider's API key is read from, honoring
+    /// a per-vendor `api_key_env` override; `""` for a provider that takes no
+    /// key. Matching on [`VendorId`] rather than on a section name is
+    /// deliberate: a new key vendor that nobody adds here fails to compile,
+    /// where a `_ =>` arm over `&str` sections would silently hand back the
+    /// wrong default and report the provider as unconfigured for ever.
+    pub fn api_key_env_for(&self, id: VendorId) -> &str {
+        match id {
+            VendorId::AnthropicApi => &self.anthropic_api.api_key_env,
+            VendorId::Zai => &self.zai.api_key_env,
+            VendorId::Openrouter => &self.openrouter.api_key_env,
+            VendorId::Deepseek => &self.deepseek.api_key_env,
+            VendorId::Kimi => &self.kimi.api_key_env,
+            VendorId::Kilo => &self.kilo.api_key_env,
+            VendorId::Novita => &self.novita.api_key_env,
+            VendorId::Moonshot => &self.moonshot.api_key_env,
+            VendorId::Grok => &self.grok.api_key_env,
+            VendorId::Minimax => &self.minimax.api_key_env,
+            VendorId::OpenCodeGo => &self.opencode_go.api_key_env,
+            VendorId::Ollama => &self.ollama.api_key_env,
+            VendorId::Tavily => &self.tavily.api_key_env,
+            // Fixed names: OAuth-first providers whose environment override is
+            // not user-renameable, and the providers with no key at all.
+            VendorId::Anthropic
+            | VendorId::Openai
+            | VendorId::Copilot
+            | VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Kiro
+            | VendorId::NousResearch
+            | VendorId::CommandCode => id.api_key_env(),
+        }
+    }
+
+    /// A non-empty inline `api_key` from this provider's config section. An
+    /// empty string counts as unset, the same way the vendors' own
+    /// `resolve_api_key` treats it.
+    pub fn inline_api_key(&self, id: VendorId) -> Option<&str> {
+        let raw = match id {
+            VendorId::AnthropicApi => self.anthropic_api.api_key.as_deref(),
+            VendorId::Zai => self.zai.api_key.as_deref(),
+            VendorId::Openrouter => self.openrouter.api_key.as_deref(),
+            VendorId::Deepseek => self.deepseek.api_key.as_deref(),
+            VendorId::Kimi => self.kimi.api_key.as_deref(),
+            VendorId::Kilo => self.kilo.api_key.as_deref(),
+            VendorId::Novita => self.novita.api_key.as_deref(),
+            VendorId::Moonshot => self.moonshot.api_key.as_deref(),
+            VendorId::Grok => self.grok.api_key.as_deref(),
+            VendorId::Minimax => self.minimax.api_key.as_deref(),
+            VendorId::OpenCodeGo => self.opencode_go.api_key.as_deref(),
+            VendorId::Ollama => self.ollama.api_key.as_deref(),
+            VendorId::Tavily => self.tavily.api_key.as_deref(),
+            VendorId::Anthropic
+            | VendorId::Openai
+            | VendorId::Copilot
+            | VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Kiro
+            | VendorId::NousResearch
+            | VendorId::CommandCode => None,
+        };
+        raw.filter(|key| !key.is_empty())
     }
 
     pub fn enabled_vendors(&self) -> Vec<VendorId> {
@@ -1273,6 +1917,13 @@ impl Config {
     /// labels are both CLI selectors and TUI tab identities, so duplicates
     /// would make either destination ambiguous.
     pub fn validate(&self) -> Result<()> {
+        if let Some(minutes) = self.tray.refresh_minutes
+            && !TRAY_REFRESH_MINUTES.contains(&minutes)
+        {
+            return Err(AppError::Other(format!(
+                "[tray] refresh_minutes must be one of 1, 5 or 10, got {minutes}"
+            )));
+        }
         if self.context.context_window_tokens == Some(0) {
             return Err(AppError::Other(
                 "[context] context_window_tokens must be greater than zero".into(),
@@ -1371,6 +2022,32 @@ impl Config {
                 )));
             }
         }
+        self.validate_custom()
+    }
+
+    /// Per-entry rules live on `CustomProviderConfig`; the cross-entry ones —
+    /// `id` and `short_name` uniqueness, including against the built-in
+    /// vendors — need the whole list and live here.
+    fn validate_custom(&self) -> Result<()> {
+        let mut ids = HashSet::new();
+        let mut short_names: HashSet<&str> =
+            VendorId::all().iter().map(|v| v.short_name()).collect();
+        for (index, custom) in self.custom.iter().enumerate() {
+            custom.validate(index)?;
+            if !ids.insert(custom.id.as_str()) {
+                return Err(AppError::Other(format!(
+                    "{}: duplicate id",
+                    custom.section_label()
+                )));
+            }
+            if !short_names.insert(custom.short_name.as_str()) {
+                return Err(AppError::Other(format!(
+                    "{}: short_name {:?} is already used by a built-in vendor or another [[custom]] entry",
+                    custom.section_label(),
+                    custom.short_name
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -1407,13 +2084,18 @@ fn legacy_xdg_path() -> Option<PathBuf> {
 
 /// The config file actually in effect.
 ///
-/// [`default_path`] stays canonical, but on macOS a file at the documented
+/// A `--config` override (see [`set_override_path`]) wins outright so a test
+/// run never touches the real file. Otherwise [`default_path`] stays
+/// canonical, but on macOS a file at the documented
 /// `~/.config/ai-usagebar/config.toml` is honored when the canonical one does
 /// not exist — otherwise everyone who followed the README (and both desktop
 /// integrations, which read that path) silently got defaults. The legacy file
 /// is never moved or rewritten: it may hold API keys, and relocating a secret
 /// behind the user's back is not this tool's business.
 pub fn resolved_path() -> Option<PathBuf> {
+    if let Some(path) = override_path() {
+        return Some(path);
+    }
     let canonical = default_path();
     if let Some(p) = &canonical
         && p.exists()
@@ -1426,6 +2108,69 @@ pub fn resolved_path() -> Option<PathBuf> {
         return Some(legacy);
     }
     canonical
+}
+
+static PATH_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Point every config load, save, and hint at one explicit file — the
+/// `--config` flag. Takes precedence over the canonical and legacy locations.
+/// The file does not have to exist yet: loads treat it as defaults while
+/// Settings saves create it. Process-wide, so call it once at startup before
+/// any config is read.
+pub fn set_override_path(path: &std::path::Path) {
+    if let Ok(mut slot) = PATH_OVERRIDE.lock() {
+        *slot = Some(path.to_path_buf());
+    }
+}
+
+/// Drop the override again. Used only by tests so they can restore the
+/// process-wide state they changed.
+#[doc(hidden)]
+pub fn clear_override_path() {
+    if let Ok(mut slot) = PATH_OVERRIDE.lock() {
+        *slot = None;
+    }
+}
+
+fn override_path() -> Option<PathBuf> {
+    PATH_OVERRIDE.lock().ok().and_then(|slot| slot.clone())
+}
+
+/// Value of a `--config=PATH` argument, split at the OS-string level so a
+/// path with bytes Windows/Unix can store but UTF-8 cannot represent (an
+/// undecodable filename on Unix, a lone surrogate on Windows) survives
+/// intact instead of being mangled by `to_string_lossy`. `None` when the
+/// argument is not in that form. Used by both binaries' argv pre-parsers.
+#[doc(hidden)]
+pub fn config_flag_value(arg: &std::ffi::OsStr) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let rest = arg.as_bytes().strip_prefix(b"--config=")?;
+        Some(std::ffi::OsString::from_vec(rest.to_vec()).into())
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        const PREFIX: &[u16] = &[
+            b'-' as u16,
+            b'-' as u16,
+            b'c' as u16,
+            b'o' as u16,
+            b'n' as u16,
+            b'f' as u16,
+            b'i' as u16,
+            b'g' as u16,
+            b'=' as u16,
+        ];
+        let wide: Vec<u16> = arg.encode_wide().collect();
+        let rest = wide.strip_prefix(PREFIX)?;
+        Some(std::ffi::OsString::from_wide(rest).into())
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        Some(PathBuf::from(arg.to_str()?.strip_prefix("--config=")?))
+    }
 }
 
 /// Expand a leading `~` (or `~/`) against the user's home directory. Anything
@@ -1645,6 +2390,45 @@ mod tests {
     fn inline_credentials_are_protected() {
         let mut config = Config::default();
         config.opencode_go.api_key = Some("<redacted>".to_string());
+        assert!(config.has_inline_secrets());
+    }
+
+    #[test]
+    fn antigravity_oauth_client_overrides_parse() {
+        let config: Config = toml::from_str(
+            "[antigravity]
+enabled = true
+oauth_client_id = \"test-client\"
+oauth_client_secret = \"test-client-secret\"
+",
+        )
+        .unwrap();
+        assert!(config.antigravity.enabled);
+        assert_eq!(
+            config.antigravity.oauth_client_id.as_deref(),
+            Some("test-client")
+        );
+        assert_eq!(
+            config.antigravity.oauth_client_secret.as_deref(),
+            Some("test-client-secret")
+        );
+        let bare: Config = toml::from_str(
+            "[antigravity]
+enabled = true
+",
+        )
+        .unwrap();
+        assert!(bare.antigravity.oauth_client_id.is_none());
+        assert!(bare.antigravity.oauth_client_secret.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_inline_oauth_secret_receives_config_file_protection() {
+        let mut config = Config::default();
+        config.antigravity.oauth_client_id = Some("test-client".into());
+        assert!(!config.has_inline_secrets());
+        config.antigravity.oauth_client_secret = Some("<redacted>".into());
         assert!(config.has_inline_secrets());
     }
 
@@ -2051,11 +2835,119 @@ enabled = false
         );
     }
 
+    fn path_override_guard() -> std::sync::MutexGuard<'static, ()> {
+        static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        M.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Serializes the override tests *and* guarantees the process-wide
+    /// override is dropped when the test ends — including via a panic, which
+    /// a bare set/clear pair does not survive. A leaked override makes every
+    /// later test in this process resolve a deleted temp file, turning one
+    /// failure into a cascade of confusing sibling failures.
+    struct ScopedPathOverride {
+        _serial: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for ScopedPathOverride {
+        fn drop(&mut self) {
+            clear_override_path();
+        }
+    }
+
+    fn scoped_path_override() -> ScopedPathOverride {
+        ScopedPathOverride {
+            _serial: path_override_guard(),
+        }
+    }
+
+    #[test]
+    fn override_path_wins_over_canonical_and_legacy() {
+        let _scoped = scoped_path_override();
+        let file = NamedTempFile::new().unwrap();
+        set_override_path(file.path());
+        assert_eq!(resolved_path().as_deref(), Some(file.path()));
+        assert_eq!(config_path_hint(), file.path().display().to_string());
+        clear_override_path();
+        // The usual locations decide again once the override is gone.
+        let p = resolved_path().expect("a config path must resolve");
+        assert!(p.ends_with("config.toml"));
+    }
+
+    #[test]
+    fn scoped_override_guard_clears_the_override_on_panic() {
+        // Silence the simulated failure's hook output; the assertion below is
+        // the real report.
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _scoped = scoped_path_override();
+            set_override_path(std::path::Path::new("panicked-override.toml"));
+            panic!("simulated mid-test failure");
+        }))
+        .is_err();
+        std::panic::set_hook(hook);
+        assert!(panicked, "the simulated failure must run");
+        let _serial = path_override_guard();
+        assert!(
+            override_path().is_none(),
+            "a panicking test must not leak the override into siblings"
+        );
+    }
+
     #[test]
     fn config_path_hint_ends_with_config_toml() {
+        let _g = path_override_guard();
         // Platform-resolved (Linux/macOS/Windows), but always ends in the
         // config filename — the trailing segment is what messages rely on.
         assert!(config_path_hint().ends_with("config.toml"));
+    }
+
+    #[test]
+    fn config_flag_value_splits_the_equals_form() {
+        use std::ffi::OsStr;
+        assert_eq!(
+            config_flag_value(OsStr::new("--config=work.toml")).as_deref(),
+            Some(std::path::Path::new("work.toml"))
+        );
+        assert_eq!(
+            config_flag_value(OsStr::new("--config=")).as_deref(),
+            Some(std::path::Path::new(""))
+        );
+        assert_eq!(config_flag_value(OsStr::new("--config")), None);
+        assert_eq!(config_flag_value(OsStr::new("--config-file")), None);
+        assert_eq!(config_flag_value(OsStr::new("account")), None);
+    }
+
+    /// The `--config=PATH` form must preserve a path the platform can store
+    /// but UTF-8 cannot represent — `to_string_lossy` would replace the bad
+    /// bytes with U+FFFD and produce a false "config file not found".
+    #[cfg(unix)]
+    #[test]
+    fn config_flag_value_keeps_undecodable_bytes_intact() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let raw = OsString::from_vec(b"--config=caf\xe9.toml".to_vec());
+        let value = config_flag_value(&raw).expect("prefix matches");
+        assert_eq!(value.as_os_str().as_bytes(), b"caf\xe9.toml");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn config_flag_value_keeps_lone_surrogates_intact() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        let mut wide: Vec<u16> = "--config=".encode_utf16().collect();
+        wide.push(0xDC00); // lone low surrogate: not valid Unicode
+        wide.extend("x.toml".encode_utf16());
+        let raw = OsString::from_wide(&wide);
+        let value = config_flag_value(&raw).expect("prefix matches");
+        let mut expected = vec![0xDC00u16];
+        expected.extend("x.toml".encode_utf16());
+        assert_eq!(
+            value.as_os_str().encode_wide().collect::<Vec<_>>(),
+            expected
+        );
     }
 
     #[test]
@@ -2341,6 +3233,7 @@ enabled = false
 
     #[test]
     fn resolved_path_is_the_canonical_one_and_names_the_config_file() {
+        let _g = path_override_guard();
         // Hermetic: only asserts the shape, never which file happens to exist
         // on the machine running the tests.
         let p = resolved_path().expect("a config path must resolve");
@@ -2961,5 +3854,702 @@ credentials_path = "~/w/.credentials.json"
             default_account_credentials_path(cfg, "work"),
             Path::new("/home/u/.config/ai-usagebar/accounts/work/.credentials.json"),
         );
+    }
+    // ----- [[custom]] providers -----
+
+    const CUSTOM_BLOCK: &str = r#"
+[[custom]]
+id = "mytool"
+name = "My Tool"
+short_name = "myt"
+enabled = true
+url = "https://api.example.test/v1/usage"
+api_key_env = "MYTOOL_API_KEY"
+auth_header = "Authorization"
+auth_scheme = "Bearer"
+plan = "Pro"
+cache_ttl_secs = 120
+[custom.headers]
+X-Org = "org_1"
+[[custom.metrics]]
+label = "Requests"
+used = "/requests/used"
+limit = "/requests/limit"
+resets_at = "/requests/reset"
+window_secs = 3600
+[[custom.texts]]
+label = "Tier"
+value = "/tier"
+"#;
+
+    fn custom_with(from: &str, to: &str) -> String {
+        assert!(CUSTOM_BLOCK.contains(from), "fixture has no {from:?}");
+        CUSTOM_BLOCK.replace(from, to)
+    }
+
+    fn custom_error(toml: &str) -> String {
+        Config::load_from(write_toml(toml).path())
+            .unwrap_err()
+            .to_string()
+    }
+
+    fn assert_custom_rejected(toml: &str, needle: &str) {
+        let msg = custom_error(toml);
+        assert!(msg.contains(needle), "expected {needle:?} in: {msg}");
+        assert!(
+            msg.contains("[[custom]]"),
+            "the error must locate the section: {msg}"
+        );
+    }
+
+    #[test]
+    fn custom_block_parses_every_field() {
+        let config = Config::load_from(write_toml(CUSTOM_BLOCK).path()).unwrap();
+        assert_eq!(config.custom.len(), 1);
+        let c = &config.custom[0];
+        assert_eq!(c.id, "mytool");
+        assert_eq!(c.name, "My Tool");
+        assert_eq!(c.short_name, "myt");
+        assert!(c.enabled);
+        assert_eq!(c.url, "https://api.example.test/v1/usage");
+        assert!(!c.allow_http);
+        assert_eq!(c.api_key_env, "MYTOOL_API_KEY");
+        assert_eq!(c.api_key, None);
+        assert_eq!(c.auth_header, "Authorization");
+        assert_eq!(c.auth_scheme, "Bearer");
+        assert_eq!(c.headers.get("X-Org").map(String::as_str), Some("org_1"));
+        assert_eq!(c.plan.as_deref(), Some("Pro"));
+        assert_eq!(c.plan_path, None);
+        assert_eq!(c.cache_ttl(), std::time::Duration::from_secs(120));
+        assert_eq!(c.metrics.len(), 1);
+        assert_eq!(c.metrics[0].label, "Requests");
+        assert_eq!(c.metrics[0].used.as_deref(), Some("/requests/used"));
+        assert_eq!(c.metrics[0].limit.as_deref(), Some("/requests/limit"));
+        assert_eq!(c.metrics[0].percent, None);
+        assert_eq!(c.metrics[0].resets_at.as_deref(), Some("/requests/reset"));
+        assert_eq!(c.metrics[0].window_secs, Some(3600));
+        assert_eq!(c.texts.len(), 1);
+        assert_eq!(c.texts[0].label, "Tier");
+        assert_eq!(c.texts[0].value, "/tier");
+        assert_eq!(c.section_label(), r#"[[custom]] id = "mytool""#);
+    }
+
+    #[test]
+    fn custom_defaults_are_the_documented_ones_and_name_falls_back_to_id() {
+        let config: Config = toml::from_str(
+            r#"
+            [[custom]]
+            id = "bare"
+            short_name = "bre"
+            url = "https://example.test/u"
+            [[custom.metrics]]
+            label = "Q"
+            percent = "/pct"
+            "#,
+        )
+        .unwrap();
+        let c = &config.custom[0];
+        assert_eq!(c.name, "bare", "name must default to id on a plain parse");
+        assert!(!c.enabled);
+        assert!(!c.allow_http);
+        assert_eq!(c.api_key_env, "");
+        assert_eq!(c.auth_header, "Authorization");
+        assert_eq!(c.auth_scheme, "Bearer");
+        assert_eq!(c.cache_ttl_secs, 60);
+        assert!(config.validate().is_ok());
+        assert!(Config::default().custom.is_empty());
+    }
+
+    #[test]
+    fn custom_rejects_a_malformed_id() {
+        let long = "a".repeat(33);
+        for id in ["", "My Tool", "-lead", "UPPER", long.as_str()] {
+            let msg = custom_error(&custom_with(r#"id = "mytool""#, &format!("id = {id:?}")));
+            assert!(msg.contains("[[custom]] entry #1"), "{id:?}: {msg}");
+            assert!(msg.contains("must match"), "{id:?}: {msg}");
+        }
+    }
+
+    #[test]
+    fn custom_rejects_a_builtin_slug_as_id() {
+        assert_custom_rejected(
+            &custom_with(r#"id = "mytool""#, r#"id = "deepseek""#),
+            "is a built-in vendor",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"id = "mytool""#, r#"id = "opencode-go""#),
+            "is a built-in vendor",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_duplicate_ids() {
+        let twice = format!(
+            "{}{}",
+            CUSTOM_BLOCK,
+            custom_with(r#"short_name = "myt""#, r#"short_name = "myu""#)
+        );
+        assert_custom_rejected(&twice, "duplicate id");
+    }
+
+    #[test]
+    fn custom_rejects_a_name_over_48_chars() {
+        let long = "n".repeat(49);
+        assert_custom_rejected(
+            &custom_with(r#"name = "My Tool""#, &format!("name = {long:?}")),
+            "name must be 1 to 48 characters",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_short_name_that_is_not_three_lowercase_letters() {
+        for short in ["my", "myto", "MYT", "m1t"] {
+            assert_custom_rejected(
+                &custom_with(r#"short_name = "myt""#, &format!("short_name = {short:?}")),
+                "exactly 3 lowercase ASCII letters",
+            );
+        }
+    }
+
+    #[test]
+    fn custom_rejects_a_short_name_taken_by_a_builtin_or_another_entry() {
+        assert_custom_rejected(
+            &custom_with(r#"short_name = "myt""#, r#"short_name = "dsk""#),
+            "already used by a built-in vendor",
+        );
+        let twice = format!(
+            "{}{}",
+            CUSTOM_BLOCK,
+            custom_with(r#"id = "mytool""#, r#"id = "othertool""#)
+        );
+        assert_custom_rejected(&twice, "already used by a built-in vendor");
+    }
+
+    #[test]
+    fn custom_rejects_http_unless_allowed() {
+        let plain = custom_with(
+            r#"url = "https://api.example.test/v1/usage""#,
+            r#"url = "http://localhost:8080/usage""#,
+        );
+        assert_custom_rejected(&plain, "url must use https://");
+        let allowed = plain.replace(
+            r#"url = "http://localhost:8080/usage""#,
+            "url = \"http://localhost:8080/usage\"\nallow_http = true",
+        );
+        assert!(
+            Config::load_from(write_toml(&allowed).path()).is_ok(),
+            "allow_http must permit http://"
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_url_with_userinfo_or_a_bad_scheme_or_garbage() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"url = "https://api.example.test/v1/usage""#,
+                r#"url = "https://user:pw@api.example.test/v1/usage""#,
+            ),
+            "must not carry credentials",
+        );
+        assert_custom_rejected(
+            &custom_with(
+                r#"url = "https://api.example.test/v1/usage""#,
+                r#"url = "not a url""#,
+            ),
+            "is not a valid URL",
+        );
+        assert_custom_rejected(
+            &custom_with(
+                r#"url = "https://api.example.test/v1/usage""#,
+                r#"url = "ftp://api.example.test/v1/usage""#,
+            ),
+            "is not http or https",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_an_invalid_api_key_env() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"api_key_env = "MYTOOL_API_KEY""#,
+                r#"api_key_env = "1BAD-NAME""#,
+            ),
+            "is not a valid environment variable name",
+        );
+        let none = custom_with(r#"api_key_env = "MYTOOL_API_KEY""#, r#"api_key_env = """#);
+        assert!(
+            Config::load_from(write_toml(&none).path()).is_ok(),
+            "an empty api_key_env means inline-only and is valid"
+        );
+    }
+
+    #[test]
+    fn custom_rejects_an_invalid_auth_header_name() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"auth_header = "Authorization""#,
+                r#"auth_header = "X Api Key""#,
+            ),
+            "auth_header \"X Api Key\" is not a valid HTTP header name",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_control_char_in_auth_scheme() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"auth_scheme = "Bearer""#,
+                "auth_scheme = \"Bearer\\u0007\"",
+            ),
+            "auth_scheme contains characters that are not valid",
+        );
+        let bare = custom_with(r#"auth_scheme = "Bearer""#, r#"auth_scheme = """#);
+        assert!(
+            Config::load_from(write_toml(&bare).path()).is_ok(),
+            "an empty scheme (bare key) is valid"
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_bad_extra_header() {
+        assert_custom_rejected(
+            &custom_with(r#"X-Org = "org_1""#, r#"authorization = "Bearer other""#),
+            "headers must not repeat auth_header",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"X-Org = "org_1""#, r#""X Org" = "org_1""#),
+            "is not a valid HTTP header name",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"X-Org = "org_1""#, "X-Org = \"org\\u0001\""),
+            "has a value that is not valid in an HTTP header",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_cache_ttl_outside_10_to_3600() {
+        for ttl in ["9", "3601"] {
+            assert_custom_rejected(
+                &custom_with("cache_ttl_secs = 120", &format!("cache_ttl_secs = {ttl}")),
+                "cache_ttl_secs must be between 10 and 3600",
+            );
+        }
+    }
+
+    #[test]
+    fn custom_rejects_an_entry_with_no_metrics_or_texts() {
+        let toml = r#"
+[[custom]]
+id = "empty"
+short_name = "emp"
+url = "https://example.test/u"
+"#;
+        assert_custom_rejected(toml, "at least one [[custom.metrics]] or [[custom.texts]]");
+    }
+
+    #[test]
+    fn custom_rejects_a_metric_mixing_percent_with_used_or_limit() {
+        assert_custom_rejected(
+            &custom_with(
+                r#"limit = "/requests/limit""#,
+                "limit = \"/requests/limit\"\npercent = \"/requests/pct\"",
+            ),
+            "must set `percent`, or both `used` and `limit`",
+        );
+        assert_custom_rejected(
+            &custom_with("limit = \"/requests/limit\"\n", ""),
+            "must set `percent`, or both `used` and `limit`",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_pointer_without_a_leading_slash() {
+        assert_custom_rejected(
+            &custom_with(r#"used = "/requests/used""#, r#"used = "requests.used""#),
+            "used \"requests.used\" must be an RFC 6901 JSON Pointer",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"value = "/tier""#, r#"value = "tier""#),
+            "value \"tier\" must be an RFC 6901 JSON Pointer",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"plan = "Pro""#, r#"plan_path = "plan""#),
+            "plan_path \"plan\" must be an RFC 6901 JSON Pointer",
+        );
+        assert_custom_rejected(
+            &custom_with(
+                r#"resets_at = "/requests/reset""#,
+                "resets_at = \"/re\\u001bset\"",
+            ),
+            "resets_at",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_a_label_outside_1_to_64_chars() {
+        let long = "l".repeat(65);
+        assert_custom_rejected(
+            &custom_with(r#"label = "Requests""#, &format!("label = {long:?}")),
+            "metric label",
+        );
+        assert_custom_rejected(
+            &custom_with(r#"label = "Tier""#, r#"label = """#),
+            "text label \"\" must be 1 to 64 characters",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_window_secs_under_60() {
+        assert_custom_rejected(
+            &custom_with("window_secs = 3600", "window_secs = 59"),
+            "window_secs must be at least 60",
+        );
+    }
+
+    #[test]
+    fn custom_rejects_duplicate_metric_and_text_labels() {
+        let metric_twice = custom_with(
+            "window_secs = 3600\n",
+            "window_secs = 3600\n[[custom.metrics]]\nlabel = \"Requests\"\npercent = \"/pct\"\n",
+        );
+        assert_custom_rejected(&metric_twice, "duplicate metric label \"Requests\"");
+        let text_twice =
+            format!("{CUSTOM_BLOCK}[[custom.texts]]\nlabel = \"Tier\"\nvalue = \"/other\"\n");
+        assert_custom_rejected(&text_twice, "duplicate text label \"Tier\"");
+    }
+
+    #[test]
+    fn enabled_custom_and_custom_by_id_select_entries() {
+        let two = format!(
+            "{}{}",
+            CUSTOM_BLOCK,
+            custom_with(r#"id = "mytool""#, r#"id = "off""#)
+                .replace(r#"short_name = "myt""#, r#"short_name = "off""#)
+                .replace("enabled = true", "enabled = false")
+        );
+        let config = Config::load_from(write_toml(&two).path()).unwrap();
+        let enabled: Vec<&str> = config.enabled_custom().map(|c| c.id.as_str()).collect();
+        assert_eq!(enabled, ["mytool"]);
+        assert_eq!(
+            config.custom_by_id("off").map(|c| c.name.as_str()),
+            Some("My Tool")
+        );
+        assert!(config.custom_by_id("nope").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn has_inline_secrets_sees_a_custom_inline_key() {
+        let without: Config = toml::from_str(CUSTOM_BLOCK).unwrap();
+        assert!(!without.has_inline_secrets());
+        let with: Config = toml::from_str(&custom_with(
+            r#"api_key_env = "MYTOOL_API_KEY""#,
+            "api_key_env = \"MYTOOL_API_KEY\"\napi_key = \"sk-inline\"",
+        ))
+        .unwrap();
+        assert!(with.has_inline_secrets());
+    }
+
+    #[test]
+    fn custom_resolve_api_key_prefers_env_then_inline_then_errors_without_the_key() {
+        let var = "AI_USAGEBAR_CUSTOM_TEST_KEY_51C2";
+        let mut spec = CustomProviderConfig {
+            id: "mytool".into(),
+            api_key_env: var.into(),
+            api_key: Some("sk-inline-secret".into()),
+            ..CustomProviderConfig::default()
+        };
+        unsafe { std::env::set_var(var, "sk-env-secret") };
+        let from_env = spec.resolve_api_key();
+        unsafe { std::env::remove_var(var) };
+        assert_eq!(from_env.unwrap(), "sk-env-secret");
+
+        assert_eq!(spec.resolve_api_key().unwrap(), "sk-inline-secret");
+
+        spec.api_key = Some(String::new());
+        let err = spec.resolve_api_key().unwrap_err();
+        assert!(matches!(err, AppError::Credentials(_)), "{err:?}");
+        let msg = err.to_string();
+        assert!(msg.contains(r#"[[custom]] id = "mytool""#), "{msg}");
+        assert!(msg.contains(var), "{msg}");
+        assert!(!msg.contains("secret"), "{msg}");
+
+        spec.api_key_env = String::new();
+        let msg = spec.resolve_api_key().unwrap_err().to_string();
+        assert!(msg.contains("set `api_key`"), "{msg}");
+    }
+
+    #[test]
+    fn loading_a_config_registers_custom_env_vars_for_scrubbing() {
+        let var = "AI_USAGEBAR_CUSTOM_SCRUB_TEST_9B1D";
+        assert!(!crate::vendor::vendor_secret_env_vars_to_remove(&[]).contains(&var));
+        let file = write_toml(&custom_with("MYTOOL_API_KEY", var));
+        Config::load_from(file.path()).unwrap();
+        assert!(
+            crate::vendor::vendor_secret_env_vars_to_remove(&[]).contains(&var),
+            "a custom provider's env var must be scrubbed from subprocesses"
+        );
+    }
+
+    /// `VendorId::config_section` is what every by-name config writer uses;
+    /// this proves each section name is one the parser actually recognizes
+    /// (the `deny_unknown_fields` on `Config` makes a misspelling fail loudly)
+    /// and lands on that vendor's `enabled` switch.
+    #[test]
+    fn every_config_section_parses_to_its_vendors_enabled_switch() {
+        for vendor in VendorId::all() {
+            let text = format!(
+                "[{}]
+enabled = true
+",
+                vendor.config_section()
+            );
+            let config: Config = toml::from_str(&text)
+                .unwrap_or_else(|e| panic!("{}: {e}", vendor.config_section()));
+            assert!(config.is_enabled(*vendor), "{}", vendor.config_section());
+            let others = VendorId::all()
+                .iter()
+                .filter(|other| *other != vendor && config.is_enabled(**other))
+                .count();
+            assert_eq!(
+                others,
+                Config::default().enabled_vendors().len()
+                    - usize::from(Config::default().is_enabled(*vendor)),
+                "[{}] enabled a different vendor",
+                vendor.config_section()
+            );
+        }
+    }
+
+    #[test]
+    fn tray_section_parses_and_defaults_to_notify() {
+        let file = write_toml("[tray]\nshortcut = \"Ctrl+Shift+U\"\nupdates = \"auto\"\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert_eq!(config.tray.shortcut.as_deref(), Some("Ctrl+Shift+U"));
+        assert_eq!(config.tray.updates(), UpdateMode::Auto);
+
+        let empty = Config::load_from(write_toml("[ui]\n").path()).unwrap();
+        assert_eq!(empty.tray, TrayConfig::default());
+        assert_eq!(empty.tray.updates(), UpdateMode::Notify);
+        assert_eq!(UpdateMode::parse(" Off "), Some(UpdateMode::Off));
+        assert_eq!(UpdateMode::parse("weekly"), None);
+        assert_eq!(UpdateMode::Auto.as_str(), "auto");
+    }
+
+    #[test]
+    fn tray_section_rejects_a_misspelled_mode() {
+        let file = write_toml("[tray]\nupdates = \"sometimes\"\n");
+        assert!(Config::load_from(file.path()).is_err());
+    }
+
+    #[test]
+    fn tray_refresh_minutes_defaults_to_five_and_parses() {
+        let empty = Config::load_from(write_toml("[ui]\n").path()).unwrap();
+        assert_eq!(empty.tray.refresh_minutes, None);
+        assert_eq!(empty.tray.refresh_minutes(), 5);
+
+        let file = write_toml("[tray]\nrefresh_minutes = 10\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert_eq!(config.tray.refresh_minutes(), 10);
+    }
+
+    #[test]
+    fn tray_refresh_minutes_rejects_values_outside_the_menu() {
+        for minutes in ["3", "0"] {
+            let file = write_toml(&format!("[tray]\nrefresh_minutes = {minutes}\n"));
+            let error = Config::load_from(file.path()).unwrap_err().to_string();
+            assert!(error.contains("[tray] refresh_minutes"), "{error}");
+            assert!(error.contains("1, 5 or 10"), "{error}");
+        }
+    }
+
+    #[test]
+    fn set_tray_value_writes_refresh_minutes_as_an_integer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[tray]\nrefresh_minutes = 5 # mine\n").unwrap();
+
+        set_tray_value(&path, "refresh_minutes", Some(10i64.into())).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, "[tray]\nrefresh_minutes = 10 # mine\n");
+        assert_eq!(Config::load_from(&path).unwrap().tray.refresh_minutes(), 10);
+
+        set_tray_value(&path, "refresh_minutes", None).unwrap();
+        assert_eq!(Config::load_from(&path).unwrap().tray.refresh_minutes(), 5);
+    }
+
+    #[test]
+    fn set_tray_value_creates_replaces_and_removes_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[ui]\n# primary = \"anthropic\"\n").unwrap();
+
+        set_tray_value(&path, "shortcut", Some("Ctrl+Shift+U".into())).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# primary = \"anthropic\""), "{text}");
+        assert!(
+            text.contains("[tray]\nshortcut = \"Ctrl+Shift+U\""),
+            "{text}"
+        );
+
+        set_tray_value(&path, "shortcut", Some("Alt+F5".into())).unwrap();
+        set_tray_value(&path, "updates", Some("off".into())).unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert_eq!(config.tray.shortcut.as_deref(), Some("Alt+F5"));
+        assert_eq!(config.tray.updates(), UpdateMode::Off);
+
+        set_tray_value(&path, "shortcut", None).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("shortcut"), "{text}");
+        assert!(text.contains("updates = \"off\""), "{text}");
+
+        // Idempotent removal does not rewrite the file.
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        set_tray_value(&path, "shortcut", None).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().modified().unwrap(), mtime);
+    }
+
+    #[test]
+    fn set_value_keeps_the_trailing_comment_when_replacing() {
+        let mut doc: toml_edit::DocumentMut =
+            "[tray]\nshortcut = \"Ctrl+U\" # mine\n".parse().unwrap();
+        set_value(&mut doc, "tray", "shortcut", Some("Alt+U".into())).unwrap();
+        assert_eq!(doc.to_string(), "[tray]\nshortcut = \"Alt+U\" # mine\n");
+    }
+
+    #[test]
+    fn enable_vendors_in_creates_a_missing_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("config.toml");
+
+        enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[grok]
+enabled = true
+"
+        );
+        assert!(Config::load_from(&path).unwrap().is_enabled(VendorId::Grok));
+    }
+
+    #[test]
+    fn enable_vendors_in_keeps_comments_and_appends_the_new_section() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# my settings
+[zai]
+api_key = \"x\" # keep
+enabled = false
+";
+        std::fs::write(&path, original).unwrap();
+
+        enable_vendors_in(&path, &[VendorId::Grok, VendorId::OpenCodeGo]).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.starts_with(
+                "# my settings
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "api_key = \"x\" # keep
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "[grok]
+enabled = true
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "[opencode-go]
+enabled = true
+"
+            ),
+            "{text}"
+        );
+        let config = Config::load_from(&path).unwrap();
+        assert!(
+            !config.is_enabled(VendorId::Zai),
+            "never widens to false, never flips others"
+        );
+        assert!(config.is_enabled(VendorId::Grok));
+        assert!(config.is_enabled(VendorId::OpenCodeGo));
+    }
+
+    #[test]
+    fn enable_vendors_in_leaves_an_explicit_false_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "[grok]
+enabled = false # off
+api_key = \"k\"
+";
+        std::fs::write(&path, original).unwrap();
+
+        // `enabled = false` in the file is the user having said no. Only the
+        // automatic path goes through here — the Settings overlay writes with
+        // `set_bool` — so nothing a person does by hand is blocked by this.
+        let written = enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert!(written.is_empty(), "{written:?}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            original,
+            "the file must not be rewritten at all"
+        );
+    }
+
+    #[test]
+    fn enable_vendors_in_adds_the_switch_when_the_config_never_mentioned_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[grok]\napi_key = \"k\"\n").unwrap();
+
+        let written = enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert_eq!(written, vec![VendorId::Grok]);
+        assert!(Config::load_from(&path).unwrap().is_enabled(VendorId::Grok));
+    }
+
+    #[test]
+    fn enable_vendors_in_is_textually_idempotent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "[grok]
+enabled = true
+
+# trailing
+";
+        std::fs::write(&path, original).unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        enable_vendors_in(&path, &[VendorId::Grok]).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before,
+            "an unchanged document must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn enable_vendors_in_with_nothing_to_enable_leaves_a_missing_file_missing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+
+        enable_vendors_in(&path, &[]).unwrap();
+
+        assert!(!path.exists());
     }
 }

@@ -28,6 +28,7 @@ KCM.SimpleKCM {
     // A ComboBox cannot use `property alias` to currentIndex: the alias would be
     // write-only from Plasma's side at load time, so the saved value never shows.
     property int cfg_leftClickAction: 0
+    property int cfg_viewMode: 0
     property string cfg_vendor: ""
     property var cfg_vendorRing: []
 
@@ -171,6 +172,14 @@ KCM.SimpleKCM {
             model: [i18n("Open the panel popup"), i18n("Open the TUI")]
             currentIndex: page.cfg_leftClickAction
             onActivated: page.cfg_leftClickAction = currentIndex
+        }
+
+        QQC2.ComboBox {
+            id: viewCombo
+            Kirigami.FormData.label: i18n("Popup layout:")
+            model: [i18n("Provider tabs"), i18n("One card per vendor")]
+            currentIndex: page.cfg_viewMode
+            onActivated: page.cfg_viewMode = currentIndex
         }
 
         QQC2.TextField {

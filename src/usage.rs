@@ -13,6 +13,7 @@
 //! sharing the pacing math, color thresholds, and Pango primitives.
 
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
 
@@ -247,9 +248,25 @@ pub struct CursorSnapshot {
     /// End of the current billing cycle (`billingCycleEnd`) — when the pools
     /// reset.
     pub reset_at: Option<DateTime<Utc>>,
+    /// Start of the current billing cycle (`billingCycleStart`), when the API
+    /// sends it. With `reset_at` it gives the exact window length the pace
+    /// projection needs; absent, no window length is reported at all.
+    pub cycle_start: Option<DateTime<Utc>>,
 }
 
 impl CursorSnapshot {
+    /// Length of the current billing cycle, but only when the API stated both
+    /// ends and they are ordered. `None` otherwise — older responses and every
+    /// snapshot cached before `billingCycleStart` existed omit the start, and a
+    /// guessed month would reach a frontend as an exact window and be paced as
+    /// one. `window_secs` is absent instead; the reset time still shows.
+    pub fn cycle_window(&self) -> Option<chrono::Duration> {
+        match (self.cycle_start, self.reset_at) {
+            (Some(start), Some(end)) if end > start => Some(end - start),
+            _ => None,
+        }
+    }
+
     /// The binding pool — whichever is closest to (or furthest past) its cap.
     /// Drives the bar color and the single generic `session_pct` alias.
     pub fn worst_pct(&self) -> i32 {
@@ -353,6 +370,11 @@ pub enum VendorSnapshot {
     OpenCodeGo(crate::opencode_go::types::Usage),
     Tavily(TavilySnapshot),
     CommandCode(crate::commandcode::types::Snapshot),
+    Ollama(OllamaSnapshot),
+    /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
+    /// that fetched it holds the `CustomProviderConfig`, and the cache
+    /// directory is keyed by its `id`.
+    Custom(crate::custom::types::CustomSnapshot),
 }
 
 /// Tavily — credit usage from the documented `GET /usage` endpoint. Tavily
@@ -416,6 +438,9 @@ pub struct AntigravitySnapshot {
     /// Fingerprint of the signed-in account. Never displayed — it exists so a
     /// cache written for one Google account is not served for another.
     pub account: String,
+    /// Where the figures came from: a running local product, or the Cloud
+    /// Code API reached with the saved Google session while nothing runs.
+    pub source: AntigravitySource,
     /// Gemini group, 5-hour window.
     pub session: Option<UsageWindow>,
     /// Gemini group, weekly window.
@@ -427,6 +452,35 @@ pub struct AntigravitySnapshot {
 }
 
 impl Eq for AntigravitySnapshot {}
+
+/// Which path produced an [`AntigravitySnapshot`]. The local language server
+/// is the primary source; the remote API is the fallback for when no product
+/// is running, and the panel says so because the two can disagree briefly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AntigravitySource {
+    #[default]
+    Local,
+    Remote,
+}
+
+impl AntigravitySource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AntigravitySource::Local => "local",
+            AntigravitySource::Remote => "remote",
+        }
+    }
+
+    /// Inverse of [`as_str`](Self::as_str); anything unrecognised is `None` so
+    /// a cache reader can fall back to the default rather than guess.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "local" => Some(AntigravitySource::Local),
+            "remote" => Some(AntigravitySource::Remote),
+            _ => None,
+        }
+    }
+}
 
 /// MiniMax Token Plan — `/v1/token_plan/remains` returns one row per model
 /// bucket (`general` for text/coding, `video`), and each row carries its own
@@ -523,9 +577,9 @@ pub struct GrokSnapshot {
 
 impl Eq for GrokSnapshot {}
 
-/// SuperGrok subscription usage returned by the official Grok Build CLI's
-/// credential-owning `x.ai/billing` ACP extension. Distinct from
-/// [`GrokSnapshot`] (Management API prepaid balance).
+/// SuperGrok subscription usage from Grok Build's billing endpoint (ACP as
+/// fallback) plus banked remaining-resets. Distinct from [`GrokSnapshot`]
+/// (Management API prepaid balance).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SuperGrokSnapshot {
     /// Subscription tier label when the billing response supplies one
@@ -543,6 +597,7 @@ pub struct SuperGrokSnapshot {
     pub reset_at: Option<DateTime<Utc>>,
     /// Remaining prepaid (purchased) API credit in USD, when present.
     pub prepaid_balance: Option<f64>,
+    pub reset_credits: ResetCredits,
 }
 
 impl Eq for SuperGrokSnapshot {}
@@ -582,12 +637,83 @@ pub struct OpenAiSnapshot {
     pub weekly: Option<UsageWindow>,
     /// Optional 7d code-review bucket.
     pub code_review: Option<UsageWindow>,
+    /// Named limits beside the main one, each with its own windows. Empty for
+    /// an account that has none.
+    pub additional_limits: Vec<OpenAiNamedLimit>,
+    /// Models the account currently cannot dispatch to, with the time they
+    /// return when the API states one. Only unavailable models are kept: a
+    /// list of everything that *is* working is noise, and the reason this
+    /// exists is to explain a refusal no percentage accounts for.
+    pub unavailable_models: Vec<OpenAiUnavailableModel>,
     /// Optional credit balance + approximate message-count ranges.
     pub credits: Option<OpenAiCredits>,
+    pub reset_credits: ResetCredits,
     /// Source of the snapshot — Codex OAuth vs admin-key fallback. Drives
     /// the placeholder set and the "OpenAI does not expose this for Plus"
     /// tooltip when the OAuth path isn't available.
     pub source: OpenAiSource,
+}
+
+/// A named limit that sits beside Codex's main window — a reserved pool or a
+/// model-specific allowance. It can be exhausted while the headline window is
+/// nearly untouched, which is the case it exists to make visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiNamedLimit {
+    /// The API's own name for it, shown as given.
+    pub name: String,
+    pub session: Option<UsageWindow>,
+    pub weekly: Option<UsageWindow>,
+}
+
+/// A model the account cannot currently dispatch to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiUnavailableModel {
+    pub model: String,
+    /// When the API says it returns. `None` means it did not say.
+    pub available_at: Option<DateTime<Utc>>,
+}
+
+/// Banked, user-redeemable quota resets — Codex's "rate limit reset credits"
+/// and SuperGrok's "remaining resets" are the same idea under two names: a
+/// count you have earned, each with its own expiry, redeemed by hand rather
+/// than arriving on the window's own schedule. Distinct from a
+/// [`UsageWindow::resets_at`], which needs no action and cannot be banked.
+///
+/// The redemption identifier each provider returns alongside these
+/// (`credits[].id`, `tokens[].token_id`) is deliberately *not* carried here:
+/// it is the handle that spends the credit, and nothing that renders a status
+/// bar needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResetCredits {
+    pub available: u32,
+    /// One row per credit the provider described. May be shorter than
+    /// `available` — Codex's usage endpoint gives the count without the
+    /// per-credit detail, and the detail call is allowed to fail on its own.
+    #[serde(default)]
+    pub credits: Vec<ResetCredit>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResetCredit {
+    /// Provider label when one exists ("Full reset (Weekly + 5 hr)"). SuperGrok
+    /// tokens have no title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+impl ResetCredits {
+    pub fn is_empty(&self) -> bool {
+        self.available == 0
+    }
+
+    pub fn next_expiry(&self) -> Option<DateTime<Utc>> {
+        self.credits
+            .iter()
+            .filter_map(|credit| credit.expires_at)
+            .min()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -616,6 +742,44 @@ pub struct ZaiSnapshot {
     pub session: Option<UsageWindow>,
     pub weekly: Option<UsageWindow>,
     pub mcp: Option<UsageWindow>,
+}
+
+/// Ollama Cloud — the session and weekly usage windows served by
+/// `ollama.com/api/usage`, plus a per-model breakdown. The response also
+/// carries an `activity.cost` string for the current period; we keep it raw
+/// (it is already dollar-formatted upstream) and let the renderer place it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OllamaSnapshot {
+    /// Display label, taken from the `[ollama] plan` config field. The API
+    /// itself does not report a plan name.
+    pub plan: String,
+    /// 5h rolling window (`limits.session`). `None` when the account has not
+    /// touched the cloud tier yet (the window is omitted from the response,
+    /// not reported as zero).
+    pub session: Option<UsageWindow>,
+    /// 7d rolling window (`limits.weekly`).
+    pub weekly: Option<UsageWindow>,
+    /// Per-model request counts inside the session window, in the order the
+    /// API returned them. Renderers sort and truncate this for the tooltip.
+    pub session_models: Vec<OllamaModelUsage>,
+    /// Per-model request counts inside the weekly window.
+    pub weekly_models: Vec<OllamaModelUsage>,
+    /// `activity.cost` as a pre-formatted dollar string (`"0.00000"`,
+    /// `"1.23456"`). Already a string on the wire — the renderer decides
+    /// whether to keep it verbatim or reformat.
+    pub activity_cost: Option<String>,
+    /// `activity.period.type` (`"last_4_weeks"` and friends). A short
+    /// human-readable label the renderer can show next to the cost.
+    pub activity_period: Option<String>,
+}
+
+/// One row of `OllamaSnapshot::{session,weekly}_models`. The API carries the
+/// per-model request count; the percentage of the window that this single
+/// model represents is not reported, so the renderer derives it locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OllamaModelUsage {
+    pub name: String,
+    pub request_count: u64,
 }
 
 /// OpenRouter — credit balance + lifetime/daily/weekly/monthly usage from

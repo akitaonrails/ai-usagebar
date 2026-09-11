@@ -132,12 +132,12 @@ function oauthCommand(v) {
     return [
         `export PATH="$HOME/.local/bin:$PATH";`,
         `if command -v ${v.cli} >/dev/null 2>&1; then ${v.login};`,
-        `else echo "⚠ ${v.cli} nao encontrado.";`,
-        `echo "Instalo em ~/.local sem sudo (npm --prefix). Pacote: ${v.pkg}"; echo;`,
-        `read -p "Instalar agora? [y/N] " a;`,
+        `else echo "⚠ ${v.cli} not found.";`,
+        `echo "I can install it under ~/.local without sudo (npm --prefix). Package: ${v.pkg}"; echo;`,
+        `read -p "Install now? [y/N] " a;`,
         `if [ "$a" = y ] || [ "$a" = Y ]; then npm i -g --prefix "$HOME/.local" ${v.pkg} && hash -r && ${v.login}; fi;`,
         `fi;`,
-        `echo; read -p "Enter para fechar..."`,
+        `echo; read -p "Press Enter to close..."`,
     ].join(' ');
 }
 
@@ -195,19 +195,19 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         window.add(page);
 
         // ── Display ──────────────────────────────────────────────────────
-        const display = new Adw.PreferencesGroup({title: _('Exibição')});
+        const display = new Adw.PreferencesGroup({title: _('Display')});
         page.add(display);
 
-        const showSession = new Adw.SwitchRow({title: _('Mostrar barra de 5h (sessão)')});
+        const showSession = new Adw.SwitchRow({title: _('Show 5h (session) bar')});
         settings.bind('show-session', showSession, 'active', Gio.SettingsBindFlags.DEFAULT);
         display.add(showSession);
 
-        const showWeekly = new Adw.SwitchRow({title: _('Mostrar barra semanal')});
+        const showWeekly = new Adw.SwitchRow({title: _('Show weekly bar')});
         settings.bind('show-weekly', showWeekly, 'active', Gio.SettingsBindFlags.DEFAULT);
         display.add(showWeekly);
 
         const showExtra = new Adw.SwitchRow({
-            title: _('Mostrar barra de uso extra (3ª)'),
+            title: _('Show extra usage bar (3rd)'),
             subtitle: _('o custo extra ($) como terceira barra'),
         });
         settings.bind('show-extra', showExtra, 'active', Gio.SettingsBindFlags.DEFAULT);
@@ -215,19 +215,19 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
 
         // Only Antigravity reports two independent pools today; for every other
         // vendor these rows are inert, which the subtitle spells out.
-        const poolLabels = [_('Ambos'), _('Só o primeiro'), _('Só o segundo'), _('Automático')];
+        const poolLabels = [_('Both'), _('First only'), _('Second only'), _('Automatic')];
         const poolValues = ['both', 'primary', 'secondary', 'auto'];
         const pools = new Adw.ComboRow({
             title: _('Pools no painel'),
-            subtitle: _('para vendors com dois pools independentes (ex.: Antigravity: Gemini e Claude & GPT OSS)'),
+            subtitle: _('for providers with two independent pools (e.g. Antigravity: Gemini and Claude & GPT OSS)'),
             model: Gtk.StringList.new(poolLabels),
         });
         bindCombo(settings, 'panel-pools', pools, poolValues);
         display.add(pools);
 
         const autoThreshold = new Adw.SpinRow({
-            title: _('Limiar do modo automático (%)'),
-            subtitle: _('troca para o outro pool quando o primeiro passa deste uso'),
+            title: _('Automatic mode threshold (%)'),
+            subtitle: _('switches to the other pool when the first passes this usage'),
             adjustment: new Gtk.Adjustment({lower: 50, upper: 100, step_increment: 1, page_increment: 5}),
         });
         settings.bind('panel-auto-threshold', autoThreshold, 'value', Gio.SettingsBindFlags.DEFAULT);
@@ -238,42 +238,42 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         syncThreshold();
         settings.connect('changed::panel-pools', syncThreshold);
 
-        const showPercent = new Adw.SwitchRow({title: _('Mostrar porcentagem/valor')});
+        const showPercent = new Adw.SwitchRow({title: _('Show percentage/value')});
         settings.bind('show-percent', showPercent, 'active', Gio.SettingsBindFlags.DEFAULT);
         display.add(showPercent);
 
         const showBars = new Adw.SwitchRow({
-            title: _('Mostrar barras'),
-            subtitle: _('desligado = só os números, sem as barras'),
+            title: _('Show bars'),
+            subtitle: _('off = numbers only, no bars'),
         });
         settings.bind('show-bars', showBars, 'active', Gio.SettingsBindFlags.DEFAULT);
         display.add(showBars);
 
         const barWidth = new Adw.SpinRow({
-            title: _('Largura de cada barra (células)'),
+            title: _('Width of each bar (cells)'),
             adjustment: new Gtk.Adjustment({lower: 4, upper: 20, step_increment: 1, page_increment: 2}),
         });
         settings.bind('bar-width', barWidth, 'value', Gio.SettingsBindFlags.DEFAULT);
         display.add(barWidth);
 
-        // ── Cores ────────────────────────────────────────────────────────
+        // ── Colours ────────────────────────────────────────────────────────
         const colors = new Adw.PreferencesGroup({
-            title: _('Cores'),
-            description: _('Cor da barra por faixa de uso (One Dark por padrão).'),
+            title: _('Colours'),
+            description: _('Bar colour by usage band (One Dark by default).'),
         });
         page.add(colors);
-        colors.add(colorRow(settings, 'color-low', _('Baixo (<50%)')));
-        colors.add(colorRow(settings, 'color-mid', _('Médio (50–74%)')));
-        colors.add(colorRow(settings, 'color-high', _('Alto (75–89%)')));
-        colors.add(colorRow(settings, 'color-critical', _('Crítico (≥90%)')));
-        colors.add(colorRow(settings, 'color-empty', _('Vazio (fundo da barra)')));
+        colors.add(colorRow(settings, 'color-low', _('Low (<50%)')));
+        colors.add(colorRow(settings, 'color-mid', _('Medium (50–74%)')));
+        colors.add(colorRow(settings, 'color-high', _('High (75–89%)')));
+        colors.add(colorRow(settings, 'color-critical', _('Critical (≥90%)')));
+        colors.add(colorRow(settings, 'color-empty', _('Empty (bar background)')));
 
-        // ── Dados ────────────────────────────────────────────────────────
-        const data = new Adw.PreferencesGroup({title: _('Dados')});
+        // ── Data ────────────────────────────────────────────────────────
+        const data = new Adw.PreferencesGroup({title: _('Data')});
         page.add(data);
 
         const interval = new Adw.SpinRow({
-            title: _('Intervalo de atualização (s)'),
+            title: _('Refresh interval (s)'),
             adjustment: new Gtk.Adjustment({lower: 5, upper: 3600, step_increment: 5, page_increment: 30}),
         });
         settings.bind('refresh-interval', interval, 'value', Gio.SettingsBindFlags.DEFAULT);
@@ -282,34 +282,34 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         const vendorList = ['anthropic', 'openai', 'zai', 'openrouter', 'deepseek', 'antigravity'];
         const vendor = new Adw.ComboRow({
             title: _('Vendor'),
-            subtitle: _('anthropic e antigravity expõem as janelas de 5h + semanal'),
+            subtitle: _('anthropic and antigravity expose the 5h + weekly windows'),
             model: Gtk.StringList.new(vendorList),
         });
         bindCombo(settings, 'vendor', vendor, vendorList);
         data.add(vendor);
 
-        const binPath = new Adw.EntryRow({title: _('Caminho do binário (vazio = auto)')});
+        const binPath = new Adw.EntryRow({title: _('Binary path (empty = auto)')});
         settings.bind('binary-path', binPath, 'text', Gio.SettingsBindFlags.DEFAULT);
         data.add(binPath);
 
         // ── Position ─────────────────────────────────────────────────────
         const pos = new Adw.PreferencesGroup({
-            title: _('Posição no painel'),
-            description: _('Mudanças aplicam na hora.'),
+            title: _('Panel position'),
+            description: _('Changes apply immediately.'),
         });
         page.add(pos);
 
         const box = new Adw.ComboRow({
-            title: _('Área'),
-            subtitle: _('right = ao lado da rede/relógio'),
+            title: _('Area'),
+            subtitle: _('right = next to the network/clock'),
             model: Gtk.StringList.new(['left', 'center', 'right']),
         });
         bindCombo(settings, 'panel-box', box, ['left', 'center', 'right']);
         pos.add(box);
 
         const index = new Adw.SpinRow({
-            title: _('Índice na área'),
-            subtitle: _('0 = mais à esquerda da área escolhida'),
+            title: _('Index within the area'),
+            subtitle: _('0 = leftmost in the chosen area'),
             adjustment: new Gtk.Adjustment({lower: 0, upper: 20, step_increment: 1, page_increment: 1}),
         });
         settings.bind('panel-index', index, 'value', Gio.SettingsBindFlags.DEFAULT);
@@ -327,8 +327,8 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         window.add(page);
 
         const group = new Adw.PreferencesGroup({
-            title: _('Login / configuração por vendor'),
-            description: _('OAuth abre um terminal com o comando de login; vendors de API key são configurados no TUI. Reabra esta janela para reavaliar o status.'),
+            title: _('Per-provider login / setup'),
+            description: _('OAuth opens a terminal with the login command; API-key providers are configured in the TUI. Reopen this window to re-check status.'),
         });
         page.add(group);
 
@@ -347,11 +347,11 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
                         if (productDetected) {
                             row.subtitle = _('✓ Antigravity detectado — mantenha o app, IDE ou agy aberto');
                         } else if (installed) {
-                            row.subtitle = _('agy instalado — abra uma sessão para disponibilizar a quota');
+                            row.subtitle = _('agy installed — open a session to make the quota available');
                         } else {
-                            row.subtitle = _('abra ou instale o app, a IDE ou o agy; não há login separado');
+                            row.subtitle = _('open or install the app, the IDE or agy; there is no separate login');
                         }
-                        btn.label = installed ? _('Abrir agy') : _('Sem login separado');
+                        btn.label = installed ? _('Open agy') : _('No separate login');
                         btn.sensitive = installed;
                     });
                     return;
@@ -359,21 +359,21 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
                 btn.sensitive = true;
                 if (v.kind !== 'oauth') {
                     const ok = vendorConfigured(v);
-                    row.subtitle = ok ? _('✓ Configurado') : `⚠ ${_('Sem API key')} — ${v.env}`;
+                    row.subtitle = ok ? _('✓ Configured') : `⚠ ${_('No API key')} — ${v.env}`;
                     btn.label = _('Configurar (TUI)');
                     return;
                 }
                 if (vendorConfigured(v)) {
-                    row.subtitle = _('✓ Configurado');
+                    row.subtitle = _('✓ Configured');
                     btn.label = _('Re-logar');
                     return;
                 }
                 row.subtitle = _('verificando…');
                 checkCliInstalled(v.cli, (installed) => {
                     row.subtitle = installed
-                        ? `⚠ ${_('Não logado')} — \`${v.login}\``
-                        : `⚠ ${v.cli} ${_('não instalado')} (instala em ~/.local, sem sudo)`;
-                    btn.label = installed ? _('Logar') : _('Instalar + logar');
+                        ? `⚠ ${_('Not signed in')} — \`${v.login}\``
+                        : `⚠ ${v.cli} ${_('not installed')} (installs under ~/.local, no sudo)`;
+                    btn.label = installed ? _('Sign in') : _('Install + sign in');
                 });
             };
             update();
@@ -399,7 +399,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         }
 
         // Re-check when the window regains focus (e.g., after logging in via
-        // the terminal) — fixes the "still shows não logado" loop.
+        // the terminal) — fixes the "still shows not signed in" loop.
         window.connect('notify::is-active', () => {
             if (window.is_active)
                 updates.forEach(u => u());

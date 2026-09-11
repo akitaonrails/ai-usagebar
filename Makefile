@@ -50,9 +50,13 @@ test:
 	$(MAKE) desktop-test
 	$(MAKE) plugin-test
 
+changelog-check:
+	./scripts/check-changelog-immutable.sh
+
 desktop-test:
 	node gnome-extension/marker-logic.test.mjs
 	node kde-plasmoid/plasmoid-logic.test.mjs
+	node windows/popover/popover.test.mjs
 
 plugin-test:
 	node omarchy/model.test.mjs

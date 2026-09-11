@@ -1,0 +1,436 @@
+@import "tailwindcss";
+
+/* Tailwind 4 gates `hover:` behind `@media (hover: hover)`; WebView2 does not
+   always report a hover-capable pointer, so restore the plain `:hover` rule. */
+@custom-variant hover (&:hover);
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens mirroring OpenUsage (macOS, SwiftUI edition):
+ * Theme.swift (surfaces, meter colors) and DensitySetting.swift (sizes).
+ * Colors follow the macOS system palette so light/dark read the same.
+ */
+:root {
+  color-scheme: light;
+
+  /* Surfaces: textBackgroundColor + .fill.quaternary composited on top. */
+  --surface: #ffffff;
+  --card: #f2f2f2;
+  --fill-quaternary: rgba(0, 0, 0, 0.05);
+  --fill-tertiary: rgba(0, 0, 0, 0.09);
+  --separator: rgba(0, 0, 0, 0.1);
+  --menu: #ffffff;
+
+  /* Labels: primary / secondary / tertiary. */
+  --label-1: rgba(0, 0, 0, 0.85);
+  --label-2: rgba(0, 0, 0, 0.5);
+  --label-3: rgba(0, 0, 0, 0.26);
+
+  /* System colors. */
+  --blue: #007aff;
+  --yellow: #ffcc00;
+  --red: #ff3b30;
+  --orange: #ff9500;
+  --green: #34c759;
+  --accent: var(--blue);
+
+  /* Chrome: back/reset circles, Options capsule, glass bars. */
+  --control-fill: rgba(0, 0, 0, 0.06);
+  --control-fill-hover: rgba(0, 0, 0, 0.1);
+  --bar-glass: rgba(255, 255, 255, 0.82);
+  --lift-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.12);
+
+  /* Regular density (DensitySetting.regular). */
+  --sz-header: 14px;
+  --sz-icon: 16px;
+  --sz-badge: 11px;
+  --sz-label: 13px;
+  --sz-support: 12px;
+  --meter-h: 5px;
+  --pad-bar-row: 10px;
+  --pad-text-row: 6px;
+  --pad-text-row-condensed: 2px;
+  --row-inner: 4px;
+  --section-gap: 14px;
+  --header-card-gap: 4px;
+  --card-gutter: 5px;
+  --pad-control: 9px;
+  --content-top: 14px;
+
+  /* Fixed geometry. */
+  --panel-pad: 14px;
+  --card-radius: 12px;
+  --topbar-h: 44px;
+}
+
+:root[data-density="compact"] {
+  --sz-header: 13px;
+  --sz-icon: 14px;
+  --sz-badge: 10px;
+  --sz-label: 12px;
+  --sz-support: 11px;
+  --meter-h: 4px;
+  --pad-bar-row: 5px;
+  --pad-text-row: 4px;
+  --pad-text-row-condensed: 1px;
+  --row-inner: 3px;
+  --section-gap: 8px;
+  --header-card-gap: 2px;
+  --card-gutter: 3px;
+  --pad-control: 6px;
+  --content-top: 10px;
+}
+
+.dark {
+  color-scheme: dark;
+  --surface: #1e1e1e;
+  --card: #292929;
+  --fill-quaternary: rgba(255, 255, 255, 0.05);
+  --fill-tertiary: rgba(255, 255, 255, 0.1);
+  --separator: rgba(255, 255, 255, 0.1);
+  --menu: #2b2b2b;
+  --label-1: rgba(255, 255, 255, 0.85);
+  --label-2: rgba(255, 255, 255, 0.55);
+  --label-3: rgba(255, 255, 255, 0.25);
+  --blue: #0a84ff;
+  --yellow: #ffd60a;
+  --red: #ff453a;
+  --orange: #ff9f0a;
+  --green: #30d158;
+  --control-fill: rgba(255, 255, 255, 0.08);
+  --control-fill-hover: rgba(255, 255, 255, 0.14);
+  --bar-glass: rgba(30, 30, 30, 0.82);
+  --lift-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* Map the shadcn utility names the ui/ components rely on. */
+@theme inline {
+  --color-background: var(--surface);
+  --color-foreground: var(--label-1);
+  --color-card: var(--card);
+  --color-card-foreground: var(--label-1);
+  --color-popover: var(--menu);
+  --color-popover-foreground: var(--label-1);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--fill-quaternary);
+  --color-secondary-foreground: var(--label-1);
+  --color-muted: var(--fill-quaternary);
+  --color-muted-foreground: var(--label-2);
+  --color-accent: var(--fill-quaternary);
+  --color-accent-foreground: var(--label-1);
+  --color-destructive: var(--red);
+  --color-border: var(--separator);
+  --color-input: var(--fill-tertiary);
+  --color-ring: var(--accent);
+  --color-label-1: var(--label-1);
+  --color-label-2: var(--label-2);
+  --color-label-3: var(--label-3);
+  --color-meter-blue: var(--blue);
+  --color-meter-yellow: var(--yellow);
+  --color-meter-red: var(--red);
+  --color-notice: var(--orange);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: var(--card-radius);
+  --radius-xl: 16px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--label-1);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.25;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Grouped card surface (Theme.cardSurface): borderless, 12pt continuous corners. */
+.card-surface {
+  background: var(--card);
+  border-radius: var(--card-radius);
+}
+
+/* Lifted drag preview: same surface + hairline + shadow (liftedRowSurface). */
+.lifted-surface {
+  background: var(--card);
+  border-radius: var(--card-radius);
+  box-shadow: inset 0 0 0 0.5px var(--separator), var(--lift-shadow);
+}
+
+/* Section header text (.caption.weight(.semibold), secondary). */
+.section-title {
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--label-2);
+}
+
+/* Full-width capsule meter (WidgetRowView.meter). */
+.meter {
+  position: relative;
+  height: var(--meter-h);
+  border-radius: 999px;
+  background: var(--fill-quaternary);
+  overflow: hidden;
+}
+
+.meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: var(--meter-h);
+  border-radius: inherit;
+  background: var(--blue);
+  transition: width 420ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.meter-fill[data-color="yellow"] {
+  background: var(--yellow);
+}
+
+.meter-fill[data-color="red"] {
+  background: var(--red);
+}
+
+.meter-fill[data-empty="true"] {
+  min-width: 0;
+  width: 0 !important;
+}
+
+/* Pace tick: where the fill would sit on an even burn (WidgetRowView's marker). */
+.meter-wrap {
+  position: relative;
+}
+
+.meter-tick {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--label-1);
+  opacity: 0.55;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+/* Reorder grip (line.3.horizontal, 12pt semibold, tertiary, 16×22). */
+.grip {
+  display: inline-flex;
+  width: 16px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--label-3);
+  cursor: grab;
+  touch-action: none;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.grip:active {
+  cursor: grabbing;
+}
+
+/* Circular chrome buttons (glass, .circle, .large → 28pt). */
+.circle-btn {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--control-fill);
+  color: var(--label-1);
+  cursor: default;
+  padding: 0;
+}
+
+.circle-btn:hover {
+  background: var(--control-fill-hover);
+}
+
+.circle-btn:active {
+  opacity: 0.7;
+}
+
+/* Options capsule (HeaderView.optionsButton in interactiveGlass Capsule). */
+.capsule-btn {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--control-fill);
+  color: var(--label-1);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: default;
+}
+
+.capsule-btn:hover,
+.capsule-btn[data-state="open"] {
+  background: var(--control-fill-hover);
+}
+
+/* Global-shortcut recorder: a 24 px capsule; while recording it wears the accent ring and
+   reads "Press keys…". Plain CSS for the same hover reason as .header-action. */
+.recorder {
+  display: inline-flex;
+  height: 24px;
+  min-width: 64px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--control-fill);
+  color: var(--label-1);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.recorder:hover {
+  background: var(--control-fill-hover);
+}
+
+.recorder[data-empty] {
+  color: var(--label-2);
+}
+
+.recorder[data-recording] {
+  color: var(--label-2);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.recorder[aria-invalid] {
+  box-shadow: inset 0 0 0 1px var(--red);
+}
+
+/* Pinned top bar / footer: content scrolls underneath (barGlass). */
+.bar-glass {
+  background: var(--bar-glass);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+}
+
+/* Provider-header shortcuts (Customize / Reset). Plain CSS on purpose: Tailwind
+   gates `hover:` behind `@media (hover: hover)`, which WebView2 does not always
+   report, so the variants never applied here. */
+.header-action {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--label-2);
+  cursor: default;
+  padding: 0;
+  transition:
+    background-color 120ms ease-out,
+    color 120ms ease-out,
+    transform 80ms ease-out;
+}
+
+.header-action:hover,
+.header-action:focus-visible {
+  background: var(--control-fill-hover);
+  color: var(--label-1);
+  outline: none;
+}
+
+.header-action:active {
+  background: var(--fill-tertiary);
+  color: var(--label-1);
+  transform: scale(0.88);
+}
+
+/* Plain text buttons (headline / reset toggles): no chrome at all. */
+.plain-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: default;
+  text-align: inherit;
+}
+
+/* Screen switch: 180ms ease-in-out slide (Motion.modeSwitch). */
+.screen-enter {
+  animation: screen-slide 180ms ease-in-out;
+}
+
+.screen-enter[data-direction="back"] {
+  animation-name: screen-slide-back;
+}
+
+@keyframes screen-slide {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes screen-slide-back {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-enter,
+  .meter-fill {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Dashed empty drop target ("Drag metrics here"). */
+.drop-zone {
+  height: 30px;
+  margin: 8px;
+  border: 1px dashed var(--label-3);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  color: var(--label-3);
+}

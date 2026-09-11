@@ -76,8 +76,9 @@ never appears in the chooser.
 
 Right-click the widget → *Configure*. One page: which vendors are in the scroll
 ring (each listed with its plan or its error, straight from the report), the
-current vendor, refresh interval, command timeout, left-click action, compact
-percentage and bar toggles, bar width, and the five severity colours.
+current vendor, the popup layout, refresh interval, command timeout, left-click
+action, compact percentage and bar toggles, bar width, and the five severity
+colours.
 
 The GNOME prefs window has a second "Vendors" page listing per-vendor login
 status. There is no equivalent page here because the report already carries
@@ -123,6 +124,30 @@ human-readable `detail` string, and parsing prose to place a marker is not a
 contract worth depending on; the pace text itself is rendered under each row, so
 the information is kept. Restoring the marker properly means adding an
 `elapsed_pct` field to the report.
+
+### The cards layout
+
+*Popup layout* offers an alternative view, ported from the closed #142 card
+design after its review: **One card per vendor** lays every entry the report
+returned out as a card, each window (session, weekly, …) rendered as its own
+gauge row with the report's own severity colouring. Per-card properties are all
+sourced from the same single aggregate report as the tab layout — labels,
+windows, percentages, severities, staleness and error text come from the report,
+never from a hardcoded provider table, so a newly added vendor gets a card with
+no widget change:
+
+- a window a vendor does not report shows *— not reported*, never a fabricated
+  0% bar (a metric arriving with `percent: null` stays null — see
+  `finitePercent()` in the shared logic)
+- an errored vendor replaces its gauges with the failure message instead of
+  showing empty bars, which would read as "0% used"
+- a stale card is flagged *cached* next to the label, keeping the severity of
+  its last good numbers rather than flipping red
+- clicking a card selects that vendor, so the compact panel tracks it just like
+  the tab strip does; the per-window pace details live in the hover tooltip
+
+Both layouts are projections of one report, so switching the layout never
+refetches.
 
 ## Shared logic
 

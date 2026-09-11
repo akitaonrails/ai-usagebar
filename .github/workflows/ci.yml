@@ -158,3 +158,6 @@ jobs:
 
       - name: Test KDE plasmoid logic
         run: node kde-plasmoid/plasmoid-logic.test.mjs
+
+      - name: Test Windows popover model
+        run: node windows/popover/popover.test.mjs

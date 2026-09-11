@@ -41,6 +41,12 @@ PlasmoidItem {
     readonly property var compactCells: Logic.panelCells(root.entry, {max: 2})
     readonly property bool showBars: Plasmoid.configuration.showBars
 
+    // Read back as the integer index of the Enum choice (0 = tabs, 1 = cards).
+    readonly property int viewMode: Plasmoid.configuration.viewMode
+    // The cards view projects every entry the report returned; it needs no
+    // per-vendor selection and never refetches when toggled.
+    readonly property var cards: Logic.cardModel(root.report)
+
     // The user's own five colours, defaulting to One Dark exactly as in
     // src/theme.rs, the GNOME extension and the macOS app.
     readonly property var fixedColors: ({

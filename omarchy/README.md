@@ -107,23 +107,30 @@ omarchy bar set akitaonrails.ai-usagebar showValue false --json
 
 # Opt in to the Waybar-style provider tag. The default is false.
 omarchy bar set akitaonrails.ai-usagebar showProvider true --json
+
+# Show every configured provider's icon and usage at once. The default is false.
+omarchy bar set akitaonrails.ai-usagebar showAll true --json
 ```
 
 The refresh interval is clamped to 30–3600 seconds. The `provider` setting
 prefers an exact entry id; if there is no exact match, a base id such as
-`anthropic` selects all accounts for that provider. `showValue` and
-`showProvider` change only the top-bar label; neither hides report details or
-changes provider fetching.
+`anthropic` selects all accounts for that provider. `showValue`,
+`showProvider`, and `showAll` change only the top-bar label; none hide report
+details or change provider fetching.
 
 `showProvider` draws the `short_name` the Rust report ships for the selected
 entry, so the codes never fork from Waybar's `{vendor_short}`: `cld 29%`,
 `gpt 95%`, `agy 81%`. Every account of one provider shares that provider's
 code — the panel and tooltip remain the place that tells `Claude · work` from
 `Claude · personal`. With both toggles on the bar reads icon + `cld 29%`; with
-`showValue` off it is the icon and `cld`. A vertical bar has room for neither
-and keeps showing the icon alone. Against an `ai-usagebar` older than the
-`short_name` field the tag falls back to the entry id's provider half
-(`anthropic 29%`) until the binary is updated.
+`showValue` off it is the icon and `cld`. `showAll` draws every visible
+entry as its own chip with a brand SVG (see [`icons/README.md`](icons/README.md)
+for source and licence). Grok and SuperGrok share a mark; Command Code has
+none and falls back to its three-letter code. A vertical bar has room for
+none of this and keeps showing a single icon.
+Against an `ai-usagebar` older than the `short_name` field the tag falls
+back to the entry id's provider half (`anthropic 29%`) until the binary is
+updated.
 
 ## Development checks
 

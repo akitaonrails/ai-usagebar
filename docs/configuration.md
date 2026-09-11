@@ -5,12 +5,22 @@ Claude, Codex, Z.AI, and OpenRouter are enabled by default; other providers are
 opt-in. The commented example shows the defaults and provider-specific
 settings.
 
+Both binaries accept `--config <PATH>` to use an alternate file instead of the
+default location (`%APPDATA%\ai-usagebar\config.toml` on Windows). The file
+must already exist; loads and the Settings overlay then read and write that
+file for the whole process, so a test config never touches the real one:
+
+```bash
+ai-usagebar --vendor kimi --config ./config.test.toml --watch 5
+ai-usagebar-tui --config ./config.test.toml
+```
+
 ```toml
 [ui]
 # Which vendor the widget shows when --vendor is omitted, AND which tab
 # is selected when the TUI opens. Defaults to anthropic when not set.
 # Only a vendor that is enabled can be primary.
-# primary = "anthropic"   # anthropic | anthropic_api | openai | copilot
+# primary = "anthropic"   # anthropic | anthropic_api | openai | copilot | ollama
 #                         # | zai | openrouter | deepseek | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
@@ -93,6 +103,13 @@ enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "NOVITA_API_KEY"
 # api_key = "..."          # used if NOVITA_API_KEY is unset; chmod 600 the file!
 
+[ollama]
+# Disabled by default; enable after minting a key at
+# https://ollama.com/settings/keys (Bearer for https://ollama.com/api/usage).
+enabled = true
+api_key_env = "OLLAMA_API_KEY"
+# api_key = "..."          # used if OLLAMA_API_KEY is unset; chmod 600 the file!
+
 [moonshot]
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "MOONSHOT_API_KEY"
@@ -109,9 +126,10 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 
 [supergrok]
 enabled = true             # disabled by default; enable once you've run `grok login`
-# No API key of its own: billing comes from Grok Build's documented HTTPS
-# endpoint using the `key` already in its auth.json (read-only, sent in one
-# Authorization header, never copied or rewritten), or from its ACP process.
+# No API key of its own: billing and banked resets use the `key` already in
+# its auth.json (read-only, sent in an Authorization header, never copied or
+# rewritten). Billing is Grok Build's documented HTTPS endpoint, or its ACP
+# process as fallback; remaining resets are a separate grok.com RPC.
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok. Override only when the
 # trusted official binary was installed elsewhere.
 # grok_binary = "/opt/grok/bin/grok"

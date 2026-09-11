@@ -280,6 +280,7 @@ mod tests {
         AntigravitySnapshot {
             plan: "Google AI Pro".into(),
             account: "acct:test".into(),
+            source: crate::usage::AntigravitySource::Local,
             session: Some(window(43, "2026-07-22T14:00:00Z", false)),
             weekly: Some(window(8, "2026-07-28T17:39:58Z", true)),
             third_party_session: Some(window(75, "2026-07-22T16:30:00Z", false)),

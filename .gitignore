@@ -12,6 +12,11 @@
 .env.local
 *.credentials.json
 
+# Per-vendor config scratch files (config.<vendor>.toml) — never commit.
+# Only config.example.toml and the user's own config.toml are tracked.
+config.*.toml
+!config.example.toml
+
 # Snapshot review files from `cargo insta`
 *.snap.new
 
@@ -29,3 +34,6 @@ macos/ai-usagebar-menubar
 
 # Local screenshots for PR bodies (not tracked; drag into the PR on GitHub)
 macos/printscreen/
+
+windows/popover/node_modules/
+windows/popover/dist/

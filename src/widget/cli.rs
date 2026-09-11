@@ -23,7 +23,12 @@ Output modes:
     in a terminal Does The Right Thing.
   - --watch N: like --pretty but refreshes every N seconds, clearing the screen
     between ticks. Useful while iterating on `--format` or `--tooltip-format`.
-  - --json: force JSON output even when stdout is a TTY (for scripting)."
+  - --json: force JSON output even when stdout is a TTY (for scripting).
+  - --config PATH: read and write an alternate config file instead of the
+    default `%APPDATA%/ai-usagebar/config.toml` (Windows) or
+    `~/.config/ai-usagebar/config.toml`. Accepted in any position, before or
+    after the subcommand; the file must already exist, and Settings saves
+    write back to it."
 )]
 pub struct Cli {
     /// Which vendor to query. When omitted, reads `[ui] primary` from
@@ -145,6 +150,27 @@ pub enum Command {
 
     /// Quota and time-to-reset for every configured vendor and account.
     Usage {
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Turn on vendors whose credentials already exist on this machine
+    /// (local files, keychains, saved keys, env vars; never the network).
+    Detect {
+        /// Re-check every vendor, not only the ones never seen before.
+        #[arg(long)]
+        all: bool,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Every provider ai-usagebar knows: how each authenticates, whether it is
+    /// switched on, and whether this machine has the credential it needs.
+    /// Unlike `usage`, this lists the switched-off and the never-configured —
+    /// it contacts nothing and is the catalog a frontend lists providers from.
+    Vendors {
         /// Machine-readable output.
         #[arg(long)]
         json: bool,
@@ -302,6 +328,7 @@ pub enum Vendor {
     Tavily,
     #[value(name = "commandcode")]
     CommandCode,
+    Ollama,
 }
 
 impl Vendor {
@@ -328,6 +355,7 @@ impl Vendor {
             Vendor::OpenCodeGo => crate::vendor::VendorId::OpenCodeGo,
             Vendor::Tavily => crate::vendor::VendorId::Tavily,
             Vendor::CommandCode => crate::vendor::VendorId::CommandCode,
+            Vendor::Ollama => crate::vendor::VendorId::Ollama,
         }
     }
 }
@@ -421,6 +449,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::OpenCodeGo => Vendor::OpenCodeGo,
         crate::vendor::VendorId::Tavily => Vendor::Tavily,
         crate::vendor::VendorId::CommandCode => Vendor::CommandCode,
+        crate::vendor::VendorId::Ollama => Vendor::Ollama,
     }
 }
 
@@ -465,6 +494,29 @@ mod tests {
     fn usage_subcommand_parses_machine_readable_mode() {
         let cli = Cli::parse_from(["ai-usagebar", "usage", "--json"]);
         assert!(matches!(cli.command, Some(Command::Usage { json: true })));
+    }
+
+    #[test]
+    fn detect_subcommand_parses_its_flags_and_takes_no_widget_flags() {
+        let bare = Cli::parse_from(["ai-usagebar", "detect"]);
+        assert!(matches!(
+            bare.command,
+            Some(Command::Detect {
+                all: false,
+                json: false
+            })
+        ));
+
+        let full = Cli::parse_from(["ai-usagebar", "detect", "--all", "--json"]);
+        assert!(matches!(
+            full.command,
+            Some(Command::Detect {
+                all: true,
+                json: true
+            })
+        ));
+
+        assert!(Cli::try_parse_from(["ai-usagebar", "--vendor", "kimi", "detect"]).is_err());
     }
 
     #[test]

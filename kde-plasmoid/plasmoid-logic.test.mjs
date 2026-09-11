@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {
-    buildArgv, buildCommand, buildTuiCommand, DEFAULT_BINARY, DEFAULT_TIMEOUT_SECS,
+    buildArgv, buildCommand, buildTuiCommand, cardFor, cardModel, cardState,
+    DEFAULT_BINARY, DEFAULT_TIMEOUT_SECS,
     detailRows, entryFor, errorMessage, EXIT_KILLED, EXIT_TIMED_OUT, formatDuration,
     headline, isAlarming, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
     metricDetail, nextVendor, paletteFromTheme, panelCells, parseReport,
@@ -86,6 +87,7 @@ for (const rel of [
     './package/contents/ui/FullRepresentation.qml',
     './package/contents/ui/UsageRow.qml',
     './package/contents/ui/UsageRows.qml',
+    './package/contents/ui/VendorCards.qml',
     './package/contents/ui/configGeneral.qml',
 ]) {
     const src = readFileSync(at(rel), 'utf8');
@@ -159,6 +161,15 @@ assert.equal(parseReport('not json').raw, 'not json', 'the original output is ke
 // An entry with no id cannot be selected or tabbed to, so it is dropped rather
 // than rendered as a nameless row.
 assert.equal(parseReport(JSON.stringify({entries: [{plan: 'x'}]})).entries.length, 0);
+
+// Number(null) === 0 in JS. A metric the report sends with percent null (a
+// balance-style row, or a window the vendor does not report) must normalize to
+// null so the views can show "not reported" — not to a fabricated 0% bar.
+const nullPercent = parseReport(JSON.stringify({entries: [{id: 'v', sections: [
+    {type: 'metric', label: 'Balance', value: '$4.10', percent: null},
+]}]})).entries[0].sections[0];
+assert.equal(nullPercent.percent, null);
+assert.equal(nullPercent.severity, 'low');
 
 // Provider-controlled strings cannot turn into QML rich text, preserve terminal
 // controls, or use bidi overrides to disguise what the panel displays.
@@ -269,6 +280,56 @@ assert.deepEqual(panelCells(zai).map(c => c.text), ['⚠']);
 assert.deepEqual(panelCells(null), []);
 // A vendor whose only section is a block has no percentage to plot.
 assert.deepEqual(panelCells(openai), []);
+
+// ---------------------------------------------------------------------------
+// cards (viewMode "VendorCards")
+// ---------------------------------------------------------------------------
+const claudeCard = cardFor(anthropic);
+const codexCard = cardFor(openai);
+const zaiCard = cardFor(zai);
+
+// One card per entry the aggregate report returned, in report order — the
+// card view never restates a provider list of its own.
+assert.deepEqual(cardModel(report).map(c => c.label), ['Claude', 'Codex', 'Z.AI']);
+assert.equal(cardModel(null).length, 0);
+assert.equal(cardFor(null), null);
+assert.equal(cardState(null), 'ok');
+
+// Windows are the metric sections, in report order; block sections ride along.
+assert.deepEqual(claudeCard.windows.map(w => w.window), ['5h', '7d']);
+assert.deepEqual(claudeCard.windows.map(w => w.value), ['62%', '91%']);
+assert.deepEqual(claudeCard.windows.map(w => w.severity), ['mid', 'critical']);
+assert.equal(claudeCard.windows[0].detail, '40% elapsed · 22pts over');
+assert.equal(claudeCard.blocks.length, 0);
+assert.equal(codexCard.blocks.length, 1);
+
+// The accent is the WORST window — the same rule headline() applies.
+assert.equal(claudeCard.accent, 'critical');
+
+// Staleness is the report's own verdict (the Rust core owns it), and a stale
+// card keeps the severity of its last good numbers instead of flipping red.
+assert.equal(claudeCard.state, 'ok');
+assert.equal(codexCard.state, 'stale');
+assert.equal(codexCard.accent, 'low');
+assert.deepEqual(codexCard.windows, []);
+
+// An errored vendor outranks whatever its last good numbers said, replaces the
+// gauges with the message, and never renders as a 0% bar.
+assert.equal(zaiCard.state, 'error');
+assert.equal(zaiCard.accent, 'critical');
+assert.equal(zaiCard.error, 'no API key');
+assert.deepEqual(zaiCard.windows, []);
+
+// A window a vendor does not report carries percent null and its value text —
+// the QML renders that as "not reported", never as a fabricated 0%.
+const partial = cardFor(parseReport(JSON.stringify({entries: [{
+    id: 'openrouter', display_name: 'OpenRouter', name: 'openrouter', plan: '',
+    status: 'ready', stale: false, error: null,
+    sections: [{type: 'metric', label: 'Session (5h)', value: '$1.20',
+        percent: null, severity: 'low'}],
+}]})).entries[0]);
+assert.deepEqual(partial.windows.map(w => [w.percent, w.value]), [[null, '$1.20']]);
+assert.equal(partial.accent, 'low');
 
 assert.equal(shortLabel('Session (5h)'), '5h');
 assert.equal(shortLabel('Weekly (7d)'), '7d');

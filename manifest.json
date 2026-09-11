@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "akitaonrails.ai-usagebar",
   "name": "AI Usage",
-  "version": "1.10.0",
+  "version": "1.15.0",
   "author": "AkitaOnRails",
   "license": "MIT",
   "description": "Multi-provider AI plan usage and balances in a native Omarchy Quattro panel.",
@@ -28,7 +28,8 @@
       "provider": "",
       "refreshIntervalSec": 300,
       "showValue": true,
-      "showProvider": false
+      "showProvider": false,
+      "showAll": false
     },
     "schema": [
       {
@@ -59,6 +60,13 @@
         "type": "boolean",
         "label": "Show provider name",
         "description": "Show the selected provider's short code (cld, gpt, zai, agy) before the usage value, the way Waybar's {vendor_short} does. Off by default.",
+        "defaultValue": false
+      },
+      {
+        "key": "showAll",
+        "type": "boolean",
+        "label": "Show all providers",
+        "description": "Show every configured provider's icon and usage in the top bar at once, instead of cycling one at a time. Off by default.",
         "defaultValue": false
       }
     ]

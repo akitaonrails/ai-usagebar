@@ -27,11 +27,27 @@ When cutting a new version (patch, minor, or major):
      to a shipped release with no removed line for the grep to find. It passed
      clean while the section was wrong.
 
-     The cause is the same both times: a PR branched before the last tag
+     **`make changelog-check` now does this comparison for you** — it diffs
+     every released section against its own tag and refuses a version file
+     that moved backwards, which is the other half of the same hazard (four
+     branches once came back reading 1.12.0 after v1.13.0 shipped). Run it
+     instead of composing the diff by hand; the manual form below is kept
+     because it documents what the script checks.
+
+     `make test` also enforces part of this without git: a guard test fails if
+     any changelog entry appears under two versions, or if one section repeats
+     a category heading. The manual comparison above stays because it is
+     stronger for the newest section — the guard cannot tell a *reworded*
+     entry from a new one — but the automated check is what catches a
+     conflict resolution that quietly copies an entry into a published
+     section, which is how it happened the third time.
+
+     The cause is the same every time: a branch that predates the last tag
      carries its entries under `[Unreleased]`, and git merges them *cleanly*
      into whatever now sits at that position — which is the section you just
-     published. It happened to v1.6.0 (#127) and again to v1.8.0 (#129). A
-     clean merge is not evidence here; the comparison is.
+     published. It happened to v1.6.0 (#127), to v1.8.0 (#129), and to
+     v1.11.0 when a maintainer resolved #152's conflict with a script. A clean
+     merge is not evidence here; the comparison is, and now the guard is too.
 3. **Bump `packaging/aur/PKGBUILD`** — `pkgver=X.Y.Z`, `pkgrel=1`, reset `sha256sums` to `'SKIP'`.
 4. **Bump `packaging/aur/PKGBUILD-bin`** — same `pkgver`, `pkgrel=1`, reset both
    `sha256sums_x86_64` and `sha256sums_aarch64` to `'SKIP'`.
@@ -49,6 +65,7 @@ When cutting a new version (patch, minor, or major):
    The committed files keep `sha256sums = SKIP`; CI pins the real hashes later.
 6. **Run gate before tagging**:
    ```
+   make changelog-check                        # released sections + version files intact
    make test                                   # cargo test + the desktop JS gate
    cargo clippy --all-targets -- -D warnings   # clean
    cargo machete                               # no unused deps
@@ -123,7 +140,11 @@ patch version instead.
 - **No secrets in tracked files.** Inline API keys in config.toml are
   the user's choice (and `chmod 600`ed by the Settings overlay), but
   **never commit** a real key. The `.gitignore` covers `.env`,
-  `*.credentials.json`, and `.claude/`.
+  `*.credentials.json`, and `.claude/`. That includes secret-*shaped*
+  public values: Antigravity's installed-app OAuth client secret is public by
+  Google's definition, yet it lives in the user's config, never in source,
+  because a literal with Google's client-secret prefix trips every secret
+  scanner for ever. Test fixtures use plain words (`test-client`).
 - **One fetch outcome, one fallback policy.** `outcome::Outcome<T>` is the
   four-field record every vendor returns (`VendorOutcome` is
   `Outcome<VendorSnapshot>`; each vendor's `FetchOutcome` is an alias, so
@@ -137,9 +158,14 @@ patch version instead.
   parses its own cache format. A guard test forbids a second caller of
   `Cache::fallback_payload`: that function is the entry point to this decision,
   and eighteen private copies of it had already drifted into two generations
-  that disagreed for five vendors. The one sanctioned synthesized error is
-  `handle_auth_failure`'s — "run `claude`/`codex login` to re-auth" is
-  actionable where the underlying OAuth error is not.
+  that disagreed for five vendors. Two synthesized errors are sanctioned, both
+  on the same ground — they tell the user something actionable that the
+  underlying failure does not. `handle_auth_failure`'s "run `claude`/`codex
+  login` to re-auth", and `fresh_payload`'s "rate limited; next attempt in 4m"
+  after a 429 armed the backoff. The second is a *pre-network refusal*, not a
+  failed refresh: it is reached only when there is also no payload inside
+  `MAX_STALE` to show instead, so it never replaces a figure with a note about
+  the cache. Anything beyond these two returns the error that caused it.
 - **Frontend adapters stay thin.** Provider fetching, credentials, canonical
   product names, metric projection, and reset metadata belong in Rust.
   `VendorId::display_name` is the shared label source; do not add a complete
@@ -201,20 +227,32 @@ vendor's response shape drifts:
 - `src/active.rs` — scroll-cycle active vendor state file
 - `src/anthropic/`, `src/openai/`, `src/openrouter/`, `src/zai/`,
   `src/deepseek/` — per-vendor types + fetch + render
-- `src/antigravity/` — Google Antigravity. Unlike every other vendor it has
-  no credential and no remote endpoint: quota comes from whichever local
-  Antigravity product is running (2.0, the IDE, or an interactive `agy`
-  session), over a loopback RPC on a **dynamically assigned** port that is
-  discovered from `/proc` on Linux, `lsof` on macOS, and the process/TCP-table
-  APIs on Windows. `ANTIGRAVITY_LS_ADDRESS` is a *first* candidate, not an
-  exclusive one — discovered ports are still probed behind it, so a stale
-  override degrades to a slower success instead of a hard failure.
+- `src/antigravity/` — Google Antigravity. Two sources, local first: quota
+  comes from whichever local Antigravity product is running (2.0, the IDE, or
+  an interactive `agy` session), over a loopback RPC on a **dynamically
+  assigned** port that is discovered from `/proc` on Linux, `lsof` on macOS,
+  and the process/TCP-table APIs on Windows. `ANTIGRAVITY_LS_ADDRESS` is a
+  *first* candidate, not an exclusive one — discovered ports are still probed
+  behind it, so a stale override degrades to a slower success instead of a
+  hard failure.
   Discovered ports are grouped per pid and emitted rank by rank (`probe_order`),
   so with two products up every RPC listener is probed before any TLS one.
-  Tests must never probe `/proc`, `lsof` or the wall clock — use
-  `candidate_bases_with`, `probe_order`, `matching_windows_ports`,
-  `parse_lsof_pcn` and `parse_cache_at`/`fetch_snapshot_at`, not their
-  production wrappers.
+  With no local server at all (and only then — a server that is up but
+  signed out keeps its own diagnosis), `fetch.rs` falls back to the Google
+  OAuth session Antigravity saved in the OS keyring (`credential.rs`:
+  Credential Manager on Windows, `security` on macOS, `secret-tool` on
+  Linux; read-only) and asks the Cloud Code API (`cloud.rs`) for the same
+  quota summary. A refreshed token goes to the vendor cache's
+  `oauth.json`, keyed by a fingerprint of the refresh token, never back to
+  the keyring. The OAuth client that refresh needs is config-only.
+  Tests must never probe `/proc`, `lsof`, the keyring, Google or the wall
+  clock — use `candidate_bases_with`, `probe_order`,
+  `matching_windows_ports`, `parse_lsof_pcn`, `parse_cache_at`, and
+  `fetch_snapshot_at` with a `RemoteOverride` (`SavedCredential::Blob` /
+  `Absent`, mockito `Endpoints`, `local_bases: Some(vec![])`), not their
+  production wrappers. The two tests that touch the real keyring
+  (`reading_the_real_windows_credential_never_errors`, `antigravity_remote_live`)
+  are `#[ignore]`d.
 - `src/kiro/` — Kiro CLI. Reads kiro-cli's own `data.sqlite3` (read-only) for
   the AWS SSO OIDC session, refreshes the ~1h access token via the documented
   CreateToken API, and calls the undocumented `GetUsageLimits` — same operation

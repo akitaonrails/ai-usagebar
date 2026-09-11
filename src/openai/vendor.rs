@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 use crate::countdown;
-use crate::format::{placeholders, substitute, updated_at_hm};
+use crate::format::{placeholders, reset_credit_lines, reset_credits, substitute, updated_at_hm};
 use crate::pacing::{self, PaceSeverity};
 use crate::pango::{color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
@@ -50,6 +50,7 @@ pub fn build_placeholders(
         .and_then(|c| c.approx_cloud_messages)
         .map(|(a, b)| format!("{a}-{b}"))
         .unwrap_or_default();
+    let reset_summary = reset_credits(&snap.reset_credits);
 
     placeholders(vec![
         ("icon", "󱢆".to_string()),
@@ -79,6 +80,35 @@ pub fn build_placeholders(
         ("oai_credit_balance", credit_balance),
         ("oai_local_msgs", local_msgs),
         ("oai_cloud_msgs", cloud_msgs),
+        (
+            "oai_resets_available",
+            snap.reset_credits.available.to_string(),
+        ),
+        ("oai_resets", reset_summary),
+        (
+            "oai_extra_limits",
+            snap.additional_limits
+                .iter()
+                .map(|l| {
+                    let worst = [l.session.as_ref(), l.weekly.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .map(|w| w.utilization_pct)
+                        .max()
+                        .unwrap_or(0);
+                    format!("{} {}%", l.name, worst)
+                })
+                .collect::<Vec<_>>()
+                .join(" · "),
+        ),
+        (
+            "oai_unavailable_models",
+            snap.unavailable_models
+                .iter()
+                .map(|m| m.model.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
     ])
 }
 
@@ -223,6 +253,50 @@ fn render_tooltip(
         );
     }
 
+    for limit in &snap.additional_limits {
+        let name = escape(&limit.name);
+        if let Some(w) = limit.session.as_ref() {
+            lines.push(TooltipLine::Body("".into()));
+            push_window(
+                &mut lines,
+                &format!("  󰔟  {name} (5h)"),
+                w,
+                theme,
+                now,
+                None,
+            );
+        }
+        if let Some(w) = limit.weekly.as_ref() {
+            lines.push(TooltipLine::Body("".into()));
+            push_window(
+                &mut lines,
+                &format!("  󰃰  {name} (7d)"),
+                w,
+                theme,
+                now,
+                None,
+            );
+        }
+    }
+
+    // A model the account cannot dispatch to shows up in no percentage, so it
+    // is stated rather than left to be inferred from healthy bars.
+    if !snap.unavailable_models.is_empty() {
+        lines.push(TooltipLine::Body("".into()));
+        lines.push(TooltipLine::Sep);
+        for model in &snap.unavailable_models {
+            let detail = match model.available_at {
+                Some(at) => format!("back {}", countdown::format(Some(at), now)),
+                None => "at capacity".to_string(),
+            };
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{red}'>  󰅚  {model}</span> <span foreground='{dim}'>{detail}</span>",
+                red = theme.red,
+                model = escape(&model.model),
+            )));
+        }
+    }
+
     if let Some(c) = snap.credits.as_ref() {
         lines.push(TooltipLine::Body("".into()));
         lines.push(TooltipLine::Sep);
@@ -246,6 +320,20 @@ fn render_tooltip(
         if let Some((lo, hi)) = c.approx_cloud_messages {
             lines.push(TooltipLine::Body(format!(
                 " <span foreground='{dim}'>     ~ {lo}-{hi} cloud messages</span>"
+            )));
+        }
+    }
+
+    if snap.reset_credits.available > 0 {
+        lines.push(TooltipLine::Body("".into()));
+        lines.push(TooltipLine::Sep);
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{fg}'>  󰁯  Reset credits</span>"
+        )));
+        for line in reset_credit_lines(&snap.reset_credits, now) {
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{dim}'>     {}</span>",
+                escape(&line)
             )));
         }
     }
@@ -315,7 +403,10 @@ mod tests {
                 window_duration: chrono::Duration::days(7),
             }),
             code_review: None,
+            additional_limits: Vec::new(),
+            unavailable_models: Vec::new(),
             credits: None,
+            reset_credits: Default::default(),
             source: OpenAiSource::CodexOauth,
         }
     }
@@ -435,6 +526,42 @@ mod tests {
         assert!(out.tooltip.contains("$5.00"));
         assert!(out.tooltip.contains("100-200 local messages"));
         assert!(out.tooltip.contains("30-50 cloud messages"));
+    }
+
+    #[test]
+    fn tooltip_reports_banked_resets_and_stays_silent_without_them() {
+        let s = sample();
+        let quiet = render(&oc(s.clone()), &s, &Theme::default(), &opts(), Utc::now());
+        assert!(!quiet.tooltip.contains("available"), "{}", quiet.tooltip);
+
+        let mut s = s;
+        s.reset_credits = crate::usage::ResetCredits {
+            available: 2,
+            credits: vec![
+                crate::usage::ResetCredit {
+                    title: Some("Full reset (Weekly + 5 hr)".into()),
+                    expires_at: Some(Utc::now() + chrono::Duration::days(13)),
+                },
+                crate::usage::ResetCredit {
+                    title: Some("Full reset (Weekly + 5 hr)".into()),
+                    expires_at: Some(
+                        Utc::now() + chrono::Duration::days(13) + chrono::Duration::hours(6),
+                    ),
+                },
+            ],
+        };
+        let out = render(&oc(s.clone()), &s, &Theme::default(), &opts(), Utc::now());
+        assert!(out.tooltip.contains("Reset credits"), "{}", out.tooltip);
+        assert_eq!(
+            out.tooltip.matches("Full reset (Weekly + 5 hr)").count(),
+            2,
+            "{}",
+            out.tooltip
+        );
+
+        let values = build_placeholders(&s, &opts(), Utc::now());
+        assert_eq!(values["oai_resets_available"], "2");
+        assert_eq!(values["oai_resets"], "2 resets available");
     }
 
     #[test]

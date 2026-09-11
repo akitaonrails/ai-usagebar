@@ -100,6 +100,12 @@ export function safeText(value, maxLength = 400) {
 }
 
 function finitePercent(value) {
+    // Number(null) === 0 in JS: without this guard a metric the Rust core
+    // reports with percent null (a balance-style row, or a window the vendor
+    // does not report) would normalize into a fabricated 0% bar instead of
+    // keeping the null that means "not reported".
+    if (value === null || value === undefined)
+        return null;
     const n = Number(value);
     return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
 }
@@ -331,6 +337,69 @@ export function panelCells(entry, options) {
         });
     }
     return cells;
+}
+
+// The card view (viewMode "VendorCards") projects one card per entry the
+// aggregate report already returned — never a hardcoded vendor table. The
+// Rust core owns names, metric projection and severity bands; this only
+// restates what `usage --json` handed over in a shape the QML can lay out.
+function severityRank(severity) {
+    return SEVERITIES.indexOf(severityOf(null, severity));
+}
+
+export function cardState(entry) {
+    if (!entry)
+        return 'ok';
+    if (entry.status === 'error' || entry.error)
+        return 'error';
+    if (entry.stale === true)
+        return 'stale';
+    return 'ok';
+}
+
+// One card's view model. Windows are the entry's metric sections; a window
+// with percent === null renders as "not reported" rather than as a fabricated
+// 0% bar. Block sections (balances, free-form notes) ride along untouched so
+// the card shows everything the tab view would.
+export function cardFor(entry) {
+    if (!entry)
+        return null;
+    let worst = -1;
+    let accent = 'low';
+    for (const s of entry.sections) {
+        if (s.type !== 'metric')
+            continue;
+        const rank = severityRank(s.severity);
+        if (rank > worst) {
+            worst = rank;
+            accent = SEVERITIES[worst];
+        }
+    }
+    const state = cardState(entry);
+    return {
+        id: entry.id,
+        label: entry.label,
+        plan: entry.plan,
+        state: state,
+        // An errored vendor outranks whatever its last good numbers said.
+        accent: state === 'error' ? 'critical' : accent,
+        error: state === 'error' ? errorMessage(entry.error) : '',
+        windows: entry.sections.filter(s => s.type === 'metric').map(s => ({
+            label: s.label,
+            window: shortLabel(s.label),
+            percent: s.percent,
+            value: s.percent === null ? s.value : `${s.percent}%`,
+            severity: s.severity,
+            resetAt: s.resetAt,
+            detail: metricDetail(s),
+        })),
+        blocks: entry.sections.filter(s => s.type === 'block'),
+    };
+}
+
+export function cardModel(report) {
+    const entries = (report && report.entries) || [];
+    return entries.map(cardFor);
 }
 
 // "Session (5h)" -> "5h", "Weekly (7d)" -> "7d". The panel is width

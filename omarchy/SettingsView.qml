@@ -16,6 +16,7 @@ Column {
   property string fontFamily: Style.font.family
   property bool showValue: true
   property bool showProvider: false
+  property bool showAll: false
   readonly property color dim: Qt.darker(foreground, 1.45)
 
   property var snapshot: ({ primary_choices: [], keys: [] })
@@ -40,6 +41,7 @@ Column {
   signal copilotLoginRequested()
   signal showValueRequested(bool enabled)
   signal showProviderRequested(bool enabled)
+  signal showAllRequested(bool enabled)
   signal closeRequested()
 
   spacing: Style.space(12)
@@ -236,6 +238,16 @@ Column {
       fontFamily: root.fontFamily
       enabled: !root.saving
       onClicked: root.showProviderRequested(!root.showProvider)
+    }
+    Toggle {
+      width: parent.width
+      label: "Show all providers in the top bar"
+      description: "Turn this on to show every configured provider's icon and usage in the top bar at once, instead of cycling one at a time. Click still opens the panel; the wheel still selects which details you see. Off by default. Applies immediately."
+      checked: root.showAll
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      enabled: !root.saving
+      onClicked: root.showAllRequested(!root.showAll)
     }
   }
 

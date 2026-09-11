@@ -32,6 +32,7 @@ let SETTINGS_DEFAULTS: [String: Any] = [
     "showPercent": true,
     "showBars": true,
     "showMeta": true,
+    "showResetClock": false,
     "barStyle": "block",
     "colorLow": "#98c379",
     "colorMid": "#e5c07b",
@@ -66,6 +67,11 @@ var COLOR_EMPTY: String { DEF.string(forKey: "colorEmpty") ?? "#3e4451" }
 // Meta reference: draw a pace marker at the elapsed-time position and flag the
 // over-meta segment of the fill. Off = plain absolute-usage bars, no marker.
 var SHOW_META: Bool { DEF.bool(forKey: "showMeta") }
+// Off (default) = countdown ("1d 1h", "14h 32m"); on = the wall-clock time the
+// window resets at ("14:32", or "9/7/26, 2:32 PM" beyond today), computed
+// client-side from the countdown the binary already reports — see
+// `resetSeconds`/`resetDate` below.
+var SHOW_RESET_CLOCK: Bool { DEF.bool(forKey: "showResetClock") }
 // The meta marker is a fixed blue, matching the binary's default theme `marker`
 // color and distinct from the over-pace warning fill.
 let COLOR_MARKER = "#61afef"
@@ -90,7 +96,13 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{ds_balance};;{kilo_balance};;{nv_balance};;{km_balance};;{grok_balance};;" +
              "{aapi_headline};;{aapi_pct};;{aapi_spent};;{aapi_limit};;{cursor_total_pct};;" +
              "{extra_model};;{extra_reset};;{extra_elapsed};;" +
-             "{zai_mcp_pct};;{zai_mcp_reset};;{zai_mcp_elapsed}"
+             "{zai_mcp_pct};;{zai_mcp_reset};;{zai_mcp_elapsed};;" +
+             "{ocg_monthly_pct};;{ocg_monthly_reset};;" +
+             "{cc_monthly_pct};;{cc_monthly_reset};;" +
+             "{copilot_completions_pct};;{copilot_reset};;" +
+             "{sgk_period};;{minimax_video_pct};;{minimax_video_reset};;" +
+             "{minimax_video_elapsed};;{minimax_video_weekly_pct};;{minimax_video_weekly_reset};;{minimax_video_weekly_elapsed};;" +
+             "{copilot_chat_limit};;{copilot_completions_limit};;{copilot_premium_limit}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -162,6 +174,66 @@ func shortReset(_ r: String) -> String? {
         return m == "m" ? "0m" : String(m)
     }
     return String(first)
+}
+
+/// Parse the binary's countdown text ("4d 1h", "23h 59m", "now", "—") back
+/// into seconds remaining. `nil` for "—"/empty/unparseable, matching
+/// `isReported`. The binary's own `countdown::format` drops minutes once a
+/// day is present, so a `>=1d` result only carries hour precision — the same
+/// precision loss the countdown display already has.
+func resetSeconds(_ r: String) -> Int? {
+    guard isReported(r) else { return nil }
+    if r == "now" { return 0 }
+    let parts = r.split(separator: " ")
+    var seconds = 0
+    var matchedAny = false
+    for part in parts {
+        if let h = part.hasSuffix("h") ? Int(part.dropLast()) : nil {
+            seconds += h * 3600
+            matchedAny = true
+        } else if let d = part.hasSuffix("d") ? Int(part.dropLast()) : nil {
+            seconds += d * 86_400
+            matchedAny = true
+        } else if let m = part.hasSuffix("m") ? Int(part.dropLast()) : nil {
+            seconds += m * 60
+            matchedAny = true
+        }
+    }
+    return matchedAny ? seconds : nil
+}
+
+/// The absolute instant a countdown string resolves to, or `nil` when the
+/// countdown itself carries no value.
+func resetDate(_ r: String, now: Date = Date()) -> Date? {
+    resetSeconds(r).map { now.addingTimeInterval(TimeInterval($0)) }
+}
+
+private let resetTimeOnlyFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .none
+    f.timeStyle = .short
+    return f
+}()
+
+private let resetDateTimeFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.dateStyle = .short
+    f.timeStyle = .short
+    return f
+}()
+
+/// Wall-clock label for a countdown, honoring `SHOW_RESET_CLOCK`: off returns
+/// the countdown unchanged (`fallback`), on renders the resolved instant —
+/// just the time when it falls today, date + time otherwise. `nil` when the
+/// countdown itself is unreported, same as the value it replaces.
+func resetClockLabel(_ r: String, fallback: String?, showClock: Bool = SHOW_RESET_CLOCK,
+                     now: Date = Date()) -> String? {
+    guard showClock else { return fallback }
+    guard let date = resetDate(r, now: now) else { return nil }
+    let formatter = Calendar.current.isDate(date, inSameDayAs: now)
+        ? resetTimeOnlyFormatter
+        : resetDateTimeFormatter
+    return formatter.string(from: date)
 }
 
 let barFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -328,6 +400,20 @@ func progressAttr(pct: Int, width: Int, elapsed: Int?, menu: Bool = false,
     return barAttr(pct: pct, width: width, elapsed: elapsed)
 }
 
+func subprocessEnvironment() -> [String: String] {
+    var env = ProcessInfo.processInfo.environment
+    let home = NSHomeDirectory()
+    let standardPaths = ["\(home)/.cargo/bin", "\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
+    let currentPath = env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+    let currentParts = currentPath.split(separator: ":").map(String.init)
+    var allPaths: [String] = []
+    for path in standardPaths + currentParts where !allPaths.contains(path) {
+        allPaths.append(path)
+    }
+    env["PATH"] = allPaths.joined(separator: ":")
+    return env
+}
+
 func resolveBinary(_ name: String) -> String? {
     let fm = FileManager.default
     if name == "ai-usagebar" {
@@ -335,13 +421,14 @@ func resolveBinary(_ name: String) -> String? {
         if !configured.isEmpty, fm.isExecutableFile(atPath: configured) { return configured }
     }
     let home = NSHomeDirectory()
-    for c in ["\(home)/.cargo/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"]
+    for c in ["\(home)/.cargo/bin/\(name)", "\(home)/.local/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)"]
     where fm.isExecutableFile(atPath: c) {
         return c
     }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/which")
     p.arguments = [name]
+    p.environment = subprocessEnvironment()
     let pipe = Pipe()
     p.standardOutput = pipe
     p.standardError = FileHandle.nullDevice
@@ -356,8 +443,19 @@ func resolveBinary(_ name: String) -> String? {
     return nil
 }
 
-// ─── Data model ──────────────────────────────────────────────────────────
-struct Window { let pct: Int; let reset: String; let elapsed: Int? }
+struct Window: Equatable {
+    let pct: Int
+    let reset: String
+    let elapsed: Int?
+    var unlimited: Bool = false
+
+    init(pct: Int, reset: String, elapsed: Int?, unlimited: Bool = false) {
+        self.pct = pct
+        self.reset = reset
+        self.elapsed = elapsed
+        self.unlimited = unlimited
+    }
+}
 struct Snapshot {
     let plan: String
     let hasUsageWindows: Bool
@@ -408,23 +506,26 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         s.hasPrefix("{") && s.hasSuffix("}")
     }
     func t(_ i: Int) -> String {
-        guard i < f.count else { return "" }
+        guard i >= 0 && i < f.count else { return "" }
         let v = f[i].trimmingCharacters(in: .whitespaces)
         return unknownPlaceholder(v) ? "" : v
     }
     // Do not accept a numeric prefix: a stale suffix such as "27 ⏸" is not elapsed.
     func n(_ i: Int) -> Int? {
         let value = t(i)
-        guard value.range(of: "^-?[0-9]+$", options: .regularExpression) != nil else { return nil }
-        return Int(value)
+        guard value.range(of: "^-?[0-9]+(\\.[0-9]+)?$", options: .regularExpression) != nil else { return nil }
+        if let intVal = Int(value) { return intVal }
+        if let doubleVal = Double(value) { return Int(doubleVal.rounded()) }
+        return nil
     }
-    func quotaWindow(_ pctIndex: Int, _ resetIndex: Int, _ elapsedIndex: Int) -> Window? {
+    func quotaWindow(_ pctIndex: Int, _ resetIndex: Int, _ elapsedIndex: Int, unlimited: Bool = false) -> Window? {
         guard let pct = n(pctIndex), (0...100).contains(pct) else { return nil }
         let reset = t(resetIndex)
         return Window(
             pct: pct,
             reset: reset,
-            elapsed: markerElapsed(reset: reset, elapsed: n(elapsedIndex)))
+            elapsed: markerElapsed(reset: reset, elapsed: n(elapsedIndex)),
+            unlimited: unlimited)
     }
     // Third bar = the per-model weekly window: a non-empty scoped model is the
     // presence signal. Its reset can legitimately be unavailable, so do not
@@ -444,6 +545,27 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         }
     } else if !sonnetReset.isEmpty, sonnetReset != "—", let p = n(5) {
         sonnet = Window(pct: p, reset: sonnetReset, elapsed: nil)
+    } else if vendor == "opencode-go" {
+        if isReported(t(35)), let w = quotaWindow(34, 35, -1) {
+            sonnet = w
+            sonnetLabel = "Monthly"
+        }
+    } else if vendor == "commandcode" {
+        if isReported(t(37)), let w = quotaWindow(36, 37, -1) {
+            sonnet = w
+            sonnetLabel = "Monthly"
+        }
+    } else if vendor == "copilot" {
+        let completionsUnlimited = t(48).lowercased().contains("unlimited")
+        if isReported(t(39)), let w = quotaWindow(38, 39, -1, unlimited: completionsUnlimited) {
+            sonnet = w
+            sonnetLabel = "Completions"
+        }
+    } else if vendor == "minimax" {
+        if isReported(t(42)), let w = quotaWindow(41, 42, 43) {
+            sonnet = w
+            sonnetLabel = "Video 5h"
+        }
     }
     let spent = t(8)
     let limit = t(9)
@@ -487,6 +609,80 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     // time windows), so relabel those bars rather than call them "Session"/
     // "Weekly". Every other vendor keeps the default time-window labels.
     let isCursor = vendor == "cursor"
+    var sessionWindow = quotaWindow(1, 2, 13)
+    let weeklyWindow: Window?
+    let sessionTag: String
+    let weeklyTag: String
+    let sessionLabel: String
+    let weeklyLabel: String
+
+    switch vendor {
+    case "opencode-go":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Session"
+        weeklyLabel = "Weekly"
+    case "commandcode":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Session"
+        weeklyLabel = "Weekly"
+    case "copilot":
+        let chatUnlimited = t(47).lowercased().contains("unlimited")
+        let premiumUnlimited = t(49).lowercased().contains("unlimited")
+        weeklyWindow = quotaWindow(3, 4, 14, unlimited: chatUnlimited)
+        sessionWindow = quotaWindow(1, 2, 13, unlimited: premiumUnlimited)
+        sessionTag = "pm"
+        weeklyTag = "ch"
+        sessionLabel = "Premium"
+        weeklyLabel = "Chat"
+    case "minimax":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Text 5h"
+        weeklyLabel = "Text Weekly"
+    case "supergrok":
+        let period = t(40)
+        weeklyWindow = nil
+        sessionTag = period == "Monthly" ? "mo" : "7d"
+        weeklyTag = "7d"
+        sessionLabel = period.isEmpty ? "Build credits" : "\(period) Credits"
+        weeklyLabel = ""
+    case "nous":
+        weeklyWindow = nil
+        sessionTag = "us"
+        weeklyTag = "7d"
+        sessionLabel = "Usage"
+        weeklyLabel = ""
+    case "kiro":
+        weeklyWindow = nil
+        sessionTag = "cr"
+        weeklyTag = "7d"
+        sessionLabel = "Credits"
+        weeklyLabel = ""
+    case "cursor":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "auto"
+        weeklyTag = "premium"
+        sessionLabel = "Cursor Models"
+        weeklyLabel = "Other Models"
+    case "antigravity":
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Gemini 5h"
+        weeklyLabel = "Gemini Weekly"
+    default:
+        weeklyWindow = quotaWindow(3, 4, 14)
+        sessionTag = "5h"
+        weeklyTag = "7d"
+        sessionLabel = "Session"
+        weeklyLabel = "Weekly"
+    }
+
     let secondaryWeekly: Window?
     let secondaryWeeklyLabel: String
     if isAntigravity, !t(28).isEmpty {
@@ -500,6 +696,9 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         // must not grow a phantom 0% row.
         secondaryWeekly = mcp
         secondaryWeeklyLabel = "MCP tools (monthly)"
+    } else if vendor == "minimax", isReported(t(45)), let vw = quotaWindow(44, 45, 46) {
+        secondaryWeekly = vw
+        secondaryWeeklyLabel = "Video Weekly"
     } else {
         secondaryWeekly = nil
         secondaryWeeklyLabel = ""
@@ -507,17 +706,17 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     return Snapshot(plan: t(0),
                     hasUsageWindows: !balanceOnly,
                     creditBalance: displayBalance,
-                    session: quotaWindow(1, 2, 13),
-                    weekly: quotaWindow(3, 4, 14),
+                    session: sessionWindow,
+                    weekly: weeklyWindow,
                     sonnet: sonnet,
                     sonnetLabel: sonnetLabel,
                     extra: aapiExtra ?? extra,
                     secondaryWeekly: secondaryWeekly,
                     secondaryWeeklyLabel: secondaryWeeklyLabel,
-                    sessionTag: isCursor ? "auto" : "5h",
-                    weeklyTag: isCursor ? "premium" : "7d",
-                    sessionLabel: isCursor ? "Cursor Models" : (isAntigravity ? "Gemini 5h" : "Session"),
-                    weeklyLabel: isCursor ? "Other Models" : (isAntigravity ? "Gemini Weekly" : "Weekly"),
+                    sessionTag: sessionTag,
+                    weeklyTag: weeklyTag,
+                    sessionLabel: sessionLabel,
+                    weeklyLabel: weeklyLabel,
                     cursorTotalPct: isCursor ? n(27) : nil)
 }
 
@@ -545,35 +744,77 @@ struct HexColorPicker: View {
 }
 
 // ─── Vendor login / config (mirrors the GNOME "Vendors" tab) ──────────────
-struct VendorAuth {
-    let id, name, kind, cli, login, pkg, env: String
+struct VendorCatalogEntry: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let shortName: String
+    let kind: String
+    let enabled: Bool
+    let configured: Bool
+    let needsCredential: Bool
+    let env: String
+    let login: String
+
+    var cli: String {
+        login.split(separator: " ").first.map(String.init) ?? id
+    }
+
+    var pkg: String {
+        switch id {
+        case "anthropic": return "@anthropic-ai/claude-code"
+        case "openai": return "@openai/codex"
+        default: return ""
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, kind, enabled, configured, env, login
+        case shortName = "short_name"
+        case needsCredential = "needs_credential"
+    }
 }
 
-let VENDOR_AUTH: [VendorAuth] = [
-    VendorAuth(id: "anthropic", name: "Claude", kind: "oauth", cli: "claude", login: "claude", pkg: "@anthropic-ai/claude-code", env: ""),
-    VendorAuth(id: "openai", name: "Codex", kind: "oauth", cli: "codex", login: "codex login", pkg: "@openai/codex", env: ""),
-    VendorAuth(id: "zai", name: "Z.AI (GLM)", kind: "apikey", cli: "", login: "", pkg: "", env: "ZAI_API_KEY"),
-    VendorAuth(id: "openrouter", name: "OpenRouter", kind: "apikey", cli: "", login: "", pkg: "", env: "OPENROUTER_API_KEY"),
-    VendorAuth(id: "deepseek", name: "DeepSeek", kind: "apikey", cli: "", login: "", pkg: "", env: "DEEPSEEK_API_KEY"),
-    VendorAuth(id: "kimi", name: "Kimi", kind: "apikey", cli: "", login: "", pkg: "", env: "KIMI_API_KEY"),
-    VendorAuth(id: "kilo", name: "Kilo", kind: "apikey", cli: "", login: "", pkg: "", env: "KILO_API_KEY"),
-    VendorAuth(id: "novita", name: "Novita", kind: "apikey", cli: "", login: "", pkg: "", env: "NOVITA_API_KEY"),
-    VendorAuth(id: "moonshot", name: "Moonshot", kind: "apikey", cli: "", login: "", pkg: "", env: "MOONSHOT_API_KEY"),
-    VendorAuth(id: "grok", name: "Grok (xAI)", kind: "apikey", cli: "", login: "", pkg: "", env: "XAI_MANAGEMENT_KEY"),
-    VendorAuth(id: "anthropic_api", name: "Anthropic API", kind: "apikey", cli: "", login: "", pkg: "", env: "ANTHROPIC_ADMIN_KEY"),
-    VendorAuth(id: "tavily", name: "Tavily", kind: "apikey", cli: "", login: "", pkg: "", env: "TAVILY_API_KEY"),
-    // Cursor has no API key: the binary reads the session token the Cursor IDE
-    // wrote to its own state.vscdb. `kind: "local"` marks the "configured =
-    // signed in to the app" case (like Antigravity below), with no login CLI
-    // or env var of its own.
-    VendorAuth(id: "cursor", name: "Cursor", kind: "local", cli: "", login: "", pkg: "", env: ""),
-    // Antigravity 2.0, the `agy` CLI and the IDE are separate products
-    // sharing one account-wide quota; any combination may be installed and
-    // there is no credential file to check — the binary probes whichever
-    // local server is running. `kind: "local"` mirrors Cursor and the GNOME
-    // extension (gnome-extension/prefs.js).
-    VendorAuth(id: "antigravity", name: "Google Antigravity", kind: "local", cli: "agy", login: "", pkg: "", env: ""),
-]
+typealias VendorAuth = VendorCatalogEntry
+
+struct VendorCatalogPayload: Codable {
+    let vendors: [VendorCatalogEntry]
+}
+
+func parseVendorCatalog(_ data: Data) -> [VendorCatalogEntry]? {
+    guard let payload = try? JSONDecoder().decode(VendorCatalogPayload.self, from: data) else {
+        return nil
+    }
+    return payload.vendors
+}
+
+func fetchVendorCatalog(timeout: TimeInterval = REFRESH_TIMEOUT) -> [VendorCatalogEntry]? {
+    guard let bin = resolveBinary("ai-usagebar") else { return nil }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: bin)
+    p.arguments = ["vendors", "--json"]
+    p.environment = subprocessEnvironment()
+    let pipe = Pipe()
+    p.standardOutput = pipe
+    p.standardError = FileHandle.nullDevice
+
+    let watchdog = DispatchWorkItem { if p.isRunning { p.terminate() } }
+    DispatchQueue.global(qos: .utility)
+        .asyncAfter(deadline: .now() + timeout, execute: watchdog)
+    var data = Data()
+    do {
+        try p.run()
+        data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+    } catch {
+        watchdog.cancel()
+        return nil
+    }
+    watchdog.cancel()
+    guard p.terminationStatus == 0 else { return nil }
+    return parseVendorCatalog(data)
+}
+
+var vendorCatalog: [VendorCatalogEntry] = []
 
 // The config file the Rust binary would actually read. On macOS
 // `directories::ProjectDirs` resolves to ~/Library/Application Support, so
@@ -940,9 +1181,11 @@ func filterOverviewEntries(_ entries: [MenuEntry], requested: [String]?) -> [Men
 /// with Claude and OpenRouter expanded into named accounts (their default
 /// entries kept only per `show_default_account`). `active` stays listed even when
 /// unconfigured — same rule the per-vendor list always had.
-func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [MenuEntry] {
+func vendorEntries(active: String,
+                   usageAccounts: [UsageAccount]? = nil,
+                   catalog: [VendorCatalogEntry] = vendorCatalog) -> [MenuEntry] {
     var out: [MenuEntry] = []
-    for v in VENDOR_AUTH where vendorEnabled(v) {
+    for v in catalog where v.enabled {
         if v.id == "anthropic" {
             // Once account status is available, Rust owns profile-directory
             // resolution and CLI/Desktop dedup. The nil fallback preserves
@@ -953,7 +1196,7 @@ func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [Men
             let showDefault = showDefaultAccount(
                 configValue: configValueTOML("anthropic", "show_default_account"),
                 hasAccounts: !accounts.isEmpty)
-            if showDefault && (v.id == active || vendorConfigured(v)) {
+            if showDefault && (v.id == active || v.configured) {
                 out.append(MenuEntry(id: v.id, name: v.name))
             }
             out.append(contentsOf: claudeAccountMenuEntries(accounts))
@@ -962,11 +1205,11 @@ func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [Men
             let showDefault = showDefaultAccount(
                 configValue: configValueTOML("openrouter", "show_default_account"),
                 hasAccounts: !labels.isEmpty)
-            if showDefault && (v.id == active || vendorConfigured(v)) {
+            if showDefault && (v.id == active || v.configured) {
                 out.append(MenuEntry(id: v.id, name: v.name))
             }
             out.append(contentsOf: openRouterAccountMenuEntries(labels))
-        } else if v.id == active || vendorConfigured(v) {
+        } else if v.id == active || v.configured {
             out.append(MenuEntry(id: v.id, name: v.name))
         }
     }
@@ -974,14 +1217,19 @@ func vendorEntries(active: String, usageAccounts: [UsageAccount]? = nil) -> [Men
 }
 
 /// Display name for any selectable id (base vendor, account, or overview).
-func entryDisplayName(_ id: String) -> String {
-    if id == "overview" { return "Visão geral" }
+func entryDisplayName(_ id: String, catalog: [VendorCatalogEntry] = vendorCatalog) -> String {
+    if id == "overview" { return "Overview" }
     if let label = accountLabel(of: id) {
         let base = baseVendorId(id)
-        let vendor = VENDOR_AUTH.first { $0.id == base }?.name ?? base
+        let vendor = catalog.first { $0.id == base }?.name
+            ?? (base == "anthropic" ? "Claude" : (base == "openrouter" ? "OpenRouter" : base))
         return "\(vendor) · \(label)"
     }
-    return VENDOR_AUTH.first { $0.id == id }?.name ?? id
+    if let name = catalog.first(where: { $0.id == id })?.name {
+        return name
+    }
+    if id == "anthropic" { return "Claude" }
+    return id
 }
 
 // MARK: - Which account each surface is signed in as
@@ -1113,7 +1361,7 @@ func addAccountScript(binary: String, label: String, desktop: Bool) -> String {
     func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     return "#!/usr/bin/env bash\n"
         + "\(quote(binary)) account add \(quote(label))\(desktop ? " --desktop" : "")\n"
-        + "echo; read -n 1 -s -r -p 'Pressione qualquer tecla para fechar…'\n"
+        + "echo; read -n 1 -s -r -p 'Press any key to close…'\n"
 }
 
 /// Rust defaults (`src/config.rs`): the OAuth/api-key vendors that ship enabled,
@@ -1122,7 +1370,8 @@ func addAccountScript(binary: String, label: String, desktop: Bool) -> String {
 func defaultEnabled(_ id: String) -> Bool {
     switch id {
     case "anthropic", "openai", "zai", "openrouter": return true
-    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity", "tavily": return false
+    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
+         "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode", "tavily": return false
     default: return true
     }
 }
@@ -1132,52 +1381,8 @@ func vendorEnabled(_ v: VendorAuth) -> Bool {
     return defaultEnabled(v.id)
 }
 
-// Cached: the check spawns a `security` subprocess, and it is consulted from the
-// menu-rebuild path (main thread). Signed-in state doesn't change within a run,
-// so compute it at most once — a restart picks up a fresh login.
-var keychainClaudeCache: Bool?
-func keychainHasClaude() -> Bool {
-    if let cached = keychainClaudeCache { return cached }
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-    p.arguments = ["find-generic-password", "-s", "Claude Code-credentials"]
-    p.standardOutput = FileHandle.nullDevice
-    p.standardError = FileHandle.nullDevice
-    let result: Bool
-    do { try p.run(); p.waitUntilExit(); result = p.terminationStatus == 0 } catch { result = false }
-    keychainClaudeCache = result
-    return result
-}
-
-func vendorConfigured(_ v: VendorAuth) -> Bool {
-    guard vendorEnabled(v) else { return false }
-    let home = NSHomeDirectory()
-    let fm = FileManager.default
-    if v.id == "anthropic" {
-        return fm.fileExists(atPath: "\(home)/.claude/.credentials.json") || keychainHasClaude()
-    }
-    if v.id == "openai" {
-        return fm.fileExists(atPath: "\(home)/.codex/auth.json")
-    }
-    if v.id == "cursor" {
-        // Configured == signed in to the Cursor IDE, i.e. its state DB exists.
-        // Honor a [cursor] db_path override the same way the binary does.
-        let dbPath = configValueTOML("cursor", "db_path")
-            ?? "\(home)/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
-        return fm.fileExists(atPath: dbPath)
-    }
-    if v.id == "antigravity" {
-        // Same check as gnome-extension/prefs.js: having any of the three
-        // products' state directories is enough — there is no credential
-        // file, and the binary itself probes whichever local server answers.
-        return ["antigravity", "antigravity-cli", "antigravity-ide"]
-            .contains { d in
-                var isDir: ObjCBool = false
-                return fm.fileExists(atPath: "\(home)/.gemini/\(d)", isDirectory: &isDir) && isDir.boolValue
-            }
-    }
-    if let e = ProcessInfo.processInfo.environment[apiKeyEnvironment(v)], !e.isEmpty { return true }
-    return configHasApiKeyTOML(v.id)
+func vendorConfigured(_ v: VendorCatalogEntry) -> Bool {
+    v.configured
 }
 
 func cliInstalled(_ cli: String) -> Bool {
@@ -1217,24 +1422,36 @@ func runInTerminal(_ script: String) {
 }
 
 func oauthScript(_ v: VendorAuth) -> String {
+    if v.pkg.isEmpty {
+        return """
+        export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+        if command -v \(v.cli) >/dev/null 2>&1; then
+          \(v.login)
+        else
+          echo "\(v.cli) not found. Please install \(v.name)."
+        fi
+        echo
+        read -p "Press Enter to close..."
+        """
+    }
     return """
     export PATH="$HOME/.local/bin:$PATH"
     if command -v \(v.cli) >/dev/null 2>&1; then
       \(v.login)
     else
-      echo "\(v.cli) nao encontrado. Instalo em ~/.local sem sudo. Pacote: \(v.pkg)"
-      read -p "Instalar agora? [y/N] " a
+      echo "\(v.cli) not found. I can install it under ~/.local without sudo. Package: \(v.pkg)"
+      read -p "Install now? [y/N] " a
       if [ "$a" = y ] || [ "$a" = Y ]; then npm i -g --prefix "$HOME/.local" \(v.pkg) && hash -r && \(v.login); fi
     fi
     echo
-    read -p "Enter para fechar..."
+    read -p "Press Enter to close..."
     """
 }
 
 func openTuiInTerminal() {
     let cargo = "\(NSHomeDirectory())/.cargo/bin/ai-usagebar-tui"
     let tui = FileManager.default.isExecutableFile(atPath: cargo) ? cargo : "ai-usagebar-tui"
-    runInTerminal("\"\(tui)\"\necho\nread -p \"Enter para fechar...\"")
+    runInTerminal("\"\(tui)\"\necho\nread -p \"Press Enter to close...\"")
 }
 
 // Launch a .app by name (e.g. "Cursor") via `open -a`, so a local-kind vendor's
@@ -1247,6 +1464,7 @@ func openApp(_ name: String) {
 }
 
 struct VendorsSection: View {
+    @State private var catalog: [VendorCatalogEntry] = vendorCatalog
     @State private var configured: [String: Bool] = [:]
     @State private var cliPresent: [String: Bool] = [:]
     @State private var checking = false
@@ -1254,7 +1472,7 @@ struct VendorsSection: View {
     var body: some View {
         GroupBox("Vendors") {
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(VENDOR_AUTH, id: \.id) { v in
+                ForEach(catalog) { v in
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(v.name)
@@ -1276,15 +1494,16 @@ struct VendorsSection: View {
     private func refresh() {
         checking = true
         DispatchQueue.global(qos: .userInitiated).async {
+            let updated = fetchVendorCatalog() ?? vendorCatalog
             var conf: [String: Bool] = [:]
             var cli: [String: Bool] = [:]
-            for v in VENDOR_AUTH {
-                conf[v.id] = vendorConfigured(v)
-                // OAuth vendors need their CLI to log in; apikey vendors are
-                // configured via the TUI.
+            for v in updated {
+                conf[v.id] = v.configured
                 if v.kind == "oauth" { cli[v.id] = cliInstalled(v.cli) }
             }
             DispatchQueue.main.async {
+                self.catalog = updated
+                vendorCatalog = updated
                 self.configured = conf
                 self.cliPresent = cli
                 self.checking = false
@@ -1292,38 +1511,51 @@ struct VendorsSection: View {
         }
     }
 
-    private func statusText(_ v: VendorAuth) -> String {
-        if configured[v.id] == true { return "✓ Configurado" }
+    private func statusText(_ v: VendorCatalogEntry) -> String {
+        if configured[v.id] ?? v.configured { return "✓ Configured" }
         if v.kind == "oauth" {
-            if cliPresent[v.id] == false { return "⚠ \(v.cli) não instalado" }
-            return "⚠ Não logado — \(v.login)"
+            if cliPresent[v.id] == false { return "⚠ \(v.cli) not installed" }
+            return "⚠ Not signed in — \(v.login)"
         }
         // Local vendors have no key: "configured" means signed in to the app
         // AND the vendor's own section enabled in config.
         if v.id == "antigravity" {
             return "⚠ Abra o Antigravity (app, IDE ou agy) e ative [antigravity] no config"
         }
+        if v.id == "cursor" {
+            return "⚠ Sign in to the Cursor app and enable [cursor] in the config"
+        }
+        if v.id == "supergrok" {
+            return "⚠ Sign in via Grok Build CLI and enable [supergrok] in the config"
+        }
+        if v.id == "kiro" {
+            return "⚠ Sign in to kiro-cli and enable [kiro] in the config"
+        }
         if v.kind == "local" {
-            return "⚠ Entre no app Cursor e ative [cursor] no config"
+            return "⚠ Sign in to \(v.name) and enable [\(v.id)] in the config"
         }
-        return "⚠ Sem API key — \(apiKeyEnvironment(v))"
+        return "⚠ No API key — \(apiKeyEnvironment(v))"
     }
 
-    private func buttonLabel(_ v: VendorAuth) -> String {
+    private func buttonLabel(_ v: VendorCatalogEntry) -> String {
         if v.kind == "oauth" {
-            if configured[v.id] == true { return "Re-logar" }
-            if cliPresent[v.id] == false { return "Instalar + logar" }
-            return "Logar"
+            if configured[v.id] ?? v.configured { return "Re-logar" }
+            if cliPresent[v.id] == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
+            return "Sign in"
         }
-        if v.id == "antigravity" { return "Abrir Antigravity" }
-        if v.kind == "local" { return "Abrir Cursor" }
-        return "Configurar (TUI)"
+        if v.id == "antigravity" { return "Open Antigravity" }
+        if v.id == "cursor" { return "Open Cursor" }
+        if v.id == "kiro" { return "Sign in" }
+        if v.kind == "local" { return "Configure (TUI)" }
+        return "Configure (TUI)"
     }
 
-    private func action(_ v: VendorAuth) {
+    private func action(_ v: VendorCatalogEntry) {
         if v.kind == "oauth" { runInTerminal(oauthScript(v)) }
         else if v.id == "antigravity" { openApp("Antigravity") }
-        else if v.kind == "local" { openApp(v.name) }
+        else if v.id == "cursor" { openApp("Cursor") }
+        else if v.id == "kiro" { runInTerminal("kiro-cli login\necho\nread -p 'Press Enter to close...'") }
+        else if v.kind == "local" { openTuiInTerminal() }
         else { openTuiInTerminal() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { refresh() }
     }
@@ -1339,6 +1571,7 @@ struct SettingsView: View {
     @AppStorage("showPercent") private var showPercent = true
     @AppStorage("showBars") private var showBars = true
     @AppStorage("showMeta") private var showMeta = true
+    @AppStorage("showResetClock") private var showResetClock = false
     @AppStorage("barStyle") private var barStyle = "block"
     @AppStorage("swapShortcutEnabled") private var swapShortcutEnabled = true
     @AppStorage("compactShortcutEnabled") private var compactShortcutEnabled = true
@@ -1355,9 +1588,9 @@ struct SettingsView: View {
     // (deepseek/kimi/kilo/novita/moonshot/grok/anthropic_api) as disabled when
     // their `[vendor].enabled` is omitted, and so must this picker. Claude
     // accounts appear as their `vendor@<label>` pseudo-ids, same as the
-    // "Trocar vendor" submenu.
+    // "Switch provider" submenu.
     private var vendors: [String] {
-        var ids = VENDOR_AUTH.filter { vendorEnabled($0) }.map { $0.id }
+        var ids = vendorCatalog.filter { $0.enabled }.map { $0.id }
         let labels = claudeAccountLabels()
         if let at = ids.firstIndex(of: "anthropic") {
             ids.insert(contentsOf: labels.map { CLAUDE_ACCOUNT_ID_PREFIX + $0 }, at: at + 1)
@@ -1377,56 +1610,57 @@ struct SettingsView: View {
         // a plain Form clipped its top rows with no way to reach them.
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 18) {
-                GroupBox("Exibição") {
+                GroupBox("Display") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Toggle("Mostrar barra de 5h (sessão)", isOn: $showSession)
-                        Toggle("Mostrar barra semanal", isOn: $showWeekly)
-                        Toggle("Mostrar barra de uso extra ($)", isOn: $showExtra)
-                        Toggle("Mostrar porcentagem/valor", isOn: $showPercent)
-                        Toggle("Mostrar barras (off = só números)", isOn: $showBars)
-                        Toggle("Mostrar referência da meta (linha de ritmo)", isOn: $showMeta)
-                        Picker("Estilo do indicador", selection: $barStyle) {
-                            Text("Barras (░█)").tag("block")
-                            Text("Anel (○)").tag("ring")
+                        Toggle("Show 5h (session) bar", isOn: $showSession)
+                        Toggle("Show weekly bar", isOn: $showWeekly)
+                        Toggle("Show extra usage bar ($)", isOn: $showExtra)
+                        Toggle("Show percentage/value", isOn: $showPercent)
+                        Toggle("Show bars (off = numbers only)", isOn: $showBars)
+                        Toggle("Show pace reference line", isOn: $showMeta)
+                        Toggle("Show reset time instead of a countdown", isOn: $showResetClock)
+                        Picker("Indicator style", selection: $barStyle) {
+                            Text("Bars (░█)").tag("block")
+                            Text("Ring (○)").tag("ring")
                         }
-                        Stepper("Largura da barra: \(barWidth)", value: $barWidth, in: 4...20)
+                        Stepper("Bar width: \(barWidth)", value: $barWidth, in: 4...20)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Atalho") {
+                GroupBox("Shortcut") {
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Trocar vendor com ⌥⌘\\ (atalho global)", isOn: $swapShortcutEnabled)
-                        Text("Alterna o vendor ativo a partir de qualquer app.")
+                        Toggle("Switch provider with ⌥⌘\\ (global shortcut)", isOn: $swapShortcutEnabled)
+                        Text("Switches the active provider from any app.")
                             .font(.caption).foregroundColor(.secondary)
-                        Toggle("Compactar/Expandir com ⌥⌘E (atalho global)", isOn: $compactShortcutEnabled)
-                        Text("Alterna a Visão geral entre barras e modo compacto.")
+                        Toggle("Collapse/Expand with ⌥⌘E (global shortcut)", isOn: $compactShortcutEnabled)
+                        Text("Switches the Overview between bars and compact mode.")
                             .font(.caption).foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Cores") {
+                GroupBox("Colours") {
                     VStack(alignment: .leading, spacing: 8) {
-                        HexColorPicker(title: "Baixo (<50%)", hex: $colorLow)
-                        HexColorPicker(title: "Médio (50–74%)", hex: $colorMid)
-                        HexColorPicker(title: "Alto (75–89%)", hex: $colorHigh)
-                        HexColorPicker(title: "Crítico (≥90%)", hex: $colorCritical)
-                        HexColorPicker(title: "Vazio (fundo da barra)", hex: $colorEmpty)
+                        HexColorPicker(title: "Low (<50%)", hex: $colorLow)
+                        HexColorPicker(title: "Medium (50–74%)", hex: $colorMid)
+                        HexColorPicker(title: "High (75–89%)", hex: $colorHigh)
+                        HexColorPicker(title: "Critical (≥90%)", hex: $colorCritical)
+                        HexColorPicker(title: "Empty (bar background)", hex: $colorEmpty)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Dados") {
+                GroupBox("Data") {
                     VStack(alignment: .leading, spacing: 8) {
                         Picker("Vendor", selection: $vendor) {
                             ForEach(vendors, id: \.self) { Text($0) }
                         }
                         Stepper("Intervalo: \(Int(interval))s", value: $interval, in: 5...3600, step: 5)
-                        TextField("Caminho do binário (vazio = auto)", text: $binaryPath)
+                        TextField("Binary path (empty = auto)", text: $binaryPath)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                GroupBox("Sistema") {
+                GroupBox("System") {
                     VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Iniciar no login", isOn: Binding(
+                        Toggle("Start at login", isOn: Binding(
                             get: { launchAtLogin },
                             set: { enabled in
                                 do {
@@ -1438,10 +1672,10 @@ struct SettingsView: View {
                                     launchAtLoginError = error.localizedDescription
                                 }
                             }))
-                        Text("Instala um LaunchAgent que sobe o app ao entrar na sua conta.")
+                        Text("Installs a LaunchAgent that starts the app when you log in.")
                             .font(.caption).foregroundColor(.secondary)
                         if let error = launchAtLoginError {
-                            Text("Não foi possível atualizar: \(error)")
+                            Text("Could not refresh: \(error)")
                                 .font(.caption).foregroundColor(.red)
                         }
                     }
@@ -1529,7 +1763,7 @@ let swapHotKeyNotification = Notification.Name("aiusagebar.swapHotKey")
 let compactHotKeyNotification = Notification.Name("aiusagebar.compactHotKey")
 
 /// Default shortcuts: `\` (kVK_ANSI_Backslash) with Command+Option swaps the
-/// vendor; `E` with Command+Option toggles the overview's Compactar/Expandir.
+/// vendor; `E` with Command+Option toggles the overview's Collapse/Expand.
 /// `[ui]` on Linux has no equivalent; this is macOS-only.
 let SWAP_HOTKEY_KEYCODE = UInt32(kVK_ANSI_Backslash)
 let COMPACT_HOTKEY_KEYCODE = UInt32(kVK_ANSI_E)
@@ -1554,7 +1788,7 @@ private func swapHotKeyCallback(
 }
 
 /// Whether the overview status-bar title draws mini bars (vs. the compact
-/// %-text mode). "Compactar" forces the text mode even under the bars-count
+/// %-text mode). "Collapse" forces the text mode even under the bars-count
 /// threshold. Pure + testable — the render path is not.
 func overviewUsesBars(count: Int, barsMax: Int, compact: Bool) -> Bool {
     !compact && count <= barsMax
@@ -1645,10 +1879,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Rebuilt on every render so only configured vendors show, and the active
     // one is checked. Kept as a field so the menu owns it for its lifetime.
     let vendorSubmenu = NSMenu()
-    let vendorSubmenuItem = NSMenuItem(title: "Trocar vendor", action: nil, keyEquivalent: "")
+    let vendorSubmenuItem = NSMenuItem(title: "Switch provider", action: nil, keyEquivalent: "")
     /// Overview-only: forces the status-bar title into the compact %-text mode
-    /// ("Compactar"); while compact it reads "Expandir" and turns it back off.
-    let compactItem = NSMenuItem(title: "Compactar", action: nil, keyEquivalent: "")
+    /// ("Collapse"); while compact it reads "Expand" and turns it back off.
+    let compactItem = NSMenuItem(title: "Collapse", action: nil, keyEquivalent: "")
     /// Which account each surface is signed in as. One dim line under the
     /// header, plus a submenu per surface. All three stay hidden until
     /// `account status --json` answers, so an older binary that doesn't know
@@ -1661,9 +1895,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var lastAccountStatus: AccountStatus?
     var accountStatusFetchedAt = Date.distantPast
     var accountStatusGeneration = 0
+    var vendorCatalogGeneration = 0
     /// A switch runs a subprocess that quits and reopens another app; both
     /// submenus grey out until it returns so it cannot be fired twice.
     var accountSwitchInFlight = false
+    var refreshOverride: (() -> Void)?
+
+    @discardableResult
+    func applyVendorCatalog(_ catalog: [VendorCatalogEntry], generation: Int) -> Bool {
+        guard generation == vendorCatalogGeneration else { return false }
+        vendorCatalog = catalog
+        rebuildVendorSubmenu()
+        if VENDOR == "overview" {
+            refresh()
+        }
+        return true
+    }
+
+    func updateVendorCatalog(fetcher: @escaping () -> [VendorCatalogEntry]? = { fetchVendorCatalog() },
+                             completion: (() -> Void)? = nil) {
+        vendorCatalogGeneration += 1
+        let generation = vendorCatalogGeneration
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let fetched = fetcher() else { return }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.applyVendorCatalog(fetched, generation: generation)
+                completion?()
+            }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DEF.register(defaults: ["swapShortcutEnabled": true, "compactShortcutEnabled": true])
@@ -1671,6 +1932,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.title = "5h …"
         buildMenu()
         rebuildVendorSubmenu()
+        updateVendorCatalog()
         observeAppearanceChanges()
         lastVendor = VENDOR  // so the first settingsChanged isn't mistaken for a swap
         refresh()
@@ -1749,6 +2011,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// full refresh to fetch any newly-added vendor/account. Reads are all fresh
     /// from disk (nothing caches config.toml), so no invalidation is needed.
     @objc func configFileChanged() {
+        updateVendorCatalog()
         rebuildVendorSubmenu()
         // A new [[anthropic.accounts]] entry changes the Claude Code list.
         fetchAccountStatus()
@@ -1773,7 +2036,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         let enabled = DEF.bool(forKey: "swapShortcutEnabled")
-        // Mirror the swap shortcut as a hint on the "Trocar vendor" item. A native
+        // Mirror the swap shortcut as a hint on the "Switch provider" item. A native
         // keyEquivalent is suppressed by the submenu's disclosure arrow, so paint
         // the hint into the title instead (right-aligned, dimmed). Cleared when off.
         if enabled {
@@ -1783,18 +2046,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // menu whenever the wide overview rows are hidden.
             let font = NSFont.menuFont(ofSize: 0)
             let s = NSMutableAttributedString(
-                string: "Trocar vendor  ", attributes: [.font: font])
+                string: "Switch provider  ", attributes: [.font: font])
             s.append(NSAttributedString(string: "⌥⌘\\", attributes: [
                 .font: font, .foregroundColor: NSColor.tertiaryLabelColor,
             ]))
             vendorSubmenuItem.attributedTitle = s
         } else {
-            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Trocar vendor")
+            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Switch provider")
         }
         guard enabled else { return }
         guard installHotKeyHandlerOnce() else {
             disableFailedShortcut("swapShortcutEnabled", name: "⌥⌘\\")
-            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Trocar vendor")
+            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Switch provider")
             return
         }
         let id = EventHotKeyID(signature: OSType(0x4149_4242), id: SWAP_HOTKEY_ID)  // 'AIBB'
@@ -1805,13 +2068,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard hotKeyRegistrationSucceeded(status), let ref else {
             if let ref { UnregisterEventHotKey(ref) }
             disableFailedShortcut("swapShortcutEnabled", name: "⌥⌘\\", status: status)
-            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Trocar vendor")
+            vendorSubmenuItem.attributedTitle = NSAttributedString(string: "Switch provider")
             return
         }
         swapHotKeyRef = ref
     }
 
-    /// (Re)register the global ⌥⌘E Compactar/Expandir hot key to match the
+    /// (Re)register the global ⌥⌘E Collapse/Expand hot key to match the
     /// `compactShortcutEnabled` preference. Idempotent, mirroring
     /// `installSwapHotKey` — including the painted-in hint (a native
     /// keyEquivalent would fire a second time while the menu is open, double-
@@ -1842,10 +2105,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         compactHotKeyRef = ref
     }
 
-    /// Compactar ↔ Expandir label plus the dimmed ⌥⌘E hint when the global
+    /// Collapse ↔ Expand label plus the dimmed ⌥⌘E hint when the global
     /// shortcut is on. Shared by the overview render and the hot-key installer.
     func updateCompactItemTitle() {
-        let label = DEF.bool(forKey: "overviewCompact") ? "Expandir" : "Compactar"
+        let label = DEF.bool(forKey: "overviewCompact") ? "Expand" : "Collapse"
         guard DEF.bool(forKey: "compactShortcutEnabled") else {
             compactItem.attributedTitle = NSAttributedString(string: label)
             return
@@ -1922,7 +2185,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// ⌥⌘E: toggle Compactar/Expandir. Overview-only — flipping a hidden
+    /// ⌥⌘E: toggle Collapse/Expand. Overview-only — flipping a hidden
     /// preference from another view would be invisible and confusing.
     @objc func handleCompactHotKey() {
         guard VENDOR == "overview" else { return }
@@ -1949,7 +2212,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(accountsInfoItem)
         // One hidden slot per built-in vendor for Overview mode. Named accounts
         // can take the total higher; renderOverview grows the pool on demand.
-        for _ in 0..<VENDOR_AUTH.count {
+        for _ in 0..<vendorCatalog.count {
             let it = NSMenuItem()
             it.isHidden = true
             overviewRows.append(it)
@@ -1967,8 +2230,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(compactItem)
 
         menu.addItem(.separator())
-        addAction(menu, "Atualizar agora", #selector(refreshAction), "r")
-        addAction(menu, "Abrir TUI", #selector(openTui), "t")
+        addAction(menu, "Refresh now", #selector(refreshAction), "r")
+        addAction(menu, "Open TUI", #selector(openTui), "t")
         vendorSubmenuItem.submenu = vendorSubmenu
         menu.addItem(vendorSubmenuItem)
         for (item, submenu) in [(desktopAccountItem, desktopAccountSubmenu),
@@ -1977,9 +2240,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.isHidden = true
             menu.addItem(item)
         }
-        addAction(menu, "Preferências…", #selector(openPrefs), ",")
+        addAction(menu, "Preferences…", #selector(openPrefs), ",")
         menu.addItem(.separator())
-        addAction(menu, "Sair", #selector(quit), "q")
+        addAction(menu, "Quit", #selector(quit), "q")
 
         // Catches a switch made elsewhere (a terminal, claude-acc) without
         // polling for state that changes at most a few times a day.
@@ -2001,7 +2264,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func quit() { NSApp.terminate(nil) }
 
     /// Flip the overview's compact mode; the UserDefaults observer re-renders,
-    /// which also relabels the item (Compactar ↔ Expandir).
+    /// which also relabels the item (Collapse ↔ Expand).
     @objc func toggleCompact() {
         DEF.set(!DEF.bool(forKey: "overviewCompact"), forKey: "overviewCompact")
     }
@@ -2019,7 +2282,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                              backing: .buffered,
                              defer: false)
             w.contentViewController = host
-            w.title = "AI Usage Bar — Preferências"
+            w.title = "AI Usage Bar — Preferences"
             // Resizable so the content can always be reached; a min size keeps
             // it usable, and the initial height is clamped to the visible screen
             // so the top never lands under the menu bar on short displays.
@@ -2084,7 +2347,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
         let name = entryDisplayName(VENDOR)
         statusItem.button?.attributedTitle = run("\(name) …", menuBarTextColor(appearance))
-        headerItem.attributedTitle = run("\(name) · carregando…", .labelColor,
+        headerItem.attributedTitle = run("\(name) · loading…", .labelColor,
                                          NSFont.boldSystemFont(ofSize: 13))
         for (_, it) in rows { it.isHidden = true }
         for it in overviewRows { it.isHidden = true }
@@ -2125,14 +2388,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func refresh() {
-        guard let bin = resolveBinary("ai-usagebar") else {
-            setError("ai-usagebar não encontrado (PATH / ~/.cargo/bin / homebrew)")
+        if let custom = refreshOverride {
+            custom()
             return
         }
-        // Coalesce: one subprocess at a time, and remember that another was
-        // asked for so a vendor change during a fetch is not simply dropped.
         if refreshInFlight {
             refreshQueued = true
+            return
+        }
+        guard let bin = resolveBinary("ai-usagebar") else {
+            setError("ai-usagebar not found (PATH / ~/.cargo/bin / homebrew)")
             return
         }
         refreshInFlight = true
@@ -2151,6 +2416,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
             p.arguments = vendorArgs(for: vendor) + ["--format", FORMAT_WITH_SENTINEL]
+            p.environment = subprocessEnvironment()
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
@@ -2171,7 +2437,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             } catch {
                 watchdog.cancel()
                 DispatchQueue.main.async {
-                    self?.finishRefresh(generation) { $0.setError("falha ao executar ai-usagebar") }
+                    self?.finishRefresh(generation) { $0.setError("could not run ai-usagebar") }
                 }
                 return
             }
@@ -2222,6 +2488,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: bin)
                 p.arguments = vendorArgs(for: v.id) + ["--format", FORMAT_WITH_SENTINEL]
+                p.environment = subprocessEnvironment()
                 let pipe = Pipe()
                 p.standardOutput = pipe
                 p.standardError = FileHandle.nullDevice
@@ -2263,8 +2530,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return (t, "\(t)%", s.weekly?.reset ?? s.session?.reset, nil)
         }
         let windows = [s.session, s.weekly, s.sonnet, s.secondaryWeekly].compactMap { $0 }
-        if let w = windows.max(by: { $0.pct < $1.pct }) {
+        let finite = windows.filter { !$0.unlimited }
+        if let w = finite.max(by: { $0.pct < $1.pct }) {
             return (w.pct, "\(w.pct)%", w.reset, w.elapsed)
+        }
+        if let w = windows.first(where: { $0.unlimited }) {
+            return (0, "Unlimited", w.reset, nil)
         }
         if let e = s.extra { return (e.pct, "\(e.spent) / \(e.limit)", nil, nil) }
         return (0, "—", nil, nil)
@@ -2295,7 +2566,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard visible.contains($0.id), let s = $0.snap else { return nil }
                 if let cb = s.creditBalance { return ($0.name, -1, nil, "cr \(cb)", nil) }
                 let h = overviewHeadline(s)
-                return ($0.name, h.pct, h.elapsed, "\(h.pct)%", h.reset.flatMap(shortReset))
+                let shortValue = h.reset.flatMap(shortReset)
+                let reset = h.reset.flatMap { resetClockLabel($0, fallback: shortValue) }
+                return ($0.name, h.pct, h.elapsed, h.value, reset)
             }
         guard !heads.isEmpty else { return run("ovr", secondary) }
 
@@ -2307,9 +2580,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if i > 0 { t.append(run("   ", secondary)) }
                 t.append(run("\(ovLabel(e.name, 6)) ", secondary))
                 if e.pct >= 0 {
-                    t.append(run("\(e.pct)% ", colorForPct(e.pct)))
-                    t.append(progressAttr(pct: e.pct, width: BAR_WIDTH, elapsed: e.elapsed,
-                                          appearance: appearance))
+                    if e.value == "Unlimited" {
+                        t.append(run("∞", hexColor(COLOR_LOW)))
+                    } else {
+                        t.append(run("\(e.pct)% ", colorForPct(e.pct)))
+                        t.append(progressAttr(pct: e.pct, width: BAR_WIDTH, elapsed: e.elapsed,
+                                              appearance: appearance))
+                    }
                     if let r = e.reset { t.append(run(" \(r)", secondary)) }
                 } else {
                     t.append(run(e.value, .labelColor))  // credit balance
@@ -2324,7 +2601,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for (i, e) in heads.prefix(maxN).enumerated() {
                 if i > 0 { t.append(run("  ", secondary)) }
                 t.append(run("\(ovLabel(e.name, 3)) ", secondary))
-                t.append(run(e.value, e.pct >= 0 ? colorForPct(e.pct) : .labelColor))
+                if e.value == "Unlimited" {
+                    t.append(run("∞", hexColor(COLOR_LOW)))
+                } else {
+                    t.append(run(e.value, e.pct >= 0 ? colorForPct(e.pct) : .labelColor))
+                }
                 if let r = e.reset { t.append(run(" \(r)", secondary)) }
             }
             if heads.count > maxN { t.append(run("  +\(heads.count - maxN)", secondary)) }
@@ -2337,7 +2618,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastSnapshot = nil
         lastOverview = items
         let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
-        headerItem.attributedTitle = run("Visão geral", .labelColor, NSFont.boldSystemFont(ofSize: 13))
+        headerItem.attributedTitle = run("Overview", .labelColor, NSFont.boldSystemFont(ofSize: 13))
         for key in ["session", "weekly", "sonnet", "extra"] { rows[key]?.isHidden = true }
         ensureOverviewRowCapacity(items.count)
 
@@ -2363,7 +2644,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Click a row to toggle whether this provider shows in the top-bar
             // summary. Checkmark = shown; unchecked + dimmed = hidden from the
             // bar (still listed here so it can be turned back on). Jump-to-vendor
-            // moved to the "Trocar vendor" submenu and ⌥⌘\.
+            // moved to the "Switch provider" submenu and ⌥⌘\.
             let isHidden = hidden.contains(item.id)
             it.state = isHidden ? .off : .on
             it.representedObject = item.id
@@ -2379,9 +2660,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     a.append(run("cr \(cb)", .labelColor))
                 } else {
                     let h = overviewHeadline(s)
-                    a.append(progressAttr(pct: h.pct, width: MENU_BAR_W, elapsed: h.elapsed,
-                                          menu: true, appearance: appearance))
-                    a.append(run("  \(rpad(h.value, pctW))", colorForPct(h.pct)))
+                    if h.value == "Unlimited" {
+                        a.append(run("Unlimited", hexColor(COLOR_LOW)))
+                    } else {
+                        a.append(progressAttr(pct: h.pct, width: MENU_BAR_W, elapsed: h.elapsed,
+                                              menu: true, appearance: appearance))
+                        a.append(run("  \(rpad(h.value, pctW))", colorForPct(h.pct)))
+                    }
                     if let r = h.reset, !r.isEmpty {
                         a.append(run("   ↺ \(rpad(r, resetW))", .secondaryLabelColor))
                     }
@@ -2424,13 +2709,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let data = output.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = obj["text"] as? String else {
-            setError("saída inválida")
+            setError("invalid output")
             return
         }
         guard let snap = parse(text, vendor: baseVendorId(VENDOR)) else {
             lastSnapshot = nil
             let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
             statusItem.button?.attributedTitle = run(stripMarkup(text), menuBarTextColor(appearance))  // Loading… / ⚠
+            let errorMsg = (obj["tooltip"] as? String).flatMap { $0.isEmpty ? nil : stripMarkup($0) }
+                ?? "\(entryDisplayName(VENDOR)) · \(stripMarkup(text))"
+            headerItem.attributedTitle = run(errorMsg, .labelColor, NSFont.boldSystemFont(ofSize: 13))
             return
         }
         lastSnapshot = snap
@@ -2443,23 +2731,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let appearance = statusItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
         let primaryTextColor = menuBarTextColor(appearance)
         let secondaryTextColor = menuBarTextColor(appearance, secondary: true)
-        func seg(_ tag: String, _ pct: Int, _ value: String, _ elapsed: Int?) {
+        func seg(_ tag: String, _ w: Window) {
+            if title.length > 0 { title.append(run("   ", secondaryTextColor)) }
+            title.append(run("\(tag) ", secondaryTextColor))
+            if w.unlimited {
+                title.append(run("∞", hexColor(COLOR_LOW)))
+                return
+            }
+            if SHOW_PERCENT { title.append(run("\(w.pct)%" + (SHOW_BARS ? " " : ""), colorForPct(w.pct))) }
+            if SHOW_BARS { title.append(progressAttr(pct: w.pct, width: BAR_WIDTH, elapsed: w.elapsed, appearance: appearance)) }
+            if !SHOW_PERCENT && !SHOW_BARS { title.append(run("\(w.pct)%", colorForPct(w.pct))) }
+        }
+        func segExtra(_ tag: String, _ pct: Int, _ value: String) {
             if title.length > 0 { title.append(run("   ", secondaryTextColor)) }
             title.append(run("\(tag) ", secondaryTextColor))
             if SHOW_PERCENT { title.append(run(value + (SHOW_BARS ? " " : ""), colorForPct(pct))) }
-            if SHOW_BARS { title.append(progressAttr(pct: pct, width: BAR_WIDTH, elapsed: elapsed, appearance: appearance)) }
+            if SHOW_BARS { title.append(progressAttr(pct: pct, width: BAR_WIDTH, elapsed: nil, appearance: appearance)) }
             if !SHOW_PERCENT && !SHOW_BARS { title.append(run(value, colorForPct(pct))) }
         }
         if let creditBalance = s.creditBalance {
             title.append(run("cr ", secondaryTextColor))
             title.append(run(creditBalance, primaryTextColor))
-        } else if s.hasUsageWindows && SHOW_SESSION, let session = s.session {
-            seg(s.sessionTag, session.pct, "\(session.pct)%", session.elapsed)
+        } else {
+            let hasFiniteSession = s.session.map { !$0.unlimited } ?? false
+            let hasFiniteWeekly = s.weekly.map { !$0.unlimited } ?? false
+
+            if s.hasUsageWindows && SHOW_SESSION, let session = s.session {
+                if !session.unlimited || !hasFiniteWeekly {
+                    seg(s.sessionTag, session)
+                }
+            }
+            if s.hasUsageWindows && SHOW_WEEKLY, let weekly = s.weekly {
+                if !weekly.unlimited || !hasFiniteSession {
+                    seg(s.weeklyTag, weekly)
+                }
+            }
         }
-        if s.creditBalance == nil && s.hasUsageWindows && SHOW_WEEKLY, let weekly = s.weekly {
-            seg(s.weeklyTag, weekly.pct, "\(weekly.pct)%", weekly.elapsed)
-        }
-        if SHOW_EXTRA, let e = s.extra { seg("ex", e.pct, e.spent, nil) } // $ budget → no meta
+        if SHOW_EXTRA, let e = s.extra { segExtra("ex", e.pct, e.spent) } // $ budget → no meta
         statusItem.button?.attributedTitle = title.length > 0 ? title : run("ai", secondaryTextColor)
     }
 
@@ -2473,7 +2781,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let header = accountLabel(of: VENDOR).map { "\(plan) · \($0)" } ?? plan
         headerItem.attributedTitle = run(header, .labelColor, NSFont.boldSystemFont(ofSize: 13))
 
-        func row(_ key: String, _ name: String, _ pct: Int, _ value: String, _ reset: String?, _ elapsed: Int?) {
+        func row(_ key: String, _ name: String, _ pct: Int, _ value: String, _ reset: String?, _ elapsed: Int?, unlimited: Bool = false) {
             guard let item = rows[key] else { return }
             item.isHidden = false
             let a = NSMutableAttributedString()
@@ -2481,9 +2789,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ? name.padding(toLength: 12, withPad: " ", startingAt: 0)
                 : name
             a.append(run(label, .labelColor))
-            a.append(progressAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed, menu: true, appearance: appearance))
-            a.append(run("  \(value)", colorForPct(pct)))
-            if let r = reset, !r.isEmpty { a.append(run("   ↺ \(r)", .secondaryLabelColor)) }
+            if unlimited {
+                a.append(run("Unlimited", hexColor(COLOR_LOW)))
+            } else {
+                a.append(progressAttr(pct: pct, width: MENU_BAR_W, elapsed: elapsed, menu: true, appearance: appearance))
+                a.append(run("  \(value)", colorForPct(pct)))
+                if let r = reset, !r.isEmpty, let display = resetClockLabel(r, fallback: r) {
+                    a.append(run("   ↺ \(display)", .secondaryLabelColor))
+                }
+            }
             item.attributedTitle = a
         }
         if let creditBalance = s.creditBalance {
@@ -2493,16 +2807,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             rows["sonnet"]?.isHidden = true
         } else {
             if s.hasUsageWindows, let session = s.session {
-                row("session", s.sessionLabel, session.pct, "\(session.pct)%", session.reset, session.elapsed)
+                row("session", s.sessionLabel, session.pct, "\(session.pct)%", session.reset, session.elapsed, unlimited: session.unlimited)
             } else { rows["session"]?.isHidden = true }
             if s.hasUsageWindows, let weekly = s.weekly {
-                row("weekly", s.weeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed)
+                row("weekly", s.weeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed, unlimited: weekly.unlimited)
             } else { rows["weekly"]?.isHidden = true }
         }
-        if let sn = s.sonnet { row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset, sn.elapsed) }
-        else { rows["sonnet"]?.isHidden = true }
+        if let sn = s.sonnet {
+            row("sonnet", s.sonnetLabel, sn.pct, "\(sn.pct)%", sn.reset, sn.elapsed, unlimited: sn.unlimited)
+        } else {
+            rows["sonnet"]?.isHidden = true
+        }
         if let weekly = s.secondaryWeekly {
-            row("extra", s.secondaryWeeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed)
+            row("extra", s.secondaryWeeklyLabel, weekly.pct, "\(weekly.pct)%", weekly.reset, weekly.elapsed, unlimited: weekly.unlimited)
         } else if let e = s.extra {
             row("extra", "Extra usage", e.pct, "\(e.spent) / \(e.limit)", nil, nil)
         } else {
@@ -2520,7 +2837,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let entries = vendorEntries(active: active,
                                     usageAccounts: lastAccountStatus?.usageAccounts)
         if entries.isEmpty {
-            let none = NSMenuItem(title: "Nenhum configurado", action: nil, keyEquivalent: "")
+            let none = NSMenuItem(title: "None configured", action: nil, keyEquivalent: "")
             none.isEnabled = false
             vendorSubmenu.addItem(none)
             vendorSubmenuItem.isHidden = false
@@ -2535,7 +2852,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // Synthetic overview target — same one the ⌥⌘\ ring ends on.
         vendorSubmenu.addItem(.separator())
-        let ov = NSMenuItem(title: "Visão geral", action: #selector(switchVendor(_:)), keyEquivalent: "")
+        let ov = NSMenuItem(title: "Overview", action: #selector(switchVendor(_:)), keyEquivalent: "")
         ov.target = self
         ov.representedObject = "overview"
         ov.state = (active == "overview") ? .on : .off
@@ -2560,6 +2877,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
             p.arguments = ["account", "status", "--json"]
+            p.environment = subprocessEnvironment()
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = FileHandle.nullDevice
@@ -2608,8 +2926,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
              #selector(switchDesktopAccount(_:)))
         fill(cliAccountSubmenu, status.cliLabels, status.cliActive,
              #selector(switchCliAccount(_:)))
-        // Both stay visible with an empty list — that is when "Adicionar
-        // conta…" matters most. Only a machine with no Claude Desktop app at
+        // Both stay visible with an empty list — that is when "Add
+        // account…" matters most. Only a machine with no Claude Desktop app at
         // all loses its submenu.
         desktopAccountItem.isHidden = !status.desktopAvailable
         cliAccountItem.isHidden = false
@@ -2628,7 +2946,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             submenu.addItem(it)
         }
         submenu.addItem(.separator())
-        let add = NSMenuItem(title: "Adicionar conta…",
+        let add = NSMenuItem(title: "Add account…",
                              action: #selector(addAccount(_:)), keyEquivalent: "")
         add.target = self
         add.representedObject = (submenu === desktopAccountSubmenu)
@@ -2643,18 +2961,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let desktop = sender.representedObject as? Bool,
               let bin = resolveBinary("ai-usagebar") else { return }
         let alert = NSAlert()
-        alert.messageText = desktop ? "Adicionar conta do Claude Desktop"
-                                    : "Adicionar conta do Claude Code"
+        alert.messageText = desktop ? "Add a Claude Desktop account"
+                                    : "Add a Claude Code account"
         alert.informativeText = desktop
-            ? "Escolha um nome. O app será fechado e reaberto na tela de login para você "
-                + "entrar com a conta nova; a atual é restaurada se você cancelar."
-            : "Escolha um nome. O `claude` abrirá no Terminal para você entrar; seu login "
-                + "padrão não é alterado."
+            ? "Choose a name. The app will quit and reopen at its login screen so you can "
+                + "sign in as the new account; the current one is restored if you cancel."
+            : "Choose a name. `claude` opens in Terminal for you to sign in; your default "
+                + "login is left alone."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        field.placeholderString = "trabalho"
+        field.placeholderString = "work"
         alert.accessoryView = field
-        alert.addButton(withTitle: "Continuar")
-        alert.addButton(withTitle: "Cancelar")
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -2669,11 +2987,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func switchDesktopAccount(_ sender: NSMenuItem) {
         guard let label = sender.representedObject as? String else { return }
         let alert = NSAlert()
-        alert.messageText = "Trocar a conta do Claude Desktop para «\(label)»?"
-        alert.informativeText = "O app será fechado e reaberto. Seu histórico local é "
-            + "mesclado nessa conta antes da troca, e uma cópia de segurança é gravada."
-        alert.addButton(withTitle: "Trocar e reiniciar")
-        alert.addButton(withTitle: "Cancelar")
+        alert.messageText = "Switch the Claude Desktop account to “\(label)”?"
+        alert.informativeText = "The app will quit and reopen. Your local history is merged into that "
+            + "account before the switch, and a backup is written."
+        alert.addButton(withTitle: "Switch and restart")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         // Routines deleted in one account but alive in another would be handed
@@ -2691,13 +3009,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let alert = NSAlert()
         alert.messageText = conflicts.count == 1
-            ? "1 item foi apagado em uma conta e ainda existe em outra"
-            : "\(conflicts.count) itens foram apagados em uma conta e ainda existem em outra"
+            ? "1 item was deleted in one account and still exists in another"
+            : "\(conflicts.count) items were deleted in one account and still exist in another"
         alert.informativeText = conflictPreview(conflicts)
-            + "\n\nManter traz de volta os apagados. Apagar remove de todas as contas — uma conversa perde só o índice, a transcrição permanece."
-        alert.addButton(withTitle: "Manter todas")
-        alert.addButton(withTitle: "Apagar em todas")
-        alert.addButton(withTitle: "Escolher…")
+            + "\n\nKeeping restores the deleted ones. Deleting removes them from every account — a chat loses only its index, the transcript stays."
+        alert.addButton(withTitle: "Keep all")
+        alert.addButton(withTitle: "Delete everywhere")
+        alert.addButton(withTitle: "Choose…")
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn: return []
@@ -2729,11 +3047,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         scroll.documentView = list
 
         let alert = NSAlert()
-        alert.messageText = "O que manter?"
-        alert.informativeText = "Marcados continuam. Os desmarcados são apagados em todas as contas."
+        alert.messageText = "What should be kept?"
+        alert.informativeText = "Checked items stay. Unchecked ones are deleted in every account."
         alert.accessoryView = scroll
-        alert.addButton(withTitle: "Confirmar")
-        alert.addButton(withTitle: "Cancelar")
+        alert.addButton(withTitle: "Confirm")
+        alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         return zip(conflicts, boxes).filter { $0.1.state != .on }.map { $0.0.key }
@@ -2753,6 +3071,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: bin)
             p.arguments = args
+            p.environment = subprocessEnvironment()
             let pipe = Pipe()
             p.standardOutput = pipe
             p.standardError = pipe
@@ -2765,13 +3084,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let detail = String(decoding: data, as: UTF8.self)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     failure = detail.isEmpty
-                        ? "ai-usagebar terminou com status \(p.terminationStatus)."
+                        ? "ai-usagebar exited with status \(p.terminationStatus)."
                         : String(detail.prefix(2_000))
                 } else {
                     failure = nil
                 }
             } catch {
-                failure = "Não foi possível iniciar ai-usagebar: \(error.localizedDescription)"
+                failure = "Could not start ai-usagebar: \(error.localizedDescription)"
             }
             DispatchQueue.main.async {
                 guard let me = self else { return }
@@ -2780,7 +3099,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let failure {
                     let alert = NSAlert()
                     alert.alertStyle = .warning
-                    alert.messageText = "Não foi possível trocar a conta"
+                    alert.messageText = "Could not switch account"
                     alert.informativeText = failure
                     alert.addButton(withTitle: "OK")
                     NSApp.activate(ignoringOtherApps: true)
@@ -2817,10 +3136,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 #if !SWIFT_TEST_HARNESS
 @main
 struct AppMain {
+    // NSApplication.delegate is `weak`; in optimized (-O) builds ARC can free a
+    // main()-local delegate before app.run() returns since it sees no later
+    // textual use, taking the status item down with it — the menu bar icon
+    // vanishes, intermittently, mid-session. Retain it here instead.
+    static var delegate: AppDelegate!
+
     static func main() {
         DEF.register(defaults: SETTINGS_DEFAULTS)
         let app = NSApplication.shared
-        let delegate = AppDelegate()
+        delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)   // menu-bar agent, no Dock icon
         app.run()

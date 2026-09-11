@@ -60,6 +60,18 @@
       <default>ExpandPopup</default>
     </entry>
 
+    <!-- Popup layout. ProviderTabs is the report shaped view with one selected
+         entry; VendorCards lays every entry the report returned out as a card
+         with one gauge row per window. Both are projections of the same single
+         aggregate usage report, so switching never refetches. -->
+    <entry name="viewMode" type="Enum">
+      <choices>
+        <choice name="ProviderTabs"/>
+        <choice name="VendorCards"/>
+      </choices>
+      <default>ProviderTabs</default>
+    </entry>
+
     <entry name="terminalCommand" type="String">
       <default></default>
     </entry>

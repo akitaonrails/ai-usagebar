@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>ai-usagebar tray icon rasterizer</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; }
+  .row { display: flex; gap: 16px; align-items: flex-end; margin: 16px 0; }
+  canvas { image-rendering: pixelated; background: #fff; box-shadow: 0 0 0 1px #ccc; }
+  .dark canvas { background: #202020; }
+  pre { background: #f4f4f4; padding: 8px; }
+</style>
+<h1>Tray icon rasterizer</h1>
+<p>Renders <code>windows/tray-icon.svg</code> at every NotifyIcon size, previews it on light and dark, and posts the PNGs back to <code>rasterize.js</code>.</p>
+<div class="row" id="light"></div>
+<div class="row dark" id="dark"></div>
+<pre id="log">rendering…</pre>
+<script>
+  // The shell asks for 16 px at 100 % DPI, 20 at 125 %, 24 at 150 %, 32 at 200 %; 40/48 cover
+  // "large icons" and 250-300 %. `src/tray/icon.rs` picks the closest size.
+  const SIZES = [16, 20, 24, 32, 40, 48];
+  // Glyphs designed on a 24-unit grid keep a 2-3 unit margin; cropping some of it off each edge
+  // lets the mark fill the icon the way Windows' own tray glyphs do. Keep the outermost stroke
+  // clear of the corner pixels: `src/tray/icon.rs` asserts every raster's corners are transparent.
+  const INSET = 1;
+  // Stroke scale per size. A 2-unit stroke on the 24 grid is already ~1.5 px at 16 px and
+  // ~1.8 px at 20 px, so nothing is thickened; large sizes get slightly lighter so the mark
+  // reads as a line icon rather than a blob. Raise these for a thin (1-1.5 unit) source SVG.
+  const strokeScale = (size) => (size <= 24 ? 1 : 0.9);
+
+  function prepare(svgText, size) {
+    const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+    const svg = doc.documentElement;
+    const [x, y, w, h] = (svg.getAttribute("viewBox") || "0 0 24 24").split(/\s+/).map(Number);
+    svg.setAttribute("viewBox", `${x + INSET} ${y + INSET} ${w - 2 * INSET} ${h - 2 * INSET}`);
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    for (const el of doc.querySelectorAll("[stroke-width]")) {
+      el.setAttribute("stroke-width", String(Number(el.getAttribute("stroke-width")) * strokeScale(size)));
+    }
+    // Black glyph; alpha carries the anti-aliasing. rasterize.js forces RGB to 0 anyway.
+    for (const el of doc.querySelectorAll("[stroke], [fill]")) {
+      if (el.getAttribute("stroke") === "currentColor") el.setAttribute("stroke", "#000");
+      if (el.getAttribute("fill") === "currentColor") el.setAttribute("fill", "#000");
+    }
+    return new XMLSerializer().serializeToString(svg);
+  }
+
+  async function render(svgText, size) {
+    const img = new Image();
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = rej;
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(prepare(svgText, size));
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, size, size);
+    return canvas;
+  }
+
+  (async () => {
+    const log = document.getElementById("log");
+    try {
+      const svgText = await (await fetch("/tray-icon.svg")).text();
+      const table = {};
+      for (const size of SIZES) {
+        const canvas = await render(svgText, size);
+        for (const id of ["light", "dark"]) {
+          const copy = canvas.cloneNode();
+          copy.getContext("2d").drawImage(canvas, 0, 0);
+          copy.style.width = size * 3 + "px";
+          copy.style.height = size * 3 + "px";
+          copy.title = size + " px";
+          document.getElementById(id).appendChild(copy);
+        }
+        table[size] = canvas.toDataURL("image/png").split(",")[1];
+      }
+      const reply = await fetch("/rasters", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(table),
+      });
+      log.textContent = await reply.text();
+    } catch (error) {
+      log.textContent = "failed: " + error;
+    }
+  })();
+</script>
