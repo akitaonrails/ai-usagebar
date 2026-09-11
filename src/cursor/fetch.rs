@@ -169,6 +169,16 @@ fn parse_cache_at(bytes: &[u8], account: &str, now: DateTime<Utc>) -> Result<Cur
             .and_then(|n| i32::try_from(n).ok())
             .ok_or_else(|| AppError::Schema(format!("cursor cache: invalid {key}")))
     };
+    let optional_cents = |key: &str| -> Result<Option<i64>> {
+        match v.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => value
+                .as_i64()
+                .filter(|n| *n >= 0)
+                .map(Some)
+                .ok_or_else(|| AppError::Schema(format!("cursor cache: invalid {key}"))),
+        }
+    };
     let plan = v["plan"]
         .as_str()
         .filter(|plan| !plan.trim().is_empty())
@@ -192,6 +202,8 @@ fn parse_cache_at(bytes: &[u8], account: &str, now: DateTime<Utc>) -> Result<Cur
         on_demand_enabled: v["on_demand_enabled"]
             .as_bool()
             .ok_or_else(|| AppError::Schema("cursor cache: invalid on-demand flag".into()))?,
+        on_demand_used_cents: optional_cents("on_demand_used_cents")?,
+        on_demand_limit_cents: optional_cents("on_demand_limit_cents")?,
         reset_at: Some(reset_at),
         cycle_start: v
             .get("cycle_start")
@@ -221,6 +233,8 @@ fn snap_to_json(snap: &CursorSnapshot, account: &str) -> serde_json::Value {
         "total_pct": snap.total_pct,
         "unlimited": snap.unlimited,
         "on_demand_enabled": snap.on_demand_enabled,
+        "on_demand_used_cents": snap.on_demand_used_cents,
+        "on_demand_limit_cents": snap.on_demand_limit_cents,
         "reset_at": snap.reset_at.map(|dt| dt.to_rfc3339()),
         "cycle_start": snap.cycle_start.map(|dt| dt.to_rfc3339()),
     })
@@ -500,6 +514,8 @@ mod tests {
                     "account": account_key(&token),
                     "plan": "Pro", "auto_pct": 7, "api_pct": 3, "total_pct": 5,
                     "unlimited": false, "on_demand_enabled": true,
+                    "on_demand_used_cents": 1785,
+                    "on_demand_limit_cents": 35000,
                     "reset_at": "2099-08-04T00:00:00Z",
                 })
                 .to_string()
@@ -521,6 +537,8 @@ mod tests {
         .unwrap();
         assert_eq!(out.snapshot.auto_pct, 7);
         assert!(out.snapshot.on_demand_enabled);
+        assert_eq!(out.snapshot.on_demand_used_cents, Some(1785));
+        assert_eq!(out.snapshot.on_demand_limit_cents, Some(35000));
         assert!(!out.stale);
     }
 
