@@ -27,6 +27,17 @@ assert.equal(manifest.barWidget.defaults.showAll, false);
 const showAllSchema = manifest.barWidget.schema.find(row => row.key === 'showAll');
 assert.equal(showAllSchema.type, 'boolean');
 assert.equal(showAllSchema.defaultValue, false);
+// Pinned window is opt-in display-only: existing shell.json entries without
+// the key keep the historical highest-percent label.
+assert.equal(manifest.barWidget.defaults.barWindow, 'auto');
+const barWindowSchema = manifest.barWidget.schema.find(row => row.key === 'barWindow');
+assert.equal(barWindowSchema.type, 'enum');
+assert.deepEqual(barWindowSchema.options, ['auto', 'session', 'weekly', 'monthly']);
+assert.equal(barWindowSchema.defaultValue, 'auto');
+// The normalizer must accept every option the manifest offers, or the
+// dropdown would write a value the panel silently ignores.
+for (const option of barWindowSchema.options)
+  assert.equal(model.normalizeBarWindow(option), option);
 
 const barWidgetSource = fs.readFileSync(new URL('./BarWidget.qml', import.meta.url), 'utf8');
 assert.match(barWidgetSource, /^BarWidget\s*\{/m);
@@ -48,8 +59,20 @@ assert.match(panelSource, /setting\("lastSelectedEntryId",\s*""\)/);
 assert.match(panelSource, /setting\("showValue",\s*true\)/);
 assert.match(panelSource, /setting\("showProvider",\s*false\)/);
 assert.match(panelSource, /setting\("showAll",\s*false\)/);
+assert.match(panelSource, /Model\.normalizeBarWindow\(setting\("barWindow",\s*"auto"\)\)/);
+// The pin covers the bar value and its echoes (hero detail, tooltip):
+// summary (bar label/chips) is pinned, while panel rows and alert state
+// keep the auto headline.
+assert.match(panelSource, /Model\.headline\(entry,\s*barWindow\)/);
+assert.match(panelSource, /Model\.headline\(item,\s*barWindow\)/);
+assert.match(panelSource, /Model\.isAlarming\(entry\)/);
+assert.match(panelSource, /Model\.anyAlarming\(visibleEntries\)/);
+assert.doesNotMatch(panelSource, /autoSummary/);
+assert.match(panelSource, /function\s+setBarWindow\s*\(/);
+assert.match(panelSource, /onBarWindowRequested/);
 assert.match(panelSource, /showProvider\s*\?\s*Model\.providerShort\(entry\)\s*:\s*""/);
-assert.match(panelSource, /Model\.barStrip\(/);
+assert.match(panelSource, /Model\.barStrip\([\s\S]*?barWindow/);
+assert.match(panelSource, /Model\.barChips\([\s\S]*?barWindow/);
 assert.match(panelSource, /Model\.providerIcon\(entry\)/);
 assert.match(panelSource, /BrandMark\s*\{/);
 assert.match(panelSource, /Model\.brandIconFile\(root\.entry\)/);
@@ -91,6 +114,13 @@ assert.match(settingsViewSource, /signal\s+showProviderRequested\(bool\s+enabled
 assert.match(settingsViewSource, /label:\s*"Show provider name in the top bar"/);
 assert.match(settingsViewSource, /signal\s+showAllRequested\(bool\s+enabled\)/);
 assert.match(settingsViewSource, /label:\s*"Show all providers in the top bar"/);
+assert.match(settingsViewSource, /signal\s+barWindowRequested\(string\s+value\)/);
+assert.match(settingsViewSource, /text:\s*"TOP BAR WINDOW"/);
+assert.match(settingsViewSource, /\{\s*value:\s*"auto",\s*label:\s*"Highest \(auto\)"/);
+assert.match(settingsViewSource, /\{\s*value:\s*"session",\s*label:\s*"5-hour \(session\)"/);
+assert.match(settingsViewSource, /\{\s*value:\s*"weekly",\s*label:\s*"7-day \(weekly\)"/);
+assert.match(settingsViewSource, /\{\s*value:\s*"monthly",\s*label:\s*"Monthly \(monthly\)"/);
+assert.match(panelSource, /barWindow:\s*root\.barWindow/);
 assert.match(panelSource, /onShowAllRequested/);
 assert.match(panelSource, /onShowProviderRequested/);
 assert.match(settingsViewSource, /Log in with Nous Research/);
@@ -435,5 +465,241 @@ assert.equal(model.buildSettingsPatch('openai', [{id: 'kimi', action: 'set', val
 assert.equal(model.buildSettingsPatch('openai', [{id: 'kimi', action: 'bogus'}]).ok, false);
 assert.equal(model.parseSettingsApplyResult('{"ok":true}'), true);
 assert.equal(model.parseSettingsApplyResult('{"ok":false}'), false);
+
+// Top bar window pinning: auto keeps history, session/weekly/monthly pin one
+// window class, unknown pins fall back to highest instead of blanking.
+assert.equal(model.normalizeBarWindow('auto'), 'auto');
+assert.equal(model.normalizeBarWindow(''), 'auto');
+assert.equal(model.normalizeBarWindow('  Session '), 'session');
+assert.equal(model.normalizeBarWindow('5h'), 'session');
+assert.equal(model.normalizeBarWindow('rolling'), 'session');
+assert.equal(model.normalizeBarWindow('WEEKLY'), 'weekly');
+assert.equal(model.normalizeBarWindow('7d'), 'weekly');
+assert.equal(model.normalizeBarWindow('Monthly'), 'monthly');
+assert.equal(model.normalizeBarWindow('bogus'), 'auto');
+assert.equal(model.normalizeBarWindow(undefined), 'auto');
+
+const twoWindow = model.parseReport(JSON.stringify({entries: [{
+  id: 'openai', error: null,
+  sections: [
+    {type: 'metric', label: 'Codex 5h', percent: 44, value: '44%', detail: '', severity: 'low', window_secs: 18000},
+    {type: 'metric', label: 'Codex weekly', percent: 59, value: '59%', detail: '', severity: 'mid', window_secs: 604800}
+  ]
+}]})).entries[0];
+assert.equal(twoWindow.sections[0].window_secs, 18000);
+assert.equal(twoWindow.sections[1].window_secs, 604800);
+assert.equal(model.headline(twoWindow).text, '59%');
+assert.equal(model.headline(twoWindow, 'auto').text, '59%');
+assert.equal(model.headline(twoWindow, 'session').text, '44%');
+assert.equal(model.headline(twoWindow, 'session').label, 'Codex 5h');
+assert.equal(model.headline(twoWindow, 'weekly').text, '59%');
+assert.equal(model.headline(twoWindow, 'bogus').text, '59%');
+// No monthly pool: falls back to highest rather than blanking.
+assert.equal(model.headline(twoWindow, 'monthly').text, '59%');
+
+const threeWindow = model.parseReport(JSON.stringify({entries: [{
+  id: 'opencode-go', error: null,
+  sections: [
+    {type: 'metric', label: 'Rolling (5h)', percent: 0, value: '0%', detail: '', severity: 'low', window_secs: 18000},
+    {type: 'metric', label: 'Weekly (7d)', percent: 18, value: '18%', detail: '', severity: 'low', window_secs: 604800},
+    {type: 'metric', label: 'Monthly', percent: 81, value: '81%', detail: '', severity: 'high'}
+  ]
+}]})).entries[0];
+assert.equal(threeWindow.sections[2].window_secs, null);
+assert.equal(model.headline(threeWindow).text, '81%');
+assert.equal(model.headline(threeWindow, 'session').text, '0%');
+assert.equal(model.headline(threeWindow, 'weekly').text, '18%');
+assert.equal(model.headline(threeWindow, 'monthly').text, '81%');
+// Label-only match when the report predates window_secs.
+const legacyWeekly = model.parseReport(JSON.stringify({entries: [{
+  id: 'openai', error: null,
+  sections: [
+    {type: 'metric', label: 'Codex 5h', percent: 10, value: '10%', detail: ''},
+    {type: 'metric', label: 'Codex weekly', percent: 90, value: '90%', detail: ''}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(legacyWeekly, 'session').text, '10%');
+assert.equal(model.headline(legacyWeekly, 'weekly').text, '90%');
+// window_secs wins over labels: neutral labels disambiguate by size alone,
+// and a present-but-different size overrules a misleading label.
+const secsOnly = model.parseReport(JSON.stringify({entries: [{
+  id: 'openai', error: null,
+  sections: [
+    {type: 'metric', label: 'Foo', percent: 44, value: '44%', detail: '', severity: 'low', window_secs: 18000},
+    {type: 'metric', label: 'Bar', percent: 59, value: '59%', detail: '', severity: 'mid', window_secs: 604800}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(secsOnly, 'session').text, '44%');
+assert.equal(model.headline(secsOnly, 'weekly').text, '59%');
+const secsMismatch = model.parseReport(JSON.stringify({entries: [{
+  id: 'openai', error: null,
+  sections: [
+    {type: 'metric', label: 'Codex weekly', percent: 44, value: '44%', detail: '', severity: 'low', window_secs: 18000},
+    {type: 'metric', label: 'Codex 5h', percent: 59, value: '59%', detail: '', severity: 'mid', window_secs: 604800}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(secsMismatch, 'session').text, '44%');
+assert.equal(model.headline(secsMismatch, 'weekly').text, '59%');
+// Weekly-only response: a session pin falls back to highest.
+const weeklyOnly = model.parseReport(JSON.stringify({entries: [{
+  id: 'openai', error: null,
+  sections: [
+    {type: 'metric', label: 'Codex weekly', percent: 77, value: '77%', detail: '', severity: 'high', window_secs: 604800}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(weeklyOnly, 'session').text, '77%');
+// Abbreviated monthly spend label matches the monthly pin.
+const spendMo = model.parseReport(JSON.stringify({entries: [{
+  id: 'anthropic_api', error: null,
+  sections: [
+    {type: 'metric', label: 'Spend (mo)', percent: 12, value: '$1.34 / $1000', detail: '', severity: 'low'}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(spendMo, 'monthly').text, '12%');
+// Balance-only vendors ignore the pin and keep showing the balance.
+assert.equal(model.headline(balance, 'session').text, '$8.42');
+// Alert state always follows the highest-percent window, never the pin;
+// the pin covers the bar value plus its hero/tooltip echoes.
+assert.equal(model.isAlarming(twoWindow), false);
+assert.equal(model.headline(legacyWeekly, 'weekly').severity, 'critical');
+assert.equal(model.isAlarming(legacyWeekly), true);
+const pinnedChips = model.barChips([twoWindow, threeWindow], twoWindow, true, true, false, false, false, false, 'session');
+assert.deepEqual(Array.from(pinnedChips.map(chip => chip.label)), ['44%', '0%']);
+assert.equal(model.barStrip([twoWindow, threeWindow], false, false, true, false, false, 'weekly'), '󰚩  59%  󰚩  18%');
+// Scoped 7-day pools carry window_secs, so the weekly pin selects them
+// (max among weekly candidates, not first).
+const scopedWeekly = model.parseReport(JSON.stringify({entries: [{
+  id: 'anthropic', error: null,
+  sections: [
+    {type: 'metric', label: 'Weekly (7d)', percent: 30, value: '30%', detail: '', severity: 'low', window_secs: 604800},
+    {type: 'metric', label: 'Fable (7d)', percent: 88, value: '88%', detail: '', severity: 'high', window_secs: 604800}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(scopedWeekly, 'weekly').text, '88%');
+// Pools without any window shape (Cursor-style) fall back to highest.
+const cursorLike = model.parseReport(JSON.stringify({entries: [{
+  id: 'cursor', error: null,
+  sections: [
+    {type: 'metric', label: 'Cursor Models', percent: 80, value: '80%', detail: '', severity: 'high'},
+    {type: 'metric', label: 'Other Models', percent: 20, value: '20%', detail: '', severity: 'low'}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(cursorLike, 'weekly').text, '80%');
+assert.equal(model.headline(cursorLike, 'session').text, '80%');
+// Buckets without any window shape (Copilot-style) fall back to highest.
+const copilotLike = model.parseReport(JSON.stringify({entries: [{
+  id: 'copilot', error: null,
+  sections: [
+    {type: 'metric', label: 'Premium requests', percent: 80, value: '80%', detail: '', severity: 'high'},
+    {type: 'metric', label: 'Chat', percent: 20, value: '20%', detail: '', severity: 'low'}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(copilotLike, 'weekly').text, '80%');
+assert.equal(model.headline(copilotLike, 'session').text, '80%');
+// The exact labels and sizes src/tui/panels.rs emits, not synthetic names:
+// Z.AI ships session/weekly plus a 30-day MCP bucket with a monthly label,
+// MiniMax names its pools Text/Video and its video session 24h, and SuperGrok
+// puts the period in the label with no window size at all.
+const zaiReal = model.parseReport(JSON.stringify({entries: [{
+  id: 'zai', error: null,
+  sections: [
+    {type: 'metric', label: 'Session (5h)', percent: 71, value: '71%', detail: '', severity: 'mid', window_secs: 18000},
+    {type: 'metric', label: 'Weekly', percent: 12, value: '12%', detail: '', severity: 'low', window_secs: 604800},
+    {type: 'metric', label: 'MCP tools (monthly)', percent: 40, value: '40%', detail: '', severity: 'low', window_secs: 2592000}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(zaiReal, 'session').text, '71%');
+assert.equal(model.headline(zaiReal, 'weekly').text, '12%');
+assert.equal(model.headline(zaiReal, 'monthly').text, '40%');
+const minimaxReal = model.parseReport(JSON.stringify({entries: [{
+  id: 'minimax', error: null,
+  sections: [
+    {type: 'metric', label: 'Text', percent: 20, value: '20%', detail: '', severity: 'low', window_secs: 18000},
+    {type: 'metric', label: 'Text', percent: 30, value: '30%', detail: '', severity: 'low', window_secs: 604800},
+    {type: 'metric', label: 'Video', percent: 90, value: '90%', detail: '', severity: 'critical', window_secs: 86400},
+    {type: 'metric', label: 'Video', percent: 50, value: '50%', detail: '', severity: 'mid', window_secs: 604800}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(minimaxReal, 'auto').text, '90%');
+assert.equal(model.headline(minimaxReal, 'session').text, '20%');
+assert.equal(model.headline(minimaxReal, 'weekly').text, '50%');
+assert.equal(model.headline(minimaxReal, 'monthly').text, '90%');
+assert.equal(model.isAlarming(minimaxReal), true);
+const supergrokReal = model.parseReport(JSON.stringify({entries: [{
+  id: 'supergrok', error: null,
+  sections: [
+    {type: 'metric', label: 'Monthly Build credits', percent: 42, value: '42%', detail: '', severity: 'low'}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(supergrokReal, 'monthly').text, '42%');
+assert.equal(model.headline(supergrokReal, 'session').text, '42%');
+const divergent = model.parseReport(JSON.stringify({entries: [{
+  id: 'openai', error: null,
+  sections: [
+    {type: 'metric', label: 'Codex 5h', percent: 10, value: '10%', detail: '', severity: 'low', window_secs: 18000},
+    {type: 'metric', label: 'Codex weekly', percent: 95, value: '95%', detail: '', severity: 'critical', window_secs: 604800}
+  ]
+}]})).entries[0];
+assert.equal(model.headline(divergent, 'session').text, '10%');
+assert.equal(model.headline(divergent, 'session').severity, 'low');
+assert.equal(model.isAlarming(divergent), true);
+// Chip alert state follows highest, never the pin: pinned low label with a
+// critical hidden window still alarms.
+const divergentChip = model.barChips([divergent], divergent, false, true, false, false, false, false, 'session')[0];
+assert.equal(divergentChip.label, '10%');
+assert.equal(divergentChip.alarming, true);
+assert.equal(model.normalizeBarWindow('highest'), 'auto');
+assert.equal(model.normalizeBarWindow('max'), 'auto');
+assert.equal(model.normalizeBarWindow('shortest'), 'session');
+assert.equal(model.normalizeBarWindow('session-5h'), 'session');
+assert.equal(model.normalizeBarWindow('5-hour'), 'session');
+assert.equal(model.normalizeBarWindow('5hour'), 'session');
+assert.equal(model.normalizeBarWindow('5hr'), 'session');
+assert.equal(model.normalizeBarWindow('five-hour'), 'session');
+assert.equal(model.normalizeBarWindow('week'), 'weekly');
+assert.equal(model.normalizeBarWindow('7-day'), 'weekly');
+assert.equal(model.normalizeBarWindow('weekly-7d'), 'weekly');
+assert.equal(model.normalizeBarWindow('month'), 'monthly');
+assert.equal(model.normalizeBarWindow('30d'), 'monthly');
+assert.equal(model.normalizeBarWindow('monthly-cycle'), 'monthly');
+assert.equal(model.normalizeBarWindow(null), 'auto');
+assert.deepEqual(Array.from(pinnedChips.map(chip => chip.alarming)), [false, false]);
+assert.equal(model.barStrip([twoWindow], false, false, true, false, false, 'monthly'), '󰚩  59%');
+const bogusChips = model.barChips([twoWindow, threeWindow], twoWindow, true, true, false, false, false, false, 'bogus');
+const autoChips = model.barChips([twoWindow, threeWindow], twoWindow, true, true, false, false, false, false);
+assert.deepEqual(Array.from(bogusChips.map(chip => chip.label)), Array.from(autoChips.map(chip => chip.label)));
+const secsEdge = model.parseReport(JSON.stringify({entries: [{
+  id: 'openai', error: null,
+  sections: [
+    {type: 'metric', label: 'Zero', percent: 10, value: '10%', detail: '', severity: 'low', window_secs: 0},
+    {type: 'metric', label: 'Negative', percent: 20, value: '20%', detail: '', severity: 'low', window_secs: -5},
+    {type: 'metric', label: 'String', percent: 30, value: '30%', detail: '', severity: 'low', window_secs: "18000"},
+    {type: 'metric', label: 'Float', percent: 40, value: '40%', detail: '', severity: 'low', window_secs: 18000.9}
+  ]
+}]})).entries[0];
+assert.equal(secsEdge.sections[0].window_secs, null);
+assert.equal(secsEdge.sections[1].window_secs, null);
+assert.equal(secsEdge.sections[2].window_secs, 18000);
+assert.equal(secsEdge.sections[3].window_secs, 18000);
+const monthlyExclude = model.parseReport(JSON.stringify({entries: [{
+id: 'openai', error: null,
+sections: [
+{type: 'metric', label: 'Monthly quota', percent: 90, value: '90%', detail: '', severity: 'low', window_secs: 18000},
+{type: 'metric', label: 'Monthly dues', percent: 10, value: '10%', detail: '', severity: 'low'}
+]
+}]})).entries[0];
+assert.equal(model.headline(monthlyExclude, 'monthly').text, '10%');
+const sessionMax = model.parseReport(JSON.stringify({entries: [{
+id: 'openai', error: null,
+sections: [
+{type: 'metric', label: 'A 5h', percent: 20, value: '20%', detail: '', severity: 'low', window_secs: 18000},
+{type: 'metric', label: 'B 5h', percent: 70, value: '70%', detail: '', severity: 'mid', window_secs: 18000}
+]
+}]})).entries[0];
+assert.equal(model.headline(sessionMax, 'session').text, '70%');
+assert.equal(model.headline(twoWindow, '5h').text, '44%');
+assert.equal(model.headline(twoWindow, 'shortest').text, '44%');
+assert.equal(model.headline(secsEdge, 'session').text, '40%');
+assert.equal(model.barStrip([threeWindow], false, false, true, false, false, 'bogus'), '󰚩  81%');
 
 console.log('Omarchy model tests passed');

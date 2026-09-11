@@ -155,7 +155,10 @@ wheel to switch providers. In QML settings, turn off **Show usage value in the
 top bar** for an icon-only widget; the panel and tooltip keep the full details.
 Turn on **Show provider name in the top bar** to prefix the entry with the same
 three-letter code Waybar's `{vendor_short}` prints, so a bar cycling several
-providers says which one it is showing.
+providers says which one it is showing. Use **Top bar usage window** to pin the
+bar to one quota window — auto (highest), 5-hour, weekly, or monthly — instead
+of always showing the highest percent; the tooltip and panel hero echo the
+pinned value while panel rows and alert state still follow the highest quota.
 
 The source-built `ai-usagebar` AUR package can replace `ai-usagebar-bin` in
 the first command.
@@ -621,6 +624,10 @@ The widget reads the providers and accounts already enabled in
   widget; this applies immediately and preserves the full panel and tooltip.
 - QML settings can also show the provider's `{vendor_short}` code before that
   value (`cld 29%`). It is off by default and applies immediately.
+- QML settings can pin the bar to one quota window — auto (highest),
+  5-hour, weekly, or monthly — instead of always showing the highest
+  percent. The tooltip and panel hero echo the pinned value; panel rows
+  and alert state still follow the highest quota.
 - Right-click launches the TUI.
 - Middle-click or the mouse wheel switches providers.
 - The selected provider or named account is remembered across shell reloads

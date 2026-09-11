@@ -48,7 +48,10 @@ omarchy plugin remove akitaonrails.ai-usagebar
   icon-and-value label and a compact icon-only label without hiding panel or
   tooltip details. Its **Show provider name in the top bar** toggle adds the
   provider's three-letter code in front of that value — the same code Waybar's
-  `{vendor_short}` prints — and is off by default.
+  `{vendor_short}` prints — and is off by default. Its **Top bar usage window**
+  dropdown pins the bar to auto (highest), 5-hour, weekly, or monthly; the
+  tooltip and panel hero echo the pinned value while the panel rows keep
+  showing every window and alert state still follows the highest percent.
   `h`/`l` or Left/Right switches provider, `j`/`k` or Up/Down scrolls, `r`,
   Enter, or Space refreshes, Tab moves to the neighboring bar panel, and Esc
   closes.
@@ -110,13 +113,22 @@ omarchy bar set akitaonrails.ai-usagebar showProvider true --json
 
 # Show every configured provider's icon and usage at once. The default is false.
 omarchy bar set akitaonrails.ai-usagebar showAll true --json
+
+# Which quota window the top bar shows: auto (highest, the historical
+# default), session (5-hour), weekly (7-day), or monthly. The default is auto.
+omarchy bar set akitaonrails.ai-usagebar barWindow session
 ```
 
 The refresh interval is clamped to 30–3600 seconds. The `provider` setting
 prefers an exact entry id; if there is no exact match, a base id such as
 `anthropic` selects all accounts for that provider. `showValue`,
-`showProvider`, and `showAll` change only the top-bar label; none hide report
+`showProvider`, and `showAll` change only the top-bar label; `barWindow`
+changes the top-bar value and its tooltip/hero echo; none hide report
 details or change provider fetching.
+Panel rows and alert state still follow the highest percent. `barWindow` falls
+back to the highest percent (balance/text where a vendor has no metric) when
+a vendor lacks the pinned window (a balance-only provider, a weekly-only
+response, or no monthly pool), so the bar never goes blank.
 
 `showProvider` draws the `short_name` the Rust report ships for the selected
 entry, so the codes never fork from Waybar's `{vendor_short}`: `cld 29%`,

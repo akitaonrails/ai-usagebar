@@ -9,6 +9,20 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Omarchy top bar usage-window picker.** The Quattro settings page gains a
+  **Top bar usage window** dropdown (`auto` / `session` / `weekly` /
+  `monthly`), also settable with
+  `omarchy bar set akitaonrails.ai-usagebar barWindow session` that pins the
+  bar label to one quota window instead of always showing the highest percent;
+  the tooltip and panel hero echo the pinned value. `session` pins the 5-hour
+  window, `weekly` the 7-day window, and `monthly` the monthly pool where one
+  exists; `auto` keeps the historical highest-percent behavior and is the
+  default, so existing installs are unchanged. A pinned window a vendor does
+  not offer falls back to the highest percent rather than blanking the bar.
+  Panel rows and alert state still follow the highest percent regardless.
+
 ## [1.15.0] — 2026-09-10
 
 ### Added
