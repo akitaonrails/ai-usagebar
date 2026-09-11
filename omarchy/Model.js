@@ -44,6 +44,8 @@ function normalizeSection(raw) {
     var severity = String(raw.severity || "")
     if (["low", "mid", "high", "critical"].indexOf(severity) < 0)
       severity = percent >= 90 ? "critical" : percent >= 75 ? "high" : percent >= 50 ? "mid" : "low"
+    var windowSecs = Math.floor(Number(raw.window_secs))
+    if (!isFinite(windowSecs) || windowSecs <= 0) windowSecs = null
     return {
       type: "metric",
       label: cleanText(raw.label, 160),
@@ -51,7 +53,8 @@ function normalizeSection(raw) {
       value: cleanText(raw.value, 240),
       detail: cleanText(raw.detail, 1000),
       severity: severity,
-      reset_at: cleanText(raw.reset_at, 80)
+      reset_at: cleanText(raw.reset_at, 80),
+      window_secs: windowSecs
     }
   }
   if (type === "text") {
@@ -226,14 +229,14 @@ function barLabel(alarming, vertical, showValue, loading, hasEntry, summaryText,
     : icon + "  " + provider + " " + summary
 }
 
-function barChip(entry, showValue, showProvider) {
+function barChip(entry, showValue, showProvider, barWindow) {
   if (!entry) return ""
   var icon = providerIcon(entry)
   var provider = showProvider ? providerShort(entry) : ""
   var summary = ""
   if (showValue) {
     if (entry.error) summary = "!"
-    else summary = autoTextSafe(headline(entry).text).trim()
+    else summary = autoTextSafe(headline(entry, barWindow).text).trim()
   }
   if (provider === "") return summary === "" ? icon : icon + "  " + summary
   return summary === "" ? icon + "  " + provider : icon + "  " + provider + " " + summary
@@ -241,14 +244,14 @@ function barChip(entry, showValue, showProvider) {
 
 // Every visible entry as its own icon+value chip. A vertical bar has no
 // width for the strip and keeps a single glyph, same as `barLabel`.
-function barStrip(entries, alarming, vertical, showValue, showProvider, loading) {
+function barStrip(entries, alarming, vertical, showValue, showProvider, loading, barWindow) {
   var list = Array.isArray(entries) ? entries : []
   if (vertical) return alarming ? "󰅙" : "󰚩"
   if (loading && list.length === 0) return "󰚩  …"
   if (list.length === 0) return alarming ? "󰅙" : "󰚩"
   var chips = []
   for (var i = 0; i < list.length; i++) {
-    var chip = barChip(list[i], showValue, showProvider)
+    var chip = barChip(list[i], showValue, showProvider, barWindow)
     if (chip !== "") chips.push(chip)
   }
   return chips.length === 0 ? "󰚩" : chips.join("  ")
@@ -309,7 +312,7 @@ function brandIconFile(entry) {
   }
 }
 
-function barChips(entries, selected, showAll, showValue, showProvider, loading, alarming, vertical) {
+function barChips(entries, selected, showAll, showValue, showProvider, loading, alarming, vertical, barWindow) {
   var list = Array.isArray(entries) ? entries : []
   if (vertical) {
     return [{ brand: "", icon: alarming ? "󰅙" : "󰚩", label: "", alarming: alarming === true }]
@@ -328,7 +331,7 @@ function barChips(entries, selected, showAll, showValue, showProvider, loading, 
     var label = ""
     if (showProvider) label = providerShort(entry)
     if (showValue) {
-      var summary = entry.error ? "!" : autoTextSafe(headline(entry).text).trim()
+      var summary = entry.error ? "!" : autoTextSafe(headline(entry, barWindow).text).trim()
       label = label === "" ? summary : (summary === "" ? label : label + " " + summary)
     }
     var brand = brandIconFile(entry)
@@ -336,20 +339,98 @@ function barChips(entries, selected, showAll, showValue, showProvider, loading, 
       brand: brand,
       icon: brand !== "" ? providerIcon(entry) : providerShort(entry),
       label: label,
+      // Alert state always follows the highest-percent window, never the
+      // pinned one: barWindow changes only the displayed value.
       alarming: isAlarming(entry)
     })
   }
   return chips
 }
 
-function headline(entry) {
-  if (!entry) return { text: "", percent: null, severity: "low", label: "" }
+// Which usage window the top bar shows. "auto" keeps the historical
+// highest-percent metric; the rest pin one window class across vendors.
+// Unknown, empty, and legacy values fall back to "auto" so an existing
+// shell.json never goes blank after an update.
+function normalizeBarWindow(value) {
+  var text = cleanText(value, 24).trim().toLowerCase()
+  if (text === "" || text === "auto" || text === "highest" || text === "max") return "auto"
+  if (text === "session" || text === "5h" || text === "5-hour" || text === "5hour"
+      || text === "5hr" || text === "five-hour" || text === "rolling"
+      || text === "shortest" || text === "session-5h") return "session"
+  if (text === "weekly" || text === "week" || text === "7d" || text === "7-day"
+      || text === "weekly-7d") return "weekly"
+  if (text === "monthly" || text === "month" || text === "30d" || text === "monthly-cycle") return "monthly"
+  return "auto"
+}
+
+// The two window lengths the report states exactly. Same values as the Rust
+// constants that publish them: openai/types.rs SESSION_WINDOW_SECS /
+// WEEKLY_WINDOW_SECS, opencode_go/vendor.rs and kimi/vendor.rs ROLLING_WINDOW /
+// WEEKLY_WINDOW, anthropic/types.rs SESSION / WEEKLY. A vendor that states any
+// other length falls through to label matching instead of being forced into
+// one of these classes.
+var SESSION_WINDOW_SECS = 18000
+var WEEKLY_WINDOW_SECS = 604800
+
+function metricMatchesWindow(section, want) {
+  if (!section || section.type !== "metric") return false
+  var label = String(section.label || "")
+  var secs = Math.floor(Number(section.window_secs))
+  var hasSecs = isFinite(secs) && secs > 0
+  var knownSize = hasSecs && (secs === SESSION_WINDOW_SECS || secs === WEEKLY_WINDOW_SECS)
+  // A known size is authoritative; an unknown positive size is treated as
+  // missing so labels decide. Labels only cover older reports that predate
+  // window_secs.
+  if (want === "session") {
+    if (knownSize) return secs === SESSION_WINDOW_SECS
+    return /(\b5\s*-?\s*h(?:ours?|rs?)?\b|\bsessions?\b|\brolling\b)/i.test(label)
+  }
+  if (want === "weekly") {
+    if (knownSize) return secs === WEEKLY_WINDOW_SECS
+    return /(\bweek(?:ly|s)?\b|\b7\s*-?\s*d(?:ays?)?\b)/i.test(label)
+  }
+  if (want === "monthly") {
+    // Monthly pools have no single fixed length (opencode-go publishes
+    // none; Z.AI uses 30d; Cursor/custom vary), so no secs value is
+    // authoritative here — except known 5h/7d sizes, which exclude.
+    if (knownSize) return false
+    return /(\bmonthly\b|\bmonth(?:ly|s)?\b|\bspend\s*\(mo\)|\b30\s*-?\s*d(?:ays?)?\b)/i.test(label)
+  }
+  return false
+}
+
+function maxPercent(sections) {
   var best = null
-  var sections = entry.sections || []
   for (var i = 0; i < sections.length; i++) {
     var section = sections[i]
     if (section.type === "metric" && (!best || section.percent > best.percent)) best = section
   }
+  return best
+}
+
+function selectMetric(entry, barWindow) {
+  var sections = entry && Array.isArray(entry.sections) ? entry.sections : []
+  var metrics = []
+  for (var i = 0; i < sections.length; i++) {
+    if (sections[i] && sections[i].type === "metric") metrics.push(sections[i])
+  }
+  if (metrics.length === 0) return null
+  var want = normalizeBarWindow(barWindow)
+  if (want === "auto") return maxPercent(metrics)
+  var candidates = []
+  for (var j = 0; j < metrics.length; j++) {
+    if (metricMatchesWindow(metrics[j], want)) candidates.push(metrics[j])
+  }
+  // A pinned window that a vendor does not offer (a balance-only provider,
+  // a weekly-only response, no monthly pool) falls back to the historical
+  // highest-percent value rather than blanking the bar.
+  if (candidates.length === 0) return maxPercent(metrics)
+  return maxPercent(candidates)
+}
+
+function headline(entry, barWindow) {
+  if (!entry) return { text: "", percent: null, severity: "low", label: "" }
+  var best = selectMetric(entry, barWindow)
   if (best) {
     var bestText = /balance/i.test(best.label) && best.value !== ""
       ? best.value : best.percent + "%"
@@ -360,6 +441,7 @@ function headline(entry) {
       label: best.label
     }
   }
+  var sections = entry.sections || []
   for (var j = 0; j < sections.length; j++) {
     var row = sections[j]
     if (row.type === "text" && /(balance|available|spend|prepaid)/i.test(row.label) && row.value !== "")
