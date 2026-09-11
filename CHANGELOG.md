@@ -22,6 +22,14 @@ Each release is also published at
 
 ### Fixed
 
+- **macOS menu bar knew the wrong default for Ollama Cloud.**
+  `defaultEnabled("ollama")` fell through to `true` while Rust ships
+  `[ollama] enabled = false` (opt-in), so the menu bar could treat Ollama
+  as enabled when the config omits the flag. It now returns `false`,
+  matching `src/config.rs`, and the Swift contract test pins it alongside
+  the other opt-in vendors. Ollama's Session/Weekly bars already rendered
+  through the generic `parse()` path — no format change.
+
 - **Cursor on-demand usage:** Cursor Enterprise reports now show the amount
   spent and configured limit when `onDemand.used` and `onDemand.limit` are
   available, instead of showing only whether on-demand billing is enabled.
