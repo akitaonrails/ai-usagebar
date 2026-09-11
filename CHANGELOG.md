@@ -25,6 +25,10 @@ Each release is also published at
 
 ### Fixed
 
+- **Cursor on-demand usage:** Cursor Enterprise reports now show the amount
+  spent and configured limit when `onDemand.used` and `onDemand.limit` are
+  available, instead of showing only whether on-demand billing is enabled.
+
 - **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
   instead of a fixed-width horizontal `ListView`. With five or more providers
   enabled the list overflowed the panel's edge and the extra entries were
