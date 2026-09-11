@@ -9,6 +9,20 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Omarchy top bar usage-window picker.** The Quattro settings page gains a
+  **Top bar usage window** dropdown (`auto` / `session` / `weekly` /
+  `monthly`), also settable with
+  `omarchy bar set akitaonrails.ai-usagebar barWindow session` that pins the
+  bar label to one quota window instead of always showing the highest percent;
+  the tooltip and panel hero echo the pinned value. `session` pins the 5-hour
+  window, `weekly` the 7-day window, and `monthly` the monthly pool where one
+  exists; `auto` keeps the historical highest-percent behavior and is the
+  default, so existing installs are unchanged. A pinned window a vendor does
+  not offer falls back to the highest percent rather than blanking the bar.
+  Panel rows and alert state still follow the highest percent regardless.
+
 ### Changed
 
 - **Omarchy install is one paste, and the marketplace card says what it needs.**
@@ -21,6 +35,14 @@ Each release is also published at
   only the `omarchy plugin add` half.
 
 ### Fixed
+
+- **macOS menu bar knew the wrong default for Ollama Cloud.**
+  `defaultEnabled("ollama")` fell through to `true` while Rust ships
+  `[ollama] enabled = false` (opt-in), so the menu bar could treat Ollama
+  as enabled when the config omits the flag. It now returns `false`,
+  matching `src/config.rs`, and the Swift contract test pins it alongside
+  the other opt-in vendors. Ollama's Session/Weekly bars already rendered
+  through the generic `parse()` path — no format change.
 
 - **macOS Claude Code Keychain prompts.** Write normal-sized refreshed OAuth
   credentials through `/usr/bin/security -i` so the item keeps the

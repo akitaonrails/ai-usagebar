@@ -17,6 +17,7 @@ Column {
   property bool showValue: true
   property bool showProvider: false
   property bool showAll: false
+  property string barWindow: "auto"
   readonly property color dim: Qt.darker(foreground, 1.45)
 
   property var snapshot: ({ primary_choices: [], keys: [] })
@@ -42,6 +43,7 @@ Column {
   signal showValueRequested(bool enabled)
   signal showProviderRequested(bool enabled)
   signal showAllRequested(bool enabled)
+  signal barWindowRequested(string value)
   signal closeRequested()
 
   spacing: Style.space(12)
@@ -248,6 +250,42 @@ Column {
       fontFamily: root.fontFamily
       enabled: !root.saving
       onClicked: root.showAllRequested(!root.showAll)
+    }
+  }
+
+  Column {
+    visible: !root.loading
+    width: parent.width
+    spacing: Style.space(8)
+
+    PanelSectionHeader {
+      text: "TOP BAR WINDOW"
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+    Text {
+      width: parent.width
+      text: "Which quota the bar shows. Providers lacking it fall back to highest. Applies immediately."
+      textFormat: Text.PlainText
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
+    Dropdown {
+      width: parent.width
+      showLabel: false
+      value: Model.normalizeBarWindow(root.barWindow)
+      options: [
+        { value: "auto", label: "Highest (auto)" },
+        { value: "session", label: "5-hour (session)" },
+        { value: "weekly", label: "7-day (weekly)" },
+        { value: "monthly", label: "Monthly (monthly)" }
+      ]
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      enabled: !root.saving
+      onChanged: function(value) { root.barWindowRequested(value) }
     }
   }
 

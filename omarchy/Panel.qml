@@ -45,6 +45,7 @@ Panel {
   readonly property bool showValue: Model.booleanSetting(setting("showValue", true), true)
   readonly property bool showProvider: Model.booleanSetting(setting("showProvider", false), false)
   readonly property bool showAll: Model.booleanSetting(setting("showAll", false), false)
+  readonly property string barWindow: Model.normalizeBarWindow(setting("barWindow", "auto"))
   readonly property var visibleEntries: Model.filteredEntries(entries, configuredProvider)
   readonly property int entryIndex: Model.selectedIndex(visibleEntries, selectedEntryId)
   readonly property var entry: entryIndex >= 0 ? visibleEntries[entryIndex] : null
@@ -52,7 +53,10 @@ Panel {
     if (!entry) return ""
     return String(entry.fetched_at || "")
   }
-  readonly property var summary: Model.headline(entry)
+  readonly property var summary: Model.headline(entry, barWindow)
+  // barWindow pins the bar value and its echoes (hero detail, tooltip).
+  // Panel rows and alert state keep the historical highest-percent headline,
+  // matching every other frontend (Waybar class, KDE isAlarming, TUI).
   readonly property var entrySections: entry ? entry.sections : []
   readonly property bool filterMiss: configuredProvider !== "" && entries.length > 0 && visibleEntries.length === 0
   readonly property bool entryAlarming: Model.isAlarming(entry)
@@ -119,6 +123,12 @@ Panel {
     var next = enabled === true
     if (next === showAll) return
     persistWidgetSettings({ showAll: next })
+  }
+
+  function setBarWindow(value) {
+    var next = Model.normalizeBarWindow(value)
+    if (next === barWindow) return
+    persistWidgetSettings({ barWindow: next })
   }
 
   function selectEntry(index) {
@@ -221,11 +231,11 @@ Panel {
   }
 
   readonly property var barChips: Model.barChips(
-    visibleEntries, entry, showAll, showValue, showProvider, loading, alarming, vertical)
+    visibleEntries, entry, showAll, showValue, showProvider, loading, alarming, vertical, barWindow)
 
   function barText() {
     if (showAll)
-      return Model.barStrip(visibleEntries, alarming, vertical, showValue, showProvider, loading)
+      return Model.barStrip(visibleEntries, alarming, vertical, showValue, showProvider, loading, barWindow)
     return Model.barLabel(alarming, vertical, showValue, loading,
       entry !== null, summary.text, showProvider ? Model.providerShort(entry) : "",
       Model.providerIcon(entry))
@@ -237,7 +247,7 @@ Panel {
       for (var i = 0; i < visibleEntries.length; i++) {
         var item = visibleEntries[i]
         var bit = Model.providerName(item)
-        var value = Model.autoTextSafe(Model.headline(item).text).trim()
+        var value = Model.autoTextSafe(Model.headline(item, barWindow).text).trim()
         if (value !== "") bit += " · " + value
         if (item.stale) bit += " · cached"
         chips.push(bit)
@@ -413,10 +423,12 @@ Panel {
             showValue: root.showValue
             showProvider: root.showProvider
             showAll: root.showAll
+            barWindow: root.barWindow
             onSaved: root.startRefresh()
             onShowValueRequested: function(enabled) { root.setShowValue(enabled) }
             onShowProviderRequested: function(enabled) { root.setShowProvider(enabled) }
             onShowAllRequested: function(enabled) { root.setShowAll(enabled) }
+            onBarWindowRequested: function(value) { root.setBarWindow(value) }
             onFallbackRequested: root.openTerminalSettings()
             onNousLoginRequested: root.openNousLogin()
             onCopilotLoginRequested: root.openCopilotLogin()
