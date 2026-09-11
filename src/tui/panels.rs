@@ -911,6 +911,20 @@ fn cursor_sections(s: &crate::usage::CursorSnapshot, now: DateTime<Utc>) -> Sect
             },
             s,
         );
+        if let Some(used) = s.on_demand_used_cents {
+            v.push(Section::Spacer);
+            v.push(Section::Text {
+                label: "On-Demand".into(),
+                value: match s.on_demand_limit_cents {
+                    Some(limit) => format!(
+                        "{} / {}",
+                        crate::usage::fmt_minor(used, 2, Some("USD")),
+                        crate::usage::fmt_minor(limit, 2, Some("USD"))
+                    ),
+                    None => crate::usage::fmt_minor(used, 2, Some("USD")),
+                },
+            });
+        }
     }
     v.push(Section::Spacer);
     v.push(Section::Text {
@@ -2407,6 +2421,8 @@ mod tests {
             total_pct: 99,
             unlimited: false,
             on_demand_enabled: false,
+            on_demand_used_cents: None,
+            on_demand_limit_cents: None,
             reset_at: Some(now() + chrono::Duration::days(9)),
             cycle_start: None,
         }
@@ -2466,7 +2482,11 @@ mod tests {
 
     #[test]
     fn cursor_sections_show_both_pools_and_reset() {
-        let sections = sections_for(&ready(VendorSnapshot::Cursor(cursor_snap())), now(), 5);
+        let mut snapshot = cursor_snap();
+        snapshot.on_demand_enabled = true;
+        snapshot.on_demand_used_cents = Some(1785);
+        snapshot.on_demand_limit_cents = Some(35000);
+        let sections = sections_for(&ready(VendorSnapshot::Cursor(snapshot)), now(), 5);
         let metrics: Vec<_> = sections
             .iter()
             .filter_map(|s| match s {
@@ -2487,6 +2507,11 @@ mod tests {
                 .iter()
                 .any(|(l, v)| l == "Other Models" && v == "100%")
         );
+        assert!(sections.iter().any(|section| matches!(
+            section,
+            Section::Text { label, value }
+                if label == "On-Demand" && value == "$17.85 / $350.00"
+        )));
         assert!(sections.iter().any(|s| matches!(
             s,
             Section::Text { label, value } if label == "Resets" && value.contains("9d")

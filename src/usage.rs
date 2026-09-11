@@ -245,6 +245,10 @@ pub struct CursorSnapshot {
     pub unlimited: bool,
     /// Whether on-demand (overage) spend is turned on (`onDemand.enabled`).
     pub on_demand_enabled: bool,
+    /// On-demand spend in cents (`onDemand.used`), when Cursor reports it.
+    pub on_demand_used_cents: Option<i64>,
+    /// Configured on-demand spending limit in cents (`onDemand.limit`).
+    pub on_demand_limit_cents: Option<i64>,
     /// End of the current billing cycle (`billingCycleEnd`) — when the pools
     /// reset.
     pub reset_at: Option<DateTime<Utc>>,
