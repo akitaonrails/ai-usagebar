@@ -420,6 +420,12 @@ mod tests {
         assert_eq!(vendors.len(), VendorId::all().len());
         assert_eq!(vendors[0]["id"], "anthropic");
         assert_eq!(vendors[0]["kind"], "oauth");
+        // The macOS menu bar decides a vendor's default state solely by
+        // `enabled`, so the wire name is frontend contract: a serde rename
+        // here would silently empty its selector, failing no Swift test.
+        assert_eq!(vendors[0]["enabled"], true);
+        assert_eq!(vendors[0]["configured"], false);
+        assert_eq!(vendors[0]["short_name"], "cld");
         let agy = vendors
             .iter()
             .find(|v| v["id"] == "antigravity")

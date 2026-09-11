@@ -4,7 +4,7 @@
 // bundle. Instead, the app's `@main` entry point is guarded by
 // `#if !SWIFT_TEST_HARNESS`, and this file — compiled together with the app in
 // one module — supplies its own `@main TestRunner`, calling the app's helpers
-// (arcAngles, tomlValueInText, defaultEnabled, parse) directly.
+// (arcAngles, tomlValueInText, parse) directly.
 //
 // Run:  ./macos/run-tests.sh
 // Gate: pure-logic regression coverage for the review fixes.
@@ -81,31 +81,31 @@ func testRingArc() {
     assertEqual(zero.startDeg, zero.endDeg, "zero-length segment is degenerate")
 }
 
-// ─── TOML enabled / api_key_env parsing ──────────────────────────────────
+// ─── TOML parsing: booleans, api_key, arrays ─────────────────────────────
 func testTomlParsing() {
-    print("TOML enabled + api_key_env")
+    print("TOML booleans, keys and arrays")
     // Bare false.
     let bareFalse = """
-    [deepseek]
-    enabled = false
+    [anthropic]
+    show_default_account = false
     """
-    assertEqual(tomlValueInText(bareFalse, section: "deepseek", key: "enabled"), "false",
-                "bare enabled = false")
+    assertEqual(tomlValueInText(bareFalse, section: "anthropic", key: "show_default_account"), "false",
+                "bare show_default_account = false")
 
     // Bare true.
     let bareTrue = """
-    [kimi]
-    enabled = true
+    [openrouter]
+    show_default_account = true
     """
-    assertEqual(tomlValueInText(bareTrue, section: "kimi", key: "enabled"), "true",
-                "bare enabled = true")
+    assertEqual(tomlValueInText(bareTrue, section: "openrouter", key: "show_default_account"), "true",
+                "bare show_default_account = true")
 
     // Inline comment on a bare boolean.
     let commented = """
-    [kilo]
-    enabled = false  # opt-in balance vendor
+    [anthropic]
+    show_default_account = true  # per-account usage row
     """
-    assertEqual(tomlValueInText(commented, section: "kilo", key: "enabled"), "false",
+    assertEqual(tomlValueInText(commented, section: "anthropic", key: "show_default_account"), "true",
                 "bare bool with inline comment")
 
     // Quoted string still works (api_key).
@@ -145,19 +145,19 @@ func testTomlParsing() {
     [anthropic]
     credentials_path = "/tmp/creds.json"
     """
-    assertNil(tomlValueInText(omitted, section: "anthropic", key: "enabled"),
-              "omitted enabled is nil")
+    assertNil(tomlValueInText(omitted, section: "anthropic", key: "show_default_account"),
+              "omitted key is nil")
 
     // Section scoping: a key under another section must not leak.
     let scoped = """
     [openrouter]
-    enabled = true
+    show_default_account = true
 
     [deepseek]
     api_key = "ds-key"
     """
-    assertNil(tomlValueInText(scoped, section: "deepseek", key: "enabled"),
-              "enabled does not leak across sections")
+    assertNil(tomlValueInText(scoped, section: "deepseek", key: "show_default_account"),
+              "key does not leak across sections")
     assertEqual(tomlValueInText(scoped, section: "deepseek", key: "api_key"), "ds-key",
                 "api_key read from the right section")
 
@@ -190,18 +190,6 @@ func testTomlParsing() {
     """
     assertNil(tomlStringArrayInText(malformedOverview, section: "ui", key: "overview_vendors"),
               "malformed string array rejected")
-}
-
-// ─── Rust enabled defaults (src/config.rs) ───────────────────────────────
-func testDefaultEnabled() {
-    print("Rust enabled defaults")
-    for id in ["anthropic", "openai", "zai", "openrouter"] {
-        assertEqual(defaultEnabled(id), true, "\(id) defaults enabled")
-    }
-    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
-               "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode", "ollama"] {
-        assertEqual(defaultEnabled(id), false, "\(id) defaults disabled (opt-in)")
-    }
 }
 
 // ─── Parser: balances per vendor, no fake 0% rows ────────────────────────
@@ -932,6 +920,10 @@ func testSubprocessEnvironment() {
 
 func testVendorCatalogContract() {
     print("vendor catalog contract (ai-usagebar vendors --json)")
+    // `enabled` is the menubar's only source of a vendor's default state —
+    // the app keeps no slug list of its own (a hand copy once disagreed with
+    // Rust about Ollama Cloud), so the opt-in-or-enabled default a vendor
+    // ships with must ride this field.
     let fixtureJson = """
     {"vendors":[{"configured":true,"enabled":true,"env":"GITHUB_COPILOT_TOKEN","id":"copilot","kind":"oauth","login":"gh auth login","name":"GitHub Copilot","needs_credential":true,"short_name":"ghc"},{"configured":false,"enabled":false,"env":"","id":"supergrok","kind":"local","login":"","name":"SuperGrok","needs_credential":true,"short_name":"sgk"},{"configured":true,"enabled":true,"env":"","id":"antigravity","kind":"local","login":"","name":"Antigravity","needs_credential":false,"short_name":"agy"}]}
     """
@@ -947,11 +939,13 @@ func testVendorCatalogContract() {
     assertEqual(copilot?.cli, "gh", "copilot cli is gh")
     assertEqual(copilot?.login, "gh auth login", "copilot login command")
     assertEqual(copilot?.env, "GITHUB_COPILOT_TOKEN", "copilot env var")
+    assertEqual(copilot?.enabled, true, "copilot enabled via catalog")
 
     let supergrok = catalog.first { $0.id == "supergrok" }
     assertEqual(supergrok?.kind, "local", "supergrok kind is local")
     assertEqual(supergrok?.shortName, "sgk", "supergrok short name is sgk")
     assertEqual(supergrok?.configured, false, "supergrok configured via catalog")
+    assertEqual(supergrok?.enabled, false, "supergrok opt-in default via catalog")
 
     let antigravity = catalog.first { $0.id == "antigravity" }
     assertEqual(antigravity?.needsCredential, false, "antigravity needs no credential")
@@ -1030,7 +1024,6 @@ struct TestRunner {
     static func main() {
         testRingArc()
         testTomlParsing()
-        testDefaultEnabled()
         testParserBalances()
         testOverviewHeadline()
         testVendorCycle()

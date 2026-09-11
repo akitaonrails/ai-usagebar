@@ -25,6 +25,18 @@ Each release is also published at
 
 ### Changed
 
+- **macOS menu bar keeps no second copy of Rust's enabled defaults.**
+  The `defaultEnabled` slug list is deleted, together with the helpers the
+  catalog migration had orphaned (`vendorEnabled`, `configEnabledTOML`,
+  `configHasApiKeyTOML`, `vendorConfigured`). Every enabled decision in the
+  menu bar had already read the catalog's `enabled` field from
+  `vendors --json` since the #170 migration — which is why the slug list's
+  disagreement about Ollama Cloud (#185) was latent, never user-visible —
+  and now nothing else exists to drift: the Rust wire test pins the
+  `enabled` field name, and the Swift contract test pins that the field
+  decides. A provider added in Rust reaches the menu bar with its own
+  default, no Swift change needed.
+
 - **Omarchy install is one paste, and the marketplace card says what it needs.**
   The plugin is the display frontend; it reads the `ai-usagebar` binary, which
   installs through a different manager (the binary is a system package, the
@@ -38,10 +50,11 @@ Each release is also published at
 
 - **macOS menu bar knew the wrong default for Ollama Cloud.**
   `defaultEnabled("ollama")` fell through to `true` while Rust ships
-  `[ollama] enabled = false` (opt-in), so the menu bar could treat Ollama
-  as enabled when the config omits the flag. It now returns `false`,
-  matching `src/config.rs`, and the Swift contract test pins it alongside
-  the other opt-in vendors. Ollama's Session/Weekly bars already rendered
+  `[ollama] enabled = false` (opt-in) — a latent disagreement only, since
+  the catalog migration had already moved the menu bar's live decisions to
+  `vendors --json`. The slug list is now deleted outright (see the Changed
+  entry above); the catalog's `enabled` field decides, and the Rust wire
+  test pins the field name. Ollama's Session/Weekly bars already rendered
   through the generic `parse()` path — no format change.
 
 - **Cursor on-demand usage:** Cursor Enterprise reports now show the amount
