@@ -40,6 +40,9 @@ codebase.
 ## Reference guides
 
 - [Configuration](docs/configuration.md)
+- [Development guide](DEVELOPMENT.md)
+- [Windows build guide](docs/windows-build.md)
+- [Ollama Cloud integration](docs/ollama-setup.md)
 - [Claude accounts](docs/claude-accounts.md)
 - [Format placeholders](docs/format-placeholders.md)
 - [Provider endpoints and live tests](docs/vendor-endpoints.md)
@@ -129,13 +132,20 @@ Alternatively, apply the overlay when you want the package available as
 ### Omarchy Quattro
 
 The native plugin is a display frontend and does not bundle the
-`ai-usagebar` executable. Install the binary first, then add and enable the
-plugin:
+`ai-usagebar` executable. Both are needed, and they install through different
+managers — the binary is a system package, the plugin is per-user shell config
+under `~/.config/omarchy/plugins/` — so this is one paste rather than one
+command:
 
 ```bash
-omarchy pkg aur add ai-usagebar-bin
-omarchy plugin add https://github.com/akitaonrails/ai-usagebar.git --enable
+omarchy pkg aur add ai-usagebar-bin &&
+  omarchy plugin add https://github.com/akitaonrails/ai-usagebar.git --enable
 ```
+
+If you found the plugin through [plugins.omarchy.org](https://plugins.omarchy.org/plugin.html?id=akitaonrails.ai-usagebar),
+its **Install** button copies the `omarchy plugin add` line on its own. That
+installs the widget but not the binary it reads, and the bar will say
+`ai-usagebar is not installed` until you run the `omarchy pkg aur add` half too.
 
 Quattro enables its own `omarchy.agents` status widget by default. Disable it
 if you want AI Usage to be the only agent status item in the bar:
@@ -825,6 +835,9 @@ Native desktop coverage varies by integration. The
 reported metric, desktop selector, stability note, and live-test command.
 
 Run `make smoke` to check live response shapes.
+
+For Ollama Cloud setup (Bearer key from ollama.com/settings/keys), see the
+[Ollama integration guide](docs/ollama-setup.md).
 
 ## Format placeholders
 

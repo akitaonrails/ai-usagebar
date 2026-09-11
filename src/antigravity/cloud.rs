@@ -354,6 +354,25 @@ pub fn oauth_cache_path(cache: &Cache) -> PathBuf {
     cache.dir().join(OAUTH_CACHE_FILE)
 }
 
+/// Whether a usable Google session has already been persisted for Antigravity,
+/// without touching the keyring.
+///
+/// `detect` needs to know that the remote fallback would work, but it promises
+/// to be cheap and silent, and reading the keyring is not unconditionally
+/// silent — on macOS `security find-generic-password` can raise a Keychain
+/// prompt, and a background probe that pops a system dialog is worse than the
+/// provider it would have enabled (see #148 for how badly that goes). This
+/// reads only our own cache file, so it cannot prompt, cannot block and cannot
+/// reach the network. It misses the very first run, before any fetch has
+/// persisted a token; that is the deliberate trade.
+pub fn has_persisted_session(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    serde_json::from_slice::<PersistedOAuth>(&bytes)
+        .is_ok_and(|saved| !saved.access_token.is_empty() && !saved.fingerprint.is_empty())
+}
+
 /// The persisted token for exactly this keyring session. Absent, unreadable,
 /// malformed, empty, or minted from a different session all read as `None`:
 /// the worst case is one extra refresh round-trip.
@@ -381,6 +400,54 @@ pub fn write_persisted(path: &Path, value: &PersistedOAuth) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The detect probe must treat anything it cannot positively read as
+    /// "no session", so a corrupt cache never advertises a provider that
+    /// would then fail its first fetch.
+    #[test]
+    fn has_persisted_session_is_true_only_for_a_readable_token() {
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("oauth.json");
+
+        assert!(!has_persisted_session(&path), "missing file");
+
+        std::fs::write(&path, b"").unwrap();
+        assert!(!has_persisted_session(&path), "empty file");
+
+        std::fs::write(&path, b"{ not json").unwrap();
+        assert!(!has_persisted_session(&path), "malformed");
+
+        let no_token = serde_json::json!({
+            "fingerprint": "abc", "access_token": "",
+            "expires_at": "2026-01-01T00:00:00Z"
+        });
+        std::fs::write(&path, no_token.to_string()).unwrap();
+        assert!(!has_persisted_session(&path), "empty access token");
+
+        let good = serde_json::json!({
+            "fingerprint": "abc", "access_token": "ya29.test",
+            "expires_at": "2026-01-01T00:00:00Z"
+        });
+        std::fs::write(&path, good.to_string()).unwrap();
+        assert!(
+            has_persisted_session(&path),
+            "a readable token is a session"
+        );
+    }
+
+    /// An expired token still counts: `detect` is asking "would the remote
+    /// path work", and an expired access token refreshes rather than failing.
+    #[test]
+    fn an_expired_persisted_token_still_counts_as_a_session() {
+        let td = tempfile::TempDir::new().unwrap();
+        let path = td.path().join("oauth.json");
+        let stale = serde_json::json!({
+            "fingerprint": "abc", "access_token": "ya29.stale",
+            "expires_at": "2000-01-01T00:00:00Z"
+        });
+        std::fs::write(&path, stale.to_string()).unwrap();
+        assert!(has_persisted_session(&path));
+    }
     use super::*;
     use mockito::Matcher;
     use tempfile::TempDir;

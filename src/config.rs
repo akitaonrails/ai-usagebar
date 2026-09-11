@@ -62,6 +62,7 @@ pub struct Config {
     #[serde(rename = "opencode-go")]
     pub opencode_go: OpenCodeGoConfig,
     pub commandcode: CommandCodeConfig,
+    pub ollama: OllamaConfig,
     /// User-defined providers, one `[[custom]]` table each.
     pub custom: Vec<CustomProviderConfig>,
 }
@@ -815,6 +816,32 @@ pub struct OpenCodeGoConfig {
 pub struct CommandCodeConfig {
     pub enabled: bool,
     pub auth_paths: Option<Vec<PathBuf>>,
+}
+
+/// Ollama Cloud (`ollama.com/api/usage`). Disabled by default: the local
+/// `ollama` daemon is the product most users reach for, and it has no quota
+/// route to query. Cloud quota is opt-in, with the key taken from
+/// `OLLAMA_API_KEY` (or `api_key` as a fallback for `chmod 600` configs).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct OllamaConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// Display label for the plan row. The API itself does not report a plan
+    /// name; "pro" is what an Ollama Cloud Pro account shows in the UI.
+    pub plan: String,
+}
+
+impl Default for OllamaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "OLLAMA_API_KEY".to_string(),
+            api_key: None,
+            plan: "pro".to_string(),
+        }
+    }
 }
 
 impl Default for OpenCodeGoConfig {
@@ -1749,6 +1776,7 @@ impl Config {
             VendorId::NousResearch => self.nous.enabled,
             VendorId::OpenCodeGo => self.opencode_go.enabled,
             VendorId::CommandCode => self.commandcode.enabled,
+            VendorId::Ollama => self.ollama.enabled,
         }
     }
 
@@ -1771,6 +1799,7 @@ impl Config {
             VendorId::Grok => &self.grok.api_key_env,
             VendorId::Minimax => &self.minimax.api_key_env,
             VendorId::OpenCodeGo => &self.opencode_go.api_key_env,
+            VendorId::Ollama => &self.ollama.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
             // not user-renameable, and the providers with no key at all.
             VendorId::Anthropic
@@ -1801,6 +1830,7 @@ impl Config {
             VendorId::Grok => self.grok.api_key.as_deref(),
             VendorId::Minimax => self.minimax.api_key.as_deref(),
             VendorId::OpenCodeGo => self.opencode_go.api_key.as_deref(),
+            VendorId::Ollama => self.ollama.api_key.as_deref(),
             VendorId::Anthropic
             | VendorId::Openai
             | VendorId::Copilot

@@ -373,6 +373,7 @@ pub enum VendorSnapshot {
     NousResearch(crate::nous::types::AccountSnapshot),
     OpenCodeGo(crate::opencode_go::types::Usage),
     CommandCode(crate::commandcode::types::Snapshot),
+    Ollama(OllamaSnapshot),
     /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
     /// that fetched it holds the `CustomProviderConfig`, and the cache
     /// directory is keyed by its `id`.
@@ -694,6 +695,44 @@ pub struct ZaiSnapshot {
     pub session: Option<UsageWindow>,
     pub weekly: Option<UsageWindow>,
     pub mcp: Option<UsageWindow>,
+}
+
+/// Ollama Cloud — the session and weekly usage windows served by
+/// `ollama.com/api/usage`, plus a per-model breakdown. The response also
+/// carries an `activity.cost` string for the current period; we keep it raw
+/// (it is already dollar-formatted upstream) and let the renderer place it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OllamaSnapshot {
+    /// Display label, taken from the `[ollama] plan` config field. The API
+    /// itself does not report a plan name.
+    pub plan: String,
+    /// 5h rolling window (`limits.session`). `None` when the account has not
+    /// touched the cloud tier yet (the window is omitted from the response,
+    /// not reported as zero).
+    pub session: Option<UsageWindow>,
+    /// 7d rolling window (`limits.weekly`).
+    pub weekly: Option<UsageWindow>,
+    /// Per-model request counts inside the session window, in the order the
+    /// API returned them. Renderers sort and truncate this for the tooltip.
+    pub session_models: Vec<OllamaModelUsage>,
+    /// Per-model request counts inside the weekly window.
+    pub weekly_models: Vec<OllamaModelUsage>,
+    /// `activity.cost` as a pre-formatted dollar string (`"0.00000"`,
+    /// `"1.23456"`). Already a string on the wire — the renderer decides
+    /// whether to keep it verbatim or reformat.
+    pub activity_cost: Option<String>,
+    /// `activity.period.type` (`"last_4_weeks"` and friends). A short
+    /// human-readable label the renderer can show next to the cost.
+    pub activity_period: Option<String>,
+}
+
+/// One row of `OllamaSnapshot::{session,weekly}_models`. The API carries the
+/// per-model request count; the percentage of the window that this single
+/// model represents is not reported, so the renderer derives it locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OllamaModelUsage {
+    pub name: String,
+    pub request_count: u64,
 }
 
 /// OpenRouter — credit balance + lifetime/daily/weekly/monthly usage from

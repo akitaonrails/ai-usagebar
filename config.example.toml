@@ -10,7 +10,7 @@
 # is selected when the TUI opens. Comment out to default to Anthropic.
 # Valid: anthropic | anthropic_api | openai | copilot | zai | openrouter | deepseek
 #        | kimi | kilo | novita | moonshot | grok | supergrok | antigravity
-#        | cursor | minimax | kiro | nous | opencode-go | commandcode
+#        | cursor | minimax | kiro | nous | opencode-go | commandcode | ollama
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
 # open directly on a vendor's tab instead.
 # primary = "anthropic"
@@ -200,6 +200,18 @@ api_key_env = "OPENROUTER_API_KEY"
 enabled = false
 api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
+
+[ollama]
+# Disabled by default. Ollama Cloud quota comes from the same route the
+# official settings page uses — https://ollama.com/api/usage — not from the
+# local Ollama daemon (127.0.0.1:11434 has no quota route). Mint a key at
+# https://ollama.com/settings/keys; the CLI's Ed25519 registry key in
+# ~/.ollama is never read. The API reports usage as a fraction of the limit
+# and no plan label — `plan` below is only the tooltip’s display name.
+enabled = false
+api_key_env = "OLLAMA_API_KEY"  # checked first; if set + non-empty, used
+# api_key = "..."               # fallback; chmod 600 the file if you use it
+# plan = "pro"                  # label shown in tooltips; the API reports none
 
 [kimi]
 # Disabled by default. Two ways to authenticate:

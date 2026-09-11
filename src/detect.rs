@@ -86,6 +86,7 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::CommandCode => {
             crate::commandcode::creds::resolve(config.commandcode.auth_paths.as_deref()).is_ok()
         }
+        VendorId::Ollama => key_present(config, vendor),
     }
 }
 
@@ -146,7 +147,22 @@ fn antigravity_present() -> bool {
     if std::env::var_os("ANTIGRAVITY_LS_ADDRESS").is_some_and(|value| !value.is_empty()) {
         return true;
     }
-    !crate::antigravity::fetch::discover_ls_ports().is_empty()
+    if !crate::antigravity::fetch::discover_ls_ports().is_empty() {
+        return true;
+    }
+    // Antigravity also reports with every product closed, from the Google
+    // session it saved. Detecting only a *running* server would skip a
+    // provider that works — and because a vendor is looked at once, the miss
+    // would stick until `--all`. Our own cached token is the prompt-free
+    // signal that the remote path is live; the keyring is deliberately not
+    // consulted here.
+    crate::cache::Cache::for_vendor(crate::vendor::VendorId::Antigravity.slug()).is_ok_and(
+        |cache| {
+            crate::antigravity::cloud::has_persisted_session(
+                &crate::antigravity::cloud::oauth_cache_path(&cache),
+            )
+        },
+    )
 }
 
 fn cursor_present(config: &Config) -> bool {

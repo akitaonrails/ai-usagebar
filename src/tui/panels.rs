@@ -252,6 +252,15 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             .collect();
             ("OpenCode Go".into(), cells)
         }
+        VendorSnapshot::Ollama(s) => {
+            let cells = [("5h", s.session.as_ref()), ("wk", s.weekly.as_ref())]
+                .into_iter()
+                .filter_map(|(label, window)| {
+                    window.map(|window| pct(label, window.utilization_pct.clamp(0, 100)))
+                })
+                .collect();
+            (s.plan.clone(), cells)
+        }
         VendorSnapshot::Custom(s) => (
             s.plan.clone().unwrap_or_default(),
             s.metrics
@@ -333,6 +342,13 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .flatten()
         .max(),
         VendorSnapshot::SuperGrok(s) => Some(s.weekly_pct),
+        VendorSnapshot::Ollama(s) => [
+            s.session.as_ref().map(|w| w.utilization_pct),
+            s.weekly.as_ref().map(|w| w.utilization_pct),
+        ]
+        .into_iter()
+        .flatten()
+        .max(),
         VendorSnapshot::Custom(s) => s.metrics.first().map(|metric| i32::from(metric.pct)),
         VendorSnapshot::Openrouter(_)
         | VendorSnapshot::Deepseek(_)
@@ -410,8 +426,9 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Minimax(s) => minimax_sections(s, now, pace_tolerance),
                 VendorSnapshot::Kiro(s) => kiro_sections(s, now),
                 VendorSnapshot::NousResearch(s) => nous_sections(s, now),
-                VendorSnapshot::OpenCodeGo(s) => opencode_go_sections(s, now),
+                VendorSnapshot::OpenCodeGo(s) => opencode_go_sections(s, now, pace_tolerance),
                 VendorSnapshot::CommandCode(s) => commandcode_sections(s, now),
+                VendorSnapshot::Ollama(s) => ollama_sections(s, now, pace_tolerance),
                 VendorSnapshot::Custom(s) => custom_sections(s),
             };
             // Inject the (already-absolute) fetched-at instant into the title
@@ -1011,33 +1028,58 @@ fn commandcode_sections(
 fn opencode_go_sections(
     s: &crate::opencode_go::types::Usage,
     now: DateTime<Utc>,
+    tol: u32,
 ) -> SectionBuilder {
+    use crate::opencode_go::vendor::{ROLLING_WINDOW, WEEKLY_WINDOW};
+
     let mut sections = SectionBuilder::new(vec![Section::Title {
         left: "OpenCode Go".into(),
         right: None,
     }]);
-    for (label, window) in [
-        ("Rolling", s.rolling.as_ref()),
-        ("Weekly", s.weekly.as_ref()),
-        ("Monthly", s.monthly.as_ref()),
+    let mut any = false;
+    for (label, window, duration) in [
+        ("Rolling (5h)", s.rolling.as_ref(), ROLLING_WINDOW),
+        ("Weekly (7d)", s.weekly.as_ref(), WEEKLY_WINDOW),
     ] {
-        if let Some(window) = window {
-            let pct = window.percent.round().clamp(0.0, 100.0) as i32;
-            sections.push_metric(
-                Section::Metric {
-                    label: label.into(),
-                    pct: pct as u16,
-                    severity: severity_for(pct),
-                    value_label: format!("{pct}%"),
-                    footnote: String::new(),
-                },
-                Some(window.resets_at),
-            );
-            sections.push(Section::Text {
-                label: "Resets".into(),
-                value: countdown::format(Some(window.resets_at), now),
-            });
-        }
+        let Some(window) = window else {
+            continue;
+        };
+        any = true;
+        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        let projected = crate::usage::UsageWindow {
+            utilization_pct: pct,
+            resets_at: Some(window.resets_at),
+            window_duration: duration,
+        };
+        push_window(&mut sections, label, &projected, now, tol, true);
+    }
+    // Monthly keeps its reset countdown but no pacing and no `window_secs`:
+    // the cycle follows the subscription date (28/29/31-day months), so no
+    // fixed denominator is exact. `push_metric` (not `push_metric_in_window`)
+    // is what withholds the window from machine-readable frontends.
+    if let Some(window) = s.monthly.as_ref() {
+        any = true;
+        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        sections.push_metric(
+            Section::Metric {
+                label: "Monthly".into(),
+                pct: pct as u16,
+                severity: severity_for(pct),
+                value_label: format!("{pct}%"),
+                footnote: format!(
+                    "Resets in {}",
+                    countdown::format(Some(window.resets_at), now)
+                ),
+            },
+            Some(window.resets_at),
+        );
+    }
+    if !any {
+        sections.push(Section::Spacer);
+        sections.push(Section::Text {
+            label: "".into(),
+            value: "  no usage windows reported".into(),
+        });
     }
     sections
 }
@@ -1257,6 +1299,65 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
     }
     push_reset_credits(&mut v, &s.reset_credits, now);
     v
+}
+
+fn ollama_sections(
+    s: &crate::usage::OllamaSnapshot,
+    now: DateTime<Utc>,
+    pace_tolerance: u32,
+) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![Section::Title {
+        left: format!("Ollama Cloud {}", s.plan),
+        right: None,
+    }]);
+    if let Some(w) = &s.session {
+        push_window(&mut v, "Session (5h)", w, now, pace_tolerance, true);
+    }
+    if let Some(w) = &s.weekly {
+        push_window(&mut v, "Weekly", w, now, pace_tolerance, true);
+    }
+    push_top_models(&mut v, &s.session_models, "Top models (5h)");
+    push_top_models(&mut v, &s.weekly_models, "Top models (weekly)");
+    if let Some(cost) = &s.activity_cost {
+        v.push(Section::Spacer);
+        v.push(Section::Block {
+            label: "Activity".into(),
+            body: vec![format!(
+                "{} · {}",
+                usd_str(cost),
+                s.activity_period.as_deref().unwrap_or("last 4 weeks")
+            )],
+        });
+    }
+    v
+}
+
+fn push_top_models(
+    sections: &mut SectionBuilder,
+    models: &[crate::usage::OllamaModelUsage],
+    label: &str,
+) {
+    if models.is_empty() {
+        return;
+    }
+    let mut sorted: Vec<&crate::usage::OllamaModelUsage> = models.iter().collect();
+    sorted.sort_by_key(|m| std::cmp::Reverse(m.request_count));
+    let body: Vec<String> = sorted
+        .into_iter()
+        .take(5)
+        .map(|m| format!("{}: {} requests", m.name, m.request_count))
+        .collect();
+    sections.push(Section::Spacer);
+    sections.push(Section::Block {
+        label: label.into(),
+        body,
+    });
+}
+
+fn usd_str(cost: &str) -> String {
+    cost.parse::<f64>()
+        .map(usd)
+        .unwrap_or_else(|_| cost.to_string())
 }
 
 fn push_reset_credits(

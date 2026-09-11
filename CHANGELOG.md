@@ -9,6 +9,25 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Changed
+
+- **Omarchy install is one paste, and the marketplace card says what it needs.**
+  The plugin is the display frontend; it reads the `ai-usagebar` binary, which
+  installs through a different manager (the binary is a system package, the
+  plugin is per-user config under `~/.config/omarchy/plugins/`), so the two
+  steps cannot become one command. They are now one copy-paste, and the
+  manifest description — which plugins.omarchy.org shows verbatim on the card —
+  names the binary requirement, because the marketplace's Install button copies
+  only the `omarchy plugin add` half.
+
+### Fixed
+
+- **Cursor on-demand usage:** Cursor Enterprise reports now show the amount
+  spent and configured limit when `onDemand.used` and `onDemand.limit` are
+  available, instead of showing only whether on-demand billing is enabled.
+
+## [1.15.0] — 2026-09-10
+
 ### Added
 
 - **macOS menu bar support for remaining CLI vendors.** Copilot, SuperGrok,
@@ -23,17 +42,66 @@ Each release is also published at
   `/usr/local/bin`, and `~/.cargo/bin` into subprocess environments for vendor
   tools.
 
+- **Ollama Cloud vendor.** `ollama.com/api/usage`, the quota route the
+  official settings page itself uses, behind a Bearer key minted at
+  <https://ollama.com/settings/keys>. The local daemon at
+  `127.0.0.1:11434` has no quota route, and the Ed25519 key the `ollama`
+  CLI keeps in `~/.ollama/id_ed25519` is the registry's signing key, not
+  a quota credential — the widget never reads it. The native Rust
+  provider adds an `Ollama Cloud` tab, a `[ollama]` config block
+  (disabled by default, opt in with `enabled = true` or via the TUI
+  Settings overlay), `{oll_session_pct}` / `{oll_weekly_pct}` placeholders
+  with the usual pace and reset aliases, a per-model breakdown of the
+  five heaviest models in each window in the tooltip, and a
+  `usage --json` entry keyed `ollama`. Plan label comes from config; the
+  API itself does not report one. `tests/fixtures/ollama/good_full.json`
+  pins the real shape, and `tests::live::ollama_live` is the live smoke
+  against the real API. The cache stores the projected snapshot only —
+  the raw body, and the Bearer key with it, is never written to disk.
+- **OpenCode Go pacing.** The rolling (5h) and weekly (7d) windows now expose
+  `{ocg_rolling|weekly_elapsed}`, `{ocg_rolling|weekly_pace}`, and
+  `{ocg_rolling|weekly_pace_indicator}` placeholders plus `{session_elapsed}`
+  / `{weekly_elapsed}` aliases, pace arrows in the Waybar tooltip, and paced
+  rows in the TUI panel and `usage --json` report footnotes. The monthly
+  window keeps its reset countdown but is not paced: its cycle follows the
+  subscription date, so no fixed length is exact and no `window_secs` is
+  published for it. Window lengths are constants: the usage endpoint reports
+  only `percent` and `resetsAt`.
+
 ### Fixed
 
-- **Cursor on-demand usage:** Cursor Enterprise reports now show the amount
-  spent and configured limit when `onDemand.used` and `onDemand.limit` are
-  available, instead of showing only whether on-demand billing is enabled.
+- **`detect` sees Antigravity with the app closed.** Since v1.14.0 Antigravity
+  reports from the Google session it saved, with every product shut — but
+  detection still looked only for a *running* local server, so `detect` skipped
+  a provider that works, and because a vendor is considered once the miss stuck
+  until `--all`. It now also counts the token in our own vendor cache. The
+  keyring is deliberately not read: that can raise a Keychain prompt on macOS,
+  and a background probe must not pop a dialog. The trade is the very first
+  run, before any fetch has persisted a token.
+
+- **Windows tray: "Open TUI" works.** The menu item launched Windows Terminal
+  with `wt -e <command>`, but `-e` is wezterm's flag, not Windows Terminal's:
+  `wt` rejected it, printed its usage page and exited, so the TUI never
+  started and the user saw a flash of help text. It now uses
+  `wt new-tab -- <command>`. `spawn()` reports only that the process started,
+  which is why the wrong flag looked like a success and fell through to no
+  fallback.
 
 - **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
   instead of a fixed-width horizontal `ListView`. With five or more providers
   enabled the list overflowed the panel's edge and the extra entries were
   simply unreachable — no scrollbar, no way to click them. They now wrap onto
   additional rows.
+
+- **Settings overlay can pick env-only key vendors.** `KEY_VENDORS` in
+  `tui::settings` were excluded from the primary list whenever neither an
+  inline `api_key` nor a non-empty env var resolved at startup, so a fresh
+  install that only ever exports `OLLAMA_API_KEY` (or any other key
+  vendor's env var) could not select the matching tab in the TUI to
+  flip `enabled = true` without first editing the TOML by hand. The
+  overlay now treats a present env var as a sufficient signal that the
+  vendor is reachable, surfaces it in the primary list and writes
+  `enabled = true` on save like the inline-key path did.
 
 ## [1.14.0] — 2026-09-08
 
@@ -2252,7 +2320,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.14.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...HEAD
+[1.15.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
