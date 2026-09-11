@@ -281,6 +281,23 @@ fn title_case(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn on_demand_tolerates_missing_null_and_present() {
+        // v1.11.0 shipped a regression where #[serde(default)] covered a missing
+        // field but not an explicit null, because the type was a Vec. Option
+        // handles null itself — proving that here rather than trusting it.
+        let missing: OnDemand = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert_eq!(missing.used, None, "missing");
+        let null: OnDemand =
+            serde_json::from_str(r#"{"enabled":true,"used":null,"limit":null}"#).unwrap();
+        assert_eq!(
+            null.used, None,
+            "explicit null must not fail the whole parse"
+        );
+        let present: OnDemand =
+            serde_json::from_str(r#"{"enabled":true,"used":42,"limit":99}"#).unwrap();
+        assert_eq!(present.used, Some(42));
+    }
     use super::*;
     use chrono::TimeZone;
 
