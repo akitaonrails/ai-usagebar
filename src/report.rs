@@ -26,6 +26,11 @@ use crate::tui::panels::{Section, sections_with_metadata_for};
 /// note appended to a metric's detail line.
 const PACE_TOLERANCE: u32 = 5;
 
+/// Version of the tolerant, machine-readable `usage --json` contract.
+/// Increment only when an incompatible change cannot be represented by adding
+/// or omitting fields.
+const USAGE_SCHEMA_VERSION: u8 = 1;
+
 /// One configured vendor or account.
 struct Entry {
     id: String,
@@ -323,13 +328,22 @@ fn format_tab_name(tab: &TabId, vendor_name: &str) -> String {
 }
 
 fn render_json_for_primary(entries: &[Entry], primary: Option<&str>) -> String {
-    json!({ "primary": primary, "entries": json_rows(entries) }).to_string()
+    json!({
+        "schema_version": USAGE_SCHEMA_VERSION,
+        "primary": primary,
+        "entries": json_rows(entries),
+    })
+    .to_string()
 }
 
 /// The single-entry shape: the same rows, without a `primary` the caller
 /// did not ask about.
 fn render_json_entries(entries: &[Entry]) -> String {
-    json!({ "entries": json_rows(entries) }).to_string()
+    json!({
+        "schema_version": USAGE_SCHEMA_VERSION,
+        "entries": json_rows(entries),
+    })
+    .to_string()
 }
 
 fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
@@ -634,6 +648,20 @@ mod tests {
         assert_eq!(value["primary"], "openai");
         assert_eq!(value["entries"][0]["id"], "anthropic");
         assert_eq!(value["entries"][1]["id"], "openai");
+    }
+
+    #[test]
+    fn every_json_report_declares_its_schema_version() {
+        let aggregate: serde_json::Value = serde_json::from_str(&render_json_for_primary(
+            &[entry("anthropic", Vec::new())],
+            Some("anthropic"),
+        ))
+        .unwrap();
+        assert_eq!(aggregate["schema_version"], 1);
+
+        let single: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[entry("anthropic", Vec::new())])).unwrap();
+        assert_eq!(single["schema_version"], 1);
     }
 
     #[test]

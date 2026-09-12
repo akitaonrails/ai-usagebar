@@ -11,17 +11,26 @@ Each release is also published at
 
 ### Added
 
-- `[[custom]]` providers can borrow a built-in vendor's brand mark with
-  `brand = "<vendor slug>"`. A custom entry is the only way to watch a second
-  API key for a service whose section holds one key, and until now that entry
-  drew its three-letter tag while the first key drew the provider's mark — the
-  same service, twice, looking like two products. The mark is chosen, not
-  inferred: it can be any built-in vendor's, not only the one the `url` belongs
-  to, so an entry whose account runs someone else's models can carry that
-  vendor's mark instead. The report relays the slug (a built-in vendor is its
-  own brand), so each frontend resolves it against the artwork it ships;
-  `brand` must name a built-in vendor, and unset keeps the tag every custom
-  entry has today.
+- **Custom provider brand marks.** A `[[custom]]` provider can set
+  `brand = "<vendor slug>"` to use a built-in vendor's mark in the Omarchy
+  widget. The brand is chosen explicitly and need not match the provider URL;
+  leaving it unset keeps the custom provider's three-letter tag.
+
+- **Versioned usage JSON.** Both aggregate and single-provider `usage --json`
+  reports now include top-level `"schema_version": 1`. The documented contract
+  remains tolerant: consumers ignore unknown fields and treat absent fields as
+  not applicable; the version changes only for incompatible shapes.
+
+### Fixed
+
+- **Antigravity works while the `agy` CLI is running.** When `agy` exposes a
+  local RPC server but rejects quota probes because its CSRF token is not
+  discoverable, ai-usagebar now uses the saved Google session fallback. Other
+  local `401`/`403` responses still surface as signed-out errors.
+
+- **Release-integrity checks now run on pull requests.** CI fetches the tag
+  history and runs the existing immutable-changelog and version check before
+  changes can reach `main`.
 
 ## [1.16.0] — 2026-09-11
 

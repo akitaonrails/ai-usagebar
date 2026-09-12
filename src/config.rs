@@ -1165,8 +1165,8 @@ fn default_grok_binary() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(executable))
 }
 
-/// Antigravity reads its quota from whichever local Antigravity product is
-/// running, so it needs no credentials of its own. When no product is up it
+/// Antigravity reads its quota from a usable local Antigravity product. When no
+/// product is up — or `agy` requires the CSRF token it does not publish — it
 /// falls back to the Google session Antigravity saved in the OS keyring and
 /// talks to Cloud Code directly. Renewing that session needs Antigravity's
 /// OAuth client id and secret, which are not shipped in source: set them here
