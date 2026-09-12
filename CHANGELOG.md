@@ -9,6 +9,13 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Versioned usage JSON.** Both aggregate and single-provider `usage --json`
+  reports now include top-level `"schema_version": 1`. The documented contract
+  remains tolerant: consumers ignore unknown fields and treat absent fields as
+  not applicable; the version changes only for incompatible shapes.
+
 ## [1.16.0] — 2026-09-11
 
 ### Added

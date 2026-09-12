@@ -572,6 +572,10 @@ The JSON report has two views of each provider:
 - `sections` preserves the complete ordered display, including balances,
   grouped rows, and spacers. Rows without a percentage do not invent one.
 
+The top-level `schema_version` is currently `1`. Consumers should ignore
+unknown fields and treat absent fields as not applicable. The version changes
+only when a tolerant reader could not safely absorb a change.
+
 `usage` reports only the providers that are **enabled**, which makes the
 switched-off and the never-credentialed exactly the rows it cannot describe.
 `vendors --json` is the catalog that covers them: one row per provider with its
