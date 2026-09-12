@@ -15,10 +15,13 @@ Each release is also published at
   `brand = "<vendor slug>"`. A custom entry is the only way to watch a second
   API key for a service whose section holds one key, and until now that entry
   drew its three-letter tag while the first key drew the provider's mark — the
-  same service, twice, looking like two products. The report relays the slug
-  (a built-in vendor is its own brand), so each frontend resolves it against
-  the artwork it ships; `brand` must name a built-in vendor, and unset keeps
-  the tag every custom entry has today.
+  same service, twice, looking like two products. The mark is chosen, not
+  inferred: it can be any built-in vendor's, not only the one the `url` belongs
+  to, so an entry whose account runs someone else's models can carry that
+  vendor's mark instead. The report relays the slug (a built-in vendor is its
+  own brand), so each frontend resolves it against the artwork it ships;
+  `brand` must name a built-in vendor, and unset keeps the tag every custom
+  entry has today.
 
 ## [1.16.0] — 2026-09-11
 
