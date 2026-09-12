@@ -1270,11 +1270,8 @@ pub struct CustomProviderConfig {
     /// Exactly three lowercase ASCII letters, unique across built-in vendors
     /// and other custom providers — it is the `{vendor_short}` bar tag.
     pub short_name: String,
-    /// A built-in vendor's slug whose brand mark this provider borrows. Set it
-    /// when the custom entry speaks to a service that already has a mark —
-    /// a second API key for the same provider is the same product, and the
-    /// panel should not draw it as a different one. `None` keeps the
-    /// `short_name` tag, which is what every custom entry had before.
+    /// A built-in vendor slug whose mark supporting frontends may use.
+    /// `None` preserves the custom provider's `short_name` tag.
     pub brand: Option<String>,
     pub enabled: bool,
     /// `https://` unless `allow_http`; never carries `user:pass@`.
@@ -3792,7 +3789,10 @@ value = "/tier"
         assert_eq!(c.id, "mytool");
         assert_eq!(c.name, "My Tool");
         assert_eq!(c.short_name, "myt");
-        assert_eq!(c.brand, None, "a custom provider has no mark unless it asks");
+        assert_eq!(
+            c.brand, None,
+            "a custom provider has no mark unless it asks"
+        );
         assert!(c.enabled);
         assert_eq!(c.url, "https://api.example.test/v1/usage");
         assert!(!c.allow_http);

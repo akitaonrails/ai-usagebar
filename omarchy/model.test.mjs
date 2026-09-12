@@ -143,6 +143,7 @@ const raw = JSON.stringify({primary: 'openai', entries: [
     name: 'anthropic · work',
     display_name: 'Claude · work',
     short_name: 'cld',
+    brand: 'anthropic',
     plan: 'Claude Max 20x',
     status: 'ready',
     error: null,
@@ -168,6 +169,7 @@ assert.equal(parsed.ok, true);
 assert.equal(parsed.primary, 'openai');
 assert.equal(parsed.entries.length, 2);
 assert.equal(parsed.entries[0].stale, true);
+assert.equal(parsed.entries[0].brand, 'anthropic');
 assert.equal(parsed.entries[0].sections[1].reset_at, '2026-08-14T14:00:00Z');
 assert.equal(model.providerName(parsed.entries[0]), 'Claude · work');
 assert.equal(model.providerName(parsed.entries[1]), 'Codex');

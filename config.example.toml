@@ -33,12 +33,8 @@
 # id = "mytool"                  # [a-z0-9][a-z0-9_-]{0,31}; unique; not a built-in name
 # name = "My Tool"               # display name, up to 48 chars; defaults to id
 # short_name = "myt"             # exactly 3 lowercase letters; unique across all vendors
-# brand = "deepseek"             # borrow a built-in vendor's mark — any of them,
-#                                # not only the vendor this url belongs to. A
-#                                # second key for a service that has a mark, or
-#                                # the model family the account actually runs.
-#                                # Must name a built-in vendor; unset keeps the
-#                                # short_name tag.
+# brand = "deepseek"             # optional built-in slug for supported UIs;
+#                                # unset keeps the short_name tag
 # enabled = true
 # url = "https://api.example.com/v1/usage"  # https:// unless allow_http; no user:pass@
 # allow_http = false             # permit http:// (localhost / LAN only)

@@ -90,6 +90,7 @@ function normalizeEntry(raw) {
     display_name: cleanText(raw.display_name, 240),
     short_name: cleanText(raw.short_name, 24),
     icon: cleanText(raw.icon, 8).trim(),
+    brand: cleanText(raw.brand, 32).trim(),
     plan: cleanText(raw.plan, 240),
     status: error !== "" || raw.status === "error" ? "error" : "ready",
     error: error,
