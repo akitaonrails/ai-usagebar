@@ -52,6 +52,9 @@ pub enum TabSource {
         id: String,
         name: String,
         short_name: String,
+        /// Built-in vendor slug whose mark this provider borrows, from
+        /// `[[custom]] brand`. `None` leaves the frontend on `short_name`.
+        brand: Option<String>,
     },
 }
 
@@ -130,6 +133,7 @@ impl TabId {
                 id: spec.id.clone(),
                 name: spec.name.clone(),
                 short_name: spec.short_name.clone(),
+                brand: spec.brand.clone(),
             },
             account: None,
             desktop: false,
@@ -1503,6 +1507,7 @@ mod tests {
                 id: "mytool".into(),
                 name: "My Tool".into(),
                 short_name: "myt".into(),
+                brand: None,
             }
         );
         assert!(tabs[builtin_count].account.is_none());

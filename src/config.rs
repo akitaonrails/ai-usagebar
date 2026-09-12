@@ -1270,6 +1270,12 @@ pub struct CustomProviderConfig {
     /// Exactly three lowercase ASCII letters, unique across built-in vendors
     /// and other custom providers — it is the `{vendor_short}` bar tag.
     pub short_name: String,
+    /// A built-in vendor's slug whose brand mark this provider borrows. Set it
+    /// when the custom entry speaks to a service that already has a mark —
+    /// a second API key for the same provider is the same product, and the
+    /// panel should not draw it as a different one. `None` keeps the
+    /// `short_name` tag, which is what every custom entry had before.
+    pub brand: Option<String>,
     pub enabled: bool,
     /// `https://` unless `allow_http`; never carries `user:pass@`.
     pub url: String,
@@ -1299,6 +1305,7 @@ impl Default for CustomProviderConfig {
             id: String::new(),
             name: String::new(),
             short_name: String::new(),
+            brand: None,
             enabled: false,
             url: String::new(),
             allow_http: false,
@@ -1421,6 +1428,14 @@ impl CustomProviderConfig {
             return Err(bad(format!(
                 "short_name {:?} must be exactly 3 lowercase ASCII letters",
                 self.short_name
+            )));
+        }
+        if let Some(brand) = &self.brand
+            && !VendorId::all().iter().any(|v| v.slug() == brand)
+        {
+            return Err(bad(format!(
+                "brand {brand:?} must name a built-in vendor (it borrows that \
+                 vendor's mark); leave it unset to keep the short_name tag"
             )));
         }
         let url = reqwest::Url::parse(&self.url)
@@ -3777,6 +3792,7 @@ value = "/tier"
         assert_eq!(c.id, "mytool");
         assert_eq!(c.name, "My Tool");
         assert_eq!(c.short_name, "myt");
+        assert_eq!(c.brand, None, "a custom provider has no mark unless it asks");
         assert!(c.enabled);
         assert_eq!(c.url, "https://api.example.test/v1/usage");
         assert!(!c.allow_http);
@@ -3825,6 +3841,32 @@ value = "/tier"
         assert_eq!(c.cache_ttl_secs, 60);
         assert!(config.validate().is_ok());
         assert!(Config::default().custom.is_empty());
+    }
+
+    #[test]
+    fn custom_brand_names_a_builtin_vendor_and_nothing_else() {
+        let config = Config::load_from(
+            write_toml(&custom_with(
+                r#"short_name = "myt""#,
+                "short_name = \"myt\"\nbrand = \"opencode-go\"",
+            ))
+            .path(),
+        )
+        .unwrap();
+        assert_eq!(config.custom[0].brand.as_deref(), Some("opencode-go"));
+
+        // The mark is borrowed from a vendor, so only a vendor can name one.
+        // A free-form slug here would reach the frontend as artwork it does
+        // not ship and draw nothing at all.
+        for brand in ["opencode", "OpenCode-Go", "mytool", ""] {
+            assert_custom_rejected(
+                &custom_with(
+                    r#"short_name = "myt""#,
+                    &format!("short_name = \"myt\"\nbrand = {brand:?}"),
+                ),
+                "must name a built-in vendor",
+            );
+        }
     }
 
     #[test]

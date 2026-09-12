@@ -36,6 +36,11 @@ struct Entry {
     short_name: String,
     /// The vendor's bar glyph. Same rule as `short_name`: one table, in Rust.
     icon: String,
+    /// Built-in vendor slug whose brand mark this entry should be drawn with.
+    /// A built-in is its own brand; a `[[custom]]` provider has one only when
+    /// it declared `brand`. The asset itself stays with the frontend — each
+    /// ships its own artwork — so this names the provider, never a file.
+    brand: Option<String>,
     plan: Option<String>,
     sections: Vec<ReportSection>,
     error: Option<String>,
@@ -182,6 +187,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         // (an error card still names the plan from the OAuth blob).
         short_name: tab_short_name(tab),
         icon: tab_icon(tab),
+        brand: tab_brand(tab),
         plan: match state {
             TabState::Error { plan, .. } => plan
                 .as_deref()
@@ -295,6 +301,16 @@ fn tab_icon(tab: &TabId) -> String {
     }
 }
 
+/// The provider whose mark draws this entry. A built-in vendor is its own
+/// brand; a custom provider borrows one only when `[[custom]] brand` names it,
+/// and `Config::validate` has already refused a slug that is not a built-in.
+fn tab_brand(tab: &TabId) -> Option<String> {
+    match &tab.source {
+        TabSource::Builtin(vendor) => Some(vendor.slug().to_string()),
+        TabSource::Custom { brand, .. } => brand.clone(),
+    }
+}
+
 fn format_tab_name(tab: &TabId, vendor_name: &str) -> String {
     let name = match &tab.account {
         // Mark a Desktop-sourced account so a mixed CLI+Desktop setup is legible;
@@ -356,6 +372,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                 "display_name": entry.display_name,
                 "short_name": entry.short_name,
                 "icon": entry.icon,
+                "brand": entry.brand,
                 "plan": entry.plan,
                 "status": if entry.error.is_some() { "error" } else { "ready" },
                 "error": entry.error,
@@ -464,6 +481,7 @@ mod tests {
             display_name: name.into(),
             short_name: VendorId::Anthropic.short_name().into(),
             icon: VendorId::Anthropic.bar_icon().into(),
+            brand: Some(VendorId::Anthropic.slug().into()),
             plan: Some("Claude Max 20x".into()),
             sections,
             error: None,
@@ -519,11 +537,15 @@ mod tests {
         let cursor = entry_from_state(&TabId::vendor(VendorId::Cursor), &failed, now);
         assert_eq!(cursor.short_name, "cur");
         assert_eq!(cursor.icon, VendorId::Cursor.bar_icon());
+        // A built-in vendor is its own brand, so a frontend never has to map
+        // the entry id back to a provider to pick the mark.
+        assert_eq!(cursor.brand.as_deref(), Some(VendorId::Cursor.slug()));
 
         let rendered = render_json_for_primary(&[cursor], None);
         let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
         assert_eq!(value["entries"][0]["short_name"], "cur");
         assert_eq!(value["entries"][0]["icon"], VendorId::Cursor.bar_icon());
+        assert_eq!(value["entries"][0]["brand"], VendorId::Cursor.slug());
     }
 
     #[test]
@@ -962,6 +984,26 @@ mod tests {
         }
     }
 
+    /// A custom provider that speaks to a service with a mark of its own —
+    /// a second API key for it, say — says so with `brand`, and the report
+    /// relays the vendor slug so every frontend can reach for its own artwork.
+    #[test]
+    fn a_custom_entry_relays_the_brand_it_borrowed() {
+        let spec = crate::config::CustomProviderConfig {
+            brand: Some("opencode-go".into()),
+            ..custom_spec("oc-second", true)
+        };
+        let tab = TabId::custom(&spec);
+        let entry = entry_from_state(&tab, &TabState::error("HTTP 500"), Utc::now());
+        assert_eq!(entry.brand.as_deref(), Some("opencode-go"));
+        // The tag is untouched: the mark is artwork, not the bar label.
+        assert_eq!(entry.short_name, "myt");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[entry], None)).unwrap();
+        assert_eq!(value["entries"][0]["brand"], "opencode-go");
+    }
+
     /// A `[[custom]]` provider is one more report entry after the built-ins,
     /// addressed as `custom:<id>`; a disabled one is absent.
     #[test]
@@ -1041,6 +1083,8 @@ mod tests {
         let first = &value["entries"][0];
         assert_eq!(first["short_name"], "myt");
         assert_eq!(first["icon"], "myt");
+        // No `brand`, so the frontend keeps drawing the short_name tag.
+        assert!(first["brand"].is_null());
         assert_eq!(first["metrics"][0]["label"], "Session");
         assert_eq!(first["metrics"][0]["percent"], 40);
         assert_eq!(first["metrics"][0]["window_secs"], 18_000);
