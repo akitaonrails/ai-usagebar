@@ -16,6 +16,17 @@ Each release is also published at
   remains tolerant: consumers ignore unknown fields and treat absent fields as
   not applicable; the version changes only for incompatible shapes.
 
+### Fixed
+
+- **Antigravity works while the `agy` CLI is running.** When `agy` exposes a
+  local RPC server but rejects quota probes because its CSRF token is not
+  discoverable, ai-usagebar now uses the saved Google session fallback. Other
+  local `401`/`403` responses still surface as signed-out errors.
+
+- **Release-integrity checks now run on pull requests.** CI fetches the tag
+  history and runs the existing immutable-changelog and version check before
+  changes can reach `main`.
+
 ## [1.16.0] — 2026-09-11
 
 ### Added
