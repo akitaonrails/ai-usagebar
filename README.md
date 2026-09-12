@@ -375,6 +375,7 @@ Declare it as a `[[custom]]` table in `config.toml`; the JSON is mapped with
 id = "mytool"                    # slug; the entry id becomes custom:mytool
 name = "My Tool"                 # header / tab label
 short_name = "myt"               # three lowercase letters, unique
+brand = "deepseek"               # optional built-in slug for supported UIs
 enabled = true
 url = "https://api.example.com/v1/usage"   # https unless allow_http = true
 api_key_env = "MYTOOL_API_KEY"   # env var first, inline api_key second
@@ -397,7 +398,9 @@ value = "/balance/display"
 ```
 
 Each metric renders as a meter with the usual severity colours; texts render
-as one-line rows. The cache under `<cache>/ai-usagebar/custom/<id>` holds the
+as one-line rows. `brand` lets supporting frontends, currently the Omarchy
+widget, draw a built-in vendor's mark for the custom entry; omit it to keep the
+`short_name` tag. The cache under `<cache>/ai-usagebar/custom/<id>` holds the
 projected snapshot (only the values the pointers selected, never the response
 body) with the same stale-while-revalidate rules as the built-in vendors, and
 an error names the failing pointer, never the response body or the key. The

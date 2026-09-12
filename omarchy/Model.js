@@ -90,6 +90,7 @@ function normalizeEntry(raw) {
     display_name: cleanText(raw.display_name, 240),
     short_name: cleanText(raw.short_name, 24),
     icon: cleanText(raw.icon, 8).trim(),
+    brand: cleanText(raw.brand, 32).trim(),
     plan: cleanText(raw.plan, 240),
     status: error !== "" || raw.status === "error" ? "error" : "ready",
     error: error,
@@ -265,11 +266,20 @@ function anyAlarming(entries) {
   return false
 }
 
+// The mark an entry is drawn with. The report names the provider — its own
+// for a built-in, the one a `[[custom]]` provider borrowed through `brand` —
+// and this file owns the artwork, because each frontend ships its own. An
+// older binary sends no `brand`, so the id still resolves the built-ins.
+function brandIconFile(entry) {
+  var declared = cleanText(entry && entry.brand, 32).trim()
+  return brandFileFor(declared !== "" ? declared : baseProvider(entry && entry.id))
+}
+
 // Official brand marks shipped next to this file. A missing file falls back
 // to the nerd-font glyph from the Rust report — the table is asset lookup,
 // not a second copy of provider names.
-function brandIconFile(entry) {
-  switch (baseProvider(entry && entry.id)) {
+function brandFileFor(provider) {
+  switch (provider) {
     case "anthropic":
       return "claude.svg"
     case "anthropic_api":

@@ -11,6 +11,11 @@ Each release is also published at
 
 ### Added
 
+- **Custom provider brand marks.** A `[[custom]]` provider can set
+  `brand = "<vendor slug>"` to use a built-in vendor's mark in the Omarchy
+  widget. The brand is chosen explicitly and need not match the provider URL;
+  leaving it unset keeps the custom provider's three-letter tag.
+
 - **Versioned usage JSON.** Both aggregate and single-provider `usage --json`
   reports now include top-level `"schema_version": 1`. The documented contract
   remains tolerant: consumers ignore unknown fields and treat absent fields as

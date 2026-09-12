@@ -41,6 +41,11 @@ struct Entry {
     short_name: String,
     /// The vendor's bar glyph. Same rule as `short_name`: one table, in Rust.
     icon: String,
+    /// Built-in vendor slug whose brand mark this entry should be drawn with.
+    /// A built-in is its own brand; a `[[custom]]` provider has one only when
+    /// it declared `brand`. The asset itself stays with the frontend — each
+    /// ships its own artwork — so this names the provider, never a file.
+    brand: Option<String>,
     plan: Option<String>,
     sections: Vec<ReportSection>,
     error: Option<String>,
@@ -175,7 +180,22 @@ pub async fn run(json: bool) -> i32 {
 
 async fn entry_for(client: &reqwest::Client, config: &Config, tab: &TabId) -> Entry {
     let state = refresh_one(client, config, tab).await;
-    entry_from_state(tab, &state, Utc::now())
+    entry_from_state_with_config(config, tab, &state, Utc::now())
+}
+
+fn entry_from_state_with_config(
+    config: &Config,
+    tab: &TabId,
+    state: &TabState,
+    now: chrono::DateTime<Utc>,
+) -> Entry {
+    let mut entry = entry_from_state(tab, state, now);
+    if let TabSource::Custom { id, .. } = &tab.source {
+        entry.brand = config
+            .custom_by_id(id)
+            .and_then(|provider| provider.brand.clone());
+    }
+    entry
 }
 
 fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -> Entry {
@@ -187,6 +207,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         // (an error card still names the plan from the OAuth blob).
         short_name: tab_short_name(tab),
         icon: tab_icon(tab),
+        brand: tab_brand(tab),
         plan: match state {
             TabState::Error { plan, .. } => plan
                 .as_deref()
@@ -300,6 +321,17 @@ fn tab_icon(tab: &TabId) -> String {
     }
 }
 
+/// The provider whose mark draws this entry. Built-in tabs carry everything
+/// needed to derive it; a custom tab's optional brand stays in `Config` rather
+/// than widening the public `TabSource` enum and is attached by
+/// `entry_from_state_with_config`.
+fn tab_brand(tab: &TabId) -> Option<String> {
+    match &tab.source {
+        TabSource::Builtin(vendor) => Some(vendor.slug().to_string()),
+        TabSource::Custom { .. } => None,
+    }
+}
+
 fn format_tab_name(tab: &TabId, vendor_name: &str) -> String {
     let name = match &tab.account {
         // Mark a Desktop-sourced account so a mixed CLI+Desktop setup is legible;
@@ -364,7 +396,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            json!({
+            let mut row = json!({
                 "id": entry.id,
                 "name": entry.name,
                 "display_name": entry.display_name,
@@ -377,7 +409,13 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                 "fetched_at": entry.fetched_at,
                 "metrics": metrics,
                 "sections": entry.sections,
-            })
+            });
+            // Optional additive fields are absent, not null, so older and
+            // newer producers keep the documented tolerant JSON contract.
+            if let Some(brand) = &entry.brand {
+                row["brand"] = json!(brand);
+            }
+            row
         })
         .collect()
 }
@@ -478,6 +516,7 @@ mod tests {
             display_name: name.into(),
             short_name: VendorId::Anthropic.short_name().into(),
             icon: VendorId::Anthropic.bar_icon().into(),
+            brand: Some(VendorId::Anthropic.slug().into()),
             plan: Some("Claude Max 20x".into()),
             sections,
             error: None,
@@ -533,11 +572,15 @@ mod tests {
         let cursor = entry_from_state(&TabId::vendor(VendorId::Cursor), &failed, now);
         assert_eq!(cursor.short_name, "cur");
         assert_eq!(cursor.icon, VendorId::Cursor.bar_icon());
+        // A built-in vendor is its own brand, so a frontend never has to map
+        // the entry id back to a provider to pick the mark.
+        assert_eq!(cursor.brand.as_deref(), Some(VendorId::Cursor.slug()));
 
         let rendered = render_json_for_primary(&[cursor], None);
         let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
         assert_eq!(value["entries"][0]["short_name"], "cur");
         assert_eq!(value["entries"][0]["icon"], VendorId::Cursor.bar_icon());
+        assert_eq!(value["entries"][0]["brand"], VendorId::Cursor.slug());
     }
 
     #[test]
@@ -990,6 +1033,30 @@ mod tests {
         }
     }
 
+    /// A custom provider can choose a built-in vendor's mark with `brand`; the
+    /// report relays that slug without copying config-only data into `TabId`.
+    #[test]
+    fn a_custom_entry_relays_the_brand_it_borrowed() {
+        let spec = crate::config::CustomProviderConfig {
+            brand: Some("opencode-go".into()),
+            ..custom_spec("oc-second", true)
+        };
+        let config = Config {
+            custom: vec![spec],
+            ..Default::default()
+        };
+        let tab = TabId::custom(&config.custom[0]);
+        let entry =
+            entry_from_state_with_config(&config, &tab, &TabState::error("HTTP 500"), Utc::now());
+        assert_eq!(entry.brand.as_deref(), Some("opencode-go"));
+        // The tag is untouched: the mark is artwork, not the bar label.
+        assert_eq!(entry.short_name, "myt");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[entry], None)).unwrap();
+        assert_eq!(value["entries"][0]["brand"], "opencode-go");
+    }
+
     /// A `[[custom]]` provider is one more report entry after the built-ins,
     /// addressed as `custom:<id>`; a disabled one is absent.
     #[test]
@@ -1069,6 +1136,9 @@ mod tests {
         let first = &value["entries"][0];
         assert_eq!(first["short_name"], "myt");
         assert_eq!(first["icon"], "myt");
+        // No `brand`, so the optional field is absent and the frontend keeps
+        // drawing the short_name tag.
+        assert!(first.get("brand").is_none());
         assert_eq!(first["metrics"][0]["label"], "Session");
         assert_eq!(first["metrics"][0]["percent"], 40);
         assert_eq!(first["metrics"][0]["window_secs"], 18_000);

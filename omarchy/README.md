@@ -138,8 +138,10 @@ code — the panel and tooltip remain the place that tells `Claude · work` from
 `showValue` off it is the icon and `cld`. `showAll` draws every visible
 entry as its own chip with a brand SVG (see [`icons/README.md`](icons/README.md)
 for source and licence). Grok and SuperGrok share a mark; Command Code has
-none and falls back to its three-letter code. A vertical bar has room for
-none of this and keeps showing a single icon.
+none and falls back to its three-letter code. A `[[custom]]` provider can set
+`brand = "<built-in slug>"` to use one of these marks; without it, the custom
+entry keeps its three-letter tag. A vertical bar has room for none of this and
+keeps showing a single icon.
 Against an `ai-usagebar` older than the `short_name` field the tag falls
 back to the entry id's provider half (`anthropic 29%`) until the binary is
 updated.

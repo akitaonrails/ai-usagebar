@@ -143,6 +143,7 @@ const raw = JSON.stringify({primary: 'openai', entries: [
     name: 'anthropic · work',
     display_name: 'Claude · work',
     short_name: 'cld',
+    brand: 'anthropic',
     plan: 'Claude Max 20x',
     status: 'ready',
     error: null,
@@ -168,6 +169,7 @@ assert.equal(parsed.ok, true);
 assert.equal(parsed.primary, 'openai');
 assert.equal(parsed.entries.length, 2);
 assert.equal(parsed.entries[0].stale, true);
+assert.equal(parsed.entries[0].brand, 'anthropic');
 assert.equal(parsed.entries[0].sections[1].reset_at, '2026-08-14T14:00:00Z');
 assert.equal(model.providerName(parsed.entries[0]), 'Claude · work');
 assert.equal(model.providerName(parsed.entries[1]), 'Codex');
@@ -272,6 +274,18 @@ assert.equal(model.brandIconFile({id: 'opencode-go'}), 'opencode.svg');
 assert.equal(model.brandIconFile({id: 'commandcode'}), '');
 assert.equal(model.brandIconFile({id: 'anthropic_api'}), 'anthropic.svg');
 assert.equal(model.brandIconFile({id: 'grok'}), model.brandIconFile({id: 'supergrok'}));
+
+// A custom provider carries no built-in slug, so the mark comes from the
+// `brand` the report relays. A second key for the same service is the same
+// product and must not read as a different one.
+assert.equal(model.brandIconFile({id: 'custom:oc-second', brand: 'opencode-go'}), 'opencode.svg');
+assert.equal(model.brandIconFile({id: 'custom:oc-second'}), '');
+// A brand the artwork does not cover degrades to the nerd-font tag rather
+// than to a blank mark, and so does an older binary's report.
+assert.equal(model.brandIconFile({id: 'custom:oc-second', brand: 'commandcode'}), '');
+assert.equal(model.brandIconFile({id: 'anthropic', brand: undefined}), 'claude.svg');
+// `brand` wins over the id: that is the whole point of declaring it.
+assert.equal(model.brandIconFile({id: 'anthropic', brand: 'openai'}), 'openai.svg');
 
 const slugs = [
   'anthropic', 'anthropic_api', 'openai', 'copilot', 'zai', 'openrouter',
