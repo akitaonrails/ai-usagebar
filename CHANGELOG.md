@@ -9,6 +9,7 @@ Each release is also published at
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### Added
 
 - Tavily usage from the documented `GET /usage` endpoint: plan billing-cycle
@@ -26,6 +27,93 @@ Each release is also published at
   Settings overlay, unconfigured key vendors are grouped under a collapsed
   "More providers" section (navigate past the last configured row or click the
   header to expand).
+=======
+## [1.17.0] — 2026-09-12
+
+### Added
+
+- **Custom provider brand marks.** A `[[custom]]` provider can set
+  `brand = "<vendor slug>"` to use a built-in vendor's mark in the Omarchy
+  widget. The brand is chosen explicitly and need not match the provider URL;
+  leaving it unset keeps the custom provider's three-letter tag.
+
+- **Versioned usage JSON.** Both aggregate and single-provider `usage --json`
+  reports now include top-level `"schema_version": 1`. The documented contract
+  remains tolerant: consumers ignore unknown fields and treat absent fields as
+  not applicable; the version changes only for incompatible shapes.
+
+### Fixed
+
+- **Antigravity works while the `agy` CLI is running.** When `agy` exposes a
+  local RPC server but rejects quota probes because its CSRF token is not
+  discoverable, ai-usagebar now uses the saved Google session fallback. Other
+  local `401`/`403` responses still surface as signed-out errors.
+
+- **Release-integrity checks now run on pull requests.** CI fetches the tag
+  history and runs the existing immutable-changelog and version check before
+  changes can reach `main`.
+
+## [1.16.0] — 2026-09-11
+
+### Added
+
+- **Omarchy top bar usage-window picker.** The Quattro settings page gains a
+  **Top bar usage window** dropdown (`auto` / `session` / `weekly` /
+  `monthly`), also settable with
+  `omarchy bar set akitaonrails.ai-usagebar barWindow session` that pins the
+  bar label to one quota window instead of always showing the highest percent;
+  the tooltip and panel hero echo the pinned value. `session` pins the 5-hour
+  window, `weekly` the 7-day window, and `monthly` the monthly pool where one
+  exists; `auto` keeps the historical highest-percent behavior and is the
+  default, so existing installs are unchanged. A pinned window a vendor does
+  not offer falls back to the highest percent rather than blanking the bar.
+  Panel rows and alert state still follow the highest percent regardless.
+
+### Changed
+
+- **macOS menu bar keeps no second copy of Rust's enabled defaults.**
+  The `defaultEnabled` slug list is deleted, together with the helpers the
+  catalog migration had orphaned (`vendorEnabled`, `configEnabledTOML`,
+  `configHasApiKeyTOML`, `vendorConfigured`). Every enabled decision in the
+  menu bar had already read the catalog's `enabled` field from
+  `vendors --json` since the #170 migration — which is why the slug list's
+  disagreement about Ollama Cloud (#185) was latent, never user-visible —
+  and now nothing else exists to drift: the Rust wire test pins the
+  `enabled` field name, and the Swift contract test pins that the field
+  decides. A provider added in Rust reaches the menu bar with its own
+  default, no Swift change needed.
+
+- **Omarchy install is one paste, and the marketplace card says what it needs.**
+  The plugin is the display frontend; it reads the `ai-usagebar` binary, which
+  installs through a different manager (the binary is a system package, the
+  plugin is per-user config under `~/.config/omarchy/plugins/`), so the two
+  steps cannot become one command. They are now one copy-paste, and the
+  manifest description — which plugins.omarchy.org shows verbatim on the card —
+  names the binary requirement, because the marketplace's Install button copies
+  only the `omarchy plugin add` half.
+
+### Fixed
+
+- **macOS menu bar knew the wrong default for Ollama Cloud.**
+  `defaultEnabled("ollama")` fell through to `true` while Rust ships
+  `[ollama] enabled = false` (opt-in) — a latent disagreement only, since
+  the catalog migration had already moved the menu bar's live decisions to
+  `vendors --json`. The slug list is now deleted outright (see the Changed
+  entry above); the catalog's `enabled` field decides, and the Rust wire
+  test pins the field name. Ollama's Session/Weekly bars already rendered
+  through the generic `parse()` path — no format change.
+
+- **Cursor on-demand usage:** Cursor Enterprise reports now show the amount
+  spent and configured limit when `onDemand.used` and `onDemand.limit` are
+  available, instead of showing only whether on-demand billing is enabled.
+
+- **macOS Claude Code Keychain prompts.** Write normal-sized refreshed OAuth
+  credentials through `/usr/bin/security -i` so the item keeps the
+  `apple-tool:` partition that Claude Code can read, while retaining the native
+  Security.framework write only as the oversized fallback. Existing affected
+  users can clear the bad partition by running a fresh `claude` + `/login`.
+
+>>>>>>> upstream/main
 ## [1.15.0] — 2026-09-10
 
 ### Added
@@ -2320,7 +2408,9 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...HEAD
+[1.17.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.16.0...v1.17.0
+[1.16.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.14.0...v1.15.0
 [1.14.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...v1.14.0
 [1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0

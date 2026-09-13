@@ -14,11 +14,13 @@
 //! whichever bucket is scarcest and must not be read as a window in its own
 //! right.
 //!
-//! When no product is running there is still a way to answer: Antigravity
-//! keeps the Google session it signed in with in the OS keyring, and the same
-//! quota summary is served by the Cloud Code API. That is the *fallback*, taken
-//! only when no local server was found at all — a server that is up but signed
-//! out, or answering on the wrong protocol, keeps its own diagnosis.
+//! When no usable product is running there is still a way to answer:
+//! Antigravity keeps the Google session it signed in with in the OS keyring,
+//! and the same quota summary is served by the Cloud Code API. That is the
+//! *fallback*, taken when no local server was found or when `agy` reports that
+//! its undiscoverable CSRF token is required. Every other local rejection — a
+//! server that is signed out or answering on the wrong protocol — keeps its
+//! own diagnosis.
 
 use std::time::Duration;
 
@@ -41,6 +43,9 @@ const DEFAULT_PLAN: &str = "Antigravity";
 const NO_LOCAL_SERVER: &str = "Antigravity: no local server found. Quota is only served while \
                                Antigravity is running — open the Antigravity app, or an interactive \
                                `agy` session, or point ANTIGRAVITY_LS_ADDRESS at a host:port.";
+
+const AGY_CSRF_UNAVAILABLE: &str = "Antigravity: the running `agy` server requires a CSRF token \
+                                   that it does not publish.";
 
 /// Appended to [`NO_LOCAL_SERVER`] once the remote fallback has also come up
 /// empty: the user has a second way out that the local-only message does not
@@ -131,8 +136,11 @@ pub async fn fetch_snapshot_at(
     // quota call itself goes to the network — after the fresh-cache check,
     // like the local RPC.
     let origin = match open_session(client, remote.local_bases.as_deref()).await {
-        Err(e) if is_no_local_server(&e) => Origin::Remote(saved_session(remote.credential)),
-        session => Origin::Local(session),
+        Ok(session) => Origin::Local(Ok(session)),
+        Err(error) => match remote_fallback_reason(&error) {
+            Some(reason) => Origin::Remote(saved_session(remote.credential, reason)),
+            None => Origin::Local(Err(error)),
+        },
     };
     let account = origin.account();
 
@@ -201,11 +209,32 @@ fn no_local_server() -> AppError {
     AppError::Credentials(NO_LOCAL_SERVER.into())
 }
 
-/// The one local failure the remote fallback is allowed to answer. A server
-/// that was found but rejected the probe — signed out, or a TLS listener —
-/// is a diagnosis in its own right and must not be papered over.
-fn is_no_local_server(e: &AppError) -> bool {
-    matches!(e, AppError::Credentials(msg) if msg == NO_LOCAL_SERVER)
+#[derive(Clone, Copy)]
+enum RemoteFallbackReason {
+    NoLocalServer,
+    AgyMissingCsrf,
+}
+
+impl RemoteFallbackReason {
+    fn message(self) -> &'static str {
+        match self {
+            Self::NoLocalServer => NO_LOCAL_SERVER,
+            Self::AgyMissingCsrf => AGY_CSRF_UNAVAILABLE,
+        }
+    }
+}
+
+/// Local failures the saved Google session is allowed to answer. The `agy`
+/// response is matched structurally and exactly; an arbitrary local `401`
+/// remains a signed-out diagnosis and never triggers remote traffic.
+fn remote_fallback_reason(error: &AppError) -> Option<RemoteFallbackReason> {
+    if matches!(error, AppError::Credentials(message) if message == NO_LOCAL_SERVER) {
+        Some(RemoteFallbackReason::NoLocalServer)
+    } else if is_missing_csrf(error) {
+        Some(RemoteFallbackReason::AgyMissingCsrf)
+    } else {
+        None
+    }
 }
 
 /// Walk every candidate language server until one identifies itself. A machine
@@ -239,9 +268,11 @@ async fn open_session(client: &reqwest::Client, bases: Option<&[String]>) -> Res
 
 /// Which failure to report when no candidate answered.
 ///
-/// A server that replies `401`/`403` is running and reachable but signed out —
-/// the user can act on that, so it outranks the connection refusals from the
-/// products that simply are not up. Without this, a stale
+/// A server that replies `401`/`403` is normally running and reachable but
+/// signed out — the user can act on that, so it outranks the connection
+/// refusals from products that simply are not up. `agy`'s exact missing-CSRF
+/// response is ranked separately because it has no token discovery route.
+/// Without this, a stale
 /// `ANTIGRAVITY_LS_ADDRESS` (or a second product on another port) would mask
 /// the one message worth reading behind transport noise.
 ///
@@ -253,10 +284,13 @@ async fn open_session(client: &reqwest::Client, bases: Option<&[String]>) -> Res
 /// serving RPC into a visible error about a protocol the user never chose.
 fn select_probe_error(errors: Vec<AppError>) -> AppError {
     let mut actionable = None;
+    let mut missing_csrf = None;
     let mut last = None;
     let mut echo = None;
     for e in errors {
-        if actionable.is_none() && is_actionable(&e) {
+        if missing_csrf.is_none() && is_missing_csrf(&e) {
+            missing_csrf = Some(e);
+        } else if actionable.is_none() && is_actionable(&e) {
             actionable = Some(e);
         } else if is_tls_echo(&e) {
             echo = Some(e);
@@ -264,16 +298,41 @@ fn select_probe_error(errors: Vec<AppError>) -> AppError {
             last = Some(e);
         }
     }
-    actionable.or(last).or(echo).unwrap_or_else(|| {
-        AppError::Other("antigravity: no local server answered GetUserStatus".into())
-    })
+    actionable
+        .or(missing_csrf)
+        .or(last)
+        .or(echo)
+        .unwrap_or_else(|| {
+            AppError::Other("antigravity: no local server answered GetUserStatus".into())
+        })
+}
+
+/// `agy` currently serves no page containing its CSRF token, then returns this
+/// structured response from the status RPC. Matching the status, code, and
+/// message avoids treating an unrelated local service or a genuinely
+/// signed-out Antigravity product as permission to use the cloud fallback.
+fn is_missing_csrf(error: &AppError) -> bool {
+    let AppError::Http { status: 401, body } = error else {
+        return false;
+    };
+    let Ok(body) = serde_json::from_str::<serde_json::Value>(body) else {
+        return false;
+    };
+    matches!(
+        (body["code"].as_str(), body["message"].as_str()),
+        (Some(code), Some(message))
+            if code.eq_ignore_ascii_case("unauthenticated")
+                && message.trim().eq_ignore_ascii_case("missing CSRF token")
+    )
 }
 
 /// An error the user can do something about, as opposed to "that product is not
 /// running". `post_rpc` only ever yields `Http`/`Transport`/`Other`, so the
-/// authentication statuses are the whole set.
+/// authentication statuses are the whole set, apart from `agy`'s precise
+/// missing-CSRF response.
 fn is_actionable(e: &AppError) -> bool {
     matches!(e, AppError::Http { status, .. } if *status == 401 || *status == 403)
+        && !is_missing_csrf(e)
 }
 
 /// A TLS listener answering the plaintext JSON-RPC probe.
@@ -315,7 +374,10 @@ async fn fetch_live(
 ///
 /// No saved session leaves the user exactly where the local probe left them,
 /// plus the one thing they can now do about it.
-fn saved_session(credential: SavedCredential<'_>) -> Result<StoredToken> {
+fn saved_session(
+    credential: SavedCredential<'_>,
+    reason: RemoteFallbackReason,
+) -> Result<StoredToken> {
     let raw = match credential {
         SavedCredential::Keyring => credential::read()?,
         SavedCredential::Blob(blob) => Some(blob.to_string()),
@@ -323,7 +385,8 @@ fn saved_session(credential: SavedCredential<'_>) -> Result<StoredToken> {
     };
     let Some(raw) = raw else {
         return Err(AppError::Credentials(format!(
-            "{NO_LOCAL_SERVER} {NO_SAVED_SESSION}"
+            "{} {NO_SAVED_SESSION}",
+            reason.message()
         )));
     };
     credential::parse_keyring_blob(&raw)
@@ -497,10 +560,9 @@ fn account_key(user_status: &serde_json::Value) -> String {
     }
 }
 
-/// The Antigravity 2.0 server embeds a CSRF token in the HTML it serves at `/`
-/// and rejects the RPC without it. The `agy` CLI serves no such page — it 404s
-/// at `/` and answers the RPC unauthenticated — so a missing token is not an
-/// error here, just a server that does not use one.
+/// The desktop products embed a CSRF token in the HTML served at `/`. The
+/// `agy` CLI serves no such page, so a missing token is recorded as `None` and
+/// its precise rejection is classified after the RPC probe.
 async fn fetch_csrf(client: &reqwest::Client, base: &str) -> Option<String> {
     let resp = client.get(base).timeout(HTTP_TIMEOUT).send().await.ok()?;
     // Bounded like every other response this crate reads: a local server is
@@ -1947,6 +2009,49 @@ mod tests {
         }
     }
 
+    fn missing_csrf() -> AppError {
+        AppError::Http {
+            status: 401,
+            body: r#"{"code":"unauthenticated","message":"missing CSRF token"}"#.into(),
+        }
+    }
+
+    #[test]
+    fn only_agys_exact_missing_csrf_response_enables_remote_fallback() {
+        assert!(is_missing_csrf(&missing_csrf()));
+        assert!(!is_missing_csrf(&AppError::Http {
+            status: 403,
+            body: r#"{"code":"unauthenticated","message":"missing CSRF token"}"#.into(),
+        }));
+        assert!(!is_missing_csrf(&AppError::Http {
+            status: 401,
+            body: r#"{"code":"other","message":"missing CSRF token"}"#.into(),
+        }));
+        assert!(!is_missing_csrf(&AppError::Http {
+            status: 401,
+            body: "prefix: missing CSRF token".into(),
+        }));
+    }
+
+    #[test]
+    fn a_real_auth_failure_outranks_agys_missing_csrf_response() {
+        for errors in [
+            vec![missing_csrf(), http(403)],
+            vec![http(401), missing_csrf()],
+        ] {
+            let err = select_probe_error(errors);
+            assert!(is_actionable(&err), "{err}");
+            assert!(!is_missing_csrf(&err), "{err}");
+        }
+    }
+
+    #[test]
+    fn several_agy_sessions_still_select_the_remote_fallback_reason() {
+        let err = select_probe_error(vec![missing_csrf(), missing_csrf()]);
+        assert!(is_missing_csrf(&err), "{err}");
+        assert!(remote_fallback_reason(&err).is_some(), "{err}");
+    }
+
     /// A signed-out server is worth reporting even when a later candidate only
     /// refused the connection — that is the whole point of probing on past the
     /// first failure.
@@ -2615,6 +2720,106 @@ mod tests {
         .unwrap();
         assert_eq!(cached.source, AntigravitySource::Remote);
         assert_eq!(cached.account, snap.account);
+    }
+
+    /// `agy` exposes the local RPC port but, unlike the desktop products, does
+    /// not expose the CSRF token needed to use it. That one precise response is
+    /// equivalent to having no usable local source, so the saved session may
+    /// answer without weakening the normal signed-out-server rule below.
+    #[tokio::test]
+    async fn agys_missing_csrf_response_uses_the_saved_session() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let root = server
+            .mock("GET", "/")
+            .with_status(404)
+            .expect(1)
+            .create_async()
+            .await;
+        let status_path = format!("/{STATUS_RPC}");
+        let status = server
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body(r#"{"code":"unauthenticated","message":"missing CSRF token"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let quota = quota_mock(&mut server, "KEYRING-AT")
+            .expect(1)
+            .create_async()
+            .await;
+        let plan = server
+            .mock("POST", "/daily/plan")
+            .match_header("authorization", "Bearer KEYRING-AT")
+            .with_status(200)
+            .with_body(r#"{"currentTier":{"name":"google_ai_pro"}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+
+        let outcome = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Blob(&blob),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![server.url()]),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect("saved session bypasses agy's unusable local RPC");
+
+        root.assert_async().await;
+        status.assert_async().await;
+        quota.assert_async().await;
+        plan.assert_async().await;
+        assert_eq!(outcome.snapshot.source, AntigravitySource::Remote);
+    }
+
+    #[tokio::test]
+    async fn agys_missing_csrf_without_a_saved_session_explains_both_options() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let root = server
+            .mock("GET", "/")
+            .with_status(404)
+            .expect(1)
+            .create_async()
+            .await;
+        let status_path = format!("/{STATUS_RPC}");
+        let status = server
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body(r#"{"code":"unauthenticated","message":"missing CSRF token"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let quota = quota_mock(&mut server, "KEYRING-AT")
+            .expect(0)
+            .create_async()
+            .await;
+        let (_td, cache) = fixture();
+
+        let error = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Absent,
+                endpoints: Some(&eps),
+                local_bases: Some(vec![server.url()]),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("neither the local RPC nor a saved session is usable");
+
+        root.assert_async().await;
+        status.assert_async().await;
+        quota.assert_async().await;
+        let message = error.to_string();
+        assert!(message.contains("requires a CSRF token"), "{message}");
+        assert!(message.contains("saved Google session"), "{message}");
     }
 
     /// The refreshed token is persisted under the session's fingerprint, so

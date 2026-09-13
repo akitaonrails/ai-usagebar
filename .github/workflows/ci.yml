@@ -24,6 +24,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Published changelog sections and versions are intact
+        shell: bash
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" != "false" ]; then
+            echo "::error::Changelog validation requires a full-history checkout."
+            exit 1
+          fi
+          if [ -z "$(git tag --list 'v*')" ]; then
+            echo "::error::Changelog validation requires v* release tags."
+            exit 1
+          fi
+          make changelog-check
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:

@@ -827,23 +827,9 @@ func configPathTOML() -> String {
     return "\(NSHomeDirectory())/.config/ai-usagebar/config.toml"
 }
 
-func configHasApiKeyTOML(_ section: String) -> Bool {
-    guard let value = configValueTOML(section, "api_key") else { return false }
-    return !value.isEmpty
-}
-
-func configEnabledTOML(_ section: String) -> Bool? {
-    guard let value = configValueTOML(section, "enabled") else { return nil }
-    switch value.lowercased() {
-    case "true": return true
-    case "false": return false
-    default: return nil
-    }
-}
-
 /// Read a single `key` under `[section]` from TOML text. Pure (no filesystem)
-/// so the enabled-flag and api_key_env parsing is testable. Handles quoted
-/// strings, bare booleans (`enabled = false`), inline comments, and `api_key_env`.
+/// so key parsing is testable. Handles quoted strings, bare booleans
+/// (`show_default_account = true`), inline comments, and `api_key_env`.
 func tomlValueInText(_ text: String, section: String, key: String) -> String? {
     var inSection = false
     for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -864,8 +850,9 @@ func tomlValueInText(_ text: String, section: String, key: String) -> String? {
             guard let end = content.firstIndex(of: quote) else { continue }
             return String(content[..<end])
         }
-        // Unquoted value: strip a trailing inline comment — `enabled = false
-        // # opt-in` is a bare boolean, not a string starting with '#'.
+        // Unquoted value: strip a trailing inline comment —
+        // `show_default_account = true # per-account` is a bare boolean,
+        // not a string starting with '#'.
         var bare = value
         if let hash = bare.firstIndex(of: "#") {
             bare = String(bare[..<hash]).trimmingCharacters(in: .whitespaces)
@@ -1364,6 +1351,7 @@ func addAccountScript(binary: String, label: String, desktop: Bool) -> String {
         + "echo; read -n 1 -s -r -p 'Press any key to close…'\n"
 }
 
+<<<<<<< HEAD
 /// Rust defaults (`src/config.rs`): the OAuth/api-key vendors that ship enabled,
 /// versus the opt-in balance vendors that default to disabled. An omitted
 /// `[vendor].enabled` must reproduce these, not silently enable everything.
@@ -1385,6 +1373,8 @@ func vendorConfigured(_ v: VendorCatalogEntry) -> Bool {
     v.configured
 }
 
+=======
+>>>>>>> upstream/main
 func cliInstalled(_ cli: String) -> Bool {
     let home = NSHomeDirectory()
     let fm = FileManager.default
@@ -1584,9 +1574,9 @@ struct SettingsView: View {
     @State private var launchAtLogin = launchAgentIsInstalled()
     @State private var launchAtLoginError: String?
 
-    // Only enabled vendors appear in the selector: Rust treats opt-in vendors
-    // (deepseek/kimi/kilo/novita/moonshot/grok/anthropic_api) as disabled when
-    // their `[vendor].enabled` is omitted, and so must this picker. Claude
+    // Only vendors the Rust catalog marks enabled appear in the selector —
+    // whatever `vendors --json` reports, so a provider added in Rust (and its
+    // opt-in or enabled default) reaches here with no menubar change. Claude
     // accounts appear as their `vendor@<label>` pseudo-ids, same as the
     // "Switch provider" submenu.
     private var vendors: [String] {

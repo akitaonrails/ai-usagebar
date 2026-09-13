@@ -121,6 +121,10 @@ pub struct PlanUsage {
 pub struct OnDemand {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub used: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<i64>,
 }
 
 /// Round a wire percentage to an integer, matching the dashboard's whole-number
@@ -175,6 +179,8 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
             total_pct: 0,
             unlimited: true,
             on_demand_enabled: false,
+            on_demand_used_cents: None,
+            on_demand_limit_cents: None,
             reset_at: Some(reset_at),
             cycle_start,
         });
@@ -183,13 +189,14 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
     // `onDemand` can live under either `individualUsage` (personal accounts)
     // or `teamUsage` (per CursorMeter's `TeamUsage`, which models nothing
     // else there) — check both rather than assuming one.
-    let on_demand_enabled = resp
+    let on_demand = resp
         .individual_usage
         .as_ref()
         .and_then(|u| u.on_demand.as_ref())
-        .or_else(|| resp.team_usage.as_ref().and_then(|t| t.on_demand.as_ref()))
-        .map(|o| o.enabled)
-        .unwrap_or(false);
+        .or_else(|| resp.team_usage.as_ref().and_then(|t| t.on_demand.as_ref()));
+    let on_demand_enabled = on_demand.is_some_and(|o| o.enabled);
+    let on_demand_used_cents = on_demand.and_then(|o| o.used).filter(|v| *v >= 0);
+    let on_demand_limit_cents = on_demand.and_then(|o| o.limit).filter(|v| *v >= 0);
 
     if let Some(plan_usage) = resp.individual_usage.as_ref().and_then(|u| u.plan.as_ref()) {
         return Ok(CursorSnapshot {
@@ -199,6 +206,8 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
             total_pct: pct("totalPercentUsed", plan_usage.total_percent_used)?,
             unlimited: false,
             on_demand_enabled,
+            on_demand_used_cents,
+            on_demand_limit_cents,
             reset_at: Some(reset_at),
             cycle_start,
         });
@@ -232,6 +241,8 @@ pub fn to_snapshot(resp: UsageSummary) -> Result<CursorSnapshot> {
             total_pct: auto_pct.max(api_pct),
             unlimited: false,
             on_demand_enabled,
+            on_demand_used_cents,
+            on_demand_limit_cents,
             reset_at: Some(reset_at),
             cycle_start,
         });
@@ -270,6 +281,23 @@ fn title_case(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn on_demand_tolerates_missing_null_and_present() {
+        // v1.11.0 shipped a regression where #[serde(default)] covered a missing
+        // field but not an explicit null, because the type was a Vec. Option
+        // handles null itself — proving that here rather than trusting it.
+        let missing: OnDemand = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert_eq!(missing.used, None, "missing");
+        let null: OnDemand =
+            serde_json::from_str(r#"{"enabled":true,"used":null,"limit":null}"#).unwrap();
+        assert_eq!(
+            null.used, None,
+            "explicit null must not fail the whole parse"
+        );
+        let present: OnDemand =
+            serde_json::from_str(r#"{"enabled":true,"used":42,"limit":99}"#).unwrap();
+        assert_eq!(present.used, Some(42));
+    }
     use super::*;
     use chrono::TimeZone;
 
@@ -286,7 +314,7 @@ mod tests {
                 "enabled": true, "used": 40000, "limit": 40000, "remaining": 0,
                 "autoPercentUsed": 98.109, "apiPercentUsed": 100, "totalPercentUsed": 98.5128
             },
-            "onDemand": { "enabled": false, "used": 0, "limit": null, "remaining": null }
+            "onDemand": { "enabled": true, "used": 1785, "limit": 35000, "remaining": 33215 }
         },
         "teamUsage": {}
     }"#;
@@ -300,7 +328,9 @@ mod tests {
         assert_eq!(snap.api_pct, 100);
         assert_eq!(snap.total_pct, 99); // 98.5128 rounds to 99
         assert!(!snap.unlimited);
-        assert!(!snap.on_demand_enabled);
+        assert!(snap.on_demand_enabled);
+        assert_eq!(snap.on_demand_used_cents, Some(1785));
+        assert_eq!(snap.on_demand_limit_cents, Some(35000));
         assert_eq!(
             snap.reset_at,
             Some(Utc.with_ymd_and_hms(2026, 8, 4, 0, 35, 51).unwrap())

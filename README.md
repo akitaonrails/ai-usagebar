@@ -132,13 +132,20 @@ Alternatively, apply the overlay when you want the package available as
 ### Omarchy Quattro
 
 The native plugin is a display frontend and does not bundle the
-`ai-usagebar` executable. Install the binary first, then add and enable the
-plugin:
+`ai-usagebar` executable. Both are needed, and they install through different
+managers — the binary is a system package, the plugin is per-user shell config
+under `~/.config/omarchy/plugins/` — so this is one paste rather than one
+command:
 
 ```bash
-omarchy pkg aur add ai-usagebar-bin
-omarchy plugin add https://github.com/akitaonrails/ai-usagebar.git --enable
+omarchy pkg aur add ai-usagebar-bin &&
+  omarchy plugin add https://github.com/akitaonrails/ai-usagebar.git --enable
 ```
+
+If you found the plugin through [plugins.omarchy.org](https://plugins.omarchy.org/plugin.html?id=akitaonrails.ai-usagebar),
+its **Install** button copies the `omarchy plugin add` line on its own. That
+installs the widget but not the binary it reads, and the bar will say
+`ai-usagebar is not installed` until you run the `omarchy pkg aur add` half too.
 
 Quattro enables its own `omarchy.agents` status widget by default. Disable it
 if you want AI Usage to be the only agent status item in the bar:
@@ -155,7 +162,10 @@ wheel to switch providers. In QML settings, turn off **Show usage value in the
 top bar** for an icon-only widget; the panel and tooltip keep the full details.
 Turn on **Show provider name in the top bar** to prefix the entry with the same
 three-letter code Waybar's `{vendor_short}` prints, so a bar cycling several
-providers says which one it is showing.
+providers says which one it is showing. Use **Top bar usage window** to pin the
+bar to one quota window — auto (highest), 5-hour, weekly, or monthly — instead
+of always showing the highest percent; the tooltip and panel hero echo the
+pinned value while panel rows and alert state still follow the highest quota.
 
 The source-built `ai-usagebar` AUR package can replace `ai-usagebar-bin` in
 the first command.
@@ -250,7 +260,7 @@ come from environment variables or `config.toml`.
 | Grok (xAI) | Management key | Opt in with `XAI_MANAGEMENT_KEY` or config. An inference key does not work. |
 | SuperGrok | Existing `grok login` (its `auth.json` key, or its ACP extension) | Opt in, install Grok Build, and run `grok login`. This reports subscription usage, not the Management API balance. |
 | MiniMax | Token Plan subscription key | Opt in with `MINIMAX_API_KEY` or config. Choose the matching global or China region; pay-as-you-go keys do not work. |
-| Google Antigravity | Local Antigravity server, or the saved Google session | Opt in. With Antigravity or an interactive `agy` session running the quota comes from its local server; when both are closed ai-usagebar reads the Google OAuth session Antigravity saved in the OS keyring (`gemini` / `antigravity`) and asks the Cloud Code API directly, refreshing the token through Google when it expired. |
+| Google Antigravity | Local Antigravity server, or the saved Google session | Opt in. The desktop products provide quota through their local server. The `agy` CLI currently requires a CSRF token it does not publish, so ai-usagebar uses the Google OAuth session Antigravity saved in the OS keyring and asks the Cloud Code API instead. The same fallback applies when no product is running. |
 | Cursor | Existing Cursor IDE or `cursor-agent` login | Opt in and sign in once. `cursor-agent` is the headless fallback. |
 | Kiro CLI | Existing kiro-cli login | Opt in and run `kiro-cli login` once. ai-usagebar refreshes the session when needed. |
 | Nous Research | OAuth device flow | Enable `[nous]`, click **Log in with Nous Research** in the Omarchy settings panel, or run `ai-usagebar auth nous login`. Credentials are kept in ai-usagebar's separate platform config directory (`~/.config/ai-usagebar/credentials.json` on Linux). |
@@ -366,6 +376,7 @@ Declare it as a `[[custom]]` table in `config.toml`; the JSON is mapped with
 id = "mytool"                    # slug; the entry id becomes custom:mytool
 name = "My Tool"                 # header / tab label
 short_name = "myt"               # three lowercase letters, unique
+brand = "deepseek"               # optional built-in slug for supported UIs
 enabled = true
 url = "https://api.example.com/v1/usage"   # https unless allow_http = true
 api_key_env = "MYTOOL_API_KEY"   # env var first, inline api_key second
@@ -388,7 +399,9 @@ value = "/balance/display"
 ```
 
 Each metric renders as a meter with the usual severity colours; texts render
-as one-line rows. The cache under `<cache>/ai-usagebar/custom/<id>` holds the
+as one-line rows. `brand` lets supporting frontends, currently the Omarchy
+widget, draw a built-in vendor's mark for the custom entry; omit it to keep the
+`short_name` tag. The cache under `<cache>/ai-usagebar/custom/<id>` holds the
 projected snapshot (only the values the pointers selected, never the response
 body) with the same stale-while-revalidate rules as the built-in vendors, and
 an error names the failing pointer, never the response body or the key. The
@@ -563,6 +576,10 @@ The JSON report has two views of each provider:
 - `sections` preserves the complete ordered display, including balances,
   grouped rows, and spacers. Rows without a percentage do not invent one.
 
+The top-level `schema_version` is currently `1`. Consumers should ignore
+unknown fields and treat absent fields as not applicable. The version changes
+only when a tolerant reader could not safely absorb a change.
+
 `usage` reports only the providers that are **enabled**, which makes the
 switched-off and the never-credentialed exactly the rows it cannot describe.
 `vendors --json` is the catalog that covers them: one row per provider with its
@@ -622,6 +639,10 @@ The widget reads the providers and accounts already enabled in
   widget; this applies immediately and preserves the full panel and tooltip.
 - QML settings can also show the provider's `{vendor_short}` code before that
   value (`cld 29%`). It is off by default and applies immediately.
+- QML settings can pin the bar to one quota window — auto (highest),
+  5-hour, weekly, or monthly — instead of always showing the highest
+  percent. The tooltip and panel hero echo the pinned value; panel rows
+  and alert state still follow the highest quota.
 - Right-click launches the TUI.
 - Middle-click or the mouse wheel switches providers.
 - The selected provider or named account is remembered across shell reloads
