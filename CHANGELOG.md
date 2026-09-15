@@ -9,6 +9,8 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [1.17.1] — 2026-09-16
+
 ### Fixed
 
 - **Antigravity CLI session fallback.** When `agy` requires an undiscoverable
@@ -2401,7 +2403,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...HEAD
+[1.17.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.14.0...v1.15.0
