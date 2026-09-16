@@ -11,10 +11,14 @@ Each release is also published at
 
 ### Fixed
 
-- **English-only UI strings in the GNOME preferences.** The provider list
-  showed `verificando…`, `Configurar (TUI)` and `Re-logar` — Portuguese left
-  over from an early draft. They now read `checking…`, `Configure (TUI)` and
-  `Sign in again`, matching every other frontend.
+- **macOS disabled providers.** Preferences now distinguish disabled providers
+  from missing credentials and offer an explicit Enable action, backed by
+  `ai-usagebar settings enable <vendor>`. Other settings and credentials are
+  preserved, and write failures remain visible in Preferences.
+- **English-only UI strings.** The GNOME preferences and the macOS provider
+  list showed `verificando…`, `Configurar (TUI)` and `Re-logar` — Portuguese
+  left over from an early draft. They now read `checking…`,
+  `Configure (TUI)` and `Sign in again`, matching every other frontend.
 
 ## [1.17.1] — 2026-09-16
 

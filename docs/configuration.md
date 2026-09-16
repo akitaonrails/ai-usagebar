@@ -199,3 +199,12 @@ Create the second login with `CODEX_HOME=~/.codex-work codex login` and point
 `codex_auth_path` at the file it writes. Select it with `--account work`; each
 account caches separately under `~/.cache/ai-usagebar/openai/<label>`. The
 singular `codex_auth_path` remains the default account and needs no migration.
+
+### Explicitly enable a provider
+
+Run `ai-usagebar settings enable anthropic` to set `[anthropic].enabled = true`,
+including when it was explicitly false. This is an explicit opt-in; automatic
+detection continues to respect disabled providers. The command preserves other
+settings, comments, and credentials, and supports `--config PATH` to edit an
+existing alternate configuration. It does not sign in or select a primary
+provider. Successful writes return `{"ok":true}`; failures exit nonzero.

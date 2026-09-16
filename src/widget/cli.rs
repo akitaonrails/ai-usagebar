@@ -207,6 +207,12 @@ pub enum NousAuthAction {
 
 #[derive(clap::Subcommand, Debug, Clone)]
 pub enum SettingsAction {
+    /// Explicitly enable one provider, preserving other settings and credentials.
+    Enable {
+        #[arg(value_enum)]
+        vendor: Vendor,
+    },
+
     /// Print a non-secret JSON settings description.
     Show,
 
@@ -474,6 +480,22 @@ fn is_stdout_tty() -> bool {
 mod tests {
     use super::*;
     use clap::{Parser, error::ErrorKind};
+
+    #[test]
+    fn settings_enable_requires_a_known_vendor() {
+        assert!(matches!(
+            Cli::try_parse_from(["ai-usagebar", "settings", "enable", "anthropic"])
+                .unwrap()
+                .command,
+            Some(Command::Settings {
+                action: SettingsAction::Enable {
+                    vendor: Vendor::Anthropic
+                }
+            })
+        ));
+        assert!(Cli::try_parse_from(["ai-usagebar", "settings", "enable", "unknown"]).is_err());
+        assert!(Cli::try_parse_from(["ai-usagebar", "settings", "enable"]).is_err());
+    }
 
     #[test]
     fn version_flags_report_the_crate_version() {
