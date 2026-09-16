@@ -11,6 +11,11 @@ Each release is also published at
 
 ### Fixed
 
+- **macOS disabled providers.** Preferences now distinguish disabled providers
+  from missing credentials and offer an explicit Enable action, backed by
+  `ai-usagebar settings enable <vendor>`. Other settings and credentials are
+  preserved, and write failures remain visible in Preferences.
+
 - **Antigravity CLI session fallback.** When `agy` requires an undiscoverable
   CSRF token, ai-usagebar now reads the CLI's saved Google session from
   `~/.gemini/antigravity-cli/antigravity-oauth-token` when the OS keyring is

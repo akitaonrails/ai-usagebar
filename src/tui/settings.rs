@@ -802,11 +802,28 @@ fn apply_settings_from_stdin() -> Result<()> {
     save_to_config_default(&state)
 }
 
+/// Explicit user opt-in, unlike discovery which respects an existing false.
+fn enable_vendor_at(path: &Path, vendor: VendorId) -> Result<()> {
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    set_bool(&mut doc, vendor.config_section(), "enabled", true)?;
+    if doc.to_string() != before {
+        write_config_document(path, &doc)?;
+    }
+    Ok(())
+}
+
 /// Administrative settings bridge for native frontends. `show` never emits a
 /// secret; `apply` accepts its patch only over stdin so keys do not appear in
 /// argv or the process environment.
 pub fn run_cli(action: &crate::widget::cli::SettingsAction) -> i32 {
     let result = match action {
+        crate::widget::cli::SettingsAction::Enable { vendor } => default_config_path()
+            .and_then(|path| enable_vendor_at(&path, vendor.to_id()))
+            .map(|()| {
+                crate::waybar::request_refresh();
+                println!(r#"{{"ok":true}}"#);
+            }),
         crate::widget::cli::SettingsAction::Show => Config::load()
             .and_then(|cfg| settings_snapshot_json(&cfg))
             .map(|json| println!("{json}")),
@@ -1035,6 +1052,35 @@ mod tests {
 
     fn key_index(id: VendorId) -> usize {
         KEY_VENDORS.iter().position(|kv| kv.id == id).unwrap()
+    }
+
+    #[test]
+    fn explicit_enable_preserves_other_settings_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# keep me\n[anthropic]\nenabled = false # intentional\n[openrouter]\napi_key = \"test-key\"\nenabled = false\n";
+        std::fs::write(&path, original).unwrap();
+        enable_vendor_at(&path, VendorId::Anthropic).unwrap();
+        let expected = original.replacen("enabled = false", "enabled = true", 1);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+        enable_vendor_at(&path, VendorId::Anthropic).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    #[test]
+    fn explicit_enable_creates_missing_config_and_rejects_malformed_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/config.toml");
+        enable_vendor_at(&path, VendorId::Anthropic).unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("enabled = true")
+        );
+        let broken = "[anthropic\n";
+        std::fs::write(&path, broken).unwrap();
+        assert!(enable_vendor_at(&path, VendorId::Anthropic).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
     }
 
     fn blank_state(primary: VendorId) -> SettingsState {
