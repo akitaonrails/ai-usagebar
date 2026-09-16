@@ -270,22 +270,59 @@ fn read_platform() -> Option<String> {
     // `secret-tool` (libsecret) speaks to whichever Secret Service is running.
     // A missing binary or no running daemon both exit non-zero / fail to
     // spawn, and both mean "no session available here".
+    //
+    // `lookup` also refuses an item whose content type is not textual — and
+    // that is how Antigravity's `agy`-built products store the session
+    // (measured 2026-09-16: `lookup` exits 1 with "secret does not contain a
+    // textual password" while the item exists and holds a valid blob).
+    // `search` prints the secret on its own `secret = ` line regardless of
+    // content type, so it turns that "unreadable" back into "read" instead of
+    // letting a present, valid session be reported as "never signed in".
+    if let Some(out) = run_secret_tool(&[
+        "lookup",
+        "service",
+        KEYRING_SERVICE,
+        "username",
+        KEYRING_ACCOUNT,
+    ]) {
+        return decode_blob_bytes(&out.stdout);
+    }
+    let out = run_secret_tool(&[
+        "search",
+        "--all",
+        "service",
+        KEYRING_SERVICE,
+        "username",
+        KEYRING_ACCOUNT,
+    ])?;
+    secret_from_search_output(&String::from_utf8_lossy(&out.stdout))
+        .and_then(|blob| decode_blob_bytes(blob.as_bytes()))
+}
+
+/// Run `secret-tool` and keep only a successful run. No stderr: it is not
+/// parsed, and a backend complaining must not reach a tooltip.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn run_secret_tool(args: &[&str]) -> Option<std::process::Output> {
     let out = std::process::Command::new("secret-tool")
-        .args([
-            "lookup",
-            "service",
-            KEYRING_SERVICE,
-            "username",
-            KEYRING_ACCOUNT,
-        ])
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    decode_blob_bytes(&out.stdout)
+    out.status.success().then_some(out)
+}
+
+/// Pull the secret out of `secret-tool search --all` output: one block per
+/// item, `key = value` lines, the secret on the `secret = ` line. The first
+/// item's secret stands in for all — the attributes matched exactly, so
+/// several blocks would be duplicates of the same session anyway.
+#[cfg(any(test, not(any(windows, target_os = "macos"))))]
+fn secret_from_search_output(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix("secret = "))
+        .map(str::trim)
+        .filter(|secret| !secret.is_empty())
 }
 
 #[cfg(test)]
@@ -470,5 +507,34 @@ mod tests {
     #[ignore = "reads the real Windows credential store"]
     fn reading_the_real_windows_credential_never_errors() {
         assert!(read().is_ok());
+    }
+
+    /// The lookup-fails / search-succeeds shape, measured 2026-09-16:
+    /// `secret-tool lookup` exits 1 with "secret does not contain a textual
+    /// password" for Antigravity's keyring item, while `search --all` over
+    /// the same attributes prints it on the `secret = ` line amid the item's
+    /// metadata. This is the verbatim block shape that parser must survive.
+    #[test]
+    fn search_output_yields_the_secret_line_that_lookup_refuses() {
+        let output = concat!(
+            "[/3]\n",
+            "label = Password for 'antigravity' on 'gemini'\n",
+            "secret = {\"token\":{\"access_token\":\"at\",\"refresh_token\":\"rt\"}}\n",
+            "created = 2026-09-16 14:30:35\n",
+            "modified = 2026-09-16 14:30:35\n",
+        );
+        let secret = secret_from_search_output(output).expect("the secret line is there");
+        assert_eq!(
+            secret,
+            r#"{"token":{"access_token":"at","refresh_token":"rt"}}"#
+        );
+        // And it goes on to parse as the saved session.
+        assert_eq!(parse_keyring_blob(secret).unwrap().access_token, "at");
+
+        // A block with no secret line — or an empty one — is no session, not
+        // a zero-length credential.
+        assert!(secret_from_search_output("[/3]\nlabel = x\n").is_none());
+        assert!(secret_from_search_output("secret =   \n").is_none());
+        assert!(secret_from_search_output("").is_none());
     }
 }

@@ -23,6 +23,15 @@ Each release is also published at
   sees it) and below a genuine auth rejection, and routed to the remote path
   in `fetch_snapshot_at`. Reported for `agy`'s embedded language server;
   any Antigravity product that adopts the interceptor is covered the same way.
+- **Antigravity: the saved session is read even when `secret-tool lookup`
+  refuses it.** Antigravity's `agy`-built products store the keyring item with
+  a non-textual content type, so `lookup` exits 1 with "secret does not contain
+  a textual password" (measured 2026-09-16) while the item exists and is
+  valid — and the cloud fallback concluded "never signed in" on a machine that
+  is. `read_platform` now falls back to `secret-tool search --all`, which
+  prints the secret regardless of content type; the extracted blob goes through
+  the same decoder and parser as before. Found behind the CSRF fix: without
+  the fall-through, this read was never even reached.
 
 ## [1.14.0] — 2026-09-08
 
