@@ -1463,11 +1463,68 @@ func openApp(_ name: String) {
     try? p.run()
 }
 
+func vendorStatusText(_ v: VendorCatalogEntry, cliPresent: Bool?) -> String {
+    if !v.enabled { return v.configured && v.needsCredential ? "Disabled — credential available" : "Disabled" }
+    if v.configured { return "✓ Configured" }
+    if v.kind == "oauth" {
+        if cliPresent == false { return "⚠ \(v.cli) not installed" }
+        return "⚠ Not signed in — \(v.login)"
+    }
+    // Enabled local providers still need their app login.
+    if v.id == "antigravity" {
+        return "⚠ Open Antigravity (app, IDE or agy)"
+    }
+    if v.id == "cursor" {
+        return "⚠ Sign in to the Cursor app"
+    }
+    if v.id == "supergrok" {
+        return "⚠ Sign in via Grok Build CLI"
+    }
+    if v.id == "kiro" {
+        return "⚠ Sign in to kiro-cli"
+    }
+    if v.kind == "local" {
+        return "⚠ Sign in to \(v.name)"
+    }
+    return "⚠ No API key — \(apiKeyEnvironment(v))"
+}
+
+func vendorButtonLabel(_ v: VendorCatalogEntry, cliPresent: Bool?) -> String {
+    if !v.enabled { return "Enable" }
+    if v.kind == "oauth" {
+        if v.configured { return "Sign in again" }
+        if cliPresent == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
+        return "Sign in"
+    }
+    if v.id == "antigravity" { return "Open Antigravity" }
+    if v.id == "cursor" { return "Open Cursor" }
+    if v.id == "kiro" { return "Sign in" }
+    if v.kind == "local" { return "Configure (TUI)" }
+    return "Configure (TUI)"
+}
+
+// Runs off the main thread; stdout contains only the settings acknowledgement.
+func enableVendor(binary: String, id: String) -> String? {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: binary)
+    p.arguments = ["settings", "enable", id]
+    p.environment = subprocessEnvironment()
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    do { try p.run() } catch { return "Could not start ai-usagebar: \(error.localizedDescription)" }
+    let watchdog = DispatchWorkItem { if p.isRunning { p.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + REFRESH_TIMEOUT, execute: watchdog)
+    p.waitUntilExit()
+    watchdog.cancel()
+    return p.terminationStatus == 0 ? nil
+        : "Could not enable the provider. Check that the config is writable and valid, and update ai-usagebar if it does not support settings enable."
+}
+
 struct VendorsSection: View {
     @State private var catalog: [VendorCatalogEntry] = vendorCatalog
-    @State private var configured: [String: Bool] = [:]
     @State private var cliPresent: [String: Bool] = [:]
     @State private var checking = false
+    @State private var enableFailure: String?
 
     var body: some View {
         GroupBox("Vendors") {
@@ -1476,14 +1533,18 @@ struct VendorsSection: View {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(v.name)
-                            Text(statusText(v)).font(.caption).foregroundColor(.secondary)
+                            Text(vendorStatusText(v, cliPresent: cliPresent[v.id])).font(.caption).foregroundColor(.secondary)
                         }
                         Spacer()
-                        Button(buttonLabel(v)) { action(v) }
+                        Button(vendorButtonLabel(v, cliPresent: cliPresent[v.id])) { action(v) }
+                            .disabled(checking)
                     }
                 }
+                if let enableFailure {
+                    Text(enableFailure).font(.caption).foregroundColor(.red)
+                }
                 if checking {
-                    Text("verificando…").font(.caption).foregroundColor(.secondary)
+                    Text("checking…").font(.caption).foregroundColor(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1495,62 +1556,36 @@ struct VendorsSection: View {
         checking = true
         DispatchQueue.global(qos: .userInitiated).async {
             let updated = fetchVendorCatalog() ?? vendorCatalog
-            var conf: [String: Bool] = [:]
             var cli: [String: Bool] = [:]
             for v in updated {
-                conf[v.id] = v.configured
                 if v.kind == "oauth" { cli[v.id] = cliInstalled(v.cli) }
             }
             DispatchQueue.main.async {
                 self.catalog = updated
                 vendorCatalog = updated
-                self.configured = conf
                 self.cliPresent = cli
                 self.checking = false
             }
         }
     }
 
-    private func statusText(_ v: VendorCatalogEntry) -> String {
-        if configured[v.id] ?? v.configured { return "✓ Configured" }
-        if v.kind == "oauth" {
-            if cliPresent[v.id] == false { return "⚠ \(v.cli) not installed" }
-            return "⚠ Not signed in — \(v.login)"
-        }
-        // Local vendors have no key: "configured" means signed in to the app
-        // AND the vendor's own section enabled in config.
-        if v.id == "antigravity" {
-            return "⚠ Abra o Antigravity (app, IDE ou agy) e ative [antigravity] no config"
-        }
-        if v.id == "cursor" {
-            return "⚠ Sign in to the Cursor app and enable [cursor] in the config"
-        }
-        if v.id == "supergrok" {
-            return "⚠ Sign in via Grok Build CLI and enable [supergrok] in the config"
-        }
-        if v.id == "kiro" {
-            return "⚠ Sign in to kiro-cli and enable [kiro] in the config"
-        }
-        if v.kind == "local" {
-            return "⚠ Sign in to \(v.name) and enable [\(v.id)] in the config"
-        }
-        return "⚠ No API key — \(apiKeyEnvironment(v))"
-    }
-
-    private func buttonLabel(_ v: VendorCatalogEntry) -> String {
-        if v.kind == "oauth" {
-            if configured[v.id] ?? v.configured { return "Re-logar" }
-            if cliPresent[v.id] == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
-            return "Sign in"
-        }
-        if v.id == "antigravity" { return "Open Antigravity" }
-        if v.id == "cursor" { return "Open Cursor" }
-        if v.id == "kiro" { return "Sign in" }
-        if v.kind == "local" { return "Configure (TUI)" }
-        return "Configure (TUI)"
-    }
-
     private func action(_ v: VendorCatalogEntry) {
+        enableFailure = nil
+        if !v.enabled {
+            guard let bin = resolveBinary("ai-usagebar") else {
+                enableFailure = "ai-usagebar binary not found. Check Binary path in Preferences."
+                return
+            }
+            checking = true
+            DispatchQueue.global(qos: .userInitiated).async {
+                let failure = enableVendor(binary: bin, id: v.id)
+                DispatchQueue.main.async {
+                    self.enableFailure = failure
+                    self.refresh()
+                }
+            }
+            return
+        }
         if v.kind == "oauth" { runInTerminal(oauthScript(v)) }
         else if v.id == "antigravity" { openApp("Antigravity") }
         else if v.id == "cursor" { openApp("Cursor") }

@@ -1061,10 +1061,48 @@ func testCodexAccounts() {
                 "Preferences respects disabled Codex")
 }
 
+func testEnableVendorCommand() {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let script = dir.appendingPathComponent("backend")
+    try! "#!/bin/sh\n[ \"$#\" = 3 ] && [ \"$1\" = settings ] && [ \"$2\" = enable ] && [ \"$3\" = anthropic ]\n"
+        .write(to: script, atomically: true, encoding: .utf8)
+    try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    assertNil(enableVendor(binary: script.path, id: "anthropic"), "enable passes exact backend arguments")
+    assertNotNil(enableVendor(binary: script.path, id: "openai"), "backend failure remains visible")
+    assertNotNil(enableVendor(binary: dir.appendingPathComponent("missing").path, id: "anthropic"),
+                 "missing executable remains visible")
+}
+
+func testDisabledVendorPreferences() {
+    for enabled in [false, true] {
+        for configured in [false, true] {
+            let v = VendorCatalogEntry(id: "anthropic", name: "Claude", shortName: "cla",
+                kind: "oauth", enabled: enabled, configured: configured,
+                needsCredential: true, env: "", login: "claude")
+            let status = vendorStatusText(v, cliPresent: true)
+            let button = vendorButtonLabel(v, cliPresent: true)
+            if !enabled {
+                assertEqual(status, configured ? "Disabled — credential available" : "Disabled",
+                            "disabled status is independent of sign-in")
+                assertEqual(button, "Enable", "disabled provider offers explicit opt-in")
+            } else {
+                assertEqual(status, configured ? "✓ Configured" : "⚠ Not signed in — claude",
+                            "enabled provider keeps credential status")
+                assertEqual(button, configured ? "Sign in again" : "Sign in",
+                            "enabled provider keeps sign-in action")
+            }
+        }
+    }
+}
+
 @main
 struct TestRunner {
     static func main() {
         testCodexAccounts()
+        testEnableVendorCommand()
+        testDisabledVendorPreferences()
         testRingArc()
         testTomlParsing()
         testParserBalances()

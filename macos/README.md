@@ -215,3 +215,15 @@ Runs `ai-usagebar --vendor <v> --format '{plan};;{session_pct};;…'`, parses th
 Waybar JSON (`{text, …}`), and draws the bars as colored `NSAttributedString`s
 in the status item and the dropdown. The subprocess runs **off the main thread**
 (`DispatchQueue.global` → back to `.main` for UI), so the UI never blocks.
+
+### Enable a connected provider
+
+Preferences → Vendors shows **Disabled** even when a credential is available.
+Click **Enable** to include the provider in usage reporting; if it still needs
+a credential, the row then offers its usual sign-in or configuration action.
+Enabling does not sign in, switch accounts, or change the selected provider.
+The menu reloads the configuration automatically.
+
+This requires a binary supporting `ai-usagebar settings enable <vendor>`.
+If enabling fails, Preferences shows an error and keeps the provider state
+from the catalog. Update the binary if it does not recognize the command.
