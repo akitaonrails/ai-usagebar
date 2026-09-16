@@ -71,6 +71,304 @@ pub fn run(action: &AccountAction) -> i32 {
                 keep_backups: *keep_backups,
             },
         }),
+        AccountAction::MergeHistory {
+            data_dir,
+            from,
+            dry_run,
+        } => merge_history(data_dir, from, *dry_run),
+    }
+}
+
+/// Resolve as far as the filesystem allows, so a trailing slash, a `..`, or a
+/// symlinked home cannot disguise one directory as another. Falls back to the
+/// nearest existing ancestor plus the remainder, because the profile directory
+/// may not exist yet on a first run.
+fn resolved(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| {
+        let mut rest = Vec::new();
+        let mut cursor = path;
+        loop {
+            match (std::fs::canonicalize(cursor), cursor.parent()) {
+                (Ok(base), _) => {
+                    let mut out = base;
+                    for part in rest.iter().rev() {
+                        out.push(part);
+                    }
+                    return out;
+                }
+                (Err(_), Some(parent)) => {
+                    if let Some(name) = cursor.file_name() {
+                        rest.push(name.to_os_string());
+                    }
+                    cursor = parent;
+                }
+                (Err(_), None) => return path.to_path_buf(),
+            }
+        }
+    })
+}
+
+/// Whether a Claude Desktop app is live on this exact profile.
+///
+/// Matched on the process's own `--user-data-dir` argument, which is unique
+/// per profile. Never on the app name or bundle id: every side-by-side copy
+/// keeps `CFBundleName = "Claude"` (Electron derives its helper-app names from
+/// it), so a name match would conflate all of them and the original.
+fn profile_in_use(data_dir: &Path) -> bool {
+    let Ok(output) = std::process::Command::new("/bin/ps")
+        .args(["-Awwo", "command"])
+        .output()
+    else {
+        // Fail closed: if we cannot tell, do not write into a profile that may
+        // have a second writer.
+        return true;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let candidates = [data_dir.to_path_buf(), resolved(data_dir)];
+    ps_shows_user_data_dir(&text, &candidates)
+}
+
+/// Whether `ps` output shows a process launched against one of `candidates`.
+///
+/// `ps` prints arguments space-separated and unquoted, so a profile path
+/// containing a space cannot be recovered by splitting a line on whitespace.
+/// Doing that truncates the argument and reports a LIVE profile as idle — a
+/// guard failing in the one direction that permits the corruption it exists to
+/// prevent. So match the whole expected argument, and treat a prefix match as
+/// in-use so the remaining ambiguity fails closed.
+fn ps_shows_user_data_dir(text: &str, candidates: &[PathBuf]) -> bool {
+    candidates
+        .iter()
+        .map(|dir| format!("--user-data-dir={}", dir.display()))
+        .any(|needle| {
+            text.lines().any(|line| {
+                line.match_indices(&needle).any(|(at, _)| {
+                    line[at + needle.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(char::is_whitespace)
+                })
+            })
+        })
+}
+
+/// A directory is a Claude Desktop profile if the app's own config lives in
+/// it. Used to keep unrelated sibling directories out of the source set.
+fn looks_like_profile(dir: &Path) -> bool {
+    dir.join("config.json").is_file()
+}
+
+/// Whether a profile holds any history at all — at least one
+/// `<account>/<org>` directory under its session root.
+///
+/// A profile the app has merely opened once already has a `config.json`, so
+/// `looks_like_profile` alone keeps abandoned and never-signed-in profiles in
+/// the default source set, where they contribute nothing and appear in every
+/// report as noise. Named `--from` sources are not filtered: asking for a
+/// specific source and being told it is empty is information.
+fn has_history(dir: &Path) -> bool {
+    let root = dir.join("claude-code-sessions");
+    let Ok(accounts) = std::fs::read_dir(&root) else {
+        return false;
+    };
+    accounts.flatten().any(|account| {
+        std::fs::read_dir(account.path())
+            .is_ok_and(|mut orgs| orgs.any(|org| org.is_ok_and(|org| org.path().is_dir())))
+    })
+}
+
+/// Every other profile this machine knows: the default one, plus any sibling
+/// of the target. The launcher should not have to know the topology, and a
+/// sibling copy that has since gained history becomes a source automatically.
+fn default_sources(target: &Path, default_profile: &Path) -> Vec<PathBuf> {
+    let wanted = resolved(target);
+    let mut out: Vec<PathBuf> = Vec::new();
+    let mut push = |dir: PathBuf| {
+        if resolved(&dir) != wanted
+            && looks_like_profile(&dir)
+            && has_history(&dir)
+            && !out.iter().any(|seen| resolved(seen) == resolved(&dir))
+        {
+            out.push(dir);
+        }
+    };
+    push(default_profile.to_path_buf());
+    if let Some(parent) = target.parent()
+        && let Ok(entries) = std::fs::read_dir(parent)
+    {
+        let mut siblings: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        siblings.sort();
+        for sibling in siblings {
+            push(sibling);
+        }
+    }
+    out
+}
+
+/// Merge every account's history into whichever account `data_dir` is signed
+/// into. Additive, and never for the default profile.
+fn merge_history(data_dir: &Path, from: &[PathBuf], dry_run: bool) -> i32 {
+    let config = config_or_default();
+    let paths = match Paths::for_data_dir(data_dir.to_path_buf(), &config.anthropic) {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
+
+    let Ok(default_paths) = Paths::resolve(&config.anthropic) else {
+        eprintln!("error: cannot determine the default Claude Desktop profile");
+        return 1;
+    };
+    if resolved(&paths.data_dir) == resolved(&default_paths.data_dir) {
+        eprintln!(
+            "error: {} is the default Claude Desktop profile — use `account switch` for it.\n       \
+             This command is for relocated profiles launched with --user-data-dir.",
+            paths.data_dir.display()
+        );
+        return 1;
+    }
+    if !paths.available() {
+        eprintln!(
+            "error: no Claude Desktop profile at {}",
+            paths.data_dir.display()
+        );
+        return 1;
+    }
+    // A dry run writes nothing, so it is the one mode worth having while the
+    // app is open — that is how you inspect a live profile without quitting it.
+    if !dry_run && profile_in_use(&paths.data_dir) {
+        eprintln!(
+            "error: a Claude Desktop app is running on {} — quit it first.\n       \
+             Two writers on one profile is how history gets corrupted.",
+            paths.data_dir.display()
+        );
+        return 1;
+    }
+
+    let (account_uuid, org_uuid) = match claude_desktop::history_target(&paths) {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
+
+    let explicit = !from.is_empty();
+    let sources = if explicit {
+        from.to_vec()
+    } else {
+        default_sources(&paths.data_dir, &default_paths.data_dir)
+    };
+
+    println!("Merge history    into {}", paths.data_dir.display());
+    for source in &sources {
+        println!("  from            {}", source.display());
+    }
+    if sources.is_empty() {
+        println!("  from            (no other profile found)");
+    }
+    // An explicitly named source that is not a profile is a mistake worth
+    // failing on, not a silently empty contribution.
+    let mut bad_sources = false;
+    for source in &sources {
+        if explicit && !looks_like_profile(source) {
+            eprintln!(
+                "error: {} is not a Claude Desktop profile (no config.json)",
+                source.display()
+            );
+            bad_sources = true;
+        }
+    }
+    if bad_sources {
+        return 1;
+    }
+
+    let staged = claude_desktop::stage_history_sources(
+        &paths,
+        &sources,
+        org_uuid.as_deref().map(|org| (account_uuid.as_str(), org)),
+        dry_run,
+    );
+    println!(
+        "  staged          {} index(es), {} registry(ies) from other profiles{}",
+        staged.sessions,
+        staged.registries,
+        if dry_run { " (would place)" } else { "" }
+    );
+
+    let plan = match claude_desktop::plan_history_merge(&paths) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
+
+    println!("  account         {}", plan.account_uuid);
+    match &plan.org_uuid {
+        Some(org) => println!("  org             {org}"),
+        None => println!("  org             none yet — nothing to merge into"),
+    }
+    println!(
+        "  sessions        {} new, {} updated",
+        plan.sessions.copied.len(),
+        plan.sessions.updated.len()
+    );
+    if let Some(scheduled) = &plan.scheduled {
+        println!(
+            "  schedules       {} added, {} updated, {} kept as conflicts",
+            scheduled.added, scheduled.updated, scheduled.conflicts
+        );
+    }
+
+    if dry_run {
+        if staged.sessions > 0 || staged.registries > 0 {
+            println!(
+                "  note            the sessions/schedules counts above are PRE-staging; the \
+                 union runs after those {} index(es) land",
+                staged.sessions
+            );
+        }
+        println!("  (dry run — nothing was changed)");
+        return 0;
+    }
+    if plan.is_empty() {
+        println!("  already up to date");
+        return 0;
+    }
+    let code = match claude_desktop::apply_history_merge(&paths, &plan) {
+        Ok(notes) => {
+            for note in &notes {
+                println!("  note: {note}");
+            }
+            println!("  merged");
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
+    };
+    // Loud, and non-zero: a source we could not read is history that did not
+    // arrive. Reporting it as a successful merge is the failure that hides.
+    if staged.unreadable.is_empty() {
+        code
+    } else {
+        eprintln!(
+            "WARNING: {} source path(s) could not be read, so their history was NOT merged:",
+            staged.unreadable.len()
+        );
+        for path in &staged.unreadable {
+            eprintln!("  skipped  {}", path.display());
+        }
+        eprintln!("         This merge is incomplete. Re-run once those are readable.");
+        1
     }
 }
 
@@ -1505,5 +1803,35 @@ mod tests {
             std::fs::read_to_string(path).unwrap(),
             "# edited while login ran\n"
         );
+    }
+
+    /// A profile path with a SPACE in it must still register as in use.
+    ///
+    /// The first version of this guard split the `ps` line on whitespace,
+    /// which truncated `.../Claude Accounts/work` to `.../Claude` and
+    /// reported every running copy as idle — the guard failing OPEN, which
+    /// permits the two-writer corruption it exists to prevent.
+    #[test]
+    fn a_running_profile_whose_path_contains_a_space_reads_as_in_use() {
+        let dir = PathBuf::from("/Users/x/Library/Application Support/Claude Accounts/work");
+        let ps = "/Applications/Claude Work.app/Contents/MacOS/Claude \
+--user-data-dir=/Users/x/Library/Application Support/Claude Accounts/work\n";
+        assert!(super::ps_shows_user_data_dir(ps, &[dir]));
+    }
+
+    /// A sibling profile sharing a prefix must not be mistaken for this one.
+    #[test]
+    fn a_sibling_profile_with_a_longer_name_is_not_this_profile() {
+        let dir = PathBuf::from("/Users/x/Library/Application Support/Claude Accounts/work");
+        let ps = "/Applications/Claude X.app/Contents/MacOS/Claude \
+--user-data-dir=/Users/x/Library/Application Support/Claude Accounts/work2\n";
+        assert!(!super::ps_shows_user_data_dir(ps, &[dir]));
+    }
+
+    #[test]
+    fn an_idle_profile_reads_as_not_in_use() {
+        let dir = PathBuf::from("/Users/x/Library/Application Support/Claude Accounts/personal");
+        let ps = "/Applications/Claude.app/Contents/MacOS/Claude\n/bin/zsh -l\n";
+        assert!(!super::ps_shows_user_data_dir(ps, &[dir]));
     }
 }

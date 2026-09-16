@@ -12,6 +12,7 @@ switch the active login used by Claude Desktop and the `claude` CLI.
 | Accounts already organized by `CLAUDE_CONFIG_DIR` | Set `[anthropic] accounts_dir`. |
 | Separate Waybar modules backed by files you already manage | Use `--creds-path` and `--cache-dir`. |
 | Switch Claude Desktop or the CLI on macOS | Use `ai-usagebar account switch`. |
+| Several Claude Desktop apps side by side on macOS | Use `ai-usagebar account merge-history`. |
 
 ## Add a named account
 
@@ -212,6 +213,49 @@ rotating refresh token is never live in two places.
 If the current CLI login is not managed by ai-usagebar, the switch stops before
 discarding it. `--force` overrides that safeguard and removes the unmanaged
 login.
+
+### Side-by-side profiles
+
+Claude Desktop can be launched against an alternative profile with
+`--user-data-dir`, which is how several accounts can run at once as separate
+apps. Each such profile has its own history, so by default those windows do not
+see each other's conversations.
+
+```bash
+ai-usagebar account merge-history --data-dir <DIR>
+ai-usagebar account merge-history --data-dir <DIR> --dry-run
+ai-usagebar account merge-history --data-dir <DIR> --from <DIR> --from <DIR>
+```
+
+`--from` names the profiles to read history from, defaulting to every other
+profile on the machine: the default one, plus any sibling directory of
+`--data-dir`. Sources are opened read-only and need not be idle. Run it just
+before the app starts.
+
+`account switch` is not usable here: it requires a saved profile per label and
+installs that label's stored token over the profile's live login, and it quits
+and relaunches Claude Desktop by *application name*, which is ambiguous once
+several app bundles answer to the same name. `merge-history` swaps no
+credential and never controls the app.
+
+The merge is additive. No deletion sweep runs, so a run with nobody at the
+keyboard cannot remove anything — conflicting items are reported and kept. The
+target profile must not be running, detected from the process's own
+`--user-data-dir` argument rather than the app name, and the default profile is
+refused as a target (`account switch` owns it). Re-running is a no-op: an index
+is copied only when the destination is absent or older.
+
+Each relocated profile keeps its own sync ledger, in a
+`<profile>-ai-usagebar/` directory beside it. That is deliberate rather than
+incidental: the ledger records what each account held after the last merge, and
+deletion candidates are the difference against it, so two profiles sharing one
+ledger would each overwrite it with their own narrower view and items merely
+absent from one profile would later read as intentional deletions.
+
+**This deliberately crosses accounts.** Afterwards the window signed into one
+account lists conversations and routines started under the others, because the
+point is that every profile opens on the union. Do not use it across accounts
+that must stay visually separate.
 
 ### Storage and history conflicts
 

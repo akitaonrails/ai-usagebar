@@ -102,6 +102,37 @@ impl Paths {
         })
     }
 
+    /// Production paths against an explicit profile directory, for a relocated
+    /// Claude Desktop profile (one launched with `--user-data-dir`).
+    ///
+    /// `profiles_dir` stays shared: it is the label-keyed store of saved
+    /// credentials, and the same accounts back every profile.
+    ///
+    /// `backups_dir` is deliberately NOT shared, and must never be "simplified"
+    /// back to one location. [`Self::synced_path`] derives from it, and that
+    /// ledger records what each account held *after the last merge*, which
+    /// [`merge::deletion_candidates`] diffs live state against. Two profiles
+    /// sharing one ledger would each overwrite it with their own narrower view,
+    /// so keys merely absent from one profile would later read as intentional
+    /// deletions — phantom candidates that an interactive switch can then
+    /// answer, and therefore delete for real.
+    pub fn for_data_dir(data_dir: PathBuf, anthropic: &AnthropicConfig) -> Result<Self> {
+        let home = crate::cache::home_dir()?;
+        let profiles_dir = anthropic
+            .desktop_profiles_dir
+            .clone()
+            .unwrap_or_else(|| home.join(".claude-acc").join("profiles"));
+        // A sibling of the profile, never inside it: nothing Claude Desktop
+        // reads should gain directories we own.
+        let mut sibling = data_dir.clone().into_os_string();
+        sibling.push("-ai-usagebar");
+        Ok(Self {
+            data_dir,
+            profiles_dir,
+            backups_dir: PathBuf::from(sibling).join("backups"),
+        })
+    }
+
     /// Whether there is a Claude Desktop app installation to act on at all.
     /// False on Linux, and on a Mac where the app has never run.
     pub fn available(&self) -> bool {
@@ -398,6 +429,294 @@ pub fn plan_switch(paths: &Paths, label: &str, opts: SwitchOpts) -> Result<Switc
         confirmed_deletions: BTreeSet::new(),
         prior_synced: synced,
     })
+}
+
+/// A history-only merge: bring every account's sessions and schedules into
+/// whichever account this profile is already signed into.
+///
+/// Deliberately narrower than [`SwitchPlan`] — no credential swap, no saved
+/// profile needed, no app control — so it is safe to run automatically before
+/// a relocated profile's app starts. Quitting "the Claude app" by name is
+/// ambiguous once several bundles share a `CFBundleName`, and nothing can
+/// answer a prompt during a double-click.
+#[derive(Debug)]
+pub struct HistoryMerge {
+    pub account_uuid: String,
+    /// Absent when the account has no history folder yet, so there is nothing
+    /// to merge into.
+    pub org_uuid: Option<String>,
+    pub sessions: SessionMerge,
+    pub scheduled: Option<ScheduledMerge>,
+    prior_synced: merge::Synced,
+}
+
+impl HistoryMerge {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let scheduled_idle = match &self.scheduled {
+            Some(scheduled) => scheduled.added == 0 && scheduled.updated == 0,
+            None => true,
+        };
+        self.sessions.is_empty() && scheduled_idle
+    }
+}
+
+/// Which organisation folder to merge into. An account normally has exactly
+/// one; when several exist the live config's own orgs win, because writing
+/// history into a stale org scatters it where the app will not look.
+fn resolve_org(sessions_root: &Path, account_uuid: &str, config: &[u8]) -> Option<String> {
+    let dir = sessions_root.join(account_uuid);
+    let mut orgs: Vec<String> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .collect();
+    orgs.sort();
+    if orgs.len() > 1 {
+        let known = merge::orgs_in_config(config);
+        let mut narrowed: Vec<String> = orgs
+            .iter()
+            .filter(|org| known.contains(org))
+            .cloned()
+            .collect();
+        if narrowed.len() == 1 {
+            return narrowed.pop();
+        }
+        orgs.sort_by_key(|org| {
+            std::fs::metadata(dir.join(org))
+                .and_then(|meta| meta.modified())
+                .ok()
+        });
+    }
+    orgs.pop()
+}
+
+/// Which account and organisation a profile's history merges into.
+pub fn history_target(paths: &Paths) -> Result<(String, Option<String>)> {
+    let config_json = paths.config_json();
+    let config = std::fs::read(&config_json).map_err(|e| AppError::io_at(&config_json, e))?;
+    let account_uuid = merge::logged_in_account(&config).ok_or_else(|| {
+        AppError::Credentials(format!(
+            "no account is signed into {}; sign in before merging history",
+            paths.data_dir.display()
+        ))
+    })?;
+    let org_uuid = resolve_org(&paths.sessions_root(), &account_uuid, &config);
+    Ok((account_uuid, org_uuid))
+}
+
+/// What a staging pass placed into the target profile.
+#[derive(Debug, Default)]
+pub struct Staged {
+    /// Session indexes newly placed or refreshed.
+    pub sessions: usize,
+    /// Account-level schedule registries placed or refreshed.
+    pub registries: usize,
+    /// Sources that exist but could not be read. Never folded into "empty":
+    /// an absent source and an unreadable one must not look alike, or a
+    /// partial failure silently shrinks history.
+    pub unreadable: Vec<PathBuf>,
+}
+
+/// Bring other profiles' per-account history into this profile's session tree,
+/// so [`plan_history_merge`] can then union it into the signed-in account.
+///
+/// Sources are opened for READING ONLY. Nothing — no ledger, lock, or
+/// temporary file — is ever written beneath a source, and a source is never
+/// required to be idle: reading an index out of a running profile is safe,
+/// writing into one is not. Every destination is checked to lie inside this
+/// profile's own session tree before it is written.
+///
+/// Idempotent, because every launch runs it: an index is placed only when the
+/// destination is absent or strictly older, so a second consecutive run copies
+/// nothing. `own` is the target account's own `<account>/<org>` directory,
+/// whose schedule registry is only ever placed when absent — overwriting it
+/// from a source could drop a routine that exists only here, before the merge
+/// has had a chance to reconcile it.
+pub fn stage_history_sources(
+    paths: &Paths,
+    sources: &[PathBuf],
+    own: Option<(&str, &str)>,
+    dry_run: bool,
+) -> Staged {
+    let mut staged = Staged::default();
+    let root = paths.sessions_root();
+    let own_dir = own.map(|(account, org)| root.join(account).join(org));
+
+    for source in sources {
+        let source_root = source.join(SESSIONS_DIR);
+        let Ok(accounts) = std::fs::read_dir(&source_root) else {
+            if source_root.exists() {
+                staged.unreadable.push(source_root);
+            }
+            continue;
+        };
+        for account in accounts.flatten() {
+            let Ok(orgs) = std::fs::read_dir(account.path()) else {
+                staged.unreadable.push(account.path());
+                continue;
+            };
+            for org in orgs.flatten().filter(|org| org.path().is_dir()) {
+                let Some(account_name) = account.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                let Some(org_name) = org.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                let destination_dir = root.join(&account_name).join(&org_name);
+                // Read-only contract: never write outside our own tree.
+                if !destination_dir.starts_with(&root) {
+                    continue;
+                }
+                let Ok(entries) = std::fs::read_dir(org.path()) else {
+                    staged.unreadable.push(org.path());
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let from = entry.path();
+                    let Some(name) = from.file_name().and_then(|n| n.to_str()) else {
+                        continue;
+                    };
+                    let is_index = name.starts_with("local_") && name.ends_with(".json");
+                    let is_registry = name == merge::SCHEDULED_TASKS;
+                    if !is_index && !is_registry {
+                        continue;
+                    }
+                    let to = destination_dir.join(name);
+                    // The target's own registry is authoritative until the
+                    // merge reconciles it: place it only if it is missing.
+                    let absent_only =
+                        is_registry && own_dir.as_deref() == Some(destination_dir.as_path());
+                    if !should_place(&from, &to, absent_only) {
+                        continue;
+                    }
+                    if dry_run || copy_file(&from, &to).is_ok() {
+                        if is_index {
+                            staged.sessions += 1;
+                        } else {
+                            staged.registries += 1;
+                        }
+                    } else {
+                        staged.unreadable.push(from);
+                    }
+                }
+            }
+        }
+    }
+    staged
+}
+
+/// Copy-if-absent-or-newer. Never overwrites a destination that is at least as
+/// new as the source, so re-running places nothing and a locally-advanced
+/// index is not rolled back.
+fn should_place(from: &Path, to: &Path, absent_only: bool) -> bool {
+    let Ok(destination) = std::fs::metadata(to) else {
+        return true;
+    };
+    if absent_only {
+        return false;
+    }
+    let newer = |meta: std::fs::Metadata| meta.modified().ok();
+    match (
+        std::fs::metadata(from).ok().and_then(newer),
+        newer(destination),
+    ) {
+        (Some(source), Some(existing)) => source > existing,
+        _ => false,
+    }
+}
+
+/// Plan a history-only merge for the profile at `paths`.
+pub fn plan_history_merge(paths: &Paths) -> Result<HistoryMerge> {
+    let config_json = paths.config_json();
+    let config = std::fs::read(&config_json).map_err(|e| AppError::io_at(&config_json, e))?;
+    let account_uuid = merge::logged_in_account(&config).ok_or_else(|| {
+        AppError::Credentials(format!(
+            "no account is signed into {}; sign in before merging history",
+            paths.data_dir.display()
+        ))
+    })?;
+
+    let sessions_root = paths.sessions_root();
+    let synced = load_synced(&paths.synced_path());
+    let org_uuid = resolve_org(&sessions_root, &account_uuid, &config);
+    let (sessions, scheduled) = match &org_uuid {
+        Some(org) => (
+            merge::plan_session_merge(&sessions_root, &account_uuid, org),
+            Some(merge::plan_scheduled_merge(
+                &sessions_root,
+                &account_uuid,
+                org,
+                &synced,
+            )?),
+        ),
+        None => (SessionMerge::default(), None),
+    };
+
+    Ok(HistoryMerge {
+        account_uuid,
+        org_uuid,
+        sessions,
+        scheduled,
+        prior_synced: synced,
+    })
+}
+
+/// Apply a planned history merge.
+///
+/// Strictly additive: indexes are copied and registries rewritten, and no
+/// deletion sweep runs. Removing a routine stays reachable only from an
+/// answered prompt in `account switch`, which is what makes an automatic
+/// pre-launch merge unable to lose history.
+pub fn apply_history_merge(paths: &Paths, plan: &HistoryMerge) -> Result<Vec<String>> {
+    let mut notes = Vec::new();
+    let display_names = plan
+        .scheduled
+        .as_ref()
+        .map(ScheduledMerge::display_names)
+        .transpose()?;
+
+    for (source, destination) in plan.sessions.copied.iter().chain(&plan.sessions.updated) {
+        copy_file(source, destination)?;
+    }
+    if let Some(scheduled) = &plan.scheduled {
+        crate::cache::atomic_write(&scheduled.target, &scheduled.bytes)?;
+    }
+    if let Some(display_names) = &display_names {
+        match merge::plan_name_convergence(&paths.sessions_root(), display_names) {
+            Ok(convergence) => {
+                for (path, bytes) in convergence.rewrites {
+                    if let Err(error) = crate::cache::atomic_write(&path, &bytes) {
+                        notes.push(format!(
+                            "could not converge routine names in {}: {error}",
+                            sanitize_untrusted_path(&path)
+                        ));
+                    }
+                }
+            }
+            Err(error) => notes.push(format!("name convergence skipped: {error}")),
+        }
+    }
+
+    // Record what every account holds now, so a later switch can tell an
+    // intentional deletion from a task this profile simply never received.
+    let mut synced = merge::current_state(&paths.sessions_root());
+    let mut canonical = plan
+        .scheduled
+        .as_ref()
+        .map(|scheduled| scheduled.canonical_routines.clone())
+        .unwrap_or_else(|| merge::canonical_routines(&plan.prior_synced));
+    let present: BTreeSet<String> = synced
+        .values()
+        .flat_map(|account| account.routines.iter().cloned())
+        .collect();
+    canonical.retain(|id, _| present.contains(id));
+    merge::set_canonical_routines(&mut synced, &canonical);
+    if let Err(error) = save_synced(&paths.synced_path(), &synced) {
+        notes.push(format!("could not record the schedule sync: {error}"));
+    }
+    Ok(notes)
 }
 
 /// Perform a planned switch.
