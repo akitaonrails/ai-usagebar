@@ -9,6 +9,13 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **English-only UI strings in the GNOME preferences.** The provider list
+  showed `verificando…`, `Configurar (TUI)` and `Re-logar` — Portuguese left
+  over from an early draft. They now read `checking…`, `Configure (TUI)` and
+  `Sign in again`, matching every other frontend.
+
 ## [1.17.1] — 2026-09-16
 
 ### Fixed
