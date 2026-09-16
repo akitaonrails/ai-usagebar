@@ -297,13 +297,16 @@ credit ledger, leaves the monthly family and `{cc_credits_reset}` at `—`.
 
 `{oll_session_pct}`, `{oll_session_reset}`, `{oll_session_pace}`,
 `{oll_weekly_pct}`, `{oll_weekly_reset}`, `{oll_weekly_pace}`,
+`{oll_monthly_pct}`, `{oll_monthly_reset}`, `{oll_monthly_pace}`,
 `{oll_plan}`, `{oll_cost}`
 
-Ollama Cloud reports the 5-hour session and weekly windows as a fraction of
-the plan limit, so both percentage placeholders are whole numbers after
-clamping to 0..=100. The API does not publish reset timestamps, pace
-deltas, or a plan label: `{oll_plan}` falls back to the `plan` string from
-your config, and the reset/pace families render neutral values when the
-window projection is unavailable. `{oll_cost}` is the dollar figure the
-settings page reports for the last four weeks of activity. `{session_pct}`
-and `{weekly_pct}` alias the two windows.
+Ollama Cloud reports either a 5-hour session + weekly pair, or a single
+calendar-month window, as a fraction of the plan limit — never both in the
+same response — so all three percentage placeholders are whole numbers
+after clamping to 0..=100, and the pair the account does not report stays
+at `0`. The API does not publish reset timestamps, pace deltas, or a plan
+label: `{oll_plan}` falls back to the `plan` string from your config, and
+the reset/pace families render neutral values when the window projection
+is unavailable. `{oll_cost}` is the dollar figure the settings page reports
+for the last four weeks of activity. `{session_pct}` and `{weekly_pct}`
+alias the session and weekly windows.

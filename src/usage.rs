@@ -713,11 +713,16 @@ pub struct OllamaSnapshot {
     pub session: Option<UsageWindow>,
     /// 7d rolling window (`limits.weekly`).
     pub weekly: Option<UsageWindow>,
+    /// Calendar-month window (`limits.monthly`). Some Pro accounts report
+    /// this in place of `session`/`weekly` instead of alongside them.
+    pub monthly: Option<UsageWindow>,
     /// Per-model request counts inside the session window, in the order the
     /// API returned them. Renderers sort and truncate this for the tooltip.
     pub session_models: Vec<OllamaModelUsage>,
     /// Per-model request counts inside the weekly window.
     pub weekly_models: Vec<OllamaModelUsage>,
+    /// Per-model request counts inside the monthly window.
+    pub monthly_models: Vec<OllamaModelUsage>,
     /// `activity.cost` as a pre-formatted dollar string (`"0.00000"`,
     /// `"1.23456"`). Already a string on the wire — the renderer decides
     /// whether to keep it verbatim or reformat.

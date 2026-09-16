@@ -23,6 +23,15 @@ Each release is also published at
   left over from an early draft. They now read `checking…`,
   `Configure (TUI)` and `Sign in again`, matching every other frontend.
 
+- **Ollama Cloud monthly-quota accounts no longer show a bare "Ready".**
+  Some Ollama Cloud accounts report `limits.monthly` instead of
+  `limits.session` + `limits.weekly` for the same `"pro"` plan label. The
+  parser only understood the session/weekly shape, so a monthly account had
+  no window to render and every frontend fell back to a plain "Ready"/status
+  pill with no percentage. `limits.monthly` is now parsed into a `Monthly`
+  metric (bar, tooltip, TUI panel, and top models), alongside the existing
+  session/weekly windows for accounts that report those instead.
+
 ## [1.17.1] — 2026-09-16
 
 ### Fixed

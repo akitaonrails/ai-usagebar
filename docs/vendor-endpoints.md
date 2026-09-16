@@ -27,7 +27,7 @@ defensive and includes opt-in live tests for catching response changes.
 | **Nous Research** | `portal.nousresearch.com/api/oauth/account` (OAuth-authenticated Portal account response) | Subscription usage %, subscription credits, top-up/purchased credits, total usable credits, renewal | Yes |
 | **OpenCode Go** | `opencode.ai/zen/go/v1/usage` | Rolling, weekly, and monthly `percent` windows with absolute reset timestamps | Yes |
 | **Command Code** | `api.commandcode.ai` `/alpha/billing/credits` + `/alpha/billing/subscriptions` (undocumented; the same calls the official `commandcode` CLI's `/usage` makes) | 5-hour and weekly rolling spend windows ($ used of $ cap), plan, and remaining monthly credits | No — widget/TUI only |
-| **Ollama Cloud** | `ollama.com/api/usage` (undocumented; the same route the official ollama.com/settings page calls) | 5-hour session % and weekly %, per-model request counts, last-4-weeks activity cost, config-supplied plan label | No — widget/TUI only |
+| **Ollama Cloud** | `ollama.com/api/usage` (undocumented; the same route the official ollama.com/settings page calls) | 5-hour session % and weekly %, **or** a single monthly % (accounts report one shape or the other, never both), per-model request counts, last-4-weeks activity cost, config-supplied plan label | No — widget/TUI only |
 
 When Antigravity uses the Cloud Code fallback, the TUI labels the source
 `Google API`. The saved session may come from the OS keyring or
@@ -63,7 +63,7 @@ or stored, and no vendor asks the user to paste a session cookie.
 | MiniMax | The Token Plan route is official, but no formal response schema is published. |
 | Kiro CLI | `GetUsageLimits` is the same undocumented CodeWhisperer operation used by kiro-cli's `/usage` command. AWS SSO OIDC `CreateToken`, used for refresh, is documented. |
 | Command Code | Undocumented `/alpha/*` routes called by the official `commandcode` CLI. The `alpha` path segment is the vendor's own signal that these may move. Windows are read by name (`fiveHour`, `weekly`) rather than by position, and `windowLimits` is accepted both at the top level and beside the ledger, so the most likely reshuffles are already tolerated. |
-| Ollama Cloud | Undocumented, but the route the official settings page itself calls. Auth is a static Bearer key minted at ollama.com/settings/keys — unrelated to the CLI's Ed25519 registry key, which ai-usagebar never reads. `usage` is a fraction (0..1), not a percent; the parser clamps it to a bounded percent. |
+| Ollama Cloud | Undocumented, but the route the official settings page itself calls. Auth is a static Bearer key minted at ollama.com/settings/keys — unrelated to the CLI's Ed25519 registry key, which ai-usagebar never reads. `usage` is a fraction (0..1), not a percent; the parser clamps it to a bounded percent. Two response shapes are live-verified under the same `"pro"` plan label — `session` + `weekly`, or `monthly` alone — never combined; the parser accepts either. |
 
 Codex's known five-hour and seven-day windows are matched by their reported
 duration, not by `primary_window` or `secondary_window` position. This handles

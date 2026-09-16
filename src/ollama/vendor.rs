@@ -37,8 +37,14 @@ fn build_placeholders_with_tolerance(
         .map(|w| w.utilization_pct)
         .unwrap_or(0);
     let weekly_pct = snap.weekly.as_ref().map(|w| w.utilization_pct).unwrap_or(0);
+    let monthly_pct = snap
+        .monthly
+        .as_ref()
+        .map(|w| w.utilization_pct)
+        .unwrap_or(0);
     let session = window_pacing(snap.session.as_ref(), pace_tolerance, now);
     let weekly = window_pacing(snap.weekly.as_ref(), pace_tolerance, now);
+    let monthly = window_pacing(snap.monthly.as_ref(), pace_tolerance, now);
     let cost = snap.activity_cost.clone().unwrap_or_else(|| "—".into());
 
     placeholders(vec![
@@ -69,12 +75,20 @@ fn build_placeholders_with_tolerance(
             "oll_weekly_reset",
             countdown::format(window_reset(&snap.weekly), now),
         ),
+        ("oll_monthly_pct", monthly_pct.to_string()),
+        (
+            "oll_monthly_reset",
+            countdown::format(window_reset(&snap.monthly), now),
+        ),
         ("oll_session_elapsed", session.elapsed),
         ("oll_session_pace", session.ratio_pace),
         ("oll_session_pace_indicator", session.point_pace),
         ("oll_weekly_elapsed", weekly.elapsed),
         ("oll_weekly_pace", weekly.ratio_pace),
         ("oll_weekly_pace_indicator", weekly.point_pace),
+        ("oll_monthly_elapsed", monthly.elapsed),
+        ("oll_monthly_pace", monthly.ratio_pace),
+        ("oll_monthly_pace_indicator", monthly.point_pace),
         ("oll_cost", cost),
     ])
 }
@@ -109,15 +123,20 @@ fn window_pacing(w: Option<&UsageWindow>, pace_tolerance: u32, now: DateTime<Utc
 }
 
 pub fn severity(snap: &OllamaSnapshot) -> PaceSeverity {
-    // Worst of the two windows — session fills faster and is the one that
-    // actually interrupts a chat mid-stream.
+    // Worst of the three windows — session fills fastest and is the one
+    // that actually interrupts a chat mid-stream.
     let session = snap
         .session
         .as_ref()
         .map(|w| w.utilization_pct)
         .unwrap_or(0);
     let weekly = snap.weekly.as_ref().map(|w| w.utilization_pct).unwrap_or(0);
-    severity_for(session.max(weekly))
+    let monthly = snap
+        .monthly
+        .as_ref()
+        .map(|w| w.utilization_pct)
+        .unwrap_or(0);
+    severity_for(session.max(weekly).max(monthly))
 }
 
 pub fn render(
@@ -200,6 +219,14 @@ fn render_tooltip(
         push_window_with_row(&mut lines, "  Weekly", w, theme, now, row(w));
         if !snap.weekly_models.is_empty() {
             push_model_rows(&mut lines, &snap.weekly_models, dim);
+        }
+        lines.push(TooltipLine::Body("".into()));
+    }
+
+    if let Some(w) = snap.monthly.as_ref() {
+        push_window_with_row(&mut lines, "  Monthly", w, theme, now, row(w));
+        if !snap.monthly_models.is_empty() {
+            push_model_rows(&mut lines, &snap.monthly_models, dim);
         }
         lines.push(TooltipLine::Body("".into()));
     }
@@ -289,6 +316,7 @@ mod tests {
                 resets_at: None,
                 window_duration: chrono::Duration::days(7),
             }),
+            monthly: None,
             session_models: vec![OllamaModelUsage {
                 name: "kimi-k3".into(),
                 request_count: 180,
@@ -303,6 +331,7 @@ mod tests {
                     request_count: 554,
                 },
             ],
+            monthly_models: vec![],
             activity_cost: Some("0.00000".into()),
             activity_period: Some("last_4_weeks".into()),
         }

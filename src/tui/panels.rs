@@ -253,12 +253,16 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             ("OpenCode Go".into(), cells)
         }
         VendorSnapshot::Ollama(s) => {
-            let cells = [("5h", s.session.as_ref()), ("wk", s.weekly.as_ref())]
-                .into_iter()
-                .filter_map(|(label, window)| {
-                    window.map(|window| pct(label, window.utilization_pct.clamp(0, 100)))
-                })
-                .collect();
+            let cells = [
+                ("5h", s.session.as_ref()),
+                ("wk", s.weekly.as_ref()),
+                ("mo", s.monthly.as_ref()),
+            ]
+            .into_iter()
+            .filter_map(|(label, window)| {
+                window.map(|window| pct(label, window.utilization_pct.clamp(0, 100)))
+            })
+            .collect();
             (s.plan.clone(), cells)
         }
         VendorSnapshot::Custom(s) => (
@@ -345,6 +349,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         VendorSnapshot::Ollama(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
+            s.monthly.as_ref().map(|w| w.utilization_pct),
         ]
         .into_iter()
         .flatten()
@@ -1316,8 +1321,12 @@ fn ollama_sections(
     if let Some(w) = &s.weekly {
         push_window(&mut v, "Weekly", w, now, pace_tolerance, true);
     }
+    if let Some(w) = &s.monthly {
+        push_window(&mut v, "Monthly", w, now, pace_tolerance, true);
+    }
     push_top_models(&mut v, &s.session_models, "Top models (5h)");
     push_top_models(&mut v, &s.weekly_models, "Top models (weekly)");
+    push_top_models(&mut v, &s.monthly_models, "Top models (monthly)");
     if let Some(cost) = &s.activity_cost {
         v.push(Section::Spacer);
         v.push(Section::Block {
