@@ -71,6 +71,162 @@ pub fn run(action: &AccountAction) -> i32 {
                 keep_backups: *keep_backups,
             },
         }),
+        AccountAction::MergeHistory { data_dir, dry_run } => {
+            merge_history(data_dir, *dry_run)
+        }
+    }
+}
+
+/// Resolve as far as the filesystem allows, so a trailing slash, a `..`, or a
+/// symlinked home cannot disguise one directory as another. Falls back to the
+/// nearest existing ancestor plus the remainder, because the profile directory
+/// may not exist yet on a first run.
+fn resolved(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| {
+        let mut rest = Vec::new();
+        let mut cursor = path;
+        loop {
+            match (std::fs::canonicalize(cursor), cursor.parent()) {
+                (Ok(base), _) => {
+                    let mut out = base;
+                    for part in rest.iter().rev() {
+                        out.push(part);
+                    }
+                    return out;
+                }
+                (Err(_), Some(parent)) => {
+                    if let Some(name) = cursor.file_name() {
+                        rest.push(name.to_os_string());
+                    }
+                    cursor = parent;
+                }
+                (Err(_), None) => return path.to_path_buf(),
+            }
+        }
+    })
+}
+
+/// Whether a Claude Desktop app is live on this exact profile.
+///
+/// Matched on the process's own `--user-data-dir` argument, which is unique
+/// per profile. Never on the app name or bundle id: every side-by-side copy
+/// keeps `CFBundleName = "Claude"` (Electron derives its helper-app names from
+/// it), so a name match would conflate all of them and the original.
+fn profile_in_use(data_dir: &Path) -> bool {
+    let Ok(output) = std::process::Command::new("/bin/ps")
+        .args(["-Awwo", "command"])
+        .output()
+    else {
+        // Fail closed: if we cannot tell, do not write into a profile that may
+        // have a second writer.
+        return true;
+    };
+    // `ps` prints arguments space-separated and unquoted, so a profile path
+    // that contains a space cannot be recovered by splitting the line on
+    // whitespace — that truncation silently reports a live profile as idle.
+    // Match the whole expected argument instead, and let a prefix match count
+    // as in-use, so the ambiguity fails closed.
+    let text = String::from_utf8_lossy(&output.stdout);
+    [data_dir.to_path_buf(), resolved(data_dir)]
+        .iter()
+        .map(|dir| format!("--user-data-dir={}", dir.display()))
+        .any(|needle| {
+            text.lines().any(|line| {
+                line.match_indices(&needle).any(|(at, _)| {
+                    line[at + needle.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(char::is_whitespace)
+                })
+            })
+        })
+}
+
+/// Merge every account's history into whichever account `data_dir` is signed
+/// into. Additive, and never for the default profile.
+fn merge_history(data_dir: &Path, dry_run: bool) -> i32 {
+    let config = config_or_default();
+    let paths = match Paths::for_data_dir(data_dir.to_path_buf(), &config.anthropic) {
+        Ok(paths) => paths,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
+
+    let Ok(default_paths) = Paths::resolve(&config.anthropic) else {
+        eprintln!("error: cannot determine the default Claude Desktop profile");
+        return 1;
+    };
+    if resolved(&paths.data_dir) == resolved(&default_paths.data_dir) {
+        eprintln!(
+            "error: {} is the default Claude Desktop profile — use `account switch` for it.\n       \
+             This command is for relocated profiles launched with --user-data-dir.",
+            paths.data_dir.display()
+        );
+        return 1;
+    }
+    if !paths.available() {
+        eprintln!("error: no Claude Desktop profile at {}", paths.data_dir.display());
+        return 1;
+    }
+    // A dry run writes nothing, so it is the one mode worth having while the
+    // app is open — that is how you inspect a live profile without quitting it.
+    if !dry_run && profile_in_use(&paths.data_dir) {
+        eprintln!(
+            "error: a Claude Desktop app is running on {} — quit it first.\n       \
+             Two writers on one profile is how history gets corrupted.",
+            paths.data_dir.display()
+        );
+        return 1;
+    }
+
+    let plan = match claude_desktop::plan_history_merge(&paths) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
+
+    println!("Merge history    into {}", paths.data_dir.display());
+    println!("  account         {}", plan.account_uuid);
+    match &plan.org_uuid {
+        Some(org) => println!("  org             {org}"),
+        None => println!("  org             none yet — nothing to merge into"),
+    }
+    println!(
+        "  sessions        {} new, {} updated",
+        plan.sessions.copied.len(),
+        plan.sessions.updated.len()
+    );
+    if let Some(scheduled) = &plan.scheduled {
+        println!(
+            "  schedules       {} added, {} updated, {} kept as conflicts",
+            scheduled.added, scheduled.updated, scheduled.conflicts
+        );
+    }
+
+    if dry_run {
+        println!("  (dry run — nothing was changed)");
+        return 0;
+    }
+    if plan.is_empty() {
+        println!("  already up to date");
+        return 0;
+    }
+    match claude_desktop::apply_history_merge(&paths, &plan) {
+        Ok(notes) => {
+            for note in &notes {
+                println!("  note: {note}");
+            }
+            println!("  merged");
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            1
+        }
     }
 }
 

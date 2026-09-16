@@ -305,6 +305,25 @@ pub enum AccountAction {
         #[arg(long, value_name = "KEY")]
         delete_conflict: Vec<String>,
     },
+
+    /// Merge every account's history into the account a Claude Desktop profile
+    /// is already signed into (macOS). Additive: nothing is ever deleted, and
+    /// no credential or app state is touched.
+    ///
+    /// For side-by-side Desktop copies launched with `--user-data-dir`, run
+    /// this just before the app starts so that window opens on the union of
+    /// everything. Use `account switch` for the normal single-profile case.
+    MergeHistory {
+        /// The profile to merge into — the same directory the app is launched
+        /// with via `--user-data-dir`. Required, and refused for the default
+        /// profile, which `account switch` owns.
+        #[arg(long, value_name = "DIR")]
+        data_dir: std::path::PathBuf,
+
+        /// Report what would change and exit without touching anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
