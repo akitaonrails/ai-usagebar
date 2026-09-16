@@ -11,6 +11,10 @@ Each release is also published at
 
 ### Fixed
 
+- **macOS named Codex accounts.** Accounts in `[[openai.accounts]]` now appear
+  in the provider selector, Overview, Preferences and vendor-cycle shortcut,
+  including when no default Codex login exists.
+
 - **Antigravity CLI session fallback.** When `agy` requires an undiscoverable
   CSRF token, ai-usagebar now reads the CLI's saved Google session from
   `~/.gemini/antigravity-cli/antigravity-oauth-token` when the OS keyring is

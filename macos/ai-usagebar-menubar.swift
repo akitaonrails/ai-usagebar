@@ -1085,6 +1085,29 @@ func openRouterAccountLabels() -> [String] {
     return accountLabels(inTOML: text, vendor: "openrouter")
 }
 
+/// Explicit `[[openai.accounts]]` labels; Rust resolves each auth file.
+func codexAccountLabels() -> [String] {
+    guard let text = try? String(contentsOfFile: configPathTOML(), encoding: .utf8) else {
+        return []
+    }
+    return accountLabels(inTOML: text, vendor: "openai")
+}
+
+/// Preferences include enabled providers even before they have credentials.
+func preferenceVendorIds(catalog: [VendorCatalogEntry], claude: [String],
+                         openRouter: [String], codex: [String]) -> [String] {
+    catalog.filter { $0.enabled }.flatMap { vendor -> [String] in
+        let labels: [String]
+        switch vendor.id {
+        case "anthropic": labels = claude
+        case "openrouter": labels = openRouter
+        case "openai": labels = codex
+        default: labels = []
+        }
+        return [vendor.id] + labels.map { vendor.id + "@" + $0 }
+    }
+}
+
 /// Rust semantics (`show_default_account`): `false` hides an unnamed entry,
 /// but is ignored when there are no named accounts, so a vendor never loses
 /// its only entry.
@@ -1165,12 +1188,13 @@ func filterOverviewEntries(_ entries: [MenuEntry], requested: [String]?) -> [Men
 }
 
 /// The selectable entries, in menu order: every enabled+configured vendor,
-/// with Claude and OpenRouter expanded into named accounts (their default
-/// entries kept only per `show_default_account`). `active` stays listed even when
+/// with Claude, Codex and OpenRouter expanded into named accounts. Claude and
+/// OpenRouter honor `show_default_account`. `active` stays listed even when
 /// unconfigured — same rule the per-vendor list always had.
 func vendorEntries(active: String,
                    usageAccounts: [UsageAccount]? = nil,
-                   catalog: [VendorCatalogEntry] = vendorCatalog) -> [MenuEntry] {
+                   catalog: [VendorCatalogEntry] = vendorCatalog,
+                   codexLabels: () -> [String] = codexAccountLabels) -> [MenuEntry] {
     var out: [MenuEntry] = []
     for v in catalog where v.enabled {
         if v.id == "anthropic" {
@@ -1187,6 +1211,16 @@ func vendorEntries(active: String,
                 out.append(MenuEntry(id: v.id, name: v.name))
             }
             out.append(contentsOf: claudeAccountMenuEntries(accounts))
+        } else if v.id == "openai" {
+            // Named auth files work independently of the default Codex login.
+            // Codex has no show_default_account option: keep the existing
+            // default-entry visibility rule, then append every named account.
+            if v.id == active || v.configured {
+                out.append(MenuEntry(id: v.id, name: v.name))
+            }
+            out.append(contentsOf: codexLabels().map {
+                MenuEntry(id: "openai@" + $0, name: "\(v.name) · \($0)")
+            })
         } else if v.id == "openrouter" {
             let labels = openRouterAccountLabels()
             let showDefault = showDefaultAccount(
@@ -1553,21 +1587,11 @@ struct SettingsView: View {
     // Only vendors the Rust catalog marks enabled appear in the selector —
     // whatever `vendors --json` reports, so a provider added in Rust (and its
     // opt-in or enabled default) reaches here with no menubar change. Claude
-    // accounts appear as their `vendor@<label>` pseudo-ids, same as the
+    // and Codex/OpenRouter accounts use `vendor@<label>` pseudo-ids, same as the
     // "Switch provider" submenu.
     private var vendors: [String] {
-        var ids = vendorCatalog.filter { $0.enabled }.map { $0.id }
-        let labels = claudeAccountLabels()
-        if let at = ids.firstIndex(of: "anthropic") {
-            ids.insert(contentsOf: labels.map { CLAUDE_ACCOUNT_ID_PREFIX + $0 }, at: at + 1)
-        }
-        let openRouterLabels = openRouterAccountLabels()
-        if let at = ids.firstIndex(of: "openrouter") {
-            ids.insert(
-                contentsOf: openRouterLabels.map { OPENROUTER_ACCOUNT_ID_PREFIX + $0 },
-                at: at + 1)
-        }
-        return ids
+        preferenceVendorIds(catalog: vendorCatalog, claude: claudeAccountLabels(),
+                            openRouter: openRouterAccountLabels(), codex: codexAccountLabels())
     }
 
     var body: some View {

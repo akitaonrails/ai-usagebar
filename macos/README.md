@@ -181,6 +181,18 @@ ai-usagebar account switch work --desktop   # quits and reopens Claude.app
 
 See the main README's *Switching the active Claude account* for the full story.
 
+## Multiple Codex accounts
+
+Entries from `[[openai.accounts]]` appear as “Codex · label” in the provider
+submenu, Preferences, Overview, and the vendor-cycle shortcut. Each is fetched
+with `--vendor openai --account <label>`; Rust resolves its `codex_auth_path`
+and keeps its cache separate. Named accounts do not require a default Codex
+login. Disabling `[openai]` hides all its accounts.
+
+Setting `[ui] overview_vendors = ["openai"]` includes all configured Codex
+accounts. Each Overview checkbox still controls that account's visibility.
+Selecting an entry changes whose usage is displayed, not the active Codex login.
+
 ## Multiple OpenRouter accounts
 
 Entries from `[[openrouter.accounts]]` appear as separate menu choices and use
