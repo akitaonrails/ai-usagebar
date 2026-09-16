@@ -418,9 +418,9 @@ mod tests {
         // `width_cjk()` would give them 2 and tear the tooltip box apart. This
         // test is the tripwire for anyone who reaches for the CJK variant.
         for g in [
-            "╭", "╮", "╯", "╰", "─", "│", "█", "░", "▶", "◀", "▸", "◆", "←",
-            "↑", "→", "↓", "↻", "≈", "·", "…", "—", "•", "€", "£", "¥", "é",
-            "α", "β", "⚠", "✓", "✗", "❯", "⏱", "⏸", "‸",
+            "╭", "╮", "╯", "╰", "─", "│", "█", "░", "▶", "◀", "▸", "◆", "←", "↑", "→", "↓", "↻",
+            "≈", "·", "…", "—", "•", "€", "£", "¥", "é", "α", "β", "⚠", "✓", "✗", "❯", "⏱", "⏸",
+            "‸",
         ] {
             assert_eq!(visible_width(g), 1, "{g} must measure one column");
         }
