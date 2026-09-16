@@ -11,6 +11,9 @@ Each release is also published at
 
 ### Fixed
 
+- **macOS named Codex accounts.** Accounts in `[[openai.accounts]]` now appear
+  in the provider selector, Overview, Preferences and vendor-cycle shortcut,
+  including when no default Codex login exists.
 - **macOS disabled providers.** Preferences now distinguish disabled providers
   from missing credentials and offer an explicit Enable action, backed by
   `ai-usagebar settings enable <vendor>`. Other settings and credentials are
