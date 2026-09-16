@@ -1048,7 +1048,7 @@ func testDisabledVendorPreferences() {
             } else {
                 assertEqual(status, configured ? "✓ Configured" : "⚠ Not signed in — claude",
                             "enabled provider keeps credential status")
-                assertEqual(button, configured ? "Re-logar" : "Sign in",
+                assertEqual(button, configured ? "Sign in again" : "Sign in",
                             "enabled provider keeps sign-in action")
             }
         }

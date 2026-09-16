@@ -1458,7 +1458,7 @@ func vendorStatusText(_ v: VendorCatalogEntry, cliPresent: Bool?) -> String {
 func vendorButtonLabel(_ v: VendorCatalogEntry, cliPresent: Bool?) -> String {
     if !v.enabled { return "Enable" }
     if v.kind == "oauth" {
-        if v.configured { return "Re-logar" }
+        if v.configured { return "Sign in again" }
         if cliPresent == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
         return "Sign in"
     }
@@ -1510,7 +1510,7 @@ struct VendorsSection: View {
                     Text(enableFailure).font(.caption).foregroundColor(.red)
                 }
                 if checking {
-                    Text("verificando…").font(.caption).foregroundColor(.secondary)
+                    Text("checking…").font(.caption).foregroundColor(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
