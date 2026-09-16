@@ -9,6 +9,20 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [1.18.0] — 2026-09-16
+
+### Added
+
+- **`ai-usagebar settings enable <vendor>`.** A new CLI subcommand that turns one
+  provider on, preserving every other setting, comment and credential in
+  `config.toml`. Unlike discovery, it is an explicit opt-in and therefore does
+  overrule a previous `enabled = false`. It is what the macOS Preferences
+  Enable button calls.
+- **Ollama Cloud monthly window placeholders.** `{oll_monthly_pct}`,
+  `{oll_monthly_reset}`, `{oll_monthly_elapsed}`, `{oll_monthly_pace}` and
+  `{oll_monthly_pace_indicator}`, plus a `Monthly` metric in the tooltip, TUI
+  panel and report, for accounts whose plan reports a calendar-month quota.
+
 ### Fixed
 
 - **macOS named Codex accounts.** Accounts in `[[openai.accounts]]` now appear
@@ -2426,7 +2440,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...v1.18.0
 [1.17.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...v1.16.0
