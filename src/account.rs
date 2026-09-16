@@ -158,6 +158,25 @@ fn looks_like_profile(dir: &Path) -> bool {
     dir.join("config.json").is_file()
 }
 
+/// Whether a profile holds any history at all — at least one
+/// `<account>/<org>` directory under its session root.
+///
+/// A profile the app has merely opened once already has a `config.json`, so
+/// `looks_like_profile` alone keeps abandoned and never-signed-in profiles in
+/// the default source set, where they contribute nothing and appear in every
+/// report as noise. Named `--from` sources are not filtered: asking for a
+/// specific source and being told it is empty is information.
+fn has_history(dir: &Path) -> bool {
+    let root = dir.join("claude-code-sessions");
+    let Ok(accounts) = std::fs::read_dir(&root) else {
+        return false;
+    };
+    accounts.flatten().any(|account| {
+        std::fs::read_dir(account.path())
+            .is_ok_and(|mut orgs| orgs.any(|org| org.is_ok_and(|org| org.path().is_dir())))
+    })
+}
+
 /// Every other profile this machine knows: the default one, plus any sibling
 /// of the target. The launcher should not have to know the topology, and a
 /// sibling copy that has since gained history becomes a source automatically.
@@ -167,6 +186,7 @@ fn default_sources(target: &Path, default_profile: &Path) -> Vec<PathBuf> {
     let mut push = |dir: PathBuf| {
         if resolved(&dir) != wanted
             && looks_like_profile(&dir)
+            && has_history(&dir)
             && !out.iter().any(|seen| resolved(seen) == resolved(&dir))
         {
             out.push(dir);
