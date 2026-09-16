@@ -17,8 +17,10 @@
 //! When no product is running there is still a way to answer: Antigravity
 //! keeps the Google session it signed in with in the OS keyring, and the same
 //! quota summary is served by the Cloud Code API. That is the *fallback*, taken
-//! only when no local server was found at all — a server that is up but signed
-//! out, or answering on the wrong protocol, keeps its own diagnosis.
+//! when no local server was found at all — or when the one that answered
+//! rejected the *probe* for lacking a CSRF token it never offered — while a
+//! server that is up but signed out, or answering on the wrong protocol,
+//! keeps its own diagnosis.
 
 use std::time::Duration;
 
@@ -131,7 +133,13 @@ pub async fn fetch_snapshot_at(
     // quota call itself goes to the network — after the fresh-cache check,
     // like the local RPC.
     let origin = match open_session(client, remote.local_bases.as_deref()).await {
-        Err(e) if is_no_local_server(&e) => Origin::Remote(saved_session(remote.credential)),
+        // A server that rejected the probe itself — newer `agy` builds demand
+        // a CSRF token the scrape at `/` can no longer supply — is running and
+        // signed in, so its 401 is about how we asked, not about the session.
+        // The remote path answers instead, exactly as when nothing is running.
+        Err(e) if is_no_local_server(&e) || is_csrf_rejection(&e) => {
+            Origin::Remote(saved_session(remote.credential))
+        }
         session => Origin::Local(session),
     };
     let account = origin.account();
@@ -245,6 +253,12 @@ async fn open_session(client: &reqwest::Client, bases: Option<&[String]>) -> Res
 /// `ANTIGRAVITY_LS_ADDRESS` (or a second product on another port) would mask
 /// the one message worth reading behind transport noise.
 ///
+/// A CSRF rejection of the probe itself ([`is_csrf_rejection`]) ranks between
+/// the two: not actionable — the session is fine — but it must still win over
+/// transport noise, because [`fetch_snapshot_at`] routes the whole fetch to
+/// the remote fallback based on *this selected error*. A connection refusal
+/// standing in its place would silently cost that routing.
+///
 /// Note that this also decides *visibility*: transport errors are transient and
 /// fall back silently to cache, while the `401` surfaces in the widget. That is
 /// why a TLS listener's echo is ranked below everything else rather than merely
@@ -253,27 +267,52 @@ async fn open_session(client: &reqwest::Client, bases: Option<&[String]>) -> Res
 /// serving RPC into a visible error about a protocol the user never chose.
 fn select_probe_error(errors: Vec<AppError>) -> AppError {
     let mut actionable = None;
+    let mut csrf = None;
     let mut last = None;
     let mut echo = None;
     for e in errors {
         if actionable.is_none() && is_actionable(&e) {
             actionable = Some(e);
+        } else if is_csrf_rejection(&e) {
+            csrf = Some(e);
         } else if is_tls_echo(&e) {
             echo = Some(e);
         } else {
             last = Some(e);
         }
     }
-    actionable.or(last).or(echo).unwrap_or_else(|| {
+    actionable.or(csrf).or(last).or(echo).unwrap_or_else(|| {
         AppError::Other("antigravity: no local server answered GetUserStatus".into())
     })
 }
 
 /// An error the user can do something about, as opposed to "that product is not
 /// running". `post_rpc` only ever yields `Http`/`Transport`/`Other`, so the
-/// authentication statuses are the whole set.
+/// authentication statuses are the whole set — except a 401 whose body says the
+/// *probe* lacked a CSRF token ([`is_csrf_rejection`]): that one is a complaint
+/// about how we asked, not about the session, and belongs to the remote
+/// fallback instead.
 fn is_actionable(e: &AppError) -> bool {
-    matches!(e, AppError::Http { status, .. } if *status == 401 || *status == 403)
+    matches!(e, AppError::Http { status: 401 | 403, .. }) && !is_csrf_rejection(e)
+}
+
+/// A `401` that rejected the probe, not the user's session.
+///
+/// Measured 2026-09-16 against an `agy` language server whose newer builds
+/// wrap the JSON-RPC surface in a `CsrfInterceptor`: asked for
+/// `RetrieveUserQuotaSummary` without a CSRF token — and the token scrape at
+/// `/` no longer finds one to carry — it answers
+/// `{"code":"unauthenticated","message":"missing CSRF token"}`. The server is
+/// up and signed in, so this is neither "signed out" nor actionable; ranked as
+/// its own class in [`select_probe_error`] and routed to the remote fallback
+/// in [`fetch_snapshot_at`].
+///
+/// Matched on the body, not the status alone, so a genuine signed-out `401`
+/// (any other body) keeps its own diagnosis. Case-insensitive on
+/// `"csrf token"` so an `invalid CSRF token` variant lands here too.
+fn is_csrf_rejection(e: &AppError) -> bool {
+    matches!(e, AppError::Http { status: 401, body }
+        if body.to_ascii_lowercase().contains("csrf token"))
 }
 
 /// A TLS listener answering the plaintext JSON-RPC probe.
@@ -1998,6 +2037,56 @@ mod tests {
         assert!(matches!(err, AppError::Http { status: 401, .. }), "{err}");
     }
 
+    /// Verbatim from a real `agy` language server (2026-09-16) whose newer
+    /// builds guard the RPC surface with a `CsrfInterceptor` — the response
+    /// that used to be reported as "signed out" and hide the cloud fallback.
+    fn csrf_rejection() -> AppError {
+        AppError::Http {
+            status: 401,
+            body: r#"{"code":"unauthenticated","message":"missing CSRF token"}"#.into(),
+        }
+    }
+
+    /// A CSRF rejection is about the probe, not the session: it must not be
+    /// classified "signed out", and a genuine signed-out 401 — any other body —
+    /// must not be mistaken for one.
+    #[test]
+    fn a_csrf_rejection_is_not_signed_out_and_vice_versa() {
+        assert!(is_csrf_rejection(&csrf_rejection()));
+        assert!(!is_actionable(&csrf_rejection()), "not the user's session");
+        assert!(!is_csrf_rejection(&http(401)), "empty body is plain signed out");
+        assert!(is_actionable(&http(401)));
+    }
+
+    /// The remote-fallback routing in `fetch_snapshot_at` keys off the error
+    /// this selection returns, so a CSRF rejection must survive transport
+    /// noise and a TLS echo standing later in the list — a refusal winning
+    /// here would silently cost the cloud path.
+    #[test]
+    fn a_csrf_rejection_outranks_transport_noise_and_a_tls_echo() {
+        let err = select_probe_error(vec![
+            csrf_rejection(),
+            AppError::Transport("connection refused".into()),
+            tls_echo(),
+        ]);
+        assert!(is_csrf_rejection(&err), "{err}");
+
+        let err = select_probe_error(vec![tls_echo(), csrf_rejection()]);
+        assert!(is_csrf_rejection(&err), "{err}");
+    }
+
+    /// A server that genuinely rejected the session outranks a CSRF-blocked
+    /// one: the account itself is the problem, and no fallback can fix that.
+    #[test]
+    fn a_genuine_auth_failure_still_outranks_a_csrf_rejection() {
+        let err = select_probe_error(vec![csrf_rejection(), http(403)]);
+        assert!(
+            matches!(err, AppError::Http { status: 403, .. }),
+            "{err}"
+        );
+        assert!(!is_csrf_rejection(&err));
+    }
+
     #[test]
     fn no_candidates_at_all_yields_a_generic_error() {
         let err = select_probe_error(Vec::new());
@@ -2811,6 +2900,64 @@ mod tests {
 
         quota.assert_async().await;
         assert!(matches!(err, AppError::Http { status: 401, .. }), "{err}");
+    }
+
+    /// The counter-case to the one above, and the reason this fix exists.
+    /// Measured 2026-09-16: an `agy` language server with the newer
+    /// `CsrfInterceptor` answers `GetUserStatus` and
+    /// `RetrieveUserQuotaSummary` with
+    /// `401 {"code":"unauthenticated","message":"missing CSRF token"}` — the
+    /// token scrape at `/` finds nothing to present. The server is up and
+    /// signed in, so that 401 is about the probe, not the session: it must not
+    /// be reported as signed out but fall through to the saved-session Cloud
+    /// Code path, which answers with the real quota buckets.
+    #[tokio::test]
+    async fn a_csrf_rejecting_local_server_falls_through_to_the_cloud_path() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let status_path = format!("/{STATUS_RPC}");
+        let status = server
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body(r#"{"code":"unauthenticated","message":"missing CSRF token"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let quota = quota_mock(&mut server, "KEYRING-AT")
+            .expect(1)
+            .create_async()
+            .await;
+        let plan = server
+            .mock("POST", "/daily/plan")
+            .match_header("authorization", "Bearer KEYRING-AT")
+            .with_status(200)
+            .with_body(r#"{"currentTier":{"name":"google_ai_pro"}}"#)
+            .create_async()
+            .await;
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+
+        let outcome = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Blob(&blob),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![server.url()]),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect("the cloud path answers when the local probe is csrf-rejected");
+
+        status.assert_async().await;
+        quota.assert_async().await;
+        plan.assert_async().await;
+        assert!(!outcome.stale);
+        assert_eq!(outcome.snapshot.source, AntigravitySource::Remote);
+        assert_eq!(
+            outcome.snapshot.session.as_ref().unwrap().utilization_pct,
+            43
+        );
     }
 
     /// The remote path falls back exactly like the local one: the last good

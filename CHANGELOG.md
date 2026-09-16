@@ -9,6 +9,21 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Antigravity: a local `401 missing CSRF token` no longer hides the cloud
+  fallback.** Newer `agy` builds wrap the local JSON-RPC surface in a
+  `CsrfInterceptor`; asked without a CSRF token (and the token scrape at `/`
+  finds none to carry), the language server answers
+  `401 {"code":"unauthenticated","message":"missing CSRF token"}`. That 401 was
+  ranked as "signed out" — actionable — so it won probe selection and the
+  widget reported `HTTP 401` while the working saved-session Cloud Code path
+  was never tried. A CSRF rejection of the *probe* is now its own error class:
+  not signed out, ranked above transport noise (so the fallback routing still
+  sees it) and below a genuine auth rejection, and routed to the remote path
+  in `fetch_snapshot_at`. Reported for `agy`'s embedded language server;
+  any Antigravity product that adopts the interceptor is covered the same way.
+
 ## [1.14.0] — 2026-09-08
 
 ### Added
