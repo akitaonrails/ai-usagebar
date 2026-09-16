@@ -22,6 +22,15 @@ Each release is also published at
   `Google API (app closed)` — false while the app is open. The source row now
   reads `Google API`, which is true for both reasons the fallback fires.
 
+- **Ollama Cloud monthly-quota accounts no longer show a bare "Ready".**
+  Some Ollama Cloud accounts report `limits.monthly` instead of
+  `limits.session` + `limits.weekly` for the same `"pro"` plan label. The
+  parser only understood the session/weekly shape, so a monthly account had
+  no window to render and every frontend fell back to a plain "Ready"/status
+  pill with no percentage. `limits.monthly` is now parsed into a `Monthly`
+  metric (bar, tooltip, TUI panel, and top models), alongside the existing
+  session/weekly windows for accounts that report those instead.
+
 ## [1.17.0] — 2026-09-12
 
 ### Added

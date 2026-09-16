@@ -1,9 +1,9 @@
 # Ollama Cloud
 
 Native provider for the cloud quota behind [ollama.com/settings](https://ollama.com/settings)
-(session + weekly windows, per-model request counts, rolling 4-week activity
-cost). **Not** the local daemon at `127.0.0.1:11434` — that process has no
-quota route.
+(session + weekly windows on most accounts, a single monthly window on
+others, per-model request counts, rolling 4-week activity cost). **Not**
+the local daemon at `127.0.0.1:11434` — that process has no quota route.
 
 - [Credential](#credential)
 - [Config](#config)
@@ -69,7 +69,9 @@ ai-usagebar-tui
 .\target\release\ai-usagebar-tui.exe
 ```
 
-Default bar format: `{oll_session_pct}% · {oll_weekly_pct}%w`.
+Default bar format: `{oll_session_pct}% · {oll_weekly_pct}%w`. Accounts that
+report `limits.monthly` instead render `{oll_monthly_pct}%` there — see
+"What the bar shows" below.
 
 ## What the bar shows
 
@@ -79,15 +81,23 @@ Default bar format: `{oll_session_pct}% · {oll_weekly_pct}%w`.
 |---|---|
 | `limits.session.usage` | Fraction `[0, 1]` of the session window (rendered as %) |
 | `limits.weekly.usage` | Fraction of the weekly window |
+| `limits.monthly.usage` | Fraction of the calendar-month window |
 | `limits.*.models[]` | `{name, request_count}` per model in that window |
 | `activity.cost` | Rolling cost as a **string** of dollars (`"0.00000"`) |
 | `activity.period.type` | Always `"last_4_weeks"` today |
 
+Two response shapes are observed in the wild, both under the same `"pro"`
+plan label: some accounts report `session` + `weekly`, others report
+`monthly` alone. ai-usagebar renders whichever the account sends; the
+shapes are never combined in one response.
+
 The JSON does **not** carry reset timestamps or a plan name (those exist
 only in the HTML UI). The tooltip therefore shows `Resets in —` and uses
-the `plan` string from config.
+the `plan` string from config. The monthly window has no fixed length on
+the wire either — ai-usagebar paces it against a nominal 30 days, which is
+cosmetic only since there is no reset timestamp to pace against.
 
-Live-verified shape (numbers redacted):
+Live-verified shapes (numbers redacted):
 
 ```json
 {
@@ -99,6 +109,21 @@ Live-verified shape (numbers redacted):
     "weekly": {
       "usage": 0.23,
       "models": [{"name": "kimi-k3", "request_count": 180}]
+    }
+  },
+  "activity": {
+    "cost": "0.00000",
+    "period": {"type": "last_4_weeks"}
+  }
+}
+```
+
+```json
+{
+  "limits": {
+    "monthly": {
+      "usage": 0.003,
+      "models": [{"name": "gpt-oss:120b", "request_count": 100}]
     }
   },
   "activity": {
