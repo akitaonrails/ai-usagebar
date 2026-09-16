@@ -9,6 +9,8 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [1.18.1] — 2026-09-16
+
 ### Fixed
 
 - **Column alignment with double-width text.** Labels were measured and padded
@@ -2449,7 +2451,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.1...HEAD
+[1.18.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...v1.18.0
 [1.17.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.16.0...v1.17.0
