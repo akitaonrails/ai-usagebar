@@ -9,6 +9,20 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **`account merge-history` for relocated Claude Desktop profiles (macOS).**
+  Merges every account's sessions and schedules into whichever account a given
+  profile is signed into, without swapping a credential or touching the app:
+  `ai-usagebar account merge-history --data-dir <DIR> [--from <DIR>]...`.
+  Intended for side-by-side Desktop copies launched with `--user-data-dir`,
+  where `account switch` cannot be used because it installs a stored token
+  over the profile's live login and quits the app by application name. The
+  merge is additive — no deletion sweep runs, so an unattended run cannot lose
+  history — sources are opened read-only, and a second run is a no-op. Note
+  that it deliberately crosses accounts: afterwards one account's window lists
+  conversations started under the others.
+
 ### Fixed
 
 - **macOS named Codex accounts.** Accounts in `[[openai.accounts]]` now appear
