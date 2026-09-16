@@ -475,8 +475,11 @@ fn resolve_org(sessions_root: &Path, account_uuid: &str, config: &[u8]) -> Optio
     orgs.sort();
     if orgs.len() > 1 {
         let known = merge::orgs_in_config(config);
-        let mut narrowed: Vec<String> =
-            orgs.iter().filter(|org| known.contains(org)).cloned().collect();
+        let mut narrowed: Vec<String> = orgs
+            .iter()
+            .filter(|org| known.contains(org))
+            .cloned()
+            .collect();
         if narrowed.len() == 1 {
             return narrowed.pop();
         }
@@ -487,6 +490,141 @@ fn resolve_org(sessions_root: &Path, account_uuid: &str, config: &[u8]) -> Optio
         });
     }
     orgs.pop()
+}
+
+/// Which account and organisation a profile's history merges into.
+pub fn history_target(paths: &Paths) -> Result<(String, Option<String>)> {
+    let config_json = paths.config_json();
+    let config = std::fs::read(&config_json).map_err(|e| AppError::io_at(&config_json, e))?;
+    let account_uuid = merge::logged_in_account(&config).ok_or_else(|| {
+        AppError::Credentials(format!(
+            "no account is signed into {}; sign in before merging history",
+            paths.data_dir.display()
+        ))
+    })?;
+    let org_uuid = resolve_org(&paths.sessions_root(), &account_uuid, &config);
+    Ok((account_uuid, org_uuid))
+}
+
+/// What a staging pass placed into the target profile.
+#[derive(Debug, Default)]
+pub struct Staged {
+    /// Session indexes newly placed or refreshed.
+    pub sessions: usize,
+    /// Account-level schedule registries placed or refreshed.
+    pub registries: usize,
+    /// Sources that exist but could not be read. Never folded into "empty":
+    /// an absent source and an unreadable one must not look alike, or a
+    /// partial failure silently shrinks history.
+    pub unreadable: Vec<PathBuf>,
+}
+
+/// Bring other profiles' per-account history into this profile's session tree,
+/// so [`plan_history_merge`] can then union it into the signed-in account.
+///
+/// Sources are opened for READING ONLY. Nothing — no ledger, lock, or
+/// temporary file — is ever written beneath a source, and a source is never
+/// required to be idle: reading an index out of a running profile is safe,
+/// writing into one is not. Every destination is checked to lie inside this
+/// profile's own session tree before it is written.
+///
+/// Idempotent, because every launch runs it: an index is placed only when the
+/// destination is absent or strictly older, so a second consecutive run copies
+/// nothing. `own` is the target account's own `<account>/<org>` directory,
+/// whose schedule registry is only ever placed when absent — overwriting it
+/// from a source could drop a routine that exists only here, before the merge
+/// has had a chance to reconcile it.
+pub fn stage_history_sources(
+    paths: &Paths,
+    sources: &[PathBuf],
+    own: Option<(&str, &str)>,
+    dry_run: bool,
+) -> Staged {
+    let mut staged = Staged::default();
+    let root = paths.sessions_root();
+    let own_dir = own.map(|(account, org)| root.join(account).join(org));
+
+    for source in sources {
+        let source_root = source.join(SESSIONS_DIR);
+        let Ok(accounts) = std::fs::read_dir(&source_root) else {
+            if source_root.exists() {
+                staged.unreadable.push(source_root);
+            }
+            continue;
+        };
+        for account in accounts.flatten() {
+            let Ok(orgs) = std::fs::read_dir(account.path()) else {
+                staged.unreadable.push(account.path());
+                continue;
+            };
+            for org in orgs.flatten().filter(|org| org.path().is_dir()) {
+                let Some(account_name) = account.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                let Some(org_name) = org.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                let destination_dir = root.join(&account_name).join(&org_name);
+                // Read-only contract: never write outside our own tree.
+                if !destination_dir.starts_with(&root) {
+                    continue;
+                }
+                let Ok(entries) = std::fs::read_dir(org.path()) else {
+                    staged.unreadable.push(org.path());
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let from = entry.path();
+                    let Some(name) = from.file_name().and_then(|n| n.to_str()) else {
+                        continue;
+                    };
+                    let is_index = name.starts_with("local_") && name.ends_with(".json");
+                    let is_registry = name == merge::SCHEDULED_TASKS;
+                    if !is_index && !is_registry {
+                        continue;
+                    }
+                    let to = destination_dir.join(name);
+                    // The target's own registry is authoritative until the
+                    // merge reconciles it: place it only if it is missing.
+                    let absent_only =
+                        is_registry && own_dir.as_deref() == Some(destination_dir.as_path());
+                    if !should_place(&from, &to, absent_only) {
+                        continue;
+                    }
+                    if dry_run || copy_file(&from, &to).is_ok() {
+                        if is_index {
+                            staged.sessions += 1;
+                        } else {
+                            staged.registries += 1;
+                        }
+                    } else {
+                        staged.unreadable.push(from);
+                    }
+                }
+            }
+        }
+    }
+    staged
+}
+
+/// Copy-if-absent-or-newer. Never overwrites a destination that is at least as
+/// new as the source, so re-running places nothing and a locally-advanced
+/// index is not rolled back.
+fn should_place(from: &Path, to: &Path, absent_only: bool) -> bool {
+    let Ok(destination) = std::fs::metadata(to) else {
+        return true;
+    };
+    if absent_only {
+        return false;
+    }
+    let newer = |meta: std::fs::Metadata| meta.modified().ok();
+    match (
+        std::fs::metadata(from).ok().and_then(newer),
+        newer(destination),
+    ) {
+        (Some(source), Some(existing)) => source > existing,
+        _ => false,
+    }
 }
 
 /// Plan a history-only merge for the profile at `paths`.

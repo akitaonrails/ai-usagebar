@@ -310,15 +310,31 @@ pub enum AccountAction {
     /// is already signed into (macOS). Additive: nothing is ever deleted, and
     /// no credential or app state is touched.
     ///
+    /// BY DESIGN THIS CROSSES ACCOUNTS. Afterwards the signed-in account's
+    /// window lists conversations and routines that were started under your
+    /// other accounts, because the point is that every profile opens on the
+    /// union of everything. That is a feature, not a leak — but it does mean
+    /// one account's window shows another account's chat titles, so do not run
+    /// it across accounts that must stay visually separate.
+    ///
     /// For side-by-side Desktop copies launched with `--user-data-dir`, run
-    /// this just before the app starts so that window opens on the union of
-    /// everything. Use `account switch` for the normal single-profile case.
+    /// this just before the app starts. Use `account switch` for the normal
+    /// single-profile case.
     MergeHistory {
         /// The profile to merge into — the same directory the app is launched
         /// with via `--user-data-dir`. Required, and refused for the default
         /// profile, which `account switch` owns.
         #[arg(long, value_name = "DIR")]
         data_dir: std::path::PathBuf,
+
+        /// Profile to read history from. Repeatable. Sources are opened
+        /// read-only and need not be idle.
+        ///
+        /// Defaults to every other profile this machine knows: the default
+        /// Claude Desktop profile plus any sibling of `--data-dir`. Pass this
+        /// to override that set.
+        #[arg(long, value_name = "DIR")]
+        from: Vec<std::path::PathBuf>,
 
         /// Report what would change and exit without touching anything.
         #[arg(long)]
