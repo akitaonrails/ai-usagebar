@@ -11,6 +11,7 @@
 
 use crate::pacing::PaceSeverity;
 use crate::theme::Theme;
+use unicode_width::UnicodeWidthChar;
 
 /// Width of the progress bar in characters. Matches `BAR_LEN=20` (claudebar:169).
 pub const BAR_LEN: u32 = 20;
@@ -160,9 +161,20 @@ fn repeat_char(c: char, n: u32) -> String {
     std::iter::repeat_n(c, n as usize).collect()
 }
 
-/// Count the visible width of a Pango-marked string (its character count with
-/// all `<span …>…</span>` tags stripped). Used by the bordered-box renderer
-/// for padding alignment — claudebar implements this with `sed 's/<[^>]*>//g'`.
+/// Count the visible width of a Pango-marked string: its width in terminal
+/// columns with all `<span …>…</span>` tags stripped. Used by the bordered-box
+/// renderer for padding alignment — claudebar implements this with
+/// `sed 's/<[^>]*>//g'` plus a character count.
+///
+/// Columns, not characters: a CJK ideograph occupies two cells, so counting
+/// `日本語` as 3 leaves every line of a Japanese tooltip three columns short of
+/// the border. Combining marks occupy none.
+///
+/// **Always `width()`, never `width_cjk()`.** Nearly every glyph this project
+/// draws with — the box border `╭─╮│`, the bar's `█`, the arrows, `·`, `…`, `€`
+/// and the Nerd Font mark — is East Asian Width *Ambiguous*. `width()` gives
+/// those 1, which is what the renderer has always assumed; `width_cjk()` would
+/// give them 2 and tear the tooltip box apart.
 pub fn visible_width(s: &str) -> usize {
     let mut depth = 0usize;
     let mut count = 0usize;
@@ -185,7 +197,7 @@ pub fn visible_width(s: &str) -> usize {
             }
             _ => {
                 if depth == 0 {
-                    count += 1;
+                    count += UnicodeWidthChar::width(ch).unwrap_or(0);
                 }
                 ch.len_utf8()
             }
@@ -375,6 +387,45 @@ mod tests {
 
     /// An escaped character occupies one cell on screen. Counting its source
     /// bytes instead left every tooltip row containing one short on padding.
+    #[test]
+    fn visible_width_counts_a_cjk_ideograph_as_two_columns() {
+        // Japanese and Korean labels occupy two terminal cells per glyph.
+        // Counting characters left every line of a translated tooltip short of
+        // its border by exactly the number of ideographs on it.
+        assert_eq!(visible_width("日本語"), 6);
+        assert_eq!(visible_width("사용량"), 6);
+        assert_eq!(visible_width("セッション"), 10);
+        // Mixed runs add up per glyph, not per character.
+        assert_eq!(visible_width("5h 日本語"), 3 + 6);
+        // Tags are still stripped before measuring.
+        assert_eq!(visible_width("<span foreground='#fff'>日本語</span>"), 6);
+    }
+
+    #[test]
+    fn visible_width_counts_a_combining_mark_as_zero() {
+        // "e" + U+0301 renders as one cell, unlike the precomposed "é" which is
+        // already one char. Both must measure 1 or accented locales ragged-edge.
+        assert_eq!(visible_width("e\u{301}"), 1);
+        assert_eq!(visible_width("é"), 1);
+        assert_eq!(visible_width("cafe\u{301}"), 4);
+    }
+
+    #[test]
+    fn visible_width_keeps_every_ambiguous_glyph_this_project_draws_at_one() {
+        // Nearly every glyph in this UI is East Asian Width *Ambiguous*: the
+        // box border, the bar block, the arrows, the separators. `width()`
+        // gives them 1 — which is what the renderer has always assumed — while
+        // `width_cjk()` would give them 2 and tear the tooltip box apart. This
+        // test is the tripwire for anyone who reaches for the CJK variant.
+        for g in [
+            "╭", "╮", "╯", "╰", "─", "│", "█", "░", "▶", "◀", "▸", "◆", "←",
+            "↑", "→", "↓", "↻", "≈", "·", "…", "—", "•", "€", "£", "¥", "é",
+            "α", "β", "⚠", "✓", "✗", "❯", "⏱", "⏸", "‸",
+        ] {
+            assert_eq!(visible_width(g), 1, "{g} must measure one column");
+        }
+    }
+
     #[test]
     fn visible_width_counts_an_entity_as_one_glyph() {
         assert_eq!(visible_width("&amp;"), 1);

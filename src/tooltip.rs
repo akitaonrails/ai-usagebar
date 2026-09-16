@@ -212,6 +212,32 @@ mod tests {
         );
     }
 
+    /// The reason `visible_width` measures columns rather than characters: a
+    /// Japanese or Korean row is twice as wide as its character count, so a
+    /// char-counting box stopped short of the right border by one cell per
+    /// ideograph. This is the integration proof behind that change.
+    #[test]
+    fn rows_with_double_width_glyphs_keep_the_border_flush() {
+        let lines = vec![
+            Line::Body("セッション (5h)".into()),
+            Line::Body("사용량".into()),
+            Line::Body("Weekly".into()),
+        ];
+        let out = render_bordered(&lines, &theme());
+        let right_edges: Vec<usize> = out.lines().map(crate::pango::visible_width).collect();
+        assert!(
+            right_edges.windows(2).all(|w| w[0] == w[1]),
+            "ragged box with CJK rows: {right_edges:?}\n{out}"
+        );
+    }
+
+    #[test]
+    fn pad_right_pads_a_double_width_string_by_columns() {
+        // "日本" is 2 chars but 4 columns; padding to 6 needs 2 spaces, not 4.
+        assert!(pad_right("日本", 6).ends_with("  "));
+        assert_eq!(crate::pango::visible_width(&pad_right("日本", 6)), 6);
+    }
+
     #[test]
     fn body_line_is_right_padded_to_inner_width() {
         // Box width = visible_width(widest) + 1 = "longest" (7) + 1 = 8.

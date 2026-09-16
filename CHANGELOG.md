@@ -9,6 +9,15 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Column alignment with double-width text.** Labels were measured and padded
+  by character count, so any text containing CJK glyphs — a Japanese account
+  label, a plan name — left the value column short by one space per ideograph
+  in the text report, the tooltip box, and the TUI. Width is now measured in
+  terminal columns, and padding is computed from that rather than from
+  `format!`'s character-based fill. Combining marks now correctly measure zero.
+
 ## [1.18.0] — 2026-09-16
 
 ### Added

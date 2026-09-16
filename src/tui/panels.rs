@@ -1647,7 +1647,7 @@ fn render_metric(
 
     // Row 2: gauge spanning most of the width + value annotation on the right
     let row = inner[1];
-    let value_w = value_label.chars().count() as u16 + 2;
+    let value_w = crate::display::text_width(value_label) as u16 + 2;
     let gauge_area = Rect {
         x: row.x + 2,
         y: row.y,

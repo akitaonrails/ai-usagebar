@@ -427,7 +427,7 @@ fn render_text(entries: &[Entry]) -> String {
         .iter()
         .flat_map(|entry| entry.sections.iter())
         .filter_map(ReportSection::label)
-        .map(|label| label.chars().count())
+        .map(crate::display::text_width)
         .max()
         .unwrap_or(0);
 
@@ -468,7 +468,7 @@ fn render_text(entries: &[Entry]) -> String {
                     detail,
                     ..
                 } => {
-                    let label = format!("{label:width$}");
+                    let label = crate::display::pad_end(label, width);
                     let value = format!("{value:>9}");
                     if detail.is_empty() {
                         body.push_str(&format!("  {label}  {value}\n"));
@@ -482,7 +482,8 @@ fn render_text(entries: &[Entry]) -> String {
                     } else if value.is_empty() {
                         body.push_str(&format!("  {label}\n"));
                     } else {
-                        body.push_str(&format!("  {label:width$}  {value}\n"));
+                        let label = crate::display::pad_end(label, width);
+                        body.push_str(&format!("  {label}  {value}\n"));
                     }
                 }
                 ReportSection::Block { label, body: lines } => {
@@ -613,6 +614,29 @@ mod tests {
             .lines()
             .filter(|line| line.starts_with("  ") && line.contains('%'))
             .map(|line| line.find('%').unwrap())
+            .collect();
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0], columns[1], "{text}");
+    }
+
+    /// The same alignment, but with a label whose glyphs are two columns wide.
+    /// `format!("{label:width$}")` pads by character count, so a CJK label used
+    /// to leave the value column short by one space per ideograph. Note the
+    /// column is measured in display width, not byte or char offset — `find`
+    /// returns a byte index, which is itself three per ideograph here.
+    #[test]
+    fn value_columns_align_when_a_label_is_double_width() {
+        let text = render_text(&[
+            entry("a", vec![metric("セッション", 1, "1%", "")]),
+            entry("b", vec![metric("Weekly", 2, "2%", "")]),
+        ]);
+        let columns: Vec<usize> = text
+            .lines()
+            .filter(|line| line.starts_with("  ") && line.contains('%'))
+            .map(|line| {
+                let byte = line.find('%').unwrap();
+                crate::display::text_width(&line[..byte])
+            })
             .collect();
         assert_eq!(columns.len(), 2);
         assert_eq!(columns[0], columns[1], "{text}");
