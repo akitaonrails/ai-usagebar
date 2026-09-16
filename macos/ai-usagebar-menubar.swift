@@ -1085,6 +1085,29 @@ func openRouterAccountLabels() -> [String] {
     return accountLabels(inTOML: text, vendor: "openrouter")
 }
 
+/// Explicit `[[openai.accounts]]` labels; Rust resolves each auth file.
+func codexAccountLabels() -> [String] {
+    guard let text = try? String(contentsOfFile: configPathTOML(), encoding: .utf8) else {
+        return []
+    }
+    return accountLabels(inTOML: text, vendor: "openai")
+}
+
+/// Preferences include enabled providers even before they have credentials.
+func preferenceVendorIds(catalog: [VendorCatalogEntry], claude: [String],
+                         openRouter: [String], codex: [String]) -> [String] {
+    catalog.filter { $0.enabled }.flatMap { vendor -> [String] in
+        let labels: [String]
+        switch vendor.id {
+        case "anthropic": labels = claude
+        case "openrouter": labels = openRouter
+        case "openai": labels = codex
+        default: labels = []
+        }
+        return [vendor.id] + labels.map { vendor.id + "@" + $0 }
+    }
+}
+
 /// Rust semantics (`show_default_account`): `false` hides an unnamed entry,
 /// but is ignored when there are no named accounts, so a vendor never loses
 /// its only entry.
@@ -1165,12 +1188,13 @@ func filterOverviewEntries(_ entries: [MenuEntry], requested: [String]?) -> [Men
 }
 
 /// The selectable entries, in menu order: every enabled+configured vendor,
-/// with Claude and OpenRouter expanded into named accounts (their default
-/// entries kept only per `show_default_account`). `active` stays listed even when
+/// with Claude, Codex and OpenRouter expanded into named accounts. Claude and
+/// OpenRouter honor `show_default_account`. `active` stays listed even when
 /// unconfigured — same rule the per-vendor list always had.
 func vendorEntries(active: String,
                    usageAccounts: [UsageAccount]? = nil,
-                   catalog: [VendorCatalogEntry] = vendorCatalog) -> [MenuEntry] {
+                   catalog: [VendorCatalogEntry] = vendorCatalog,
+                   codexLabels: () -> [String] = codexAccountLabels) -> [MenuEntry] {
     var out: [MenuEntry] = []
     for v in catalog where v.enabled {
         if v.id == "anthropic" {
@@ -1187,6 +1211,16 @@ func vendorEntries(active: String,
                 out.append(MenuEntry(id: v.id, name: v.name))
             }
             out.append(contentsOf: claudeAccountMenuEntries(accounts))
+        } else if v.id == "openai" {
+            // Named auth files work independently of the default Codex login.
+            // Codex has no show_default_account option: keep the existing
+            // default-entry visibility rule, then append every named account.
+            if v.id == active || v.configured {
+                out.append(MenuEntry(id: v.id, name: v.name))
+            }
+            out.append(contentsOf: codexLabels().map {
+                MenuEntry(id: "openai@" + $0, name: "\(v.name) · \($0)")
+            })
         } else if v.id == "openrouter" {
             let labels = openRouterAccountLabels()
             let showDefault = showDefaultAccount(
@@ -1429,11 +1463,68 @@ func openApp(_ name: String) {
     try? p.run()
 }
 
+func vendorStatusText(_ v: VendorCatalogEntry, cliPresent: Bool?) -> String {
+    if !v.enabled { return v.configured && v.needsCredential ? "Disabled — credential available" : "Disabled" }
+    if v.configured { return "✓ Configured" }
+    if v.kind == "oauth" {
+        if cliPresent == false { return "⚠ \(v.cli) not installed" }
+        return "⚠ Not signed in — \(v.login)"
+    }
+    // Enabled local providers still need their app login.
+    if v.id == "antigravity" {
+        return "⚠ Open Antigravity (app, IDE or agy)"
+    }
+    if v.id == "cursor" {
+        return "⚠ Sign in to the Cursor app"
+    }
+    if v.id == "supergrok" {
+        return "⚠ Sign in via Grok Build CLI"
+    }
+    if v.id == "kiro" {
+        return "⚠ Sign in to kiro-cli"
+    }
+    if v.kind == "local" {
+        return "⚠ Sign in to \(v.name)"
+    }
+    return "⚠ No API key — \(apiKeyEnvironment(v))"
+}
+
+func vendorButtonLabel(_ v: VendorCatalogEntry, cliPresent: Bool?) -> String {
+    if !v.enabled { return "Enable" }
+    if v.kind == "oauth" {
+        if v.configured { return "Sign in again" }
+        if cliPresent == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
+        return "Sign in"
+    }
+    if v.id == "antigravity" { return "Open Antigravity" }
+    if v.id == "cursor" { return "Open Cursor" }
+    if v.id == "kiro" { return "Sign in" }
+    if v.kind == "local" { return "Configure (TUI)" }
+    return "Configure (TUI)"
+}
+
+// Runs off the main thread; stdout contains only the settings acknowledgement.
+func enableVendor(binary: String, id: String) -> String? {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: binary)
+    p.arguments = ["settings", "enable", id]
+    p.environment = subprocessEnvironment()
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    do { try p.run() } catch { return "Could not start ai-usagebar: \(error.localizedDescription)" }
+    let watchdog = DispatchWorkItem { if p.isRunning { p.terminate() } }
+    DispatchQueue.global().asyncAfter(deadline: .now() + REFRESH_TIMEOUT, execute: watchdog)
+    p.waitUntilExit()
+    watchdog.cancel()
+    return p.terminationStatus == 0 ? nil
+        : "Could not enable the provider. Check that the config is writable and valid, and update ai-usagebar if it does not support settings enable."
+}
+
 struct VendorsSection: View {
     @State private var catalog: [VendorCatalogEntry] = vendorCatalog
-    @State private var configured: [String: Bool] = [:]
     @State private var cliPresent: [String: Bool] = [:]
     @State private var checking = false
+    @State private var enableFailure: String?
 
     var body: some View {
         GroupBox("Vendors") {
@@ -1442,14 +1533,18 @@ struct VendorsSection: View {
                     HStack(alignment: .firstTextBaseline) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(v.name)
-                            Text(statusText(v)).font(.caption).foregroundColor(.secondary)
+                            Text(vendorStatusText(v, cliPresent: cliPresent[v.id])).font(.caption).foregroundColor(.secondary)
                         }
                         Spacer()
-                        Button(buttonLabel(v)) { action(v) }
+                        Button(vendorButtonLabel(v, cliPresent: cliPresent[v.id])) { action(v) }
+                            .disabled(checking)
                     }
                 }
+                if let enableFailure {
+                    Text(enableFailure).font(.caption).foregroundColor(.red)
+                }
                 if checking {
-                    Text("verificando…").font(.caption).foregroundColor(.secondary)
+                    Text("checking…").font(.caption).foregroundColor(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1461,62 +1556,36 @@ struct VendorsSection: View {
         checking = true
         DispatchQueue.global(qos: .userInitiated).async {
             let updated = fetchVendorCatalog() ?? vendorCatalog
-            var conf: [String: Bool] = [:]
             var cli: [String: Bool] = [:]
             for v in updated {
-                conf[v.id] = v.configured
                 if v.kind == "oauth" { cli[v.id] = cliInstalled(v.cli) }
             }
             DispatchQueue.main.async {
                 self.catalog = updated
                 vendorCatalog = updated
-                self.configured = conf
                 self.cliPresent = cli
                 self.checking = false
             }
         }
     }
 
-    private func statusText(_ v: VendorCatalogEntry) -> String {
-        if configured[v.id] ?? v.configured { return "✓ Configured" }
-        if v.kind == "oauth" {
-            if cliPresent[v.id] == false { return "⚠ \(v.cli) not installed" }
-            return "⚠ Not signed in — \(v.login)"
-        }
-        // Local vendors have no key: "configured" means signed in to the app
-        // AND the vendor's own section enabled in config.
-        if v.id == "antigravity" {
-            return "⚠ Abra o Antigravity (app, IDE ou agy) e ative [antigravity] no config"
-        }
-        if v.id == "cursor" {
-            return "⚠ Sign in to the Cursor app and enable [cursor] in the config"
-        }
-        if v.id == "supergrok" {
-            return "⚠ Sign in via Grok Build CLI and enable [supergrok] in the config"
-        }
-        if v.id == "kiro" {
-            return "⚠ Sign in to kiro-cli and enable [kiro] in the config"
-        }
-        if v.kind == "local" {
-            return "⚠ Sign in to \(v.name) and enable [\(v.id)] in the config"
-        }
-        return "⚠ No API key — \(apiKeyEnvironment(v))"
-    }
-
-    private func buttonLabel(_ v: VendorCatalogEntry) -> String {
-        if v.kind == "oauth" {
-            if configured[v.id] ?? v.configured { return "Re-logar" }
-            if cliPresent[v.id] == false { return v.pkg.isEmpty ? "Install CLI" : "Install + sign in" }
-            return "Sign in"
-        }
-        if v.id == "antigravity" { return "Open Antigravity" }
-        if v.id == "cursor" { return "Open Cursor" }
-        if v.id == "kiro" { return "Sign in" }
-        if v.kind == "local" { return "Configure (TUI)" }
-        return "Configure (TUI)"
-    }
-
     private func action(_ v: VendorCatalogEntry) {
+        enableFailure = nil
+        if !v.enabled {
+            guard let bin = resolveBinary("ai-usagebar") else {
+                enableFailure = "ai-usagebar binary not found. Check Binary path in Preferences."
+                return
+            }
+            checking = true
+            DispatchQueue.global(qos: .userInitiated).async {
+                let failure = enableVendor(binary: bin, id: v.id)
+                DispatchQueue.main.async {
+                    self.enableFailure = failure
+                    self.refresh()
+                }
+            }
+            return
+        }
         if v.kind == "oauth" { runInTerminal(oauthScript(v)) }
         else if v.id == "antigravity" { openApp("Antigravity") }
         else if v.id == "cursor" { openApp("Cursor") }
@@ -1553,21 +1622,11 @@ struct SettingsView: View {
     // Only vendors the Rust catalog marks enabled appear in the selector —
     // whatever `vendors --json` reports, so a provider added in Rust (and its
     // opt-in or enabled default) reaches here with no menubar change. Claude
-    // accounts appear as their `vendor@<label>` pseudo-ids, same as the
+    // and Codex/OpenRouter accounts use `vendor@<label>` pseudo-ids, same as the
     // "Switch provider" submenu.
     private var vendors: [String] {
-        var ids = vendorCatalog.filter { $0.enabled }.map { $0.id }
-        let labels = claudeAccountLabels()
-        if let at = ids.firstIndex(of: "anthropic") {
-            ids.insert(contentsOf: labels.map { CLAUDE_ACCOUNT_ID_PREFIX + $0 }, at: at + 1)
-        }
-        let openRouterLabels = openRouterAccountLabels()
-        if let at = ids.firstIndex(of: "openrouter") {
-            ids.insert(
-                contentsOf: openRouterLabels.map { OPENROUTER_ACCOUNT_ID_PREFIX + $0 },
-                at: at + 1)
-        }
-        return ids
+        preferenceVendorIds(catalog: vendorCatalog, claude: claudeAccountLabels(),
+                            openRouter: openRouterAccountLabels(), codex: codexAccountLabels())
     }
 
     var body: some View {

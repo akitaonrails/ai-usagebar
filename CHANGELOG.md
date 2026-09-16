@@ -11,6 +11,22 @@ Each release is also published at
 
 ### Fixed
 
+- **macOS named Codex accounts.** Accounts in `[[openai.accounts]]` now appear
+  in the provider selector, Overview, Preferences and vendor-cycle shortcut,
+  including when no default Codex login exists.
+- **macOS disabled providers.** Preferences now distinguish disabled providers
+  from missing credentials and offer an explicit Enable action, backed by
+  `ai-usagebar settings enable <vendor>`. Other settings and credentials are
+  preserved, and write failures remain visible in Preferences.
+- **English-only UI strings.** The GNOME preferences and the macOS provider
+  list showed `verificando…`, `Configurar (TUI)` and `Re-logar` — Portuguese
+  left over from an early draft. They now read `checking…`,
+  `Configure (TUI)` and `Sign in again`, matching every other frontend.
+
+## [1.17.1] — 2026-09-16
+
+### Fixed
+
 - **Antigravity CLI session fallback.** When `agy` requires an undiscoverable
   CSRF token, ai-usagebar now reads the CLI's saved Google session from
   `~/.gemini/antigravity-cli/antigravity-oauth-token` when the OS keyring is
@@ -2410,7 +2426,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...HEAD
+[1.17.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.14.0...v1.15.0
