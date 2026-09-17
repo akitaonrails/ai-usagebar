@@ -199,6 +199,9 @@ USD; the China service uses CNY.
 - `{sgk_period}` is `Weekly`, `Monthly`, or `Current period`.
 - The default bar format is `{sgk_pct}% · {sgk_reset}`.
 - `{session_pct}` and `{weekly_pct}` remain aliases for `sgk_pct`.
+- Per-product slices (Grok Build, Grok Chat, Grok Imagine, …) appear as extra
+  meters in the TUI, tooltip and `usage --json` report. They share the same
+  reset as `{sgk_pct}` and do not have their own placeholders.
 - `{plan}` is the subscription tier when Grok Build supplies one.
 - `{sgk_resets_available}` is the number of banked resets you can redeem by
   hand, and `{sgk_resets}` the compact count (`1 reset available`). These are

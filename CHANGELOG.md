@@ -9,6 +9,15 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **SuperGrok per-product usage.** The billing document's `productUsage`
+  array is now shown as extra meters beside the overall included-credit
+  percentage — Grok Build, Grok Chat, Grok Imagine, and any other named
+  slice — so the TUI, `usage --json`, and the Waybar tooltip match the
+  grok.com usage page instead of collapsing everything into one "Build
+  credits" bar.
+
 ## [1.18.1] — 2026-09-16
 
 ### Fixed

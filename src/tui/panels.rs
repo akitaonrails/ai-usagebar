@@ -1295,6 +1295,20 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
     } else {
         v.push_metric(metric, s.reset_at);
     }
+    for product in &s.products {
+        let row = Section::Metric {
+            label: product.label.clone(),
+            pct: product.percent.clamp(0, 100) as u16,
+            severity: severity_for(product.percent),
+            value_label: format!("{}%", product.percent),
+            footnote: String::new(),
+        };
+        if s.period == crate::usage::SuperGrokPeriod::Weekly {
+            v.push_metric_in_window(row, s.reset_at, chrono::Duration::days(7));
+        } else {
+            v.push_metric(row, s.reset_at);
+        }
+    }
     if let Some(bal) = s.prepaid_balance {
         v.push(Section::Spacer);
         v.push(Section::Text {
@@ -1718,6 +1732,7 @@ mod tests {
             reset_at: Some(now() + chrono::Duration::days(2)),
             prepaid_balance: None,
             reset_credits: crate::usage::ResetCredits::default(),
+            products: Vec::new(),
         })
     }
 
@@ -2244,6 +2259,7 @@ mod tests {
             reset_at: Some(now + chrono::Duration::days(3)),
             prepaid_balance: None,
             reset_credits: credits,
+            products: Vec::new(),
         };
 
         for snapshot in [
@@ -2298,6 +2314,7 @@ mod tests {
             reset_at: Some(now + chrono::Duration::days(6)),
             prepaid_balance: Some(0.0),
             reset_credits: ResetCredits::default(),
+            products: Vec::new(),
         };
         let sections = sections_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5);
         assert!(!sections.iter().any(|section| matches!(
@@ -2308,6 +2325,45 @@ mod tests {
             section,
             Section::Text { label, .. } if label == "Prepaid API"
         )));
+    }
+
+    #[test]
+    fn supergrok_lists_product_slices_beside_the_overall_meter() {
+        let now = now();
+        let snap = crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "scope".into(),
+            weekly_pct: 90,
+            period: crate::usage::SuperGrokPeriod::Weekly,
+            reset_at: Some(now + chrono::Duration::days(3)),
+            prepaid_balance: None,
+            reset_credits: ResetCredits::default(),
+            products: vec![
+                crate::usage::SuperGrokProduct {
+                    label: "Grok Build".into(),
+                    percent: 87,
+                },
+                crate::usage::SuperGrokProduct {
+                    label: "Grok Chat".into(),
+                    percent: 3,
+                },
+            ],
+        };
+        let labels: Vec<_> = sections_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5)
+            .into_iter()
+            .filter_map(|section| match section {
+                Section::Metric { label, pct, .. } => Some((label, pct)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                ("Weekly Build credits".into(), 90),
+                ("Grok Build".into(), 87),
+                ("Grok Chat".into(), 3),
+            ]
+        );
     }
 
     #[test]

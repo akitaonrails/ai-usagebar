@@ -156,6 +156,16 @@ fn render_tooltip(
         snap.reset_at,
         now,
     );
+    for product in &snap.products {
+        push_pct_row(
+            &mut lines,
+            theme,
+            &format!("  󰚩  {}", product.label),
+            product.percent,
+            None,
+            now,
+        );
+    }
 
     if let Some(bal) = snap.prepaid_balance {
         let bal_s = usd(bal);
@@ -236,6 +246,7 @@ mod tests {
             reset_at: Some(now() + chrono::Duration::hours(20)),
             prepaid_balance: Some(0.0),
             reset_credits: Default::default(),
+            products: Vec::new(),
         }
     }
 
@@ -276,6 +287,27 @@ mod tests {
             out.tooltip
         );
         assert!(out.tooltip.contains("Resets in"));
+    }
+
+    #[test]
+    fn tooltip_lists_product_slices() {
+        let mut snap = sample_snap();
+        snap.products = vec![
+            crate::usage::SuperGrokProduct {
+                label: "Grok Build".into(),
+                percent: 20,
+            },
+            crate::usage::SuperGrokProduct {
+                label: "Grok Chat".into(),
+                percent: 14,
+            },
+        ];
+        let o = sample_outcome(snap.clone());
+        let out = render(&o, &snap, &Theme::default(), &opts(), now());
+        assert!(out.tooltip.contains("Grok Build"));
+        assert!(out.tooltip.contains("Grok Chat"));
+        assert!(out.tooltip.contains("20%"));
+        assert!(out.tooltip.contains("14%"));
     }
 
     #[test]
