@@ -63,6 +63,11 @@ pub(crate) struct SectionProjection {
     /// whose window length the vendor never states — a frontend can pace a
     /// metric only when this is `Some`.
     pub window: Option<chrono::Duration>,
+    /// Named sub-group the metric belongs under (e.g. SuperGrok's product
+    /// slices under `"Breakdown"`), so a frontend can draw it as a compact
+    /// row beneath a heading instead of a peer of the overall meter. The TUI
+    /// renders grouped metrics like any other; only the report carries this.
+    pub group: Option<&'static str>,
 }
 
 struct SectionBuilder(Vec<SectionProjection>);
@@ -81,6 +86,7 @@ impl SectionBuilder {
                         section,
                         reset_at: None,
                         window: None,
+                        group: None,
                     }
                 })
                 .collect(),
@@ -96,6 +102,7 @@ impl SectionBuilder {
             section,
             reset_at: None,
             window: None,
+            group: None,
         });
     }
 
@@ -107,6 +114,7 @@ impl SectionBuilder {
             section,
             reset_at,
             window: None,
+            group: None,
         });
     }
 
@@ -123,6 +131,21 @@ impl SectionBuilder {
             section,
             reset_at,
             window: Some(window),
+            group: None,
+        });
+    }
+
+    /// A metric that belongs to a named sub-group of the panel (SuperGrok's
+    /// product slices under `"Breakdown"`). Grouped slices share the overall
+    /// pool's window, so they carry no reset of their own; the group label is
+    /// the only extra thing they assert.
+    fn push_metric_in_group(&mut self, section: Section, group: &'static str) {
+        assert!(matches!(section, Section::Metric { .. }));
+        self.0.push(SectionProjection {
+            section,
+            reset_at: None,
+            window: None,
+            group: Some(group),
         });
     }
 }
@@ -1282,7 +1305,7 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
         Section::Spacer,
     ]);
     let metric = Section::Metric {
-        label: format!("{} Build credits", s.period.label()),
+        label: format!("{} usage", s.period.label()),
         pct: pct.clamp(0, 100) as u16,
         severity: severity_for(pct),
         value_label: format!("{pct}%"),
@@ -1295,7 +1318,27 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
     } else {
         v.push_metric(metric, s.reset_at);
     }
-    if let Some(bal) = s.prepaid_balance {
+    for product in &s.products {
+        // Product slices share the overall pool. They must not carry the
+        // window reset or a severity colour — only the overall usage meter
+        // is the binding constraint. The "Breakdown" group lets frontends
+        // draw them compactly under a heading instead of as peers of it.
+        v.push_metric_in_group(
+            Section::Metric {
+                label: product.label.clone(),
+                pct: product.percent.clamp(0, 100) as u16,
+                severity: PaceSeverity::Low,
+                value_label: format!("{}%", product.percent),
+                footnote: String::new(),
+            },
+            "Breakdown",
+        );
+    }
+    // A $0.00 prepaid row reads as "you have no money" when the field merely
+    // says no credit was purchased on top of the subscription — and a unified
+    // billing account keeps its real dollars in the Management API wallet
+    // (`[grok]`), not here. Show the row only when there is credit to show.
+    if let Some(bal) = s.prepaid_balance.filter(|bal| *bal > 0.0) {
         v.push(Section::Spacer);
         v.push(Section::Text {
             label: "Prepaid API".into(),
@@ -1718,6 +1761,7 @@ mod tests {
             reset_at: Some(now() + chrono::Duration::days(2)),
             prepaid_balance: None,
             reset_credits: crate::usage::ResetCredits::default(),
+            products: Vec::new(),
         })
     }
 
@@ -2244,6 +2288,7 @@ mod tests {
             reset_at: Some(now + chrono::Duration::days(3)),
             prepaid_balance: None,
             reset_credits: credits,
+            products: Vec::new(),
         };
 
         for snapshot in [
@@ -2298,16 +2343,127 @@ mod tests {
             reset_at: Some(now + chrono::Duration::days(6)),
             prepaid_balance: Some(0.0),
             reset_credits: ResetCredits::default(),
+            products: Vec::new(),
         };
         let sections = sections_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5);
         assert!(!sections.iter().any(|section| matches!(
             section,
             Section::Text { label, .. } if label == "Resets"
         )));
-        assert!(sections.iter().any(|section| matches!(
+        // Zero prepaid is noise (see `supergrok_hides_a_zero_prepaid_balance`),
+        // so even a present-but-zero field draws no row.
+        assert!(!sections.iter().any(|section| matches!(
             section,
             Section::Text { label, .. } if label == "Prepaid API"
         )));
+    }
+
+    /// A $0.00 prepaid line reads as "no money" when the billing document
+    /// merely reports that nothing was purchased on top of the subscription.
+    /// The row appears only when there is credit to show.
+    #[test]
+    fn supergrok_hides_a_zero_prepaid_balance_but_keeps_a_real_one() {
+        let now = now();
+        let base = |prepaid: Option<f64>| crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "scope".into(),
+            weekly_pct: 40,
+            period: crate::usage::SuperGrokPeriod::Weekly,
+            reset_at: Some(now + chrono::Duration::days(6)),
+            prepaid_balance: prepaid,
+            reset_credits: ResetCredits::default(),
+            products: Vec::new(),
+        };
+        let labels = |snap| {
+            sections_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5)
+                .into_iter()
+                .filter_map(|section| match section {
+                    Section::Text { label, value, .. } => Some((label, value)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            !labels(base(Some(0.0)))
+                .iter()
+                .any(|(label, _)| label == "Prepaid API")
+        );
+        assert_eq!(
+            labels(base(Some(4.22))).last(),
+            Some(&("Prepaid API".to_string(), "$4.22".to_string()))
+        );
+    }
+
+    #[test]
+    fn supergrok_lists_product_slices_beside_the_overall_meter() {
+        let now = now();
+        let snap = crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "scope".into(),
+            weekly_pct: 90,
+            period: crate::usage::SuperGrokPeriod::Weekly,
+            reset_at: Some(now + chrono::Duration::days(3)),
+            prepaid_balance: None,
+            reset_credits: ResetCredits::default(),
+            products: vec![
+                crate::usage::SuperGrokProduct {
+                    label: "Grok Build".into(),
+                    percent: 87,
+                },
+                crate::usage::SuperGrokProduct {
+                    label: "Grok Chat".into(),
+                    percent: 3,
+                },
+            ],
+        };
+        let labels: Vec<_> = sections_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5)
+            .into_iter()
+            .filter_map(|section| match section {
+                Section::Metric { label, pct, .. } => Some((label, pct)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                ("Weekly usage".into(), 90),
+                ("Grok Build".into(), 87),
+                ("Grok Chat".into(), 3),
+            ]
+        );
+    }
+
+    /// Product slices report the "Breakdown" group so frontends can draw them
+    /// under a heading; the overall meter stays ungrouped, and neither gains
+    /// reset metadata it must not have.
+    #[test]
+    fn supergrok_product_slices_carry_the_breakdown_group() {
+        let now = now();
+        let snap = crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "scope".into(),
+            weekly_pct: 90,
+            period: crate::usage::SuperGrokPeriod::Weekly,
+            reset_at: Some(now + chrono::Duration::days(3)),
+            prepaid_balance: None,
+            reset_credits: ResetCredits::default(),
+            products: vec![crate::usage::SuperGrokProduct {
+                label: "Grok Build".into(),
+                percent: 87,
+            }],
+        };
+        let projected = sections_with_metadata_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5);
+        let mut metrics = projected
+            .iter()
+            .filter(|p| matches!(p.section, Section::Metric { .. }));
+        let overall = metrics.next().expect("overall usage metric");
+        let build = metrics.next().expect("one product slice metric");
+        assert!(metrics.next().is_none(), "expected exactly two metric rows");
+        assert_eq!(overall.group, None);
+        assert!(overall.reset_at.is_some());
+        assert_eq!(build.group, Some("Breakdown"));
+        assert_eq!(build.reset_at, None);
+        assert_eq!(build.window, None);
     }
 
     #[test]

@@ -72,6 +72,12 @@ enum ReportSection {
         /// month or an unstated window omits the field rather than guessing.
         #[serde(skip_serializing_if = "Option::is_none")]
         window_secs: Option<u64>,
+        /// Sub-group heading the metric belongs under (SuperGrok's product
+        /// slices under `"Breakdown"`), so a frontend can draw it compactly
+        /// beneath that heading instead of as a peer of the overall meter.
+        /// Absent for metrics that stand on their own.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        group: Option<String>,
     },
     Text {
         label: String,
@@ -254,6 +260,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
                     window_secs: projected
                         .window
                         .map(|window| window.num_seconds().max(0) as u64),
+                    group: projected.group.map(str::to_string),
                 });
             }
             Section::Text { label, value } => {
@@ -378,6 +385,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         severity,
                         reset_at,
                         window_secs,
+                        group,
                     } => {
                         let mut metric = json!({
                             "label": label,
@@ -390,6 +398,9 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         // Same rule as the `sections` serializer: absent, not null.
                         if let Some(secs) = window_secs {
                             metric["window_secs"] = json!(secs);
+                        }
+                        if let Some(group) = group {
+                            metric["group"] = json!(group);
                         }
                         Some(metric)
                     }
@@ -535,6 +546,7 @@ mod tests {
             severity: "mid".into(),
             reset_at: None,
             window_secs: None,
+            group: None,
         }
     }
 
@@ -740,6 +752,45 @@ mod tests {
         // must not be handed a length to pace against.
         assert!(first["metrics"][0]["window_secs"].is_null());
         assert!(first["sections"][1].get("window_secs").is_none());
+    }
+
+    /// Grouped sub-rows (SuperGrok's product slices) carry their group in both
+    /// the ordered `sections` and the `metrics` convenience view, and the field
+    /// is omitted (not `null`) for metrics that stand on their own — including
+    /// the overall meter they break down.
+    #[test]
+    fn json_carries_the_group_only_for_grouped_slices() {
+        use crate::usage::{ResetCredits, SuperGrokPeriod, SuperGrokProduct, SuperGrokSnapshot};
+
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::SuperGrok(SuperGrokSnapshot {
+                plan: "SuperGrok Heavy".into(),
+                account: "scope".into(),
+                weekly_pct: 97,
+                period: SuperGrokPeriod::Weekly,
+                reset_at: Some(Utc::now() + chrono::Duration::days(3)),
+                prepaid_balance: None,
+                reset_credits: ResetCredits::default(),
+                products: vec![SuperGrokProduct {
+                    label: "Grok Build".into(),
+                    percent: 94,
+                }],
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Supergrok), &state, Utc::now());
+        let rendered = render_json_for_primary(&[projected], None);
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let first = &value["entries"][0];
+
+        // sections: [spacer, overall, product slice] — the overall meter the
+        // slices break down carries no group; the slice does, in both views.
+        assert!(first["sections"][1].get("group").is_none());
+        assert_eq!(first["sections"][2]["group"], "Breakdown");
+        assert!(first["metrics"][0].get("group").is_none());
+        assert_eq!(first["metrics"][1]["group"], "Breakdown");
     }
 
     /// A rolling window's exact length rides along with its row, in both the

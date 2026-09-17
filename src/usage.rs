@@ -552,6 +552,17 @@ pub struct SuperGrokSnapshot {
     /// Remaining prepaid (purchased) API credit in USD, when present.
     pub prepaid_balance: Option<f64>,
     pub reset_credits: ResetCredits,
+    /// Per-product slices of the same included-credit pool (`GrokBuild`,
+    /// `GrokChat`, `GrokImagine`, …). Empty when the billing document omits
+    /// `productUsage`.
+    pub products: Vec<SuperGrokProduct>,
+}
+
+/// One SuperGrok product's share of the current included-credit window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuperGrokProduct {
+    pub label: String,
+    pub percent: i32,
 }
 
 impl Eq for SuperGrokSnapshot {}

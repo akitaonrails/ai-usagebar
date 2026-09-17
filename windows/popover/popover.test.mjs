@@ -746,7 +746,8 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
 // --- SuperGrok labels / displayPlan equality ----------------------------------
 
 {
-  // ARRANGE: SuperGrok names every meter "<Window> Build credits"; Grok proper does not
+  // ARRANGE: SuperGrok names the overall meter "<Window> usage" (older
+  // reports used "<Window> Build credits"); Grok proper does not.
   const grok = parseHostPayload({
     entries: [
       { id: 'supergrok', display_name: 'SuperGrok', plan: 'SuperGrok', sections: [
@@ -769,6 +770,18 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.deepEqual(personal.rows.map(rowKey), ['metric:Weekly', 'metric:Monthly', 'metric:Build credits']);
   assert.deepEqual(work.rows.map((r) => r.label), ['Weekly']);
   assert.deepEqual(plain.rows.map((r) => r.label), ['Weekly Build credits']);
+
+  const usageNamed = parseHostPayload({
+    entries: [
+      { id: 'supergrok', display_name: 'SuperGrok', plan: 'SuperGrok', sections: [
+        { type: 'metric', label: 'Weekly usage', percent: 90, severity: 'critical' },
+        { type: 'metric', label: 'Grok Build', percent: 87, severity: 'high' },
+        { type: 'metric', label: 'Grok Chat', percent: 3, severity: 'low' },
+      ] },
+    ],
+  });
+  const [usageCard] = projectCards(usageNamed, 0);
+  assert.deepEqual(usageCard.rows.map((r) => r.label), ['Weekly', 'Grok Build', 'Grok Chat']);
 
   // ASSERT: a plan equal to the title vanishes; a prefixed plan keeps its tail
   assert.equal(displayPlan(personal.title, personal.plan), '');

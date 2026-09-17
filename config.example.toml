@@ -300,7 +300,9 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # extension is a fallback when the HTTPS billing endpoint is unavailable.
 [supergrok]
 # Disabled by default — enable after installing official Grok Build and running
-# `grok login` at least once.
+# `grok login` at least once. This is included *usage* (overall % plus
+# Build/Chat/Imagine slices from the billing document), not the `[grok]`
+# Management API prepaid dollar balance.
 enabled = false
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok, avoiding unrelated PATH
 # programs with the same name. Override only for a trusted official install.

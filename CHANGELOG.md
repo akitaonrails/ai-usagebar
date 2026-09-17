@@ -9,6 +9,39 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **SuperGrok included usage, not a single Build-credits bar.** SuperGrok
+  already fetched Grok Build's billing document; the parser only kept the
+  overall `creditUsagePercent` and labelled it "Build credits". It now
+  shows that figure as **weekly/monthly usage** and lists the
+  `productUsage` slices beside it (Grok Build, Grok Chat, Grok Imagine,
+  and any other named product) — in the tooltip and `--pretty` box each
+  slice is one dim line with an aligned percentage, no gauge and no
+  severity colour, so only the overall meter reads as the binding
+  constraint. `[grok]` is unchanged: that vendor is
+  still the Management API prepaid dollar balance.
+- **Grouped sub-rows in the report and the Omarchy panel.** Product slices
+  now carry a `group` field (`"Breakdown"`) in `usage --json`'s `sections`
+  and `metrics`, and the Quattro panel renders grouped rows compactly —
+  dim label, thin muted gauge — under a `BREAKDOWN` heading, instead of as
+  full meters beside the overall usage row. The field is additive: older
+  frontends keep rendering the rows as plain metrics.
+
+### Fixed
+
+- **SuperGrok product names are escaped before reaching the tooltip's Pango
+  markup.** A hostile billing document could otherwise inject markup through
+  a crafted `productUsage` name. Width-based label alignment happens before
+  the escape, so padded columns still line up.
+- **SuperGrok no longer shows a "$0.00 Prepaid API" line.** The billing
+  document reports `prepaidBalance: 0` unless credit was purchased on top
+  of the subscription, and a zero row read as "no money" — especially for
+  unified billing accounts, whose real dollars sit in the Management API
+  wallet that `[grok]` reports. The row (TUI, tooltip and report) now
+  appears only when there is credit to show; `{sgk_prepaid}` still
+  publishes the raw figure.
+
 ## [1.18.1] — 2026-09-16
 
 ### Fixed
