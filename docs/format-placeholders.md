@@ -178,6 +178,22 @@ combined monthly pool — so the weekly placeholders (`kimi_weekly_*` and the
 `{kimi_monthly_pct}` / `{kimi_monthly_reset}` carry the monthly pool
 instead. On legacy-shape accounts the monthly placeholders render empty.
 
+## Grok Bot
+
+`{gbt_plan}`, `{gbt_weekly_pct}`, `{gbt_weekly_reset}`, `{gbt_on_demand}`
+
+These cover the desktop app's weekly included-usage pool from
+`api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus`
+(Linux-only for now). The default format is `{gbt_weekly_pct}%`. Generic
+aliases are `{plan}` and `{weekly_pct}` / `{weekly_reset}`.
+`{gbt_on_demand}` renders `on`/`off` for pay-as-you-go past the included
+pool.
+
+An account with no included allowance (`hasNonZeroIncludedLimit: false`) is
+a distinct state, not 0%: the weekly placeholders (`gbt_weekly_*` and the
+`weekly_pct`/`weekly_reset` aliases) render empty there, and the tooltip
+says "No included allowance" instead of drawing a meter.
+
 ## Kilo
 
 `{kilo_balance}` is the remaining USD balance from

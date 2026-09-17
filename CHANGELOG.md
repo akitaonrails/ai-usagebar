@@ -11,6 +11,26 @@ Each release is also published at
 
 ### Added
 
+- **Grok Bot as its own opt-in vendor** (`[grokbot]`, `--vendor grokbot`,
+  Linux-only for now): the Grok Bot desktop app's weekly included-usage
+  pool, from its Connect-RPC dashboard call
+  (`api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus`).
+  Distinct from `[grok]` (Management API prepaid dollars) and
+  `[supergrok]` (Grok Build subscription). The credential is the app's own
+  OAuth session in `~/.config/Grok Bot/sand-secrets.json` — Chromium
+  OSCrypt `v10` blobs decrypted read-only with the Linux OSCrypt key (one
+  PBKDF2 round; `secret-tool lookup application "Grok Bot"`, falling back
+  to Chromium's documented default). Refresh goes through Cursor's public
+  installed-app OAuth client, and rotated tokens persist only in
+  ai-usagebar's vendor cache (`oauth.json`, mode 0600), never back to the
+  app's file. The window length is derived from the reported period bounds
+  rather than assumed to be 7 days; an account with
+  `hasNonZeroIncludedLimit: false` shows a "no included allowance" state
+  rather than a 0% meter, and at 100% with the account still serving, an
+  on-demand footnote appears when on-demand is enabled. New placeholders:
+  `{gbt_plan}`, `{gbt_weekly_pct}`, `{gbt_weekly_reset}`,
+  `{gbt_on_demand}`. macOS and Windows fail closed with a credentials
+  error explaining the Linux-only support. (#206)
 - **SuperGrok included usage, not a single Build-credits bar.** SuperGrok
   already fetched Grok Build's billing document; the parser only kept the
   overall `creditUsagePercent` and labelled it "Build credits". It now

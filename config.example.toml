@@ -9,7 +9,7 @@
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.
 # Valid: anthropic | anthropic_api | openai | copilot | zai | openrouter | deepseek
-#        | kimi | kilo | novita | moonshot | grok | supergrok | antigravity
+#        | kimi | kilo | novita | moonshot | grok | supergrok | grokbot | antigravity
 #        | cursor | minimax | kiro | nous | opencode-go | commandcode | ollama
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
 # open directly on a vendor's tab instead.
@@ -311,6 +311,17 @@ enabled = false
 # auth.json is also read for its billing `key`. Neither is copied or written.
 # auth_path = "/home/you/.grok/auth.json"
 # config_path = "/home/you/.grok/config.toml"
+
+[grokbot]
+# Disabled by default. Linux-only for now. The Grok Bot desktop app's weekly
+# included-usage pool, from its own Connect-RPC dashboard call — distinct from
+# `[grok]` (Management API prepaid dollars) and `[supergrok]` (Grok Build
+# subscription). No API key of its own: the credential is the app's own OAuth
+# session in ~/.config/Grok Bot/sand-secrets.json (Chromium OSCrypt `v10`
+# blobs, decrypted read-only; refreshed tokens persist only in ai-usagebar's
+# cache, never back to the app's file). Install the app and sign in to it.
+enabled = false
+# secrets_path = "~/.config/Grok Bot/sand-secrets.json"  # credential file
 
 # Google Antigravity. Usage is read from a usable local Antigravity product.
 # The `agy` CLI requires a CSRF token it does not publish, so it uses the saved

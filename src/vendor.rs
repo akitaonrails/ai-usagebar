@@ -166,6 +166,7 @@ pub enum VendorId {
     Moonshot,
     Grok,
     Supergrok,
+    Grokbot,
     Antigravity,
     Cursor,
     Minimax,
@@ -220,6 +221,7 @@ impl VendorId {
             VendorId::Moonshot => "moonshot",
             VendorId::Grok => "grok",
             VendorId::Supergrok => "supergrok",
+            VendorId::Grokbot => "grokbot",
             VendorId::Antigravity => "antigravity",
             VendorId::Cursor => "cursor",
             VendorId::Minimax => "minimax",
@@ -249,6 +251,7 @@ impl VendorId {
             VendorId::Moonshot => "Moonshot",
             VendorId::Grok => "Grok",
             VendorId::Supergrok => "SuperGrok",
+            VendorId::Grokbot => "Grok Bot",
             VendorId::Antigravity => "Antigravity",
             VendorId::Cursor => "Cursor",
             VendorId::Minimax => "MiniMax",
@@ -277,6 +280,7 @@ impl VendorId {
             VendorId::Novita => "󰄔",
             VendorId::Moonshot => VendorId::Moonshot.short_name(),
             VendorId::Grok | VendorId::Supergrok => "󰇷",
+            VendorId::Grokbot => VendorId::Grokbot.short_name(),
             VendorId::Antigravity => VendorId::Antigravity.short_name(),
             VendorId::Cursor => "❯",
             VendorId::Minimax => VendorId::Minimax.short_name(),
@@ -309,6 +313,7 @@ impl VendorId {
             VendorId::Moonshot => "msh",
             VendorId::Grok => "grk",
             VendorId::Supergrok => "sgk",
+            VendorId::Grokbot => "gbt",
             VendorId::Antigravity => "agy",
             VendorId::Cursor => "cur",
             VendorId::Minimax => "mmx",
@@ -342,6 +347,7 @@ impl VendorId {
             VendorId::Moonshot => "moonshot",
             VendorId::Grok => "grok",
             VendorId::Supergrok => "supergrok",
+            VendorId::Grokbot => "grokbot",
             VendorId::Antigravity => "antigravity",
             VendorId::Cursor => "cursor",
             VendorId::Minimax => "minimax",
@@ -380,11 +386,14 @@ impl VendorId {
             // No credential of their own: another local product's session is
             // the login. Antigravity has no credential file at all (the binary
             // probes whichever local server answers), Cursor and Kiro read the
-            // IDE's and kiro-cli's own state, and SuperGrok uses the Grok Build
-            // CLI's login.
-            VendorId::Supergrok | VendorId::Antigravity | VendorId::Cursor | VendorId::Kiro => {
-                AuthKind::Local
-            }
+            // IDE's and kiro-cli's own state, SuperGrok uses the Grok Build
+            // CLI's login, and Grok Bot reads the desktop app's own
+            // OSCrypt-protected session file.
+            VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Kiro
+            | VendorId::Grokbot => AuthKind::Local,
         }
     }
 
@@ -414,6 +423,7 @@ impl VendorId {
             VendorId::Anthropic
             | VendorId::Openai
             | VendorId::Supergrok
+            | VendorId::Grokbot
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Kiro
@@ -447,6 +457,7 @@ impl VendorId {
             VendorId::Cursor => "Sign in to the Cursor app, then Refresh.",
             VendorId::Antigravity => "Open Antigravity or run `agy`, then Refresh.",
             VendorId::Grok | VendorId::Supergrok => "Sign in with `grok`, then Refresh.",
+            VendorId::Grokbot => "Install and sign in to the Grok Bot desktop app, then Refresh.",
             // Key-only providers: there is nothing to log into, only a key to
             // put in the config. Ollama Cloud's key is minted at
             // ollama.com/settings/keys; the local `ollama` CLI's Ed25519 key
@@ -484,6 +495,7 @@ impl VendorId {
             | VendorId::Moonshot
             | VendorId::Grok
             | VendorId::Supergrok
+            | VendorId::Grokbot
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Minimax
@@ -507,6 +519,7 @@ impl VendorId {
             VendorId::Moonshot,
             VendorId::Grok,
             VendorId::Supergrok,
+            VendorId::Grokbot,
             VendorId::Antigravity,
             VendorId::Cursor,
             VendorId::Minimax,

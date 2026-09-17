@@ -748,6 +748,22 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                     .await?;
             Ok(outcome.into())
         }
+        VendorId::Grokbot => {
+            // The desktop app's own session is the login; refreshed pairs
+            // persist only inside the vendor cache.
+            let creds = crate::grokbot::resolve_credentials(&config.grokbot)?;
+            let cache = crate::cache::Cache::for_vendor("grokbot")?;
+            let endpoints = crate::grokbot::fetch::Endpoints::default();
+            let outcome = crate::grokbot::fetch::fetch_snapshot_with(
+                client,
+                &creds,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
         VendorId::Minimax => {
             let api_key = crate::config::resolve_api_key(
                 "MiniMax",

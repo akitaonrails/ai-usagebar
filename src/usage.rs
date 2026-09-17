@@ -394,6 +394,7 @@ pub enum VendorSnapshot {
     Moonshot(MoonshotSnapshot),
     Grok(GrokSnapshot),
     SuperGrok(SuperGrokSnapshot),
+    Grokbot(GrokbotSnapshot),
     AnthropicApi(AnthropicApiSnapshot),
     Antigravity(AntigravitySnapshot),
     Cursor(CursorSnapshot),
@@ -618,6 +619,48 @@ impl SuperGrokPeriod {
             Self::Monthly => "mo",
             Self::Unknown => "period",
         }
+    }
+}
+
+/// Grok Bot desktop app — the weekly included-usage pool from
+/// `aiserver.v1.DashboardService/GetSandUsageStatus` (Connect-RPC), read with
+/// the app's own OAuth session. Distinct from [`GrokSnapshot`] (Management
+/// API prepaid dollars) and [`SuperGrokSnapshot`] (Grok Build subscription).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrokbotSnapshot {
+    /// `grokPlanLabel`, falling back to `cursorPlanName`, then "Grok Bot".
+    pub plan: String,
+    /// `hasNonZeroIncludedLimit`. When false the account carries no included
+    /// allowance at all — a distinct "no included allowance" state, never a
+    /// fabricated 0% meter.
+    pub has_included_allowance: bool,
+    /// `usagePercent` of the included pool (0..=100). Meaningful only when
+    /// `has_included_allowance` is set.
+    pub weekly_pct: i32,
+    /// `hasAvailableUsage` — the account can still serve requests, which at
+    /// 100% of the included pool means on-demand is picking up the rest.
+    pub has_available_usage: bool,
+    /// `onDemandSettings.enabled` — pay-as-you-go past the included pool.
+    pub on_demand_enabled: bool,
+    /// `currentPeriodStart`.
+    pub period_start: Option<DateTime<Utc>>,
+    /// `nextResetTimestampUtc`.
+    pub reset_at: Option<DateTime<Utc>>,
+    /// `reset_at − period_start` when both are reported (7 days on the
+    /// captured account) — computed, never assumed.
+    pub window: Option<chrono::Duration>,
+}
+
+impl GrokbotSnapshot {
+    /// At 100% of the included pool, `hasAvailableUsage` can still be true
+    /// because on-demand keeps serving — say so, but only when the account
+    /// actually has on-demand switched on.
+    pub fn on_demand_note(&self) -> Option<&'static str> {
+        (self.has_included_allowance
+            && self.weekly_pct >= 100
+            && self.has_available_usage
+            && self.on_demand_enabled)
+            .then_some("included pool exhausted — on-demand may still be serving usage")
     }
 }
 

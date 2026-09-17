@@ -9,6 +9,7 @@
 //! [openrouter] enabled = true
 //! [deepseek]   enabled = false
 //! [kimi]       enabled = false
+//! [grokbot]    enabled = false  # Grok Bot desktop app's own session (Linux)
 //! [[custom]]   id = "mytool"   # user-defined HTTP provider, static token
 //! ```
 //!
@@ -54,6 +55,7 @@ pub struct Config {
     pub moonshot: MoonshotConfig,
     pub grok: GrokConfig,
     pub supergrok: SuperGrokConfig,
+    pub grokbot: GrokbotConfig,
     pub antigravity: AntigravityConfig,
     pub cursor: CursorConfig,
     pub minimax: MinimaxConfig,
@@ -1154,6 +1156,23 @@ impl Default for SuperGrokConfig {
     }
 }
 
+/// Grok Bot — the desktop app's weekly included-usage pool, from its own
+/// Connect-RPC dashboard call. Distinct from `[grok]` (Management API prepaid
+/// dollars) and `[supergrok]` (Grok Build subscription). No API key: the
+/// credential is the app's own session in `sand-secrets.json` (read-only).
+/// Linux-only for now — other platforms fail closed at fetch time.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GrokbotConfig {
+    /// Opt-in (defaults to `false`), like every vendor riding a local app's
+    /// session.
+    pub enabled: bool,
+    /// Override for the app's credential file (default
+    /// `~/.config/Grok Bot/sand-secrets.json`), mirroring `[cursor] db_path`
+    /// and `[kimi] credentials_path`.
+    pub secrets_path: Option<PathBuf>,
+}
+
 fn default_grok_binary() -> PathBuf {
     let executable = if cfg!(windows) { "grok.exe" } else { "grok" };
     let grok_home = std::env::var_os("GROK_HOME")
@@ -1684,6 +1703,7 @@ impl Config {
         expand_tilde_opt(&mut self.cursor.agent_auth_path);
         expand_tilde_opt(&mut self.kiro.db_path);
         expand_tilde_opt(&mut self.kimi.credentials_path);
+        expand_tilde_opt(&mut self.grokbot.secrets_path);
         self.supergrok.grok_binary = expand_tilde(&self.supergrok.grok_binary);
         expand_tilde_opt(&mut self.supergrok.auth_path);
         expand_tilde_opt(&mut self.supergrok.config_path);
@@ -1781,6 +1801,7 @@ impl Config {
             VendorId::Moonshot => self.moonshot.enabled,
             VendorId::Grok => self.grok.enabled,
             VendorId::Supergrok => self.supergrok.enabled,
+            VendorId::Grokbot => self.grokbot.enabled,
             VendorId::Antigravity => self.antigravity.enabled,
             VendorId::Cursor => self.cursor.enabled,
             VendorId::Minimax => self.minimax.enabled,
@@ -1818,6 +1839,7 @@ impl Config {
             | VendorId::Openai
             | VendorId::Copilot
             | VendorId::Supergrok
+            | VendorId::Grokbot
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Kiro
@@ -1847,6 +1869,7 @@ impl Config {
             | VendorId::Openai
             | VendorId::Copilot
             | VendorId::Supergrok
+            | VendorId::Grokbot
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Kiro
@@ -2253,6 +2276,7 @@ mod tests {
             VendorId::Moonshot,
             VendorId::Grok,
             VendorId::Supergrok,
+            VendorId::Grokbot,
             VendorId::Cursor,
             VendorId::Minimax,
             VendorId::Kiro,
@@ -2502,6 +2526,34 @@ enabled = false
             .unwrap();
         assert!(!path.starts_with("~"), "{}", path.display());
         assert!(path.ends_with("kimi/creds.json"), "{}", path.display());
+    }
+
+    #[test]
+    fn grokbot_is_opt_in_and_takes_no_api_key() {
+        let defaults = GrokbotConfig::default();
+        assert!(!defaults.enabled);
+        assert_eq!(defaults.secrets_path, None);
+        // No key surface of any kind: the app's own session is the login.
+        let config = Config::default();
+        assert_eq!(config.api_key_env_for(VendorId::Grokbot), "");
+        assert_eq!(config.inline_api_key(VendorId::Grokbot), None);
+
+        let file = write_toml("[grokbot]\nenabled = true\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert!(config.is_enabled(VendorId::Grokbot));
+        assert!(config.enabled_vendors().contains(&VendorId::Grokbot));
+    }
+
+    #[test]
+    fn grokbot_secrets_path_expands_a_tilde() {
+        let file = write_toml("[grokbot]\nsecrets_path = \"~/gb/secrets.json\"\n");
+        let path = Config::load_from(file.path())
+            .unwrap()
+            .grokbot
+            .secrets_path
+            .unwrap();
+        assert!(!path.starts_with("~"), "{}", path.display());
+        assert!(path.ends_with("gb/secrets.json"), "{}", path.display());
     }
 
     #[test]

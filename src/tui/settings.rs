@@ -1,10 +1,10 @@
 //! Settings overlay — opened from the TUI by pressing `s`. Lets the user pick
 //! the primary vendor and paste a credential for any API-key-authenticated vendor
 //! (including Z.AI, Kimi, MiniMax, and the balance vendors) without hand-editing
-//! config.toml. Anthropic, OpenAI, GitHub Copilot, Cursor, Kiro, Antigravity, and
-//! Command Code authenticate through official or local product state, so they have
-//! no credential field here — there is nothing to paste, and a field would only
-//! imply otherwise. Kimi keeps
+//! config.toml. Anthropic, OpenAI, GitHub Copilot, Cursor, Kiro, Antigravity,
+//! Grok Bot, and Command Code authenticate through official or local product
+//! state, so they have no credential field here — there is nothing to paste,
+//! and a field would only imply otherwise. Kimi keeps
 //! its credential field because a platform key is still one of its two credentials, but
 //! a subscriber whose credential is the Kimi Code CLI login has nothing to paste
 //! and enables `[kimi]` in config.toml instead.

@@ -30,6 +30,7 @@ pub mod display;
 pub mod error;
 pub mod format;
 pub mod grok;
+pub mod grokbot;
 /// Source-scanning helpers for structural guard tests. Test-only.
 #[cfg(test)]
 pub(crate) mod guard;

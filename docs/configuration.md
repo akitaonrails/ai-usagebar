@@ -22,7 +22,7 @@ ai-usagebar-tui --config ./config.test.toml
 # Only a vendor that is enabled can be primary.
 # primary = "anthropic"   # anthropic | anthropic_api | openai | copilot | ollama
 #                         # | zai | openrouter | deepseek | kimi | kilo | novita
-#                         # | moonshot | grok | supergrok | antigravity | cursor
+#                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
 
 [context]
@@ -139,6 +139,15 @@ enabled = true             # disabled by default; enable once you've run `grok l
 # auth.json is also read for its billing `key`. Neither is copied or written.
 # auth_path = "/home/you/.grok/auth.json"
 # config_path = "/home/you/.grok/config.toml"
+
+[grokbot]
+enabled = false            # disabled by default; enable after signing in to the app
+# Grok Bot desktop app's weekly included-usage pool (Linux-only for now).
+# Distinct from `[grok]` (Management API prepaid dollars) and `[supergrok]`
+# (Grok Build subscription). No API key: the credential is the app's own
+# session in ~/.config/Grok Bot/sand-secrets.json, read-only. Refreshed
+# tokens persist only in ai-usagebar's cache, never back to the app's file.
+# secrets_path = "~/.config/Grok Bot/sand-secrets.json"
 
 [antigravity]
 enabled = false            # opt in after signing in with Antigravity

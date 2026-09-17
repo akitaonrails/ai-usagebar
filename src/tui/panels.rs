@@ -228,6 +228,15 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         VendorSnapshot::Moonshot(s) => (String::new(), vec![money_cell(s.available, &s.currency)]),
         VendorSnapshot::Grok(s) => (String::new(), vec![usd_cell(s.balance)]),
         VendorSnapshot::SuperGrok(s) => (s.plan.clone(), vec![pct(s.period.short(), s.weekly_pct)]),
+        VendorSnapshot::Grokbot(s) => {
+            // No included allowance is a state, not a 0% — no meter cell.
+            let cells = if s.has_included_allowance {
+                vec![pct("wk", s.weekly_pct)]
+            } else {
+                vec![("—".into(), PaceSeverity::Low)]
+            };
+            (s.plan.clone(), cells)
+        }
         VendorSnapshot::Antigravity(s) => (
             s.plan.clone(),
             [
@@ -375,6 +384,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .flatten()
         .max(),
         VendorSnapshot::SuperGrok(s) => Some(s.weekly_pct),
+        VendorSnapshot::Grokbot(s) => s.has_included_allowance.then_some(s.weekly_pct),
         VendorSnapshot::Ollama(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
@@ -455,6 +465,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Moonshot(s) => moonshot_sections(s),
                 VendorSnapshot::Grok(s) => grok_sections(s),
                 VendorSnapshot::SuperGrok(s) => supergrok_sections(s, now),
+                VendorSnapshot::Grokbot(s) => grokbot_sections(s, now),
                 VendorSnapshot::Antigravity(s) => antigravity_sections(s, now),
                 VendorSnapshot::Cursor(s) => cursor_sections(s, now),
                 VendorSnapshot::Minimax(s) => minimax_sections(s, now, pace_tolerance),
@@ -1509,6 +1520,46 @@ fn kimi_sections(s: &crate::usage::KimiSnapshot, now: DateTime<Utc>, tol: u32) -
         );
     }
 
+    v
+}
+
+/// Grok Bot: one weekly meter for the included pool — plus the honest
+/// window length when both period instants were reported, so the report
+/// carries exact `window_secs` — or the no-included-allowance state, which is
+/// a text row, never a 0% meter.
+fn grokbot_sections(s: &crate::usage::GrokbotSnapshot, now: DateTime<Utc>) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![Section::Title {
+        left: s.plan.clone(),
+        right: None,
+    }]);
+    v.push(Section::Spacer);
+    if !s.has_included_allowance {
+        v.push(Section::Text {
+            label: "Included usage".into(),
+            value: "no included allowance on this account".into(),
+        });
+        return v;
+    }
+    let metric = Section::Metric {
+        label: "Weekly".into(),
+        pct: s.weekly_pct.clamp(0, 100) as u16,
+        severity: severity_for(s.weekly_pct),
+        value_label: format!("{}%", s.weekly_pct),
+        footnote: format!("Resets in {}", countdown::format(s.reset_at, now)),
+    };
+    match s.window {
+        Some(window) => v.push_metric_in_window(metric, s.reset_at, window),
+        None => v.push_metric(metric, s.reset_at),
+    }
+    // At 100% with the account still serving, on-demand may be picking up the
+    // rest — a footnote row, not its own meter.
+    if let Some(note) = s.on_demand_note() {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: "On-demand".into(),
+            value: note.into(),
+        });
+    }
     v
 }
 
@@ -2825,6 +2876,99 @@ mod tests {
             s,
             Section::Text { label, value } if label == "Resets" && value.contains("1d")
         )));
+    }
+
+    fn grokbot_snap() -> crate::usage::GrokbotSnapshot {
+        crate::usage::GrokbotSnapshot {
+            plan: "Grok Bot Plan".into(),
+            has_included_allowance: true,
+            weekly_pct: 42,
+            has_available_usage: true,
+            on_demand_enabled: false,
+            period_start: Some(now() - chrono::Duration::days(3)),
+            reset_at: Some(now() + chrono::Duration::days(4)),
+            window: Some(chrono::Duration::days(7)),
+        }
+    }
+
+    #[test]
+    fn grokbot_sections_show_one_weekly_meter_with_the_derived_window() {
+        let sections =
+            sections_with_metadata_for(&ready(VendorSnapshot::Grokbot(grokbot_snap())), now(), 5);
+        let metric = only_metric(&sections);
+        let Section::Metric {
+            label,
+            value_label,
+            footnote,
+            ..
+        } = &metric.section
+        else {
+            unreachable!()
+        };
+        assert_eq!(label, "Weekly");
+        assert_eq!(value_label, "42%");
+        assert!(footnote.contains("Resets in"), "{footnote}");
+        // The honest derived window, so a frontend paces against 7d exactly.
+        assert_eq!(metric.window, Some(chrono::Duration::days(7)));
+        assert_eq!(metric.reset_at, grokbot_snap().reset_at);
+    }
+
+    #[test]
+    fn grokbot_no_allowance_state_is_a_text_row_not_a_meter() {
+        let snap = crate::usage::GrokbotSnapshot {
+            has_included_allowance: false,
+            weekly_pct: 0,
+            ..grokbot_snap()
+        };
+        let sections = sections_for(&ready(VendorSnapshot::Grokbot(snap.clone())), now(), 5);
+        assert!(
+            sections
+                .iter()
+                .all(|s| !matches!(s, Section::Metric { .. })),
+            "no meter without an included allowance"
+        );
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { value, .. } if value.contains("no included allowance")
+        )));
+        assert_eq!(headline_pct(&VendorSnapshot::Grokbot(snap)), None);
+        let (_, cells) = compact_cells(&VendorSnapshot::Grokbot(grokbot_snap()));
+        assert_eq!(cells.len(), 1);
+        assert!(cells[0].0.contains("42%"), "{cells:?}");
+    }
+
+    #[test]
+    fn grokbot_on_demand_footnote_is_a_text_row_when_it_applies() {
+        let mut snap = grokbot_snap();
+        snap.weekly_pct = 100;
+        snap.has_available_usage = true;
+        snap.on_demand_enabled = true;
+        let sections = sections_for(&ready(VendorSnapshot::Grokbot(snap)), now(), 5);
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { label, value } if label == "On-demand" && value.contains("on-demand")
+        )));
+
+        let mut snap = grokbot_snap();
+        snap.weekly_pct = 100;
+        snap.has_available_usage = true;
+        snap.on_demand_enabled = false;
+        let sections = sections_for(&ready(VendorSnapshot::Grokbot(snap)), now(), 5);
+        assert!(
+            sections
+                .iter()
+                .all(|s| !matches!(s, Section::Text { label, .. } if label == "On-demand")),
+            "on-demand off: no footnote"
+        );
+    }
+
+    #[test]
+    fn grokbot_without_a_period_start_reports_no_window() {
+        let mut snap = grokbot_snap();
+        snap.period_start = None;
+        snap.window = None;
+        let sections = sections_with_metadata_for(&ready(VendorSnapshot::Grokbot(snap)), now(), 5);
+        assert_eq!(only_metric(&sections).window, None);
     }
 
     #[test]
