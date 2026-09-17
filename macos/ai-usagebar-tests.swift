@@ -475,7 +475,7 @@ func testParserBalances() {
                        ]))
     assertEqual(sgk?.hasUsageWindows, true, "supergrok shows windows")
     assertEqual(sgk?.session?.pct, 45, "supergrok session pct")
-    assertEqual(sgk?.sessionLabel, "Weekly Credits", "supergrok session label")
+    assertEqual(sgk?.sessionLabel, "Weekly usage", "supergrok session label")
     assertNil(sgk?.weekly, "supergrok suppresses duplicate weekly window")
 
     let nous = snapshot(FORMAT, vendor: "nous",
