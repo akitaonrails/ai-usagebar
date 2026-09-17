@@ -1296,18 +1296,19 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
         v.push_metric(metric, s.reset_at);
     }
     for product in &s.products {
-        let row = Section::Metric {
-            label: product.label.clone(),
-            pct: product.percent.clamp(0, 100) as u16,
-            severity: severity_for(product.percent),
-            value_label: format!("{}%", product.percent),
-            footnote: String::new(),
-        };
-        if s.period == crate::usage::SuperGrokPeriod::Weekly {
-            v.push_metric_in_window(row, s.reset_at, chrono::Duration::days(7));
-        } else {
-            v.push_metric(row, s.reset_at);
-        }
+        // Product slices share the overall pool. They must not carry the
+        // window reset or a severity colour — only the overall usage meter
+        // is the binding constraint.
+        v.push_metric(
+            Section::Metric {
+                label: product.label.clone(),
+                pct: product.percent.clamp(0, 100) as u16,
+                severity: PaceSeverity::Low,
+                value_label: format!("{}%", product.percent),
+                footnote: String::new(),
+            },
+            None,
+        );
     }
     if let Some(bal) = s.prepaid_balance {
         v.push(Section::Spacer);
