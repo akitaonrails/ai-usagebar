@@ -147,7 +147,7 @@ fn render_tooltip(
     lines.push(TooltipLine::Sep);
     lines.push(TooltipLine::Body("".into()));
 
-    let period_label = format!("  󰔟  {} Build credits", snap.period.label());
+    let period_label = format!("  󰔟  {} usage", snap.period.label());
     push_pct_row(
         &mut lines,
         theme,
@@ -276,7 +276,8 @@ mod tests {
         let o = sample_outcome(snap.clone());
         let out = render(&o, &snap, &Theme::default(), &opts(), now());
         assert!(out.text.contains("34%"));
-        assert!(out.tooltip.contains("Build credits"));
+        assert!(out.tooltip.contains("usage"));
+        assert!(!out.tooltip.contains("Build credits"));
         assert!(out.tooltip.contains("Weekly"));
         assert!(out.tooltip.contains("SuperGrok"));
         // Usage-% vendors (Anthropic / OpenAI) draw a filled progress bar in

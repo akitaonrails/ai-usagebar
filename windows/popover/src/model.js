@@ -473,11 +473,15 @@ export function projectCards(payload, nowMs) {
   return cards;
 }
 
-// SuperGrok names every meter "<Window> Build credits"; the card title already
-// says what is being counted, so the row keeps only the window.
+// SuperGrok names the overall meter "<Window> usage" (older reports used
+// "<Window> Build credits"). The card title already says SuperGrok, so the
+// row keeps only the window. Product slices (Grok Build, Grok Chat, …) keep
+// their full labels.
 function metricLabel(entryId, label) {
   if (vendorSlug(entryId) !== "supergrok") return label;
-  return String(label || "").replace(/\s+Build credits$/i, "");
+  return String(label || "")
+    .replace(/\s+Build credits$/i, "")
+    .replace(/\s+usage$/i, "");
 }
 
 /** @returns {Layout} */

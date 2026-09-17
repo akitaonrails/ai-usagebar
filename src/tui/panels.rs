@@ -1282,7 +1282,7 @@ fn supergrok_sections(s: &crate::usage::SuperGrokSnapshot, now: DateTime<Utc>) -
         Section::Spacer,
     ]);
     let metric = Section::Metric {
-        label: format!("{} Build credits", s.period.label()),
+        label: format!("{} usage", s.period.label()),
         pct: pct.clamp(0, 100) as u16,
         severity: severity_for(pct),
         value_label: format!("{pct}%"),
@@ -2359,7 +2359,7 @@ mod tests {
         assert_eq!(
             labels,
             vec![
-                ("Weekly Build credits".into(), 90),
+                ("Weekly usage".into(), 90),
                 ("Grok Build".into(), 87),
                 ("Grok Chat".into(), 3),
             ]

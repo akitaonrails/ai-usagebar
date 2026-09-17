@@ -126,6 +126,8 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 
 [supergrok]
 enabled = true             # disabled by default; enable once you've run `grok login`
+# Included usage from Grok Build billing (overall % plus productUsage slices).
+# Distinct from `[grok]`, which is Management API prepaid dollars.
 # No API key of its own: billing and banked resets use the `key` already in
 # its auth.json (read-only, sent in an Authorization header, never copied or
 # rewritten). Billing is Grok Build's documented HTTPS endpoint, or its ACP

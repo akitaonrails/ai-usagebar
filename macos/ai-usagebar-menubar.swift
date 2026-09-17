@@ -649,7 +649,7 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         weeklyWindow = nil
         sessionTag = period == "Monthly" ? "mo" : "7d"
         weeklyTag = "7d"
-        sessionLabel = period.isEmpty ? "Build credits" : "\(period) Credits"
+        sessionLabel = period.isEmpty ? "Usage" : "\(period) usage"
         weeklyLabel = ""
     case "nous":
         weeklyWindow = nil

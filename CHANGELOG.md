@@ -11,12 +11,13 @@ Each release is also published at
 
 ### Added
 
-- **SuperGrok per-product usage.** The billing document's `productUsage`
-  array is now shown as extra meters beside the overall included-credit
-  percentage — Grok Build, Grok Chat, Grok Imagine, and any other named
-  slice — so the TUI, `usage --json`, and the Waybar tooltip match the
-  grok.com usage page instead of collapsing everything into one "Build
-  credits" bar.
+- **SuperGrok included usage, not a single Build-credits bar.** SuperGrok
+  already fetched Grok Build's billing document; the parser only kept the
+  overall `creditUsagePercent` and labelled it "Build credits". It now
+  shows that figure as **weekly/monthly usage** and lists the
+  `productUsage` slices beside it (Grok Build, Grok Chat, Grok Imagine,
+  and any other named product). `[grok]` is unchanged: that vendor is
+  still the Management API prepaid dollar balance.
 
 ## [1.18.1] — 2026-09-16
 
