@@ -75,6 +75,14 @@ Each release is also published at
   appears only when there is credit to show; `{sgk_prepaid}` still
   publishes the raw figure.
 
+### Security
+
+- **Updated rustls to 0.23.45** (from 0.23.40), fixing RUSTSEC-2026-0285 —
+  TLS 1.3 handshake messages incorrectly accepted across encryption-level
+  boundaries — in the stack that carries every vendor credential request.
+  Added `.cargo/audit.toml` documenting the two remaining transitive-only
+  gtk/glib advisories the tray stack pins and ai-usagebar never reaches.
+
 ## [1.18.1] — 2026-09-16
 
 ### Fixed
