@@ -2,7 +2,7 @@
 
 A NotifyIcon + WebView2 popover for [`ai-usagebar`](../README.md). Left-click
 the tray icon for a dashboard that follows the OpenUsage (SwiftUI edition)
-design: a 320 px panel that sizes itself to its content, provider sections
+design: a compact 300 px panel that sizes itself to its content, provider sections
 with capsule meters, reset countdowns and spend rows. It is the Windows
 counterpart to the
 [KDE plasmoid](../kde-plasmoid/README.md): same `usage --json` report, same

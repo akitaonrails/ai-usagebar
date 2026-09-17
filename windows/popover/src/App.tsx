@@ -27,6 +27,7 @@ import {
   sendCommand,
   setRowEnabled,
 } from "./model.js";
+import { measurePanelHeight } from "./panel-size.js";
 
 type Direction = "back" | "forward";
 
@@ -60,6 +61,7 @@ export default function App() {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [rowMenuOpen, setRowMenuOpen] = useState(false);
   const [resetArmed, setResetArmed] = useState(false);
+  const [popoverVisible, setPopoverVisible] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const cards = useMemo(() => (payload.hostError ? [] : projectCards(payload, nowMs)), [payload, nowMs]);
@@ -112,6 +114,10 @@ export default function App() {
       });
     };
     window.__AIUB_VISIBLE__ = (visible) => {
+      // Visibility changes are also sizing boundaries. ResizeObserver callbacks
+      // can be suspended while WebView2 is hidden, so force a fresh measurement
+      // as soon as the native host opens the popover again.
+      setPopoverVisible(visible);
       if (visible) return;
       // Closing the popover resets navigation: back to the dashboard, scrolled to the top,
       // menus closed (OpenUsage "Closing").
@@ -149,13 +155,7 @@ export default function App() {
     let last = -1;
     const report = () => {
       frame = 0;
-      const content = shell.querySelector<HTMLElement>("[data-scroll-content]");
-      let height = 0;
-      for (const child of Array.from(shell.children)) {
-        const el = child as HTMLElement;
-        height += el.dataset.scroll !== undefined && content ? content.offsetHeight : el.offsetHeight;
-      }
-      height = Math.ceil(height);
+      const height = measurePanelHeight(shell);
       if (height <= 0 || height === last) return;
       last = height;
       sendCommand("resize", { height, theme: resolvedTheme(layout.theme) });
@@ -173,7 +173,7 @@ export default function App() {
       observer.disconnect();
       if (frame !== 0) window.clearTimeout(frame);
     };
-  }, [screen, layout.theme, layout.density]);
+  }, [screen, payload, layout, popoverVisible]);
 
   function onKeyDown(event: KeyboardEvent) {
     if (locked || event.defaultPrevented || optionsOpen || rowMenuOpen) return;

@@ -8,6 +8,8 @@ import MdiRestore from "~icons/mdi/restore";
 import MdiTune from "~icons/mdi/tune-variant";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { RowMenu, type RowAction } from "@/components/RowMenu";
+import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
   BlockRow,
   Card,
@@ -15,6 +17,7 @@ import type {
   ExplainedError,
   Layout,
   MetricRow as MetricRowData,
+  ResetCreditsRow as ResetCreditsRowData,
   Row,
   TextRow as TextRowData,
 } from "@/lib/types";
@@ -34,6 +37,7 @@ import {
   prefsForCard,
   providerIconId,
   resetAlternate,
+  resetCreditDetails,
   resetText,
   rowKey,
   sendCommand,
@@ -104,6 +108,8 @@ export function ProviderSection({
           onToggleResetTimes={onToggleResetTimes}
           onToggleShowAs={onToggleShowAs}
         />
+      ) : row.kind === "resetCredits" ? (
+        <ResetCreditsRow key={key} condensedTop={condensed.has(index)} layout={layout} nowMs={nowMs} row={row} />
       ) : (
         <TextRow key={key} condensedTop={condensed.has(index)} row={row} />
       );
@@ -145,6 +151,59 @@ export function ProviderSection({
         {card.warning ? <WarningStrip warning={card.warning} /> : null}
       </div>
     </section>
+  );
+}
+
+interface ResetCreditsRowProps {
+  condensedTop: boolean;
+  layout: Layout;
+  nowMs: number;
+  row: ResetCreditsRowData;
+}
+
+function ResetCreditsRow({ condensedTop, layout, nowMs, row }: ResetCreditsRowProps) {
+  const details = resetCreditDetails(row, nowMs, { timeFormat: layout.timeFormat });
+  const noun = row.available === 1 ? "available reset" : "available resets";
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-[10px] px-[14px] pb-[var(--pad-text-row)]",
+        condensedTop ? "pt-[var(--pad-text-row-condensed)]" : "pt-[var(--pad-text-row)]",
+      )}
+    >
+      <span className="shrink-0 text-[length:var(--sz-support)] font-semibold">{row.label}</span>
+      <span className="min-w-3 flex-1" />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge asChild variant="secondary">
+            <button type="button" aria-label={`${row.available} ${noun}; show expiry dates`}>
+              <span aria-hidden="true" className="size-2 rounded-full bg-meter-yellow" />
+              <span className="tabular-nums">{row.available} available</span>
+            </button>
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent
+          align="end"
+          collisionPadding={12}
+          side="top"
+          sideOffset={9}
+          className="flex w-[min(330px,calc(100vw-24px))] flex-col gap-3 rounded-xl p-4 text-[length:var(--sz-support)]"
+        >
+          {details.items.map((item: { date: string; remaining: string; title: string }, index: number) => (
+            <div key={`${item.date}-${index}`} className="flex items-center gap-3 tabular-nums" title={item.title || undefined}>
+              <Badge variant={index === 0 ? "warning" : "default"} className="size-6 rounded-full p-0 text-[11px]">
+                {index + 1}
+              </Badge>
+              <span className="min-w-0 flex-1 truncate font-medium">{item.date}</span>
+              <span className="shrink-0 text-label-2">{item.remaining}</span>
+            </div>
+          ))}
+          {details.hidden > 0 ? (
+            <div className="text-right text-label-2">+{details.hidden} more</div>
+          ) : null}
+        </TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
 
