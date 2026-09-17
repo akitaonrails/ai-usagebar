@@ -162,7 +162,8 @@ currencies are present; otherwise they use CNY.
 `{kimi_plan}`, `{kimi_weekly_pct}`, `{kimi_weekly_used}`,
 `{kimi_weekly_limit}`, `{kimi_weekly_remaining}`, `{kimi_weekly_reset}`,
 `{kimi_window_pct}`, `{kimi_window_used}`, `{kimi_window_limit}`,
-`{kimi_window_remaining}`, `{kimi_window_reset}`
+`{kimi_window_remaining}`, `{kimi_window_reset}`,
+`{kimi_monthly_pct}`, `{kimi_monthly_reset}`
 
 These cover the subscription quota and rolling five-hour window from
 `api.kimi.com/coding/v1/usages`. The default format is
@@ -170,6 +171,12 @@ These cover the subscription quota and rolling five-hour window from
 every other two-window vendor. Generic aliases are `{plan}` for the plan,
 `{weekly_pct}` for weekly usage, and `{session_pct}` for the five-hour
 window.
+
+Accounts on the newer response shape have no weekly bucket — only the
+combined monthly pool — so the weekly placeholders (`kimi_weekly_*` and the
+`weekly_pct`/`weekly_reset` aliases) render empty there, and
+`{kimi_monthly_pct}` / `{kimi_monthly_reset}` carry the monthly pool
+instead. On legacy-shape accounts the monthly placeholders render empty.
 
 ## Kilo
 

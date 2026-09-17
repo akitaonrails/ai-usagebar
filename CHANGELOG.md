@@ -30,6 +30,19 @@ Each release is also published at
 
 ### Fixed
 
+- **Kimi accounts on the newer `/coding/v1/usages` response shape no longer
+  hard-error as schema drift.** Such accounts return no top-level `usage`
+  block — only a `usages` map of ratios — which the parser rejected
+  outright. The snapshot now reads the combined monthly pool from
+  `limit_month_total` (`used_ratio` × 100, a spelling validated against the
+  vendor's own website), exposed as the new `{kimi_monthly_pct}` /
+  `{kimi_monthly_reset}` placeholders and a "Monthly" row in the tooltip and
+  the detail panel. These accounts have **no weekly window**: the weekly row
+  is dropped and the `kimi_weekly_*` placeholders resolve to empty rather
+  than a fabricated 0. `limit_month_code` — the Code slice *inside* that
+  same pool — is never added to the total or rendered as its own allowance,
+  and the 5h rolling window still comes from `limits[]`, which the website
+  matches.
 - **SuperGrok product names are escaped before reaching the tooltip's Pango
   markup.** A hostile billing document could otherwise inject markup through
   a crafted `productUsage` name. Width-based label alignment happens before

@@ -213,10 +213,16 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         }
         VendorSnapshot::Openrouter(s) => (String::new(), vec![usd_cell(s.balance())]),
         VendorSnapshot::Deepseek(s) => (String::new(), vec![money_cell(s.balance, &s.currency)]),
-        VendorSnapshot::Kimi(s) => (
-            s.plan.clone().unwrap_or_default(),
-            vec![pct("5h", s.window_pct()), pct("wk", s.weekly_pct())],
-        ),
+        VendorSnapshot::Kimi(s) => {
+            let mut cells = vec![pct("5h", s.window_pct())];
+            if s.has_weekly {
+                cells.push(pct("wk", s.weekly_pct()));
+            }
+            if let Some(monthly) = s.monthly_pct {
+                cells.push(pct("mo", monthly));
+            }
+            (s.plan.clone().unwrap_or_default(), cells)
+        }
         VendorSnapshot::Kilo(s) => (String::new(), vec![usd_cell(s.balance)]),
         VendorSnapshot::Novita(s) => (String::new(), vec![usd_cell(s.available)]),
         VendorSnapshot::Moonshot(s) => (String::new(), vec![money_cell(s.available, &s.currency)]),
@@ -334,7 +340,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .into_iter()
         .flatten()
         .max(),
-        VendorSnapshot::Kimi(s) => Some(s.weekly_pct().max(s.window_pct())),
+        VendorSnapshot::Kimi(s) => Some(s.worst_pct()),
         VendorSnapshot::Antigravity(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
@@ -1482,8 +1488,26 @@ fn kimi_sections(s: &crate::usage::KimiSnapshot, now: DateTime<Utc>, tol: u32) -
         let w = window(s.window_pct(), s.window_reset_at, ROLLING_WINDOW);
         push_window(&mut v, "Rolling window (5h)", &w, now, tol, false);
     }
-    let w = window(s.weekly_pct(), s.weekly_reset_at, WEEKLY_WINDOW);
-    push_window(&mut v, "Weekly quota", &w, now, tol, false);
+    if s.has_weekly {
+        let w = window(s.weekly_pct(), s.weekly_reset_at, WEEKLY_WINDOW);
+        push_window(&mut v, "Weekly quota", &w, now, tol, false);
+    }
+    if let Some(monthly_pct) = s.monthly_pct {
+        // The monthly pool resets from the order date, so there is no fixed
+        // window length: the metric carries its reset but no window metadata,
+        // and nothing paces it.
+        v.push(Section::Spacer);
+        v.push_metric(
+            Section::Metric {
+                label: "Monthly".into(),
+                pct: monthly_pct.clamp(0, 100) as u16,
+                severity: severity_for(monthly_pct),
+                value_label: format!("{monthly_pct}%"),
+                footnote: format!("Resets in {}", countdown::format(s.monthly_reset_at, now)),
+            },
+            s.monthly_reset_at,
+        );
+    }
 
     v
 }
@@ -1800,6 +1824,9 @@ mod tests {
                 weekly_used: 10,
                 weekly_remaining: 90,
                 weekly_reset_at: Some(now() + chrono::Duration::days(3)),
+                has_weekly: true,
+                monthly_pct: None,
+                monthly_reset_at: None,
                 window_limit: 0,
                 window_used: 0,
                 window_remaining: 0,
@@ -2475,6 +2502,9 @@ mod tests {
             weekly_used: 26,
             weekly_remaining: 74,
             weekly_reset_at: Some(now + chrono::Duration::days(4)),
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
             window_limit: 100,
             window_used: 15,
             window_remaining: 85,
@@ -2537,6 +2567,9 @@ mod tests {
             weekly_used: 26,
             weekly_remaining: 74,
             weekly_reset_at: Some(now + chrono::Duration::days(4)),
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
             window_limit: 100,
             window_used: 15,
             window_remaining: 85,
@@ -2565,6 +2598,9 @@ mod tests {
             weekly_used: 10,
             weekly_remaining: 90,
             weekly_reset_at: None,
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
             window_limit: 0,
             window_used: 0,
             window_remaining: 0,
@@ -2576,6 +2612,55 @@ mod tests {
             .filter(|s| matches!(s, Section::Metric { .. }))
             .count();
         assert_eq!(metric_count, 1);
+    }
+
+    /// The newer `usages`-map shape has no weekly bucket: the panel drops the
+    /// weekly row and lists the monthly pool — with its reset, but with no
+    /// window metadata, because the reset hangs on the order date and there
+    /// is no fixed length to pace against.
+    #[test]
+    fn kimi_sections_on_the_monthly_shape_drop_weekly_and_add_monthly() {
+        let now = now();
+        let snap = KimiSnapshot {
+            plan: Some("Allegretto".into()),
+            weekly_limit: 0,
+            weekly_used: 0,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            has_weekly: false,
+            monthly_pct: Some(42),
+            monthly_reset_at: Some(now + chrono::Duration::days(30)),
+            window_limit: 100,
+            window_used: 15,
+            window_remaining: 85,
+            window_reset_at: Some(now + chrono::Duration::hours(2)),
+        };
+        let projected =
+            sections_with_metadata_for(&ready(VendorSnapshot::Kimi(snap.clone())), now, 5);
+        let metrics: Vec<_> = projected
+            .iter()
+            .filter(|p| matches!(p.section, Section::Metric { .. }))
+            .collect();
+        assert_eq!(metrics.len(), 2);
+        let monthly = metrics
+            .iter()
+            .find(|p| matches!(&p.section, Section::Metric { label, .. } if label == "Monthly"))
+            .expect("a Monthly metric");
+        assert!(matches!(
+            &monthly.section,
+            Section::Metric { value_label, footnote, .. }
+            if value_label == "42%" && footnote == "Resets in 30d 0h"
+        ));
+        assert_eq!(monthly.reset_at, Some(now + chrono::Duration::days(30)));
+        assert_eq!(monthly.window, None, "no fixed window length, no pacing");
+        assert!(!metrics.iter().any(
+            |p| matches!(&p.section, Section::Metric { label, .. } if label == "Weekly quota")
+        ));
+
+        // The Overview cells follow the same presence rules.
+        let (_, cells) = compact_cells(&VendorSnapshot::Kimi(snap));
+        let texts: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(texts, ["5h 15%", "mo 42%"]);
     }
 
     fn cursor_snap() -> crate::usage::CursorSnapshot {
@@ -2750,6 +2835,9 @@ mod tests {
             weekly_used: 10,
             weekly_remaining: 90,
             weekly_reset_at: None,
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
             window_limit: 0,
             window_used: 0,
             window_remaining: 0,
@@ -2788,6 +2876,9 @@ mod tests {
                 weekly_used: 0,
                 weekly_remaining: 0,
                 weekly_reset_at: None,
+                has_weekly: true,
+                monthly_pct: None,
+                monthly_reset_at: None,
                 window_limit: 0,
                 window_used: 0,
                 window_remaining: 0,

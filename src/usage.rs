@@ -312,6 +312,13 @@ impl KiroSnapshot {
 }
 
 /// Kimi Code — weekly subscription quota plus a 5h rolling rate-limit window.
+///
+/// Accounts on the newer `/coding/v1/usages` response shape have no weekly
+/// counters at all: the top-level `usage` block is replaced by a `usages` map
+/// of ratios, of which only `limit_month_total` — the combined monthly pool —
+/// is read. On such accounts `has_weekly` is false, the weekly counters stay
+/// zero (never fabricated), and the monthly pool arrives as
+/// `monthly_pct`/`monthly_reset_at`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KimiSnapshot {
     pub plan: Option<String>,
@@ -319,6 +326,14 @@ pub struct KimiSnapshot {
     pub weekly_used: u64,
     pub weekly_remaining: u64,
     pub weekly_reset_at: Option<DateTime<Utc>>,
+    /// `false` on the newer `usages`-map shape, which exposes no weekly
+    /// bucket; renderers must drop the weekly row rather than draw zeros.
+    pub has_weekly: bool,
+    /// Combined monthly pool usage (0..=100) on the newer shape. The
+    /// `limit_month_code` entry is the Code slice *inside* that pool, never
+    /// its own allowance, so it is not carried here.
+    pub monthly_pct: Option<i32>,
+    pub monthly_reset_at: Option<DateTime<Utc>>,
     pub window_limit: u64,
     pub window_used: u64,
     pub window_remaining: u64,
@@ -346,6 +361,20 @@ impl KimiSnapshot {
     /// Percentage of the rolling rate-limit window consumed (0..=100).
     pub fn window_pct(&self) -> i32 {
         Self::pct(self.window_used, self.window_limit)
+    }
+
+    /// Worst percentage across the windows this snapshot actually has: the
+    /// rolling window, the weekly quota when present, and the monthly pool
+    /// when present.
+    pub fn worst_pct(&self) -> i32 {
+        let mut worst = self.window_pct();
+        if self.has_weekly {
+            worst = worst.max(self.weekly_pct());
+        }
+        if let Some(monthly) = self.monthly_pct {
+            worst = worst.max(monthly);
+        }
+        worst
     }
 }
 
@@ -995,6 +1024,9 @@ mod tests {
             weekly_used: 1 << 52,
             weekly_remaining: 0,
             weekly_reset_at: None,
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
             window_limit: u64::MAX,
             window_used: u64::MAX - 1,
             window_remaining: 0,
