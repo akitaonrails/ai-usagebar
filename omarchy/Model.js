@@ -54,7 +54,8 @@ function normalizeSection(raw) {
       detail: cleanText(raw.detail, 1000),
       severity: severity,
       reset_at: cleanText(raw.reset_at, 80),
-      window_secs: windowSecs
+      window_secs: windowSecs,
+      group: cleanText(raw.group, 80)
     }
   }
   if (type === "text") {
@@ -525,6 +526,30 @@ function metricDetail(row) {
   detail = detail.replace(/^Resets in [^·]+\s*(?:·\s*)?/i, "")
   detail = detail.replace(/\s*·\s*reset\s+[^·]+$/i, "")
   return detail.trim()
+}
+
+// The report marks sub-rows with a group (SuperGrok's product slices under
+// "Breakdown"). Render each group as a heading row — an empty-value text row,
+// which DetailRow draws through its section-header path — followed by that
+// group's metrics, so slices read as a breakdown of the meter above them
+// instead of peers of it. Ungrouped sections pass through untouched, and a
+// group heading appears once no matter how many rows carry it.
+function groupedSections(sections) {
+  var rows = Array.isArray(sections) ? sections : []
+  var out = []
+  var seen = {}
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    if (row && row.type === "metric") {
+      var group = String(row.group || "")
+      if (group !== "" && !seen[group]) {
+        seen[group] = true
+        out.push({ type: "text", label: group, value: "" })
+      }
+    }
+    out.push(row)
+  }
+  return out
 }
 
 function errorMessage(value) {

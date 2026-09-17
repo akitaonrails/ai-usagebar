@@ -18,6 +18,22 @@ Each release is also published at
   `productUsage` slices beside it (Grok Build, Grok Chat, Grok Imagine,
   and any other named product). `[grok]` is unchanged: that vendor is
   still the Management API prepaid dollar balance.
+- **Grouped sub-rows in the report and the Omarchy panel.** Product slices
+  now carry a `group` field (`"Breakdown"`) in `usage --json`'s `sections`
+  and `metrics`, and the Quattro panel renders grouped rows compactly —
+  dim label, thin muted gauge — under a `BREAKDOWN` heading, instead of as
+  full meters beside the overall usage row. The field is additive: older
+  frontends keep rendering the rows as plain metrics.
+
+### Fixed
+
+- **SuperGrok no longer shows a "$0.00 Prepaid API" line.** The billing
+  document reports `prepaidBalance: 0` unless credit was purchased on top
+  of the subscription, and a zero row read as "no money" — especially for
+  unified billing accounts, whose real dollars sit in the Management API
+  wallet that `[grok]` reports. The row (TUI, tooltip and report) now
+  appears only when there is credit to show; `{sgk_prepaid}` still
+  publishes the raw figure.
 
 ## [1.18.1] — 2026-09-16
 

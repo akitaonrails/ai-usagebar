@@ -167,7 +167,10 @@ fn render_tooltip(
         );
     }
 
-    if let Some(bal) = snap.prepaid_balance {
+    // Same rule as the panel: a $0.00 prepaid line is noise, not information
+    // (unified billing accounts keep their dollars in the Management API
+    // wallet, which the `[grok]` vendor reports).
+    if let Some(bal) = snap.prepaid_balance.filter(|bal| *bal > 0.0) {
         let bal_s = usd(bal);
         lines.push(TooltipLine::Body("".into()));
         lines.push(TooltipLine::Body(format!(
@@ -309,6 +312,41 @@ mod tests {
         assert!(out.tooltip.contains("Grok Chat"));
         assert!(out.tooltip.contains("20%"));
         assert!(out.tooltip.contains("14%"));
+    }
+
+    /// The prepaid line appears only when there is credit to show — a $0.00
+    /// row reads as "no money" when the billing document merely reports that
+    /// nothing was purchased on top of the subscription. The `{sgk_prepaid}`
+    /// placeholder keeps reporting the raw figure either way.
+    #[test]
+    fn tooltip_lists_prepaid_only_when_there_is_credit() {
+        let mut snap = sample_snap();
+        snap.prepaid_balance = Some(0.0);
+        let zero = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(!zero.tooltip.contains("Prepaid API"), "{}", zero.tooltip);
+        assert_eq!(
+            build_placeholders(&snap, now())
+                .get("sgk_prepaid")
+                .map(String::as_str),
+            Some("$0.00")
+        );
+
+        snap.prepaid_balance = Some(4.22);
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(out.tooltip.contains("Prepaid API"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("$4.22"), "{}", out.tooltip);
     }
 
     #[test]

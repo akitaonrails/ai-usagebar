@@ -201,7 +201,12 @@ USD; the China service uses CNY.
 - `{session_pct}` and `{weekly_pct}` remain aliases for `sgk_pct`.
 - Per-product slices (Grok Build, Grok Chat, Grok Imagine, …) appear as extra
   meters in the TUI, tooltip and `usage --json` report. They share the same
-  reset as `{sgk_pct}` and do not have their own placeholders.
+  reset as `{sgk_pct}` and do not have their own placeholders. In the report
+  each slice carries `group: "Breakdown"` (absent on the overall meter), so a
+  frontend can draw it under a heading; the Omarchy panel does exactly that.
+- The prepaid line is shown only when the billing document reports credit —
+  a `prepaidBalance` of zero draws no row, while `{sgk_prepaid}` still
+  publishes the raw figure.
 - `{plan}` is the subscription tier when Grok Build supplies one.
 - `{sgk_resets_available}` is the number of banked resets you can redeem by
   hand, and `{sgk_resets}` the compact count (`1 reset available`). These are

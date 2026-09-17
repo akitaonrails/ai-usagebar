@@ -57,7 +57,9 @@ Panel {
   // barWindow pins the bar value and its echoes (hero detail, tooltip).
   // Panel rows and alert state keep the historical highest-percent headline,
   // matching every other frontend (Waybar class, KDE isAlarming, TUI).
-  readonly property var entrySections: entry ? entry.sections : []
+  // Grouped sub-rows (SuperGrok's product slices) gain a heading row here so
+  // they render as a breakdown of the meter above, not peers of it.
+  readonly property var entrySections: entry ? Model.groupedSections(entry.sections) : []
   readonly property bool filterMiss: configuredProvider !== "" && entries.length > 0 && visibleEntries.length === 0
   readonly property bool entryAlarming: Model.isAlarming(entry)
   readonly property bool alarming: loadError !== "" || filterMiss
@@ -607,11 +609,23 @@ Panel {
   component MetricRow: Column {
     id: metricRow
     property var row: null
-    readonly property bool critical: row && row.severity === "critical"
+    // A grouped metric is a sub-row (SuperGrok's product slices under
+    // "Breakdown"): dim label, thin muted gauge, no critical colouring — the
+    // overall meter above stays the binding constraint. The indent is applied
+    // as margins inside full-width children, never as positioner padding: a
+    // Column's leftPadding shifts children without narrowing them, which
+    // pushes right-anchored values past the panel edge.
+    readonly property bool grouped: row ? String(row.group || "") !== "" : false
+    readonly property bool critical: !grouped && row && row.severity === "critical"
+    readonly property color labelColor: grouped ? root.dim : root.foreground
+    readonly property color fillColor: grouped
+      ? root.alpha(root.foreground, 0.38)
+      : (critical ? root.urgent : root.foreground)
+    readonly property int indent: grouped ? Style.space(10) : 0
     readonly property string detailText: Model.metricDetail(row)
     readonly property string resetText: row ? Model.formatReset(row.reset_at, root.nowMs) : ""
 
-    spacing: Style.space(6)
+    spacing: Style.space(grouped ? 4 : 6)
 
     Item {
       width: parent.width
@@ -621,11 +635,12 @@ Panel {
         id: metricLabel
         text: metricRow.row ? metricRow.row.label : ""
         textFormat: Text.PlainText
-        color: root.foreground
+        color: metricRow.labelColor
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
+        font.pixelSize: metricRow.grouped ? Style.font.caption : Style.font.body
         elide: Text.ElideRight
         anchors.left: parent.left
+        anchors.leftMargin: metricRow.indent
         anchors.right: metricValue.left
         anchors.rightMargin: Style.spacing.sm
         anchors.verticalCenter: parent.verticalCenter
@@ -636,10 +651,10 @@ Panel {
         text: metricRow.row && metricRow.row.value !== ""
           ? metricRow.row.value : (metricRow.row ? metricRow.row.percent + "%" : "")
         textFormat: Text.PlainText
-        color: metricRow.critical ? root.urgent : root.foreground
+        color: metricRow.critical ? root.urgent : metricRow.labelColor
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        font.bold: true
+        font.bold: !metricRow.grouped
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
       }
@@ -647,13 +662,14 @@ Panel {
 
     Item {
       width: parent.width
-      implicitHeight: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.14))
+      implicitHeight: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * (metricRow.grouped ? 0.10 : 0.14)))
 
       Rectangle {
         id: meterTrack
         anchors.fill: parent
+        anchors.leftMargin: metricRow.indent
         radius: height / 2
-        color: root.track
+        color: metricRow.grouped ? root.alpha(root.foreground, 0.10) : root.track
       }
 
       Rectangle {
@@ -662,7 +678,7 @@ Panel {
         height: meterTrack.height
         radius: meterTrack.radius
         width: meterTrack.width * root.clamp(metricRow.row ? metricRow.row.percent / 100 : 0, 0, 1)
-        color: metricRow.critical ? root.urgent : root.foreground
+        color: metricRow.fillColor
 
         Behavior on width {
           NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
@@ -673,6 +689,7 @@ Panel {
     Text {
       visible: text !== ""
       width: parent.width
+      leftPadding: metricRow.indent
       text: metricRow.detailText
       textFormat: Text.PlainText
       color: root.dim
@@ -684,6 +701,7 @@ Panel {
     Text {
       visible: text !== ""
       width: parent.width
+      leftPadding: metricRow.indent
       text: metricRow.resetText
       textFormat: Text.PlainText
       color: root.dim
