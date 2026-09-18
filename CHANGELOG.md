@@ -9,7 +9,7 @@ Each release is also published at
 
 ## [Unreleased]
 
-## [1.20.0] — 2026-09-17
+## [1.20.1] — 2026-09-18
 
 ### Added
 
@@ -34,6 +34,9 @@ Each release is also published at
 - The Windows tray popover remeasures its intrinsic content height whenever it
   opens or receives updated data, instead of retaining a stale work-area-sized
   window with empty space above the footer.
+- The Scoop manifest's `version` is bumped in lockstep with the release (the
+  new `verify-version` guard caught the never-published v1.20.0's stale
+  manifest before anything shipped; that tag remains unused).
 
 ## [1.19.0] — 2026-09-17
 
@@ -2553,8 +2556,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.0...HEAD
-[1.20.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.19.0...v1.20.0
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.1...HEAD
+[1.20.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.19.0...v1.20.1
 [1.19.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.1...v1.19.0
 [1.18.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.0...v1.18.1
 [1.18.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...v1.18.0

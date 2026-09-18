@@ -7,8 +7,12 @@ these are invariants we keep almost-forgetting, not a project tour.
 
 When cutting a new version (patch, minor, or major):
 
-1. **Bump both versions** — `Cargo.toml` `version` and the root Omarchy
-   `manifest.json` `version` must match the release tag.
+1. **Bump all version surfaces** — `Cargo.toml` `version`, the root Omarchy
+   `manifest.json` `version`, and `packaging/scoop/ai-usagebar.json`
+   `version` must match the release tag. The Scoop manifest's URL/hash keep
+   the previous release's values in-tree; `publish-scoop` rewrites them
+   from the published sidecar at release time (verify-version only gates
+   `version` — v1.20.0 never shipped because the bump missed this file).
 2. **Update `CHANGELOG.md`**:
    - Add a new `## [X.Y.Z] — YYYY-MM-DD` section above the previous one.
    - Categorize entries by **Added / Changed / Fixed / Security** (Keep-A-Changelog).

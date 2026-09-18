@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "ai-usagebar"
-version = "1.20.0"
+version = "1.20.1"
 dependencies = [
  "aes",
  "base64 0.23.1",
