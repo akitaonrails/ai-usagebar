@@ -42,8 +42,9 @@ const INDEX_HTML: &str = include_str!("../../windows/popover/dist/index.html");
 const POPOVER_CSS: &str = include_str!("../../windows/popover/dist/popover.css");
 const POPOVER_JS: &str = include_str!("../../windows/popover/dist/popover.js");
 
-/// Fixed popover width in logical px, matching the OpenUsage macOS panel.
-const WINDOW_WIDTH: f64 = 320.0;
+/// Compact fixed width in logical px. The previous 320 px became visually
+/// oversized on scaled Windows displays.
+const WINDOW_WIDTH: f64 = 300.0;
 /// Initial height only: the web content drives it afterwards via the
 /// `resize` IPC command.
 const WINDOW_HEIGHT: f64 = 420.0;

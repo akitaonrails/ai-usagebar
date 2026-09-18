@@ -140,6 +140,7 @@ function normalizeEntry(raw) {
     displayName: clean(raw.display_name || raw.name, 240),
     shortName: clean(raw.short_name, 24),
     plan: clean(raw.plan, 240),
+    resetCredits: normalizeResetCredits(raw.reset_credits),
     status: error !== "" || raw.status === "error" ? "error" : "ready",
     error,
     stale: raw.stale === true,
@@ -148,6 +149,22 @@ function normalizeEntry(raw) {
     signIn: clean(raw.sign_in, 200),
     sections,
   };
+}
+
+function normalizeResetCredits(raw) {
+  if (!isPlainObject(raw)) return null;
+  const available = Math.max(0, Math.min(10_000, Math.floor(finiteNumber(raw.available))));
+  if (available === 0) return null;
+  const source = Array.isArray(raw.credits) ? raw.credits : [];
+  const credits = [];
+  for (let i = 0; i < source.length && i < 64; i++) {
+    if (!isPlainObject(source[i])) continue;
+    credits.push({
+      title: clean(source[i].title, 120),
+      expiresAt: clean(source[i].expires_at, 80),
+    });
+  }
+  return { available, credits };
 }
 
 function normalizeSection(raw) {
@@ -294,6 +311,54 @@ export function formatResetExact(atMs, nowMs, opts) {
   if (timeZone) dayOptions.timeZone = timeZone;
   const day = new Intl.DateTimeFormat(locale, dayOptions).format(at).replace(/ /g, " ");
   return day + " at " + time;
+}
+
+// Banked reset credits always show a calendar date, even when they expire
+// today or tomorrow: unlike a rolling quota reset, each row is an inventory
+// item and the stable date makes neighboring expiries easy to compare.
+export function formatResetCreditDate(value, opts) {
+  const atMs = typeof value === "number" ? value : Date.parse(String(value || ""));
+  if (!Number.isFinite(atMs)) return "Date unavailable";
+  // `undefined` asks Intl for the WebView/Windows locale. Tests can still
+  // inject a locale explicitly to keep their expected strings deterministic.
+  const locale = opts && opts.locale ? opts.locale : undefined;
+  const timeZone = opts && opts.timeZone ? opts.timeZone : undefined;
+  const timeFormat = opts && opts.timeFormat;
+  const at = new Date(atMs);
+  const dayOptions = { month: "short", day: "numeric" };
+  const timeOptions = { hour: "numeric", minute: "2-digit" };
+  if (timeZone) {
+    dayOptions.timeZone = timeZone;
+    timeOptions.timeZone = timeZone;
+  }
+  if (timeFormat === "12") timeOptions.hour12 = true;
+  else if (timeFormat === "24") timeOptions.hourCycle = "h23";
+  const day = new Intl.DateTimeFormat(locale, dayOptions).format(at).replace(/ /g, " ");
+  const time = new Intl.DateTimeFormat(locale, timeOptions).format(at).replace(/ /g, " ");
+  return day + " at " + time;
+}
+
+export function resetCreditDetails(row, nowMs, opts) {
+  if (!row || row.kind !== "resetCredits") return { items: [], hidden: 0 };
+  const available = Math.max(0, Math.floor(finiteNumber(row.available)));
+  const credits = Array.isArray(row.credits) ? row.credits.slice() : [];
+  credits.sort((a, b) => {
+    const left = Date.parse(String(a && a.expiresAt || ""));
+    const right = Date.parse(String(b && b.expiresAt || ""));
+    return (Number.isNaN(left) ? Infinity : left) - (Number.isNaN(right) ? Infinity : right);
+  });
+  const shown = Math.min(available, 24);
+  const items = [];
+  for (let index = 0; index < shown; index++) {
+    const credit = credits[index] || {};
+    const atMs = Date.parse(String(credit.expiresAt || ""));
+    items.push({
+      date: formatResetCreditDate(credit.expiresAt, opts),
+      remaining: Number.isNaN(atMs) ? "—" : atMs <= nowMs ? "expired" : formatDuration(atMs - nowMs),
+      title: String(credit.title || ""),
+    });
+  }
+  return { items, hidden: Math.max(0, available - shown) };
 }
 
 function parseResetAt(row) {
@@ -449,7 +514,16 @@ export function projectCards(payload, nowMs) {
         row.key = rowKey(row);
         rows.push(row);
       } else if (section.type === "block" && section.body && section.body.length) {
-        const row = { kind: "block", label: section.label, body: section.body };
+        const resetCredits = entry.resetCredits;
+        const isResetCredits = resetCredits && /^reset credits$/i.test(section.label || "");
+        const row = isResetCredits
+          ? {
+              kind: "resetCredits",
+              label: "Rate Limit Resets",
+              available: resetCredits.available,
+              credits: resetCredits.credits,
+            }
+          : { kind: "block", label: section.label, body: section.body };
         row.key = rowKey(row);
         rows.push(row);
       }

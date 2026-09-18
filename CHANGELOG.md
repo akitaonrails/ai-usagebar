@@ -9,6 +9,23 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Reset-credit expiry tooltip on Windows.** The Codex and SuperGrok reset
+  credit row keeps its compact available-count badge and now reveals each
+  credit's expiry date and remaining time on hover or keyboard focus.
+
+### Changed
+
+- The Windows tray popover is 300 logical pixels wide for a more compact
+  footprint, including on scaled displays.
+
+### Fixed
+
+- The Windows tray popover remeasures its intrinsic content height whenever it
+  opens or receives updated data, instead of retaining a stale work-area-sized
+  window with empty space above the footer.
+
 ## [1.19.0] — 2026-09-17
 
 ### Added

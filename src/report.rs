@@ -51,6 +51,9 @@ struct Entry {
     error: Option<String>,
     stale: bool,
     fetched_at: Option<DateTime<Utc>>,
+    /// Structured banked-reset inventory for rich frontends. The human-readable
+    /// block remains in `sections` for the text report and older consumers.
+    reset_credits: Option<crate::usage::ResetCredits>,
 }
 
 /// Lossless machine-readable projection of a TUI panel row. `metrics` remains
@@ -233,6 +236,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
             TabState::Ready(ready) => ready.fetched_at,
             _ => None,
         },
+        reset_credits: reset_credits_for(state),
     };
     // The error is already a first-class entry field. Do not duplicate the
     // TUI's interactive retry instructions as report data.
@@ -273,6 +277,18 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         }
     }
     entry
+}
+
+fn reset_credits_for(state: &TabState) -> Option<crate::usage::ResetCredits> {
+    let credits = match state {
+        TabState::Ready(ready) => match &ready.snapshot {
+            crate::usage::VendorSnapshot::Openai(snapshot) => &snapshot.reset_credits,
+            crate::usage::VendorSnapshot::SuperGrok(snapshot) => &snapshot.reset_credits,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    (!credits.is_empty()).then(|| credits.clone())
 }
 
 fn report_exit_code(entries: &[Entry]) -> i32 {
@@ -418,6 +434,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                 "error": entry.error,
                 "stale": entry.stale,
                 "fetched_at": entry.fetched_at,
+                "reset_credits": entry.reset_credits,
                 "metrics": metrics,
                 "sections": entry.sections,
             });
@@ -517,7 +534,9 @@ mod tests {
     use super::*;
     use crate::tui::app::ReadyTab;
     use crate::usage::{
-        DeepseekSnapshot, KimiSnapshot, KiroSnapshot, OpenRouterSnapshot, VendorSnapshot,
+        DeepseekSnapshot, KimiSnapshot, KiroSnapshot, OpenAiSnapshot, OpenAiSource,
+        OpenRouterSnapshot, ResetCredit, ResetCredits, SuperGrokPeriod, SuperGrokSnapshot,
+        VendorSnapshot,
     };
     use crate::vendor::VendorId;
 
@@ -534,6 +553,7 @@ mod tests {
             error: None,
             stale: false,
             fetched_at: None,
+            reset_credits: None,
         }
     }
 
@@ -791,6 +811,85 @@ mod tests {
         assert_eq!(first["sections"][2]["group"], "Breakdown");
         assert!(first["metrics"][0].get("group").is_none());
         assert_eq!(first["metrics"][1]["group"], "Breakdown");
+    }
+
+    #[test]
+    fn json_exposes_banked_reset_expiries_without_removing_the_text_block() {
+        let expiry: DateTime<Utc> = "2026-09-20T23:58:00Z".parse().unwrap();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Openai(OpenAiSnapshot {
+                plan: "ChatGPT Pro".into(),
+                session: None,
+                weekly: None,
+                code_review: None,
+                additional_limits: Vec::new(),
+                unavailable_models: Vec::new(),
+                credits: None,
+                reset_credits: ResetCredits {
+                    available: 2,
+                    credits: vec![ResetCredit {
+                        title: Some("Full reset".into()),
+                        expires_at: Some(expiry),
+                    }],
+                },
+                source: OpenAiSource::CodexOauth,
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Openai), &state, Utc::now());
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[projected], None)).unwrap();
+        let entry = &value["entries"][0];
+
+        assert_eq!(entry["reset_credits"]["available"], 2);
+        assert_eq!(entry["reset_credits"]["credits"][0]["title"], "Full reset");
+        assert_eq!(
+            entry["reset_credits"]["credits"][0]["expires_at"],
+            expiry.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        );
+        assert!(
+            entry["sections"].as_array().unwrap().iter().any(|section| {
+                section["type"] == "block" && section["label"] == "Reset credits"
+            })
+        );
+    }
+
+    #[test]
+    fn json_exposes_supergrok_reset_credit_expiries() {
+        let expiry: DateTime<Utc> = "2026-10-03T23:00:00Z".parse().unwrap();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::SuperGrok(SuperGrokSnapshot {
+                plan: "SuperGrok".into(),
+                account: "test-account".into(),
+                weekly_pct: 0,
+                period: SuperGrokPeriod::Weekly,
+                reset_at: None,
+                prepaid_balance: None,
+                reset_credits: ResetCredits {
+                    available: 1,
+                    credits: vec![ResetCredit {
+                        title: None,
+                        expires_at: Some(expiry),
+                    }],
+                },
+                products: Vec::new(),
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Supergrok), &state, Utc::now());
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[projected], None)).unwrap();
+        let entry = &value["entries"][0];
+
+        assert_eq!(entry["reset_credits"]["available"], 1);
+        assert_eq!(
+            entry["reset_credits"]["credits"][0]["expires_at"],
+            expiry.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        );
     }
 
     /// A rolling window's exact length rides along with its row, in both the
