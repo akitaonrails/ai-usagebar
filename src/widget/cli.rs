@@ -207,6 +207,12 @@ pub enum NousAuthAction {
 
 #[derive(clap::Subcommand, Debug, Clone)]
 pub enum SettingsAction {
+    /// Explicitly enable one provider, preserving other settings and credentials.
+    Enable {
+        #[arg(value_enum)]
+        vendor: Vendor,
+    },
+
     /// Print a non-secret JSON settings description.
     Show,
 
@@ -317,6 +323,7 @@ pub enum Vendor {
     Moonshot,
     Grok,
     Supergrok,
+    Grokbot,
     Antigravity,
     Cursor,
     Minimax,
@@ -346,6 +353,7 @@ impl Vendor {
             Vendor::Moonshot => crate::vendor::VendorId::Moonshot,
             Vendor::Grok => crate::vendor::VendorId::Grok,
             Vendor::Supergrok => crate::vendor::VendorId::Supergrok,
+            Vendor::Grokbot => crate::vendor::VendorId::Grokbot,
             Vendor::Antigravity => crate::vendor::VendorId::Antigravity,
             Vendor::Cursor => crate::vendor::VendorId::Cursor,
             Vendor::Minimax => crate::vendor::VendorId::Minimax,
@@ -439,6 +447,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Moonshot => Vendor::Moonshot,
         crate::vendor::VendorId::Grok => Vendor::Grok,
         crate::vendor::VendorId::Supergrok => Vendor::Supergrok,
+        crate::vendor::VendorId::Grokbot => Vendor::Grokbot,
         crate::vendor::VendorId::Antigravity => Vendor::Antigravity,
         crate::vendor::VendorId::Cursor => Vendor::Cursor,
         crate::vendor::VendorId::Minimax => Vendor::Minimax,
@@ -474,6 +483,22 @@ fn is_stdout_tty() -> bool {
 mod tests {
     use super::*;
     use clap::{Parser, error::ErrorKind};
+
+    #[test]
+    fn settings_enable_requires_a_known_vendor() {
+        assert!(matches!(
+            Cli::try_parse_from(["ai-usagebar", "settings", "enable", "anthropic"])
+                .unwrap()
+                .command,
+            Some(Command::Settings {
+                action: SettingsAction::Enable {
+                    vendor: Vendor::Anthropic
+                }
+            })
+        ));
+        assert!(Cli::try_parse_from(["ai-usagebar", "settings", "enable", "unknown"]).is_err());
+        assert!(Cli::try_parse_from(["ai-usagebar", "settings", "enable"]).is_err());
+    }
 
     #[test]
     fn version_flags_report_the_crate_version() {
@@ -714,6 +739,21 @@ mod tests {
         let cli = Cli::parse_from(["ai-usagebar", "--vendor", "kimi"]);
         assert_eq!(cli.vendor, Some(Vendor::Kimi));
         assert_eq!(cli.vendor.unwrap().to_id(), crate::vendor::VendorId::Kimi);
+    }
+
+    #[test]
+    fn vendor_grokbot_parses_to_grokbot_variant() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "grokbot"]);
+        assert_eq!(cli.vendor, Some(Vendor::Grokbot));
+        assert_eq!(
+            cli.vendor.unwrap().to_id(),
+            crate::vendor::VendorId::Grokbot
+        );
+        // …and back, for the persisted-state resolver.
+        assert_eq!(
+            id_to_vendor(crate::vendor::VendorId::Grokbot),
+            Vendor::Grokbot
+        );
     }
 
     #[test]

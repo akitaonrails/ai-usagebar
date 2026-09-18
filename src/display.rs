@@ -98,3 +98,76 @@ mod tests {
         assert!(output.chars().all(|ch| ch == 'é'));
     }
 }
+
+/// Width of plain (non-markup) text in terminal columns.
+///
+/// Use this for layout arithmetic — column padding, gauge widths, the widest
+/// label in a report. A character count is wrong for any locale with CJK text,
+/// where one glyph occupies two cells, and for combining marks, which occupy
+/// none.
+///
+/// This is deliberately separate from [`crate::pango::visible_width`], which
+/// additionally strips `<span>` markup. Feeding plain text to that function
+/// would treat a literal `<` as the start of a tag and silently undercount the
+/// rest of the line; feeding markup to this one would count the tags.
+///
+/// Character counts remain correct for *limits* (a config field documented as
+/// "1 to 48 characters") and for edit-cursor positions, which move per
+/// character rather than per column. Those are not layout.
+pub fn text_width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// Left-align `s` in a field `width` columns wide, padding with spaces.
+///
+/// `format!("{s:width$}")` cannot do this: Rust's fill/align pads a `str` by
+/// character count, so a label of three CJK ideographs in a field of ten gets
+/// seven trailing spaces and renders thirteen columns wide, pushing the next
+/// column out of line. Padding is computed from [`text_width`] instead.
+///
+/// A string already at or past `width` is returned unpadded rather than
+/// truncated — the callers use this for column alignment, where clipping a
+/// label is worse than a single long row.
+pub fn pad_end(s: &str, width: usize) -> String {
+    let w = text_width(s);
+    if w >= width {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + (width - w));
+    out.push_str(s);
+    out.extend(std::iter::repeat_n(' ', width - w));
+    out
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::{pad_end, text_width};
+
+    #[test]
+    fn text_width_measures_columns_not_characters() {
+        assert_eq!(text_width("Weekly"), 6);
+        assert_eq!(text_width("日本語"), 6); // 3 chars, 6 columns
+        assert_eq!(text_width("사용량"), 6);
+        assert_eq!(text_width("e\u{301}"), 1); // combining mark adds nothing
+    }
+
+    #[test]
+    fn pad_end_pads_by_columns_not_characters() {
+        // The bug this exists to prevent: `format!("{:10}", "日本語")` appends
+        // seven spaces to a six-column string, yielding thirteen columns.
+        assert_eq!(text_width(&pad_end("日本語", 10)), 10);
+        assert_eq!(text_width(&pad_end("Weekly", 10)), 10);
+        assert_eq!(pad_end("Weekly", 10), "Weekly    ");
+        // Already wide enough: returned unchanged rather than truncated.
+        assert_eq!(pad_end("Weekly", 3), "Weekly");
+        assert_eq!(pad_end("日本語", 6), "日本語");
+    }
+
+    #[test]
+    fn text_width_counts_a_literal_angle_bracket() {
+        // The reason this is not `pango::visible_width`: that function would
+        // read `<` as a tag opening and drop everything after it.
+        assert_eq!(text_width("a<b"), 3);
+        assert_eq!(text_width("Claude & GPT"), 12);
+    }
+}

@@ -2,7 +2,7 @@
 
 A NotifyIcon + WebView2 popover for [`ai-usagebar`](../README.md). Left-click
 the tray icon for a dashboard that follows the OpenUsage (SwiftUI edition)
-design: a 320 px panel that sizes itself to its content, provider sections
+design: a compact 300 px panel that sizes itself to its content, provider sections
 with capsule meters, reset countdowns and spend rows. It is the Windows
 counterpart to the
 [KDE plasmoid](../kde-plasmoid/README.md): same `usage --json` report, same
@@ -12,6 +12,22 @@ The host is `ai-usagebar-tray.exe` (Rust, in-process fetch). The UI is a
 Vite + React + shadcn app in `windows/popover/` (Iconify icons via
 `unplugin-icons`). The view-model in `src/model.js` has a Node contract
 test that does not need `npm install`.
+
+## Install
+
+From [Scoop](https://scoop.sh), via the official bucket:
+
+```powershell
+scoop bucket add akitaonrails https://github.com/akitaonrails/scoop-bucket
+scoop install ai-usagebar
+```
+
+Or grab `ai-usagebar-windows-x86_64.zip` from the latest
+[GitHub release](https://github.com/akitaonrails/ai-usagebar/releases) and
+unzip it anywhere. Update ownership differs between the two paths: **Scoop
+owns updates for Scoop installs** (`scoop update ai-usagebar`), while the
+tray's built-in updater (below, **Settings → Updates**) applies to
+standalone ZIP installs.
 
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](../screenshots/windows-tray-dashboard.png)
 
@@ -130,7 +146,7 @@ numbers and shows an orange ⚠ in its header plus a one-line note at the
 bottom of the card; hovering either shows the raw diagnosis. Antigravity
 only reports "isn't running" when there is no local server *and* no saved
 Google session to fall back on: with the app closed but signed in, the card
-shows the quota from Google's API with a "Source · Google API (app closed)"
+shows the quota from Google's API with a "Source · Google API"
 row. A
 provider with nothing to show gets a red ⚠ and a card with the verdict, a
 hint, and — when the fix is something the tray can do — a button (Open TUI

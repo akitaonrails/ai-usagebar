@@ -1,6 +1,6 @@
 [package]
 name = "ai-usagebar"
-version = "1.17.0"
+version = "1.20.1"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -79,6 +79,7 @@ ratatui-bubbletea-theme = "0.2"
 # links SQLite via cc, so no system libsqlite3-dev is required — keeping the
 # AUR source build's hermeticity (see CLAUDE.md's release checklist).
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }
@@ -103,7 +104,7 @@ windows-sys = { version = "0.61.2", features = [
 # Tray popover host: NotifyIcon + WebView2. Linux/macOS never compile these so
 # the AUR source build does not pull GTK/WebKit.
 tao = "0.37"
-wry = "0.56"
+wry = "0.57"
 tray-icon = "0.24"
 # Global toggle shortcut for the popover: owns a message-only window and
 # delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.

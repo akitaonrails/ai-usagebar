@@ -190,6 +190,24 @@ fn reuse_cache(bytes: Vec<u8>, cache: &Cache, stale: bool) -> Result<FetchOutcom
 
 fn parse_cache(bytes: &[u8]) -> Result<KimiSnapshot> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
+    let weekly_limit = parse_cache_u64(&v["weekly_limit"], "weekly_limit")?;
+    let weekly_used = parse_cache_u64(&v["weekly_used"], "weekly_used")?;
+    let weekly_remaining = parse_cache_u64(&v["weekly_remaining"], "weekly_remaining")?;
+    // Caches written before the monthly shape have no `has_weekly` key; they
+    // all carried weekly counters, so absence means the legacy shape.
+    let has_weekly = match &v["has_weekly"] {
+        serde_json::Value::Null => true,
+        serde_json::Value::Bool(b) => *b,
+        _ => return Err(AppError::Schema("kimi cache: invalid has_weekly".into())),
+    };
+    if !has_weekly && (weekly_limit > 0 || weekly_used > 0 || weekly_remaining > 0) {
+        // A combination the fetch path can never produce: the newer shape has
+        // no weekly counters, so nonzero ones here are a corrupt cache.
+        return Err(AppError::Schema(
+            "kimi cache: weekly counters on a monthly-shape snapshot".into(),
+        ));
+    }
+    let monthly_pct = parse_cache_monthly_pct(&v["monthly_pct"])?;
     Ok(KimiSnapshot {
         plan: v["plan"].as_str().map(|plan| {
             if plan.starts_with("LEVEL_") {
@@ -198,10 +216,13 @@ fn parse_cache(bytes: &[u8]) -> Result<KimiSnapshot> {
                 plan.to_string()
             }
         }),
-        weekly_limit: parse_cache_u64(&v["weekly_limit"], "weekly_limit")?,
-        weekly_used: parse_cache_u64(&v["weekly_used"], "weekly_used")?,
-        weekly_remaining: parse_cache_u64(&v["weekly_remaining"], "weekly_remaining")?,
+        weekly_limit,
+        weekly_used,
+        weekly_remaining,
         weekly_reset_at: parse_cache_datetime(&v["weekly_reset_at"])?,
+        has_weekly,
+        monthly_pct,
+        monthly_reset_at: parse_cache_datetime(&v["monthly_reset_at"])?,
         window_limit: parse_cache_u64(&v["window_limit"], "window_limit")?,
         window_used: parse_cache_u64(&v["window_used"], "window_used")?,
         window_remaining: parse_cache_u64(&v["window_remaining"], "window_remaining")?,
@@ -233,6 +254,26 @@ fn parse_cache_datetime(v: &serde_json::Value) -> Result<Option<DateTime<Utc>>> 
     }
 }
 
+/// A percentage the fetch path already clamped to 0..=100; anything else in
+/// the cache is corruption, not a quota.
+fn parse_cache_monthly_pct(v: &serde_json::Value) -> Result<Option<i32>> {
+    match v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(n) => {
+            let pct = n
+                .as_i64()
+                .ok_or_else(|| AppError::Schema("kimi cache: invalid monthly_pct".into()))?;
+            if !(0..=100).contains(&pct) {
+                return Err(AppError::Schema(
+                    "kimi cache: monthly_pct out of range".into(),
+                ));
+            }
+            Ok(Some(pct as i32))
+        }
+        _ => Err(AppError::Schema("kimi cache: invalid monthly_pct".into())),
+    }
+}
+
 fn snap_to_json(snap: &KimiSnapshot) -> serde_json::Value {
     serde_json::json!({
         "plan": snap.plan,
@@ -240,6 +281,9 @@ fn snap_to_json(snap: &KimiSnapshot) -> serde_json::Value {
         "weekly_used": snap.weekly_used,
         "weekly_remaining": snap.weekly_remaining,
         "weekly_reset_at": snap.weekly_reset_at.map(|dt| dt.to_rfc3339()),
+        "has_weekly": snap.has_weekly,
+        "monthly_pct": snap.monthly_pct,
+        "monthly_reset_at": snap.monthly_reset_at.map(|dt| dt.to_rfc3339()),
         "window_limit": snap.window_limit,
         "window_used": snap.window_used,
         "window_remaining": snap.window_remaining,
@@ -1194,5 +1238,77 @@ mod tests {
             PathBuf::from("/elsewhere/kimi-code.json")
         );
         assert_eq!(auth.lock_target, oauth::lock_target_in(home));
+    }
+
+    fn monthly_shape_snap() -> KimiSnapshot {
+        KimiSnapshot {
+            plan: Some("Allegretto".into()),
+            weekly_limit: 0,
+            weekly_used: 0,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            has_weekly: false,
+            monthly_pct: Some(42),
+            monthly_reset_at: Some(
+                DateTime::parse_from_rfc3339("2026-10-16T00:00:00Z")
+                    .unwrap()
+                    .into(),
+            ),
+            window_limit: 100,
+            window_used: 15,
+            window_remaining: 85,
+            window_reset_at: Some(
+                DateTime::parse_from_rfc3339("2026-09-16T20:11:32Z")
+                    .unwrap()
+                    .into(),
+            ),
+        }
+    }
+
+    #[test]
+    fn a_monthly_shape_snapshot_survives_the_cache_round_trip() {
+        let bytes = serde_json::to_vec(&snap_to_json(&monthly_shape_snap())).unwrap();
+        let snap = parse_cache(&bytes).unwrap();
+        assert!(!snap.has_weekly);
+        assert_eq!(snap.monthly_pct, Some(42));
+        assert_eq!(
+            snap.monthly_reset_at.map(|dt| dt.to_rfc3339()),
+            Some("2026-10-16T00:00:00+00:00".to_string())
+        );
+        assert_eq!(snap.weekly_used, 0);
+        assert_eq!(snap.window_used, 15);
+        assert_eq!(snap, monthly_shape_snap());
+    }
+
+    #[test]
+    fn a_legacy_cache_without_the_new_keys_still_parses() {
+        // sample_seed predates the monthly shape: no has_weekly/monthly keys.
+        let bytes = sample_seed().to_string();
+        let snap = parse_cache(bytes.as_bytes()).unwrap();
+        assert!(snap.has_weekly);
+        assert_eq!(snap.monthly_pct, None);
+        assert_eq!(snap.monthly_reset_at, None);
+        assert_eq!(snap.weekly_used, 30);
+    }
+
+    #[test]
+    fn a_cache_with_weekly_counters_on_a_monthly_shape_is_rejected() {
+        let mut v = sample_seed();
+        v["has_weekly"] = serde_json::json!(false);
+        let err = parse_cache(v.to_string().as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("monthly-shape"), "{err}");
+    }
+
+    #[test]
+    fn a_cache_with_an_out_of_range_monthly_pct_is_rejected() {
+        for bad in [150, -1] {
+            let mut v: serde_json::Value = serde_json::from_slice(
+                &serde_json::to_vec(&snap_to_json(&monthly_shape_snap())).unwrap(),
+            )
+            .unwrap();
+            v["monthly_pct"] = serde_json::json!(bad);
+            let err = parse_cache(v.to_string().as_bytes()).unwrap_err();
+            assert!(err.to_string().contains("monthly_pct"), "{bad}: {err}");
+        }
     }
 }

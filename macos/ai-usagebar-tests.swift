@@ -475,7 +475,7 @@ func testParserBalances() {
                        ]))
     assertEqual(sgk?.hasUsageWindows, true, "supergrok shows windows")
     assertEqual(sgk?.session?.pct, 45, "supergrok session pct")
-    assertEqual(sgk?.sessionLabel, "Weekly Credits", "supergrok session label")
+    assertEqual(sgk?.sessionLabel, "Weekly usage", "supergrok session label")
     assertNil(sgk?.weekly, "supergrok suppresses duplicate weekly window")
 
     let nous = snapshot(FORMAT, vendor: "nous",
@@ -1019,9 +1019,90 @@ func testVendorCatalogLifecycle() {
     assertEqual(refreshInvoked, true, "catalog arrival executes refresh when idle")
 }
 
+func testCodexAccounts() {
+    let config = """
+    [[openai.accounts]]
+    label = "work"
+    codex_auth_path = "/fixture/work/auth.json"
+    [[openrouter.accounts]]
+    label = "router"
+    [[openai.accounts]]
+    label = 'personal'
+    """
+    let labels = accountLabels(inTOML: config, vendor: "openai")
+    assertEqual(labels, ["work", "personal"], "Codex labels preserve order and exclude other providers")
+    func catalog(enabled: Bool, configured: Bool) -> [VendorCatalogEntry] {
+        [VendorCatalogEntry(id: "openai", name: "Codex", shortName: "cdx", kind: "oauth",
+            enabled: enabled, configured: configured, needsCredential: true, env: "", login: "codex login")]
+    }
+    let ready = catalog(enabled: true, configured: true)
+    let entries = vendorEntries(active: "overview", catalog: ready, codexLabels: { labels })
+    let ids = entries.map { $0.id }
+    assertEqual(ids, ["openai", "openai@work", "openai@personal"], "selector includes default and named Codex accounts")
+    assertEqual(entries.map { $0.name }, ["Codex", "Codex · work", "Codex · personal"], "names come from catalog")
+    assertEqual(vendorEntries(active: "overview", catalog: catalog(enabled: true, configured: false),
+                             codexLabels: { labels }).map { $0.id },
+                ["openai@work", "openai@personal"], "named accounts need no default login")
+    assertEqual(vendorEntries(active: "openai", catalog: catalog(enabled: true, configured: false),
+                             codexLabels: { [] }).map { $0.id }, ["openai"], "active default remains visible")
+    let disabled = catalog(enabled: false, configured: true)
+    assertEqual(vendorEntries(active: "openai@work", catalog: disabled, codexLabels: { labels }).count,
+                0, "disabled Codex exposes no accounts")
+    assertEqual(filterOverviewEntries(entries, requested: ["openai"]).map { $0.id }, ids,
+                "Overview filter includes every Codex account")
+    assertEqual(nextVendorId(current: "openai", in: ids), "openai@work", "shortcut cycles into named account")
+    assertEqual(nextVendorId(current: "openai@personal", in: ids), "openai", "shortcut wraps from named account")
+    assertEqual(vendorArgs(for: "openai@work"), ["--vendor", "openai", "--account", "work"],
+                "fetch selects the named auth file via Rust")
+    assertEqual(entryDisplayName("openai@work", catalog: ready), "Codex · work", "preference label uses catalog name")
+    assertEqual(preferenceVendorIds(catalog: ready, claude: [], openRouter: [], codex: labels), ids,
+                "Preferences includes named Codex accounts")
+    assertEqual(preferenceVendorIds(catalog: disabled, claude: [], openRouter: [], codex: labels), [],
+                "Preferences respects disabled Codex")
+}
+
+func testEnableVendorCommand() {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let script = dir.appendingPathComponent("backend")
+    try! "#!/bin/sh\n[ \"$#\" = 3 ] && [ \"$1\" = settings ] && [ \"$2\" = enable ] && [ \"$3\" = anthropic ]\n"
+        .write(to: script, atomically: true, encoding: .utf8)
+    try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    assertNil(enableVendor(binary: script.path, id: "anthropic"), "enable passes exact backend arguments")
+    assertNotNil(enableVendor(binary: script.path, id: "openai"), "backend failure remains visible")
+    assertNotNil(enableVendor(binary: dir.appendingPathComponent("missing").path, id: "anthropic"),
+                 "missing executable remains visible")
+}
+
+func testDisabledVendorPreferences() {
+    for enabled in [false, true] {
+        for configured in [false, true] {
+            let v = VendorCatalogEntry(id: "anthropic", name: "Claude", shortName: "cla",
+                kind: "oauth", enabled: enabled, configured: configured,
+                needsCredential: true, env: "", login: "claude")
+            let status = vendorStatusText(v, cliPresent: true)
+            let button = vendorButtonLabel(v, cliPresent: true)
+            if !enabled {
+                assertEqual(status, configured ? "Disabled — credential available" : "Disabled",
+                            "disabled status is independent of sign-in")
+                assertEqual(button, "Enable", "disabled provider offers explicit opt-in")
+            } else {
+                assertEqual(status, configured ? "✓ Configured" : "⚠ Not signed in — claude",
+                            "enabled provider keeps credential status")
+                assertEqual(button, configured ? "Sign in again" : "Sign in",
+                            "enabled provider keeps sign-in action")
+            }
+        }
+    }
+}
+
 @main
 struct TestRunner {
     static func main() {
+        testCodexAccounts()
+        testEnableVendorCommand()
+        testDisabledVendorPreferences()
         testRingArc()
         testTomlParsing()
         testParserBalances()

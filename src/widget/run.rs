@@ -18,6 +18,7 @@ use crate::cursor;
 use crate::deepseek;
 use crate::error::{AppError, Result};
 use crate::grok;
+use crate::grokbot;
 use crate::kilo;
 use crate::kimi;
 use crate::kiro;
@@ -157,6 +158,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Moonshot => moonshot_output(cli, &config).await,
         Vendor::Grok => grok_output(cli, &config).await,
         Vendor::Supergrok => supergrok_output(cli, &config).await,
+        Vendor::Grokbot => grokbot_output(cli, &config).await,
         Vendor::Antigravity => antigravity_output(cli, &config).await,
         Vendor::Cursor => cursor_output(cli, &config).await,
         Vendor::Minimax => minimax_output(cli, &config).await,
@@ -870,6 +872,35 @@ async fn kimi_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let vendor_outcome: VendorOutcome = outcome.into();
     let opts = RenderOpts::from_cli(cli);
     Ok(kimi::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+/// Grok Bot has no key of its own: the desktop app's session is the login, so
+/// the only config input is where that file lives.
+async fn grokbot_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let creds = grokbot::resolve_credentials(&config.grokbot)?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "grokbot")?;
+    let endpoints = grokbot::fetch::Endpoints::default();
+    let outcome =
+        match grokbot::fetch::fetch_snapshot_with(&client, &creds, &cache, &endpoints, DEFAULT_TTL)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(grokbot::vendor::render(
         &vendor_outcome,
         &snap,
         &theme,

@@ -312,6 +312,13 @@ impl KiroSnapshot {
 }
 
 /// Kimi Code — weekly subscription quota plus a 5h rolling rate-limit window.
+///
+/// Accounts on the newer `/coding/v1/usages` response shape have no weekly
+/// counters at all: the top-level `usage` block is replaced by a `usages` map
+/// of ratios, of which only `limit_month_total` — the combined monthly pool —
+/// is read. On such accounts `has_weekly` is false, the weekly counters stay
+/// zero (never fabricated), and the monthly pool arrives as
+/// `monthly_pct`/`monthly_reset_at`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KimiSnapshot {
     pub plan: Option<String>,
@@ -319,6 +326,14 @@ pub struct KimiSnapshot {
     pub weekly_used: u64,
     pub weekly_remaining: u64,
     pub weekly_reset_at: Option<DateTime<Utc>>,
+    /// `false` on the newer `usages`-map shape, which exposes no weekly
+    /// bucket; renderers must drop the weekly row rather than draw zeros.
+    pub has_weekly: bool,
+    /// Combined monthly pool usage (0..=100) on the newer shape. The
+    /// `limit_month_code` entry is the Code slice *inside* that pool, never
+    /// its own allowance, so it is not carried here.
+    pub monthly_pct: Option<i32>,
+    pub monthly_reset_at: Option<DateTime<Utc>>,
     pub window_limit: u64,
     pub window_used: u64,
     pub window_remaining: u64,
@@ -347,6 +362,20 @@ impl KimiSnapshot {
     pub fn window_pct(&self) -> i32 {
         Self::pct(self.window_used, self.window_limit)
     }
+
+    /// Worst percentage across the windows this snapshot actually has: the
+    /// rolling window, the weekly quota when present, and the monthly pool
+    /// when present.
+    pub fn worst_pct(&self) -> i32 {
+        let mut worst = self.window_pct();
+        if self.has_weekly {
+            worst = worst.max(self.weekly_pct());
+        }
+        if let Some(monthly) = self.monthly_pct {
+            worst = worst.max(monthly);
+        }
+        worst
+    }
 }
 
 /// Discriminated union of vendor-specific snapshots. The widget and TUI match
@@ -365,6 +394,7 @@ pub enum VendorSnapshot {
     Moonshot(MoonshotSnapshot),
     Grok(GrokSnapshot),
     SuperGrok(SuperGrokSnapshot),
+    Grokbot(GrokbotSnapshot),
     AnthropicApi(AnthropicApiSnapshot),
     Antigravity(AntigravitySnapshot),
     Cursor(CursorSnapshot),
@@ -392,7 +422,8 @@ pub struct AntigravitySnapshot {
     /// cache written for one Google account is not served for another.
     pub account: String,
     /// Where the figures came from: a running local product, or the Cloud
-    /// Code API reached with the saved Google session while nothing runs.
+    /// Code API reached with the saved Google session when no local server
+    /// can answer — none is running, or `agy` withholds its CSRF token.
     pub source: AntigravitySource,
     /// Gemini group, 5-hour window.
     pub session: Option<UsageWindow>,
@@ -551,6 +582,17 @@ pub struct SuperGrokSnapshot {
     /// Remaining prepaid (purchased) API credit in USD, when present.
     pub prepaid_balance: Option<f64>,
     pub reset_credits: ResetCredits,
+    /// Per-product slices of the same included-credit pool (`GrokBuild`,
+    /// `GrokChat`, `GrokImagine`, …). Empty when the billing document omits
+    /// `productUsage`.
+    pub products: Vec<SuperGrokProduct>,
+}
+
+/// One SuperGrok product's share of the current included-credit window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuperGrokProduct {
+    pub label: String,
+    pub percent: i32,
 }
 
 impl Eq for SuperGrokSnapshot {}
@@ -577,6 +619,48 @@ impl SuperGrokPeriod {
             Self::Monthly => "mo",
             Self::Unknown => "period",
         }
+    }
+}
+
+/// Grok Bot desktop app — the weekly included-usage pool from
+/// `aiserver.v1.DashboardService/GetSandUsageStatus` (Connect-RPC), read with
+/// the app's own OAuth session. Distinct from [`GrokSnapshot`] (Management
+/// API prepaid dollars) and [`SuperGrokSnapshot`] (Grok Build subscription).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrokbotSnapshot {
+    /// `grokPlanLabel`, falling back to `cursorPlanName`, then "Grok Bot".
+    pub plan: String,
+    /// `hasNonZeroIncludedLimit`. When false the account carries no included
+    /// allowance at all — a distinct "no included allowance" state, never a
+    /// fabricated 0% meter.
+    pub has_included_allowance: bool,
+    /// `usagePercent` of the included pool (0..=100). Meaningful only when
+    /// `has_included_allowance` is set.
+    pub weekly_pct: i32,
+    /// `hasAvailableUsage` — the account can still serve requests, which at
+    /// 100% of the included pool means on-demand is picking up the rest.
+    pub has_available_usage: bool,
+    /// `onDemandSettings.enabled` — pay-as-you-go past the included pool.
+    pub on_demand_enabled: bool,
+    /// `currentPeriodStart`.
+    pub period_start: Option<DateTime<Utc>>,
+    /// `nextResetTimestampUtc`.
+    pub reset_at: Option<DateTime<Utc>>,
+    /// `reset_at − period_start` when both are reported (7 days on the
+    /// captured account) — computed, never assumed.
+    pub window: Option<chrono::Duration>,
+}
+
+impl GrokbotSnapshot {
+    /// At 100% of the included pool, `hasAvailableUsage` can still be true
+    /// because on-demand keeps serving — say so, but only when the account
+    /// actually has on-demand switched on.
+    pub fn on_demand_note(&self) -> Option<&'static str> {
+        (self.has_included_allowance
+            && self.weekly_pct >= 100
+            && self.has_available_usage
+            && self.on_demand_enabled)
+            .then_some("included pool exhausted — on-demand may still be serving usage")
     }
 }
 
@@ -712,11 +796,16 @@ pub struct OllamaSnapshot {
     pub session: Option<UsageWindow>,
     /// 7d rolling window (`limits.weekly`).
     pub weekly: Option<UsageWindow>,
+    /// Calendar-month window (`limits.monthly`). Some Pro accounts report
+    /// this in place of `session`/`weekly` instead of alongside them.
+    pub monthly: Option<UsageWindow>,
     /// Per-model request counts inside the session window, in the order the
     /// API returned them. Renderers sort and truncate this for the tooltip.
     pub session_models: Vec<OllamaModelUsage>,
     /// Per-model request counts inside the weekly window.
     pub weekly_models: Vec<OllamaModelUsage>,
+    /// Per-model request counts inside the monthly window.
+    pub monthly_models: Vec<OllamaModelUsage>,
     /// `activity.cost` as a pre-formatted dollar string (`"0.00000"`,
     /// `"1.23456"`). Already a string on the wire — the renderer decides
     /// whether to keep it verbatim or reformat.
@@ -978,6 +1067,9 @@ mod tests {
             weekly_used: 1 << 52,
             weekly_remaining: 0,
             weekly_reset_at: None,
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
             window_limit: u64::MAX,
             window_used: u64::MAX - 1,
             window_remaining: 0,

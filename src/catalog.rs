@@ -157,6 +157,8 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         // SuperGrok rides the Grok Build CLI's own login; its executable is the
         // only local artifact, and config pins the trusted path.
         VendorId::Supergrok => (probes.exists)(&cfg.supergrok.grok_binary),
+        // The Grok Bot desktop app's own credential file is the login.
+        VendorId::Grokbot => any_exists(probes, [crate::grokbot::secrets_path(&cfg.grokbot)]),
         // Nothing to check: handled by `needs_credential`, never reached.
         VendorId::Antigravity => true,
         // Key-only providers: the environment and inline checks above are the

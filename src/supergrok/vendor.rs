@@ -129,6 +129,27 @@ fn push_pct_row(
     }
 }
 
+/// A product slice is information about the pool, not a meter of it: one dim
+/// line — icon, label padded to the widest sibling, right-aligned bold % —
+/// with no gauge and no severity colour, so only the overall meter above can
+/// read as the binding constraint. Percentages never exceed three digits, so
+/// `{:>4}%` aligns "100%" with "3%". Labels are untrusted billing text: pad
+/// by rendered width first, then escape at this sink.
+fn push_product_row(
+    lines: &mut Vec<TooltipLine>,
+    theme: &Theme,
+    product: &crate::usage::SuperGrokProduct,
+    label_width: usize,
+) {
+    let dim = &theme.dim;
+    let label = crate::display::pad_end(&product.label, label_width);
+    let pct = format!("{:>4}%", product.percent);
+    lines.push(TooltipLine::Body(format!(
+        " <span foreground='{dim}'>  󰚩  {}  </span><span foreground='{dim}' font_weight='bold'>{pct}</span>",
+        escape(&label)
+    )));
+}
+
 fn render_tooltip(
     outcome: &VendorOutcome,
     snap: &SuperGrokSnapshot,
@@ -147,7 +168,7 @@ fn render_tooltip(
     lines.push(TooltipLine::Sep);
     lines.push(TooltipLine::Body("".into()));
 
-    let period_label = format!("  󰔟  {} Build credits", snap.period.label());
+    let period_label = format!("  󰔟  {} usage", snap.period.label());
     push_pct_row(
         &mut lines,
         theme,
@@ -156,8 +177,22 @@ fn render_tooltip(
         snap.reset_at,
         now,
     );
+    if !snap.products.is_empty() {
+        let label_width = snap
+            .products
+            .iter()
+            .map(|product| crate::display::text_width(&product.label))
+            .max()
+            .unwrap_or(0);
+        for product in &snap.products {
+            push_product_row(&mut lines, theme, product, label_width);
+        }
+    }
 
-    if let Some(bal) = snap.prepaid_balance {
+    // Same rule as the panel: a $0.00 prepaid line is noise, not information
+    // (unified billing accounts keep their dollars in the Management API
+    // wallet, which the `[grok]` vendor reports).
+    if let Some(bal) = snap.prepaid_balance.filter(|bal| *bal > 0.0) {
         let bal_s = usd(bal);
         lines.push(TooltipLine::Body("".into()));
         lines.push(TooltipLine::Body(format!(
@@ -236,6 +271,7 @@ mod tests {
             reset_at: Some(now() + chrono::Duration::hours(20)),
             prepaid_balance: Some(0.0),
             reset_credits: Default::default(),
+            products: Vec::new(),
         }
     }
 
@@ -265,7 +301,8 @@ mod tests {
         let o = sample_outcome(snap.clone());
         let out = render(&o, &snap, &Theme::default(), &opts(), now());
         assert!(out.text.contains("34%"));
-        assert!(out.tooltip.contains("Build credits"));
+        assert!(out.tooltip.contains("usage"));
+        assert!(!out.tooltip.contains("Build credits"));
         assert!(out.tooltip.contains("Weekly"));
         assert!(out.tooltip.contains("SuperGrok"));
         // Usage-% vendors (Anthropic / OpenAI) draw a filled progress bar in
@@ -276,6 +313,99 @@ mod tests {
             out.tooltip
         );
         assert!(out.tooltip.contains("Resets in"));
+    }
+
+    #[test]
+    fn tooltip_lists_product_slices() {
+        let mut snap = sample_snap();
+        snap.products = vec![
+            crate::usage::SuperGrokProduct {
+                label: "Grok Build".into(),
+                percent: 20,
+            },
+            crate::usage::SuperGrokProduct {
+                label: "Grok Chat".into(),
+                percent: 14,
+            },
+        ];
+        let o = sample_outcome(snap.clone());
+        let out = render(&o, &snap, &Theme::default(), &opts(), now());
+        assert!(out.tooltip.contains("Grok Build"));
+        assert!(out.tooltip.contains("Grok Chat"));
+        // Each slice is one dim line: no gauge, no reset of its own, and the
+        // percentages right-align in one column ("  20%" / "  14%") under the
+        // overall meter's bar — the only bar line in the box.
+        let product_lines: Vec<&str> = out
+            .tooltip
+            .lines()
+            .filter(|line| line.contains("Grok Build") || line.contains("Grok Chat"))
+            .collect();
+        assert_eq!(product_lines.len(), 2, "{}", out.tooltip);
+        for line in &product_lines {
+            assert!(!line.contains('█') && !line.contains('░'), "{line}");
+            assert!(!line.contains("Resets"), "{line}");
+        }
+        assert!(product_lines[0].contains("  20%</span>"));
+        assert!(product_lines[1].contains("  14%</span>"));
+        assert_eq!(
+            out.tooltip
+                .lines()
+                .filter(|line| line.contains('█'))
+                .count(),
+            1,
+            "{}",
+            out.tooltip
+        );
+    }
+
+    /// A hostile product name must not inject Pango markup into the tooltip:
+    /// the label is escaped at the render sink, after width-based padding.
+    #[test]
+    fn tooltip_escapes_product_labels() {
+        let mut snap = sample_snap();
+        snap.products = vec![crate::usage::SuperGrokProduct {
+            label: "Grok<b>Build</b>".into(),
+            percent: 7,
+        }];
+        let o = sample_outcome(snap.clone());
+        let out = render(&o, &snap, &Theme::default(), &opts(), now());
+        assert!(out.tooltip.contains("Grok&lt;b&gt;"), "{}", out.tooltip);
+        assert!(!out.tooltip.contains("<b>Build"), "{}", out.tooltip);
+    }
+
+    /// The prepaid line appears only when there is credit to show — a $0.00
+    /// row reads as "no money" when the billing document merely reports that
+    /// nothing was purchased on top of the subscription. The `{sgk_prepaid}`
+    /// placeholder keeps reporting the raw figure either way.
+    #[test]
+    fn tooltip_lists_prepaid_only_when_there_is_credit() {
+        let mut snap = sample_snap();
+        snap.prepaid_balance = Some(0.0);
+        let zero = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(!zero.tooltip.contains("Prepaid API"), "{}", zero.tooltip);
+        assert_eq!(
+            build_placeholders(&snap, now())
+                .get("sgk_prepaid")
+                .map(String::as_str),
+            Some("$0.00")
+        );
+
+        snap.prepaid_balance = Some(4.22);
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(out.tooltip.contains("Prepaid API"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("$4.22"), "{}", out.tooltip);
     }
 
     #[test]

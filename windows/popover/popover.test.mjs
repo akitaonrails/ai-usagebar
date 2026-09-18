@@ -39,6 +39,8 @@ import {
   resetText,
   resetAlternate,
   formatResetExact,
+  formatResetCreditDate,
+  resetCreditDetails,
   condensedTextRowIndexes,
   providerIconId,
   initialsGlyph,
@@ -57,6 +59,17 @@ import {
   updateBannerPending,
   updateModeLabel,
 } from './src/model.js';
+import { measurePanelHeight } from './src/panel-size.js';
+
+// The native window can retain a tall viewport while WebView2 is hidden. Its
+// stretched scroll region must not become the next requested panel height.
+const intrinsicContent = { offsetHeight: 420, scrollHeight: 510 };
+const stretchedScroller = { dataset: { scroll: '' }, offsetHeight: 900 };
+const footerChrome = { dataset: {}, offsetHeight: 44 };
+assert.equal(measurePanelHeight({
+  children: [stretchedScroller, footerChrome],
+  querySelector: () => intrinsicContent,
+}), 554);
 
 const report = {
   version: '1.10.0',
@@ -265,6 +278,56 @@ const withResets = parseHostPayload({
 const [resetsFolded, resetsKept] = projectCards(withResets, 0);
 assert.equal(resetsFolded.rows.map((r) => r.kind).join(','), 'metric');
 assert.equal(resetsKept.rows.map((r) => r.label).join(','), 'Balance,Resets');
+
+// Banked resets stay structured through normalization so the dashboard can
+// keep the compact count in the card and put every expiry in its tooltip.
+const bankedResets = parseHostPayload({
+  entries: [{
+    id: 'openai',
+    display_name: 'Codex',
+    reset_credits: {
+      available: 3,
+      credits: [
+        { title: 'Full reset', expires_at: '2026-10-05T04:18:00Z' },
+        { title: 'Full reset', expires_at: '2026-09-20T23:58:00Z' },
+      ],
+    },
+    sections: [{ type: 'block', label: 'Reset credits', body: ['legacy text'] }],
+  }],
+});
+assert.equal(bankedResets.entries[0].resetCredits.available, 3);
+assert.equal(bankedResets.entries[0].resetCredits.credits[0].expiresAt, '2026-10-05T04:18:00Z');
+const resetRow = projectCards(bankedResets, Date.parse('2026-09-15T10:00:00Z'))[0].rows[0];
+assert.equal(resetRow.kind, 'resetCredits');
+assert.equal(resetRow.label, 'Rate Limit Resets');
+assert.equal(resetRow.available, 3);
+
+const resetDetails = resetCreditDetails(resetRow, Date.parse('2026-09-15T10:00:00Z'), {
+  locale: 'en-US',
+  timeZone: 'UTC',
+  timeFormat: '24',
+});
+assert.deepEqual(resetDetails.items.map((item) => item.date), [
+  'Sep 20 at 23:58',
+  'Oct 5 at 04:18',
+  'Date unavailable',
+]);
+assert.deepEqual(resetDetails.items.map((item) => item.remaining), ['5d 13h', '19d 18h', '—']);
+assert.equal(resetDetails.hidden, 0);
+assert.equal(
+  formatResetCreditDate('2026-09-20T23:58:00Z', { locale: 'en-US', timeZone: 'UTC', timeFormat: '12' }),
+  'Sep 20 at 11:58 PM',
+);
+
+// Older hosts do not send `reset_credits`; their existing text block remains visible.
+const legacyResetCard = projectCards(parseHostPayload({
+  entries: [{
+    id: 'openai',
+    display_name: 'Codex',
+    sections: [{ type: 'block', label: 'Reset credits', body: ['2 resets available'] }],
+  }],
+}), 0)[0];
+assert.equal(legacyResetCard.rows[0].kind, 'block');
 
 const extraOnAlways = moveRowToList(
   defaultRowPrefs(cursorCard.rows),
@@ -746,7 +809,8 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
 // --- SuperGrok labels / displayPlan equality ----------------------------------
 
 {
-  // ARRANGE: SuperGrok names every meter "<Window> Build credits"; Grok proper does not
+  // ARRANGE: SuperGrok names the overall meter "<Window> usage" (older
+  // reports used "<Window> Build credits"); Grok proper does not.
   const grok = parseHostPayload({
     entries: [
       { id: 'supergrok', display_name: 'SuperGrok', plan: 'SuperGrok', sections: [
@@ -769,6 +833,18 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.deepEqual(personal.rows.map(rowKey), ['metric:Weekly', 'metric:Monthly', 'metric:Build credits']);
   assert.deepEqual(work.rows.map((r) => r.label), ['Weekly']);
   assert.deepEqual(plain.rows.map((r) => r.label), ['Weekly Build credits']);
+
+  const usageNamed = parseHostPayload({
+    entries: [
+      { id: 'supergrok', display_name: 'SuperGrok', plan: 'SuperGrok', sections: [
+        { type: 'metric', label: 'Weekly usage', percent: 90, severity: 'critical' },
+        { type: 'metric', label: 'Grok Build', percent: 87, severity: 'high' },
+        { type: 'metric', label: 'Grok Chat', percent: 3, severity: 'low' },
+      ] },
+    ],
+  });
+  const [usageCard] = projectCards(usageNamed, 0);
+  assert.deepEqual(usageCard.rows.map((r) => r.label), ['Weekly', 'Grok Build', 'Grok Chat']);
 
   // ASSERT: a plan equal to the title vanishes; a prefixed plan keeps its tail
   assert.equal(displayPlan(personal.title, personal.plan), '');

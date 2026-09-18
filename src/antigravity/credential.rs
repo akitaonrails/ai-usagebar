@@ -1,22 +1,24 @@
-//! Antigravity's saved Google session, read from the OS keyring.
+//! Antigravity's saved Google session, read from the OS keyring or CLI file.
 //!
-//! Every Antigravity product (2.0, the IDE, `agy`) stores the OAuth token it
-//! obtained at sign-in through Go's `go-keyring`, under service `gemini` and
-//! account `antigravity`. On Windows that is a generic credential named
-//! `gemini:antigravity` in the Credential Manager, on macOS a generic
-//! password in the login Keychain, and on Linux a Secret Service item. The
-//! value is JSON — sometimes wrapped as `go-keyring-base64:<base64>` on
-//! backends that cannot hold raw text.
+//! Antigravity normally stores the OAuth token it obtained at sign-in through
+//! Go's `go-keyring`, under service `gemini` and account `antigravity`. On
+//! Windows that is a generic credential named `gemini:antigravity` in the
+//! Credential Manager, on macOS a generic password in the login Keychain, and
+//! on Linux a Secret Service item. The `agy` CLI can instead use the
+//! JSON file `~/.gemini/antigravity-cli/antigravity-oauth-token`. Both shapes
+//! are accepted; the keyring is tried first.
 //!
 //! This module only *reads* the blob and pulls out the tokens; the network
-//! side (refresh, quota) lives in `cloud.rs`. The keyring is never written.
+//! side (refresh, quota) lives in `cloud.rs`. The keyring and CLI file are
+//! never written.
 //!
 //! [`read`] is deliberately forgiving: any keyring hiccup — no backend, a
-//! locked store, a denied ACL — is `Ok(None)`, because the caller has a better
-//! message for "no session" than anything the backend produces, and the vendor
-//! must keep working when the keyring is simply unavailable.
+//! locked store, a denied ACL — falls through to the CLI file. If neither
+//! source is available, the caller gets `Ok(None)` and can produce its own
+//! "no session" message.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
@@ -168,11 +170,43 @@ fn fingerprint_of(secret: &str) -> String {
     hex
 }
 
-/// The raw blob from the OS keyring, or `None` when there is no saved session
-/// or the keyring could not be consulted. Never errors on a backend failure —
-/// see the module docs.
+/// The raw blob from the OS keyring or Antigravity CLI token file, or `None`
+/// when no saved session is available. Never errors on a backend failure — see
+/// the module docs.
 pub fn read() -> Result<Option<String>> {
-    Ok(read_platform())
+    let cli_path = crate::cache::home_dir().ok().map(|home| {
+        home.join(".gemini")
+            .join("antigravity-cli")
+            .join("antigravity-oauth-token")
+    });
+    Ok(read_saved_session(read_platform(), cli_path.as_deref()))
+}
+
+fn read_saved_session(keyring: Option<String>, cli_path: Option<&Path>) -> Option<String> {
+    keyring.or_else(|| cli_path.and_then(read_cli_token_file))
+}
+
+/// Read the read-only OAuth file used by the Antigravity CLI when it cannot
+/// use the OS keyring. The file has the same JSON credential shape as the
+/// keyring blob, including the nested `token` object.
+///
+/// Held to the keyring path's limits rather than trusted because it is a file:
+/// only a regular file is opened — checked before `open`, since opening a FIFO
+/// blocks until a writer appears and this runs inside the widget's fetch — and
+/// at most `MAX_BLOB_BYTES + 1` bytes are read, so a runaway file or a symlink
+/// to a device is rejected by `decode_blob_bytes` instead of filling memory.
+fn read_cli_token_file(path: &Path) -> Option<String> {
+    use std::io::Read;
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(MAX_BLOB_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    decode_blob_bytes(&bytes)
 }
 
 /// A keyring value as bytes → text. `go-keyring` writes UTF-8; a credential
@@ -461,6 +495,47 @@ mod tests {
         assert_eq!(decode_blob_bytes(&[0xff, 0xfe, 0xfd]), None);
         assert_eq!(decode_blob_bytes(&[0xc3, 0x28]), None);
         assert_eq!(decode_blob_bytes(&vec![b'a'; MAX_BLOB_BYTES + 1]), None);
+    }
+
+    #[test]
+    fn cli_oauth_token_file_rejects_oversized_and_non_regular_paths() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let big = dir.path().join("big");
+        std::fs::write(&big, vec![b'a'; MAX_BLOB_BYTES + 1]).unwrap();
+        assert_eq!(read_cli_token_file(&big), None, "over the blob cap");
+
+        let not_a_file = dir.path().join("a-directory");
+        std::fs::create_dir(&not_a_file).unwrap();
+        assert_eq!(read_cli_token_file(&not_a_file), None, "not a regular file");
+
+        assert_eq!(read_cli_token_file(&dir.path().join("missing")), None);
+    }
+
+    #[test]
+    fn cli_oauth_token_file_is_read_from_the_nested_token_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("antigravity-oauth-token");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"token":{"access_token":"file-at","refresh_token":"file-rt","expiry":"2030-01-02T03:04:05Z"}}"#,
+        )
+        .unwrap();
+
+        let raw = read_saved_session(None, Some(&path)).expect("CLI OAuth file should be readable");
+        let token = parse_keyring_blob(&raw).unwrap();
+        assert_eq!(token.access_token, "file-at");
+        assert_eq!(token.refresh_token.as_deref(), Some("file-rt"));
+
+        assert_eq!(
+            read_saved_session(Some("keyring".into()), Some(&path)).as_deref(),
+            Some("keyring")
+        );
     }
 
     /// Touches the real Credential Manager; asserts only that the read does

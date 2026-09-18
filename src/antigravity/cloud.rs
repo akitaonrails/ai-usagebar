@@ -1,4 +1,4 @@
-//! Google Cloud Code client for the Antigravity "app closed" fallback.
+//! Google Cloud Code client for Antigravity's saved-session fallback.
 //!
 //! When no Antigravity product is running there is no loopback RPC to ask, but
 //! the Google session Antigravity saved in the OS keyring (`credential.rs`)

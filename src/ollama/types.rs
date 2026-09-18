@@ -21,6 +21,11 @@ pub struct Limits {
     pub session: Option<Window>,
     #[serde(default)]
     pub weekly: Option<Window>,
+    /// Calendar-month quota (`limits.monthly`). Reported instead of
+    /// `session`/`weekly` on at least some Pro accounts — the two shapes are
+    /// mutually observed, never combined in one response so far.
+    #[serde(default)]
+    pub monthly: Option<Window>,
 }
 
 /// One quota window. `usage` is a fraction in `[0.0, 1.0]`.
@@ -96,6 +101,7 @@ impl Body {
     pub fn into_snapshot(self, plan: String) -> OllamaSnapshot {
         let session_models = Self::models(self.limits.session.as_ref());
         let weekly_models = Self::models(self.limits.weekly.as_ref());
+        let monthly_models = Self::models(self.limits.monthly.as_ref());
         let (cost, period_kind) = match self.activity {
             Some(a) => (a.cost, a.period.map(|p| p.kind)),
             None => (None, None),
@@ -105,8 +111,13 @@ impl Body {
             plan,
             session: Self::window(self.limits.session, chrono::Duration::hours(5)),
             weekly: Self::window(self.limits.weekly, chrono::Duration::days(7)),
+            // Nominal length only — the API gives no cycle-start date, so
+            // pacing against a real subscription month is not possible. Kept
+            // consistent with session/weekly, which also carry no reset time.
+            monthly: Self::window(self.limits.monthly, chrono::Duration::days(30)),
             session_models,
             weekly_models,
+            monthly_models,
             activity_cost: cost,
             activity_period: period_kind,
         }
@@ -176,8 +187,46 @@ mod tests {
         let snap = body.into_snapshot("free".into());
         assert!(snap.session.is_none());
         assert!(snap.weekly.is_none());
+        assert!(snap.monthly.is_none());
         assert!(snap.session_models.is_empty());
         assert!(snap.weekly_models.is_empty());
+        assert!(snap.monthly_models.is_empty());
+    }
+
+    /// Real 200 body captured 2026-09-16 against a different Pro account —
+    /// this shape reports `limits.monthly` instead of `session`/`weekly`.
+    /// Both shapes exist in the wild for the same "pro" plan label.
+    const LIVE_MONTHLY: &str = r#"{
+      "activity": {
+        "cost": "0.00000",
+        "period": {
+          "type": "last_4_weeks",
+          "starting_at": "2026-08-24T00:00:00Z",
+          "ending_at": "2026-09-16T08:55:34.663902649Z"
+        }
+      },
+      "limits": {
+        "monthly": {
+          "usage": 0.003,
+          "models": [
+            {"name": "gpt-oss:120b", "request_count": 100},
+            {"name": "gpt-oss:20b", "request_count": 2}
+          ]
+        }
+      }
+    }"#;
+
+    #[test]
+    fn parses_live_captured_monthly_body() {
+        let body: Body = serde_json::from_str(LIVE_MONTHLY).unwrap();
+        let snap = body.into_snapshot("pro".into());
+        assert!(snap.session.is_none());
+        assert!(snap.weekly.is_none());
+        assert_eq!(snap.monthly.as_ref().unwrap().utilization_pct, 0);
+        assert_eq!(snap.monthly_models[0].name, "gpt-oss:120b");
+        assert_eq!(snap.monthly_models[0].request_count, 100);
+        assert_eq!(snap.monthly_models.len(), 2);
+        assert_eq!(snap.activity_cost.as_deref(), Some("0.00000"));
     }
 
     #[test]

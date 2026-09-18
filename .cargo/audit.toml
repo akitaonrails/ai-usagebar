@@ -1,0 +1,16 @@
+# cargo-audit policy for ai-usagebar.
+#
+# Both ignores are transitive-only crates pinned by the tray/webview stack
+# (tray-icon → gtk/glib, wry → webkit2gtk → gtk/glib). Neither is removable
+# without upstream wry/tao moving to a newer gtk; revisit on each wry/tao
+# upgrade. ai-usagebar never calls either crate directly.
+[advisories]
+ignore = [
+    # proc-macro-error is unmaintained (2024-09). Reached only through
+    # gtk3-macros/glib-macros build-time derive macros; no runtime surface.
+    "RUSTSEC-2024-0370",
+    # glib::VariantStrIter iterator unsoundness (2024-03). glib arrives only
+    # via the tray/webview chain; ai-usagebar code never touches glib
+    # iterators — no reachable path in this crate.
+    "RUSTSEC-2024-0429",
+]

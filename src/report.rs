@@ -51,6 +51,9 @@ struct Entry {
     error: Option<String>,
     stale: bool,
     fetched_at: Option<DateTime<Utc>>,
+    /// Structured banked-reset inventory for rich frontends. The human-readable
+    /// block remains in `sections` for the text report and older consumers.
+    reset_credits: Option<crate::usage::ResetCredits>,
 }
 
 /// Lossless machine-readable projection of a TUI panel row. `metrics` remains
@@ -72,6 +75,12 @@ enum ReportSection {
         /// month or an unstated window omits the field rather than guessing.
         #[serde(skip_serializing_if = "Option::is_none")]
         window_secs: Option<u64>,
+        /// Sub-group heading the metric belongs under (SuperGrok's product
+        /// slices under `"Breakdown"`), so a frontend can draw it compactly
+        /// beneath that heading instead of as a peer of the overall meter.
+        /// Absent for metrics that stand on their own.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        group: Option<String>,
     },
     Text {
         label: String,
@@ -227,6 +236,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
             TabState::Ready(ready) => ready.fetched_at,
             _ => None,
         },
+        reset_credits: reset_credits_for(state),
     };
     // The error is already a first-class entry field. Do not duplicate the
     // TUI's interactive retry instructions as report data.
@@ -254,6 +264,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
                     window_secs: projected
                         .window
                         .map(|window| window.num_seconds().max(0) as u64),
+                    group: projected.group.map(str::to_string),
                 });
             }
             Section::Text { label, value } => {
@@ -266,6 +277,18 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         }
     }
     entry
+}
+
+fn reset_credits_for(state: &TabState) -> Option<crate::usage::ResetCredits> {
+    let credits = match state {
+        TabState::Ready(ready) => match &ready.snapshot {
+            crate::usage::VendorSnapshot::Openai(snapshot) => &snapshot.reset_credits,
+            crate::usage::VendorSnapshot::SuperGrok(snapshot) => &snapshot.reset_credits,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    (!credits.is_empty()).then(|| credits.clone())
 }
 
 fn report_exit_code(entries: &[Entry]) -> i32 {
@@ -378,6 +401,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         severity,
                         reset_at,
                         window_secs,
+                        group,
                     } => {
                         let mut metric = json!({
                             "label": label,
@@ -390,6 +414,9 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         // Same rule as the `sections` serializer: absent, not null.
                         if let Some(secs) = window_secs {
                             metric["window_secs"] = json!(secs);
+                        }
+                        if let Some(group) = group {
+                            metric["group"] = json!(group);
                         }
                         Some(metric)
                     }
@@ -407,6 +434,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                 "error": entry.error,
                 "stale": entry.stale,
                 "fetched_at": entry.fetched_at,
+                "reset_credits": entry.reset_credits,
                 "metrics": metrics,
                 "sections": entry.sections,
             });
@@ -427,7 +455,7 @@ fn render_text(entries: &[Entry]) -> String {
         .iter()
         .flat_map(|entry| entry.sections.iter())
         .filter_map(ReportSection::label)
-        .map(|label| label.chars().count())
+        .map(crate::display::text_width)
         .max()
         .unwrap_or(0);
 
@@ -468,7 +496,7 @@ fn render_text(entries: &[Entry]) -> String {
                     detail,
                     ..
                 } => {
-                    let label = format!("{label:width$}");
+                    let label = crate::display::pad_end(label, width);
                     let value = format!("{value:>9}");
                     if detail.is_empty() {
                         body.push_str(&format!("  {label}  {value}\n"));
@@ -482,7 +510,8 @@ fn render_text(entries: &[Entry]) -> String {
                     } else if value.is_empty() {
                         body.push_str(&format!("  {label}\n"));
                     } else {
-                        body.push_str(&format!("  {label:width$}  {value}\n"));
+                        let label = crate::display::pad_end(label, width);
+                        body.push_str(&format!("  {label}  {value}\n"));
                     }
                 }
                 ReportSection::Block { label, body: lines } => {
@@ -505,7 +534,9 @@ mod tests {
     use super::*;
     use crate::tui::app::ReadyTab;
     use crate::usage::{
-        DeepseekSnapshot, KimiSnapshot, KiroSnapshot, OpenRouterSnapshot, VendorSnapshot,
+        DeepseekSnapshot, KimiSnapshot, KiroSnapshot, OpenAiSnapshot, OpenAiSource,
+        OpenRouterSnapshot, ResetCredit, ResetCredits, SuperGrokPeriod, SuperGrokSnapshot,
+        VendorSnapshot,
     };
     use crate::vendor::VendorId;
 
@@ -522,6 +553,7 @@ mod tests {
             error: None,
             stale: false,
             fetched_at: None,
+            reset_credits: None,
         }
     }
 
@@ -534,6 +566,7 @@ mod tests {
             severity: "mid".into(),
             reset_at: None,
             window_secs: None,
+            group: None,
         }
     }
 
@@ -613,6 +646,29 @@ mod tests {
             .lines()
             .filter(|line| line.starts_with("  ") && line.contains('%'))
             .map(|line| line.find('%').unwrap())
+            .collect();
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0], columns[1], "{text}");
+    }
+
+    /// The same alignment, but with a label whose glyphs are two columns wide.
+    /// `format!("{label:width$}")` pads by character count, so a CJK label used
+    /// to leave the value column short by one space per ideograph. Note the
+    /// column is measured in display width, not byte or char offset — `find`
+    /// returns a byte index, which is itself three per ideograph here.
+    #[test]
+    fn value_columns_align_when_a_label_is_double_width() {
+        let text = render_text(&[
+            entry("a", vec![metric("セッション", 1, "1%", "")]),
+            entry("b", vec![metric("Weekly", 2, "2%", "")]),
+        ]);
+        let columns: Vec<usize> = text
+            .lines()
+            .filter(|line| line.starts_with("  ") && line.contains('%'))
+            .map(|line| {
+                let byte = line.find('%').unwrap();
+                crate::display::text_width(&line[..byte])
+            })
             .collect();
         assert_eq!(columns.len(), 2);
         assert_eq!(columns[0], columns[1], "{text}");
@@ -716,6 +772,124 @@ mod tests {
         // must not be handed a length to pace against.
         assert!(first["metrics"][0]["window_secs"].is_null());
         assert!(first["sections"][1].get("window_secs").is_none());
+    }
+
+    /// Grouped sub-rows (SuperGrok's product slices) carry their group in both
+    /// the ordered `sections` and the `metrics` convenience view, and the field
+    /// is omitted (not `null`) for metrics that stand on their own — including
+    /// the overall meter they break down.
+    #[test]
+    fn json_carries_the_group_only_for_grouped_slices() {
+        use crate::usage::{ResetCredits, SuperGrokPeriod, SuperGrokProduct, SuperGrokSnapshot};
+
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::SuperGrok(SuperGrokSnapshot {
+                plan: "SuperGrok Heavy".into(),
+                account: "scope".into(),
+                weekly_pct: 97,
+                period: SuperGrokPeriod::Weekly,
+                reset_at: Some(Utc::now() + chrono::Duration::days(3)),
+                prepaid_balance: None,
+                reset_credits: ResetCredits::default(),
+                products: vec![SuperGrokProduct {
+                    label: "Grok Build".into(),
+                    percent: 94,
+                }],
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Supergrok), &state, Utc::now());
+        let rendered = render_json_for_primary(&[projected], None);
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        let first = &value["entries"][0];
+
+        // sections: [spacer, overall, product slice] — the overall meter the
+        // slices break down carries no group; the slice does, in both views.
+        assert!(first["sections"][1].get("group").is_none());
+        assert_eq!(first["sections"][2]["group"], "Breakdown");
+        assert!(first["metrics"][0].get("group").is_none());
+        assert_eq!(first["metrics"][1]["group"], "Breakdown");
+    }
+
+    #[test]
+    fn json_exposes_banked_reset_expiries_without_removing_the_text_block() {
+        let expiry: DateTime<Utc> = "2026-09-20T23:58:00Z".parse().unwrap();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Openai(OpenAiSnapshot {
+                plan: "ChatGPT Pro".into(),
+                session: None,
+                weekly: None,
+                code_review: None,
+                additional_limits: Vec::new(),
+                unavailable_models: Vec::new(),
+                credits: None,
+                reset_credits: ResetCredits {
+                    available: 2,
+                    credits: vec![ResetCredit {
+                        title: Some("Full reset".into()),
+                        expires_at: Some(expiry),
+                    }],
+                },
+                source: OpenAiSource::CodexOauth,
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Openai), &state, Utc::now());
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[projected], None)).unwrap();
+        let entry = &value["entries"][0];
+
+        assert_eq!(entry["reset_credits"]["available"], 2);
+        assert_eq!(entry["reset_credits"]["credits"][0]["title"], "Full reset");
+        assert_eq!(
+            entry["reset_credits"]["credits"][0]["expires_at"],
+            expiry.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        );
+        assert!(
+            entry["sections"].as_array().unwrap().iter().any(|section| {
+                section["type"] == "block" && section["label"] == "Reset credits"
+            })
+        );
+    }
+
+    #[test]
+    fn json_exposes_supergrok_reset_credit_expiries() {
+        let expiry: DateTime<Utc> = "2026-10-03T23:00:00Z".parse().unwrap();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::SuperGrok(SuperGrokSnapshot {
+                plan: "SuperGrok".into(),
+                account: "test-account".into(),
+                weekly_pct: 0,
+                period: SuperGrokPeriod::Weekly,
+                reset_at: None,
+                prepaid_balance: None,
+                reset_credits: ResetCredits {
+                    available: 1,
+                    credits: vec![ResetCredit {
+                        title: None,
+                        expires_at: Some(expiry),
+                    }],
+                },
+                products: Vec::new(),
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Supergrok), &state, Utc::now());
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[projected], None)).unwrap();
+        let entry = &value["entries"][0];
+
+        assert_eq!(entry["reset_credits"]["available"], 1);
+        assert_eq!(
+            entry["reset_credits"]["credits"][0]["expires_at"],
+            expiry.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        );
     }
 
     /// A rolling window's exact length rides along with its row, in both the
@@ -858,6 +1032,9 @@ mod tests {
                 weekly_used: 200,
                 weekly_remaining: 800,
                 weekly_reset_at: Some(weekly_reset),
+                has_weekly: true,
+                monthly_pct: None,
+                monthly_reset_at: None,
                 window_limit: 100,
                 window_used: 40,
                 window_remaining: 60,

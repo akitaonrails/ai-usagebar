@@ -342,7 +342,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
             const update = () => {
                 if (v.kind === 'local') {
                     const productDetected = vendorConfigured(v);
-                    row.subtitle = _('verificando…');
+                    row.subtitle = _('checking…');
                     checkCliInstalled(v.cli, (installed) => {
                         if (productDetected) {
                             row.subtitle = _('✓ Antigravity detectado — mantenha o app, IDE ou agy aberto');
@@ -360,15 +360,15 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
                 if (v.kind !== 'oauth') {
                     const ok = vendorConfigured(v);
                     row.subtitle = ok ? _('✓ Configured') : `⚠ ${_('No API key')} — ${v.env}`;
-                    btn.label = _('Configurar (TUI)');
+                    btn.label = _('Configure (TUI)');
                     return;
                 }
                 if (vendorConfigured(v)) {
                     row.subtitle = _('✓ Configured');
-                    btn.label = _('Re-logar');
+                    btn.label = _('Sign in again');
                     return;
                 }
-                row.subtitle = _('verificando…');
+                row.subtitle = _('checking…');
                 checkCliInstalled(v.cli, (installed) => {
                     row.subtitle = installed
                         ? `⚠ ${_('Not signed in')} — \`${v.login}\``

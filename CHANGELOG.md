@@ -26,6 +26,174 @@ Each release is also published at
 
 - Native Tavily usage support. Configure Tavily with `[[custom]]` instead.
 
+## [1.20.1] — 2026-09-18
+
+### Added
+
+- **Official Scoop manifest for the Windows release.**
+  `packaging/scoop/ai-usagebar.json` installs the release ZIP with all three
+  binaries and an "AI Usage" Start-menu shortcut for the tray, and a
+  `publish-scoop` job in the release workflow pushes the freshly pinned
+  manifest (version from the tag, hash recomputed from the published
+  `.sha256` sidecar) to the `akitaonrails/scoop-bucket` repo when
+  `SCOOP_BUCKET_TOKEN` is set. Proposal: #216.
+- **Reset-credit expiry tooltip on Windows.** The Codex and SuperGrok reset
+  credit row keeps its compact available-count badge and now reveals each
+  credit's expiry date and remaining time on hover or keyboard focus.
+
+### Changed
+
+- The Windows tray popover is 300 logical pixels wide for a more compact
+  footprint, including on scaled displays.
+
+### Fixed
+
+- The Windows tray popover remeasures its intrinsic content height whenever it
+  opens or receives updated data, instead of retaining a stale work-area-sized
+  window with empty space above the footer.
+- The Scoop manifest's `version` is bumped in lockstep with the release (the
+  new `verify-version` guard caught the never-published v1.20.0's stale
+  manifest before anything shipped; that tag remains unused).
+
+## [1.19.0] — 2026-09-17
+
+### Added
+
+- **Grok Bot as its own opt-in vendor** (`[grokbot]`, `--vendor grokbot`,
+  Linux-only for now): the Grok Bot desktop app's weekly included-usage
+  pool, from its Connect-RPC dashboard call
+  (`api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus`).
+  Distinct from `[grok]` (Management API prepaid dollars) and
+  `[supergrok]` (Grok Build subscription). The credential is the app's own
+  OAuth session in `~/.config/Grok Bot/sand-secrets.json` — Chromium
+  OSCrypt `v10` blobs decrypted read-only with the Linux OSCrypt key (one
+  PBKDF2 round; `secret-tool lookup application "Grok Bot"`, falling back
+  to Chromium's documented default). Refresh goes through Cursor's public
+  installed-app OAuth client, and rotated tokens persist only in
+  ai-usagebar's vendor cache (`oauth.json`, mode 0600), never back to the
+  app's file. The window length is derived from the reported period bounds
+  rather than assumed to be 7 days; an account with
+  `hasNonZeroIncludedLimit: false` shows a "no included allowance" state
+  rather than a 0% meter, and at 100% with the account still serving, an
+  on-demand footnote appears when on-demand is enabled. New placeholders:
+  `{gbt_plan}`, `{gbt_weekly_pct}`, `{gbt_weekly_reset}`,
+  `{gbt_on_demand}`. macOS and Windows fail closed with a credentials
+  error explaining the Linux-only support. (#206)
+- **SuperGrok included usage, not a single Build-credits bar.** SuperGrok
+  already fetched Grok Build's billing document; the parser only kept the
+  overall `creditUsagePercent` and labelled it "Build credits". It now
+  shows that figure as **weekly/monthly usage** and lists the
+  `productUsage` slices beside it (Grok Build, Grok Chat, Grok Imagine,
+  and any other named product) — in the tooltip and `--pretty` box each
+  slice is one dim line with an aligned percentage, no gauge and no
+  severity colour, so only the overall meter reads as the binding
+  constraint. `[grok]` is unchanged: that vendor is
+  still the Management API prepaid dollar balance.
+- **Grouped sub-rows in the report and the Omarchy panel.** Product slices
+  now carry a `group` field (`"Breakdown"`) in `usage --json`'s `sections`
+  and `metrics`, and the Quattro panel renders grouped rows compactly —
+  dim label, thin muted gauge — under a `BREAKDOWN` heading, instead of as
+  full meters beside the overall usage row. The field is additive: older
+  frontends keep rendering the rows as plain metrics.
+
+### Fixed
+
+- **Kimi accounts on the newer `/coding/v1/usages` response shape no longer
+  hard-error as schema drift.** Such accounts return no top-level `usage`
+  block — only a `usages` map of ratios — which the parser rejected
+  outright. The snapshot now reads the combined monthly pool from
+  `limit_month_total` (`used_ratio` × 100, a spelling validated against the
+  vendor's own website), exposed as the new `{kimi_monthly_pct}` /
+  `{kimi_monthly_reset}` placeholders and a "Monthly" row in the tooltip and
+  the detail panel. These accounts have **no weekly window**: the weekly row
+  is dropped and the `kimi_weekly_*` placeholders resolve to empty rather
+  than a fabricated 0. `limit_month_code` — the Code slice *inside* that
+  same pool — is never added to the total or rendered as its own allowance,
+  and the 5h rolling window still comes from `limits[]`, which the website
+  matches.
+- **SuperGrok product names are escaped before reaching the tooltip's Pango
+  markup.** A hostile billing document could otherwise inject markup through
+  a crafted `productUsage` name. Width-based label alignment happens before
+  the escape, so padded columns still line up.
+- **SuperGrok no longer shows a "$0.00 Prepaid API" line.** The billing
+  document reports `prepaidBalance: 0` unless credit was purchased on top
+  of the subscription, and a zero row read as "no money" — especially for
+  unified billing accounts, whose real dollars sit in the Management API
+  wallet that `[grok]` reports. The row (TUI, tooltip and report) now
+  appears only when there is credit to show; `{sgk_prepaid}` still
+  publishes the raw figure.
+
+### Security
+
+- **Updated rustls to 0.23.45** (from 0.23.40), fixing RUSTSEC-2026-0285 —
+  TLS 1.3 handshake messages incorrectly accepted across encryption-level
+  boundaries — in the stack that carries every vendor credential request.
+  Added `.cargo/audit.toml` documenting the two remaining transitive-only
+  gtk/glib advisories the tray stack pins and ai-usagebar never reaches.
+
+## [1.18.1] — 2026-09-16
+
+### Fixed
+
+- **Column alignment with double-width text.** Labels were measured and padded
+  by character count, so any text containing CJK glyphs — a Japanese account
+  label, a plan name — left the value column short by one space per ideograph
+  in the text report, the tooltip box, and the TUI. Width is now measured in
+  terminal columns, and padding is computed from that rather than from
+  `format!`'s character-based fill. Combining marks now correctly measure zero.
+
+## [1.18.0] — 2026-09-16
+
+### Added
+
+- **`ai-usagebar settings enable <vendor>`.** A new CLI subcommand that turns one
+  provider on, preserving every other setting, comment and credential in
+  `config.toml`. Unlike discovery, it is an explicit opt-in and therefore does
+  overrule a previous `enabled = false`. It is what the macOS Preferences
+  Enable button calls.
+- **Ollama Cloud monthly window placeholders.** `{oll_monthly_pct}`,
+  `{oll_monthly_reset}`, `{oll_monthly_elapsed}`, `{oll_monthly_pace}` and
+  `{oll_monthly_pace_indicator}`, plus a `Monthly` metric in the tooltip, TUI
+  panel and report, for accounts whose plan reports a calendar-month quota.
+
+### Fixed
+
+- **macOS named Codex accounts.** Accounts in `[[openai.accounts]]` now appear
+  in the provider selector, Overview, Preferences and vendor-cycle shortcut,
+  including when no default Codex login exists.
+- **macOS disabled providers.** Preferences now distinguish disabled providers
+  from missing credentials and offer an explicit Enable action, backed by
+  `ai-usagebar settings enable <vendor>`. Other settings and credentials are
+  preserved, and write failures remain visible in Preferences.
+- **English-only UI strings.** The GNOME preferences and the macOS provider
+  list showed `verificando…`, `Configurar (TUI)` and `Re-logar` — Portuguese
+  left over from an early draft. They now read `checking…`,
+  `Configure (TUI)` and `Sign in again`, matching every other frontend.
+
+- **Ollama Cloud monthly-quota accounts no longer show a bare "Ready".**
+  Some Ollama Cloud accounts report `limits.monthly` instead of
+  `limits.session` + `limits.weekly` for the same `"pro"` plan label. The
+  parser only understood the session/weekly shape, so a monthly account had
+  no window to render and every frontend fell back to a plain "Ready"/status
+  pill with no percentage. `limits.monthly` is now parsed into a `Monthly`
+  metric (bar, tooltip, TUI panel, and top models), alongside the existing
+  session/weekly windows for accounts that report those instead.
+
+## [1.17.1] — 2026-09-16
+
+### Fixed
+
+- **Antigravity CLI session fallback.** When `agy` requires an undiscoverable
+  CSRF token, ai-usagebar now reads the CLI's saved Google session from
+  `~/.gemini/antigravity-cli/antigravity-oauth-token` when the OS keyring is
+  unavailable.
+
+- **Antigravity's fallback source no longer claims the app is closed.** Since
+  v1.17.0 the Cloud Code fallback also answers when `agy` is running but will
+  not publish its CSRF token, yet the TUI labelled those figures
+  `Google API (app closed)` — false while the app is open. The source row now
+  reads `Google API`, which is true for both reasons the fallback fires.
+
 ## [1.17.0] — 2026-09-12
 
 ### Added
@@ -2405,7 +2573,12 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.1...HEAD
+[1.20.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.19.0...v1.20.1
+[1.19.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.1...v1.19.0
+[1.18.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.0...v1.18.1
+[1.18.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...v1.18.0
+[1.17.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...v1.17.1
 [1.17.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.14.0...v1.15.0

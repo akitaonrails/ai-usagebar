@@ -62,7 +62,23 @@ export interface BlockRow {
   label: string;
 }
 
-export type Row = BlockRow | MetricRow | TextRow;
+export interface ResetCredit {
+  expiresAt: string;
+  title: string;
+}
+
+export interface ResetCredits {
+  available: number;
+  credits: ResetCredit[];
+}
+
+export interface ResetCreditsRow extends ResetCredits {
+  key?: string;
+  kind: "resetCredits";
+  label: string;
+}
+
+export type Row = BlockRow | MetricRow | ResetCreditsRow | TextRow;
 
 export interface ErrorAction {
   cmd: string;
@@ -125,6 +141,7 @@ export interface Entry {
   error: string;
   id: string;
   plan: string;
+  resetCredits: ResetCredits | null;
   sections: Section[];
   shortName: string;
   stale: boolean;

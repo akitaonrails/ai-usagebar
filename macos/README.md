@@ -181,6 +181,18 @@ ai-usagebar account switch work --desktop   # quits and reopens Claude.app
 
 See the main README's *Switching the active Claude account* for the full story.
 
+## Multiple Codex accounts
+
+Entries from `[[openai.accounts]]` appear as “Codex · label” in the provider
+submenu, Preferences, Overview, and the vendor-cycle shortcut. Each is fetched
+with `--vendor openai --account <label>`; Rust resolves its `codex_auth_path`
+and keeps its cache separate. Named accounts do not require a default Codex
+login. Disabling `[openai]` hides all its accounts.
+
+Setting `[ui] overview_vendors = ["openai"]` includes all configured Codex
+accounts. Each Overview checkbox still controls that account's visibility.
+Selecting an entry changes whose usage is displayed, not the active Codex login.
+
 ## Multiple OpenRouter accounts
 
 Entries from `[[openrouter.accounts]]` appear as separate menu choices and use
@@ -203,3 +215,15 @@ Runs `ai-usagebar --vendor <v> --format '{plan};;{session_pct};;…'`, parses th
 Waybar JSON (`{text, …}`), and draws the bars as colored `NSAttributedString`s
 in the status item and the dropdown. The subprocess runs **off the main thread**
 (`DispatchQueue.global` → back to `.main` for UI), so the UI never blocks.
+
+### Enable a connected provider
+
+Preferences → Vendors shows **Disabled** even when a credential is available.
+Click **Enable** to include the provider in usage reporting; if it still needs
+a credential, the row then offers its usual sign-in or configuration action.
+Enabling does not sign in, switch accounts, or change the selected provider.
+The menu reloads the configuration automatically.
+
+This requires a binary supporting `ai-usagebar settings enable <vendor>`.
+If enabling fails, Preferences shows an error and keeps the provider state
+from the catalog. Update the binary if it does not recognize the command.

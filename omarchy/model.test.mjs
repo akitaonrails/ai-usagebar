@@ -365,6 +365,44 @@ assert.equal(model.formatReset('not-a-date', Date.parse('2026-08-14T12:00:00Z'))
 assert.equal(model.formatUpdated('2026-08-14T12:00:00Z', Date.parse('2026-08-14T12:03:00Z')), 'Updated 3m ago');
 assert.equal(model.metricDetail(parsed.entries[0].sections[1]), '60% elapsed · 31pts under');
 
+// Grouped sub-rows (SuperGrok's product slices) gain one heading row per
+// group and pass everything else through untouched.
+const supergrokSections = model.parseReport(JSON.stringify({entries: [{
+  id: 'supergrok', error: null,
+  sections: [
+    {type: 'spacer'},
+    {type: 'metric', label: 'Weekly usage', percent: 97, value: '97%', detail: '',
+     severity: 'critical', reset_at: '2026-09-20T13:26:44Z', window_secs: 604800},
+    {type: 'metric', label: 'Grok Build', percent: 94, value: '94%', detail: '',
+     severity: 'low', group: 'Breakdown'},
+    {type: 'metric', label: 'Grok Chat', percent: 3, value: '3%', detail: '',
+     severity: 'low', group: 'Breakdown'},
+    {type: 'text', label: 'Prepaid API', value: '$4.22'}
+  ]
+}]})).entries[0].sections;
+assert.equal(supergrokSections[1].group, '');
+assert.equal(supergrokSections[2].group, 'Breakdown');
+// Array.from/JSON round-trips bridge the vm realm, like every other
+// shape assertion in this file.
+assert.deepEqual(Array.from(model.groupedSections(supergrokSections)).map(row => {
+  if (row.type === 'spacer') return 'spacer';
+  if (row.type === 'text' && row.value === '') return 'heading:' + row.label;
+  return row.label;
+}), [
+  'spacer',
+  'Weekly usage',      // ungrouped metric: no heading inserted
+  'heading:Breakdown', // one heading before the group's first row…
+  'Grok Build',
+  'Grok Chat',         // …never a second one for the same group
+  'Prepaid API'
+]);
+assert.equal(model.groupedSections(supergrokSections).filter(row =>
+  row.type === 'metric' && row.group === 'Breakdown').length, 2);
+assert.deepEqual(JSON.parse(JSON.stringify(model.groupedSections([{type: 'spacer'}]))),
+  [{type: 'spacer'}]);
+assert.equal(model.groupedSections(null).length, 0);
+assert.equal(model.groupedSections('not-sections').length, 0);
+
 const balance = model.parseReport(JSON.stringify({entries: [{
   id: 'deepseek', error: null,
   sections: [{type: 'text', label: 'Balance', value: '$8.42'}]
