@@ -206,6 +206,16 @@ The **Waybar widget is Wayland-only and does not apply to Windows.** Use the
 reads the same `usage --json` report as the KDE plasmoid, in-process — no
 console window. `ai-usagebar --json` / `--pretty` still work for scripting.
 
+Install with [Scoop](https://scoop.sh) from the official bucket:
+
+```powershell
+scoop bucket add akitaonrails https://github.com/akitaonrails/scoop-bucket
+scoop install ai-usagebar
+```
+
+Scoop owns updates for Scoop installs (`scoop update ai-usagebar`); the
+tray's built-in updater applies to standalone ZIP installs.
+
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](screenshots/windows-tray-dashboard.png)
 
 Build with a standard Rust toolchain plus **Node.js 20+** (the tray WebView is

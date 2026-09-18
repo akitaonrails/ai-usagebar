@@ -13,6 +13,22 @@ Vite + React + shadcn app in `windows/popover/` (Iconify icons via
 `unplugin-icons`). The view-model in `src/model.js` has a Node contract
 test that does not need `npm install`.
 
+## Install
+
+From [Scoop](https://scoop.sh), via the official bucket:
+
+```powershell
+scoop bucket add akitaonrails https://github.com/akitaonrails/scoop-bucket
+scoop install ai-usagebar
+```
+
+Or grab `ai-usagebar-windows-x86_64.zip` from the latest
+[GitHub release](https://github.com/akitaonrails/ai-usagebar/releases) and
+unzip it anywhere. Update ownership differs between the two paths: **Scoop
+owns updates for Scoop installs** (`scoop update ai-usagebar`), while the
+tray's built-in updater (below, **Settings → Updates**) applies to
+standalone ZIP installs.
+
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](../screenshots/windows-tray-dashboard.png)
 
 ## Requirements

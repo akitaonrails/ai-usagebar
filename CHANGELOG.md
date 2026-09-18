@@ -11,6 +11,13 @@ Each release is also published at
 
 ### Added
 
+- **Official Scoop manifest for the Windows release.**
+  `packaging/scoop/ai-usagebar.json` installs the release ZIP with all three
+  binaries and an "AI Usage" Start-menu shortcut for the tray, and a
+  `publish-scoop` job in the release workflow pushes the freshly pinned
+  manifest (version from the tag, hash recomputed from the published
+  `.sha256` sidecar) to the `akitaonrails/scoop-bucket` repo when
+  `SCOOP_BUCKET_TOKEN` is set. Proposal: #216.
 - **Reset-credit expiry tooltip on Windows.** The Codex and SuperGrok reset
   credit row keeps its compact available-count badge and now reveals each
   credit's expiry date and remaining time on hover or keyboard focus.

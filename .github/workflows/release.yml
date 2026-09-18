@@ -74,6 +74,10 @@ jobs:
             "$(grep -m1 'pkgver = ' packaging/aur/.SRCINFO | awk '{print $3}')" "$version"
           check ".SRCINFO-bin pkgver" \
             "$(grep -m1 'pkgver = ' packaging/aur/.SRCINFO-bin | awk '{print $3}')" "$version"
+          jq -e . packaging/scoop/ai-usagebar.json >/dev/null \
+            || { echo "::error::packaging/scoop/ai-usagebar.json is not valid JSON"; fail=1; }
+          check "Scoop manifest version" \
+            "$(jq -r '.version' packaging/scoop/ai-usagebar.json)" "$version"
 
           grep -q "^## \[$version\]" CHANGELOG.md \
             || { echo "::error::CHANGELOG.md has no '## [$version]' section"; fail=1; }
@@ -461,3 +465,75 @@ jobs:
           commit_message: "ai-usagebar-bin ${{ inputs.ref || github.ref_name }}"
           ssh_keyscan_types: rsa,ecdsa,ed25519
           force_push: 'false'
+
+  # Mirrors publish-aur's defensive shape, but the bucket push is a plain git
+  # push over HTTPS with a PAT — no third-party action needed for a one-file
+  # manifest update. The token travels via GIT_ASKPASS so it never appears in
+  # the process list (an http.extraheader or URL credential would).
+  publish-scoop:
+    needs: [verify-version, build, release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.ref != ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Check SCOOP_BUCKET_TOKEN presence
+        id: scoop_token
+        env:
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+        run: |
+          if [ -z "$SCOOP_BUCKET_TOKEN" ]; then
+            echo "set=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping Scoop bucket push — no SCOOP_BUCKET_TOKEN secret set"
+          else
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Pin the in-tree manifest template to this tag. The hash is recomputed
+      # from the release's published `.sha256` sidecar, never from the
+      # workflow artifacts: the bucket must verify what the release serves.
+      - name: Pin version, URL and hash for the tag
+        if: steps.scoop_token.outputs.set == 'true'
+        env:
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          zip="ai-usagebar-windows-x86_64.zip"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          hash=$(curl -fsSL "$base/$zip.sha256" | awk '{print $1}')
+          jq --arg version "$version" --arg url "$base/$zip" --arg hash "$hash" '
+            .version = $version
+            | .architecture."64bit".url = $url
+            | .architecture."64bit".hash = $hash
+          ' packaging/scoop/ai-usagebar.json > scoop-manifest.json
+          jq -e . scoop-manifest.json >/dev/null
+
+      - name: Push manifest to scoop-bucket
+        if: steps.scoop_token.outputs.set == 'true'
+        env:
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          TAG: ${{ inputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          askpass=$(mktemp)
+          printf '#!/bin/sh\nprintf %%s "$SCOOP_BUCKET_TOKEN"\n' > "$askpass"
+          chmod 700 "$askpass"
+          export GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0
+          git clone --depth 1 https://x-access-token@github.com/akitaonrails/scoop-bucket.git bucket
+          mkdir -p bucket/bucket
+          cp scoop-manifest.json bucket/bucket/ai-usagebar.json
+          cd bucket
+          git config user.name "AkitaOnRails (GitHub Actions)"
+          git config user.email "boss@akitaonrails.com"
+          git add bucket/ai-usagebar.json
+          if git diff --cached --quiet; then
+            echo "Bucket already at ${TAG} — nothing to push"
+            rm -f "$askpass"
+            exit 0
+          fi
+          git commit -m "ai-usagebar ${TAG}"
+          git push origin HEAD
+          rm -f "$askpass"
