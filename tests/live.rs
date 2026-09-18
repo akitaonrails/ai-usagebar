@@ -80,7 +80,6 @@ use ai_usagebar::ollama;
 use ai_usagebar::openai;
 use ai_usagebar::openrouter;
 use ai_usagebar::supergrok;
-use ai_usagebar::tavily;
 use ai_usagebar::zai;
 
 fn xdg_cache_for(test: &str) -> Cache {
@@ -401,72 +400,6 @@ async fn kimi_subscription_live() {
         out.snapshot.weekly_limit,
         out.snapshot.window_used,
         out.snapshot.window_limit,
-    );
-}
-
-#[tokio::test]
-#[ignore = "live API; run with --ignored"]
-async fn tavily_live() {
-    let Ok(api_key) = std::env::var("TAVILY_API_KEY") else {
-        eprintln!("tavily_live: TAVILY_API_KEY is unset — skipping optional Tavily smoke test");
-        return;
-    };
-    if api_key.trim().is_empty() {
-        eprintln!("tavily_live: TAVILY_API_KEY is empty — skipping optional Tavily smoke test");
-        return;
-    }
-    let cache = xdg_cache_for("tavily");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .unwrap();
-    let endpoints = tavily::fetch::Endpoints::default();
-    let out = tavily::fetch_snapshot(
-        &client,
-        &api_key,
-        None,
-        &cache,
-        &endpoints,
-        Duration::from_secs(0),
-    )
-    .await
-    .expect("tavily fetch should succeed against the real API");
-
-    assert!(
-        !out.snapshot.plan.trim().is_empty(),
-        "tavily plan name must be non-empty"
-    );
-    // A positive plan limit means a percentage must be derivable; an absent or
-    // zero limit (unlimited plans) must surface as no percentage, never a fake.
-    if out.snapshot.plan_limit.is_some_and(|limit| limit > 0) {
-        let pct = out
-            .snapshot
-            .plan_pct()
-            .expect("positive plan limit must yield a percentage");
-        assert_pct("tavily.plan", pct);
-    }
-    for (label, count) in [
-        ("search", out.snapshot.search),
-        ("extract", out.snapshot.extract),
-        ("crawl", out.snapshot.crawl),
-        ("map", out.snapshot.map),
-        ("research", out.snapshot.research),
-    ] {
-        assert!(
-            count <= out.snapshot.plan_used,
-            "tavily.{label} breakdown ({count}) exceeds plan_used ({})",
-            out.snapshot.plan_used
-        );
-    }
-    println!(
-        "✅ tavily — plan={}, plan={} / {:?}, payg={} / {:?}, key={} / {:?}",
-        out.snapshot.plan,
-        out.snapshot.plan_used,
-        out.snapshot.plan_limit,
-        out.snapshot.payg_used,
-        out.snapshot.payg_limit,
-        out.snapshot.key_used,
-        out.snapshot.key_limit,
     );
 }
 

@@ -265,7 +265,6 @@ come from environment variables or `config.toml`.
 | Kiro CLI | Existing kiro-cli login | Opt in and run `kiro-cli login` once. ai-usagebar refreshes the session when needed. |
 | Nous Research | OAuth device flow | Enable `[nous]`, click **Log in with Nous Research** in the Omarchy settings panel, or run `ai-usagebar auth nous login`. Credentials are kept in ai-usagebar's separate platform config directory (`~/.config/ai-usagebar/credentials.json` on Linux). |
 | OpenCode Go | API key (`OPENCODE_GO_API_KEY` env or `[opencode-go] api_key` in config) | Enable `[opencode-go]`, then enter the key in the Omarchy settings panel or set the environment variable. |
-| Tavily | API key (`TAVILY_API_KEY` env or `[tavily] api_key` in config) | Set either and opt in. Reports the plan's billing-cycle usage (used/limit and a % when the plan has a limit), pay-as-you-go, this key's usage, and the per-endpoint breakdown. Optionally set `[tavily] project_id` to scope the query and cache to one project. |
 | Command Code | Existing `commandcode` or pi login | Enable `[commandcode]` and sign in to either one once. No key to paste; `COMMANDCODE_API_KEY` overrides if you prefer one. |
 
 ### Nous credits and OpenCode Go

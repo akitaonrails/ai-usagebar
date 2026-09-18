@@ -83,7 +83,6 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
             matches!(store.read_unlocked(), Ok(Some(_)))
         }
         VendorId::OpenCodeGo => key_present(config, vendor),
-        VendorId::Tavily => key_present(config, vendor),
         VendorId::CommandCode => {
             crate::commandcode::creds::resolve(config.commandcode.auth_paths.as_deref()).is_ok()
         }

@@ -62,7 +62,6 @@ pub struct Config {
     #[serde(rename = "opencode-go")]
     pub opencode_go: OpenCodeGoConfig,
     pub commandcode: CommandCodeConfig,
-    pub tavily: TavilyConfig,
     pub ollama: OllamaConfig,
     /// User-defined providers, one `[[custom]]` table each.
     pub custom: Vec<CustomProviderConfig>,
@@ -851,34 +850,6 @@ impl Default for OpenCodeGoConfig {
             enabled: false,
             api_key_env: "OPENCODE_GO_API_KEY".to_string(),
             api_key: None,
-        }
-    }
-}
-
-/// Tavily — credit usage from the documented `GET /usage` endpoint.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct TavilyConfig {
-    pub enabled: bool,
-    /// Env var name to read the key from (env wins over `api_key`).
-    pub api_key_env: String,
-    /// Inline key (fallback when the env var is unset). Chmod 600 your
-    /// config file if you put a real key here.
-    pub api_key: Option<String>,
-    /// Optional project id, sent as the `X-Project-ID` header and folded into
-    /// the cache-scope fingerprint so one project's usage is never served for
-    /// another.
-    pub project_id: Option<String>,
-}
-
-impl Default for TavilyConfig {
-    fn default() -> Self {
-        // Opt-in like DeepSeek/Kimi: requires an explicit API key.
-        Self {
-            enabled: false,
-            api_key_env: "TAVILY_API_KEY".to_string(),
-            api_key: None,
-            project_id: None,
         }
     }
 }
@@ -1741,7 +1712,6 @@ impl Config {
             self.grok.api_key.as_deref(),
             self.anthropic_api.api_key.as_deref(),
             self.opencode_go.api_key.as_deref(),
-            self.tavily.api_key.as_deref(),
             self.antigravity.oauth_client_secret.as_deref(),
         ]
         .into_iter()
@@ -1818,7 +1788,6 @@ impl Config {
             VendorId::NousResearch => self.nous.enabled,
             VendorId::OpenCodeGo => self.opencode_go.enabled,
             VendorId::CommandCode => self.commandcode.enabled,
-            VendorId::Tavily => self.tavily.enabled,
             VendorId::Ollama => self.ollama.enabled,
         }
     }
@@ -1871,7 +1840,6 @@ impl Config {
             VendorId::Minimax => &self.minimax.api_key_env,
             VendorId::OpenCodeGo => &self.opencode_go.api_key_env,
             VendorId::Ollama => &self.ollama.api_key_env,
-            VendorId::Tavily => &self.tavily.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
             // not user-renameable, and the providers with no key at all.
             VendorId::Anthropic
@@ -1903,7 +1871,6 @@ impl Config {
             VendorId::Minimax => self.minimax.api_key.as_deref(),
             VendorId::OpenCodeGo => self.opencode_go.api_key.as_deref(),
             VendorId::Ollama => self.ollama.api_key.as_deref(),
-            VendorId::Tavily => self.tavily.api_key.as_deref(),
             VendorId::Anthropic
             | VendorId::Openai
             | VendorId::Copilot
@@ -1981,13 +1948,6 @@ impl Config {
         if self.supergrok.grok_binary.as_os_str().is_empty() {
             return Err(AppError::Other(
                 "[supergrok] grok_binary must not be empty".into(),
-            ));
-        }
-        if let Some(project) = &self.tavily.project_id
-            && project.trim().is_empty()
-        {
-            return Err(AppError::Other(
-                "[tavily] project_id must not be empty or whitespace; remove the field to query the account scope".into(),
             ));
         }
         let mut labels = HashSet::new();
@@ -2324,7 +2284,6 @@ mod tests {
             VendorId::Cursor,
             VendorId::Minimax,
             VendorId::Kiro,
-            VendorId::Tavily,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
@@ -2339,18 +2298,6 @@ mod tests {
         assert_eq!(config.opencode_go.api_key_env, "OPENCODE_GO_API_KEY");
         assert!(config.opencode_go.api_key.is_none());
         assert!(!config.is_enabled(VendorId::Copilot));
-        assert!(!config.is_enabled(VendorId::Tavily));
-        assert_eq!(config.tavily.api_key_env, "TAVILY_API_KEY");
-        assert!(config.tavily.api_key.is_none());
-        assert!(config.tavily.project_id.is_none());
-    }
-
-    #[test]
-    fn tavily_whitespace_project_id_is_rejected() {
-        let mut config = Config::default();
-        config.tavily.project_id = Some("   ".into());
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("project_id"), "{err}");
     }
 
     #[test]
@@ -2359,26 +2306,12 @@ mod tests {
         // OAuth/local vendors are configured whenever enabled.
         assert!(config.is_configured(VendorId::Anthropic));
         assert!(config.is_configured(VendorId::Openai));
-        // Point the API-key vendors at test-only env names so the assertions
-        // never depend on the shell's real variables.
-        config.tavily.api_key_env = "TAVILY_TEST_UNSET_ENV".into();
-        assert!(!config.is_configured(VendorId::Tavily));
-        // An inline key makes the vendor configured regardless of env.
-        config.tavily.api_key = Some("tvly-test".into());
-        assert!(config.is_configured(VendorId::Tavily));
-        config.tavily.api_key = None;
-        assert!(!config.is_configured(VendorId::Tavily));
-        // The configured env var name wins; removing it unconfigures again.
-        // SAFETY: the variable name is unique to this test, so no parallel
-        // test reads it; we remove it before returning.
-        unsafe {
-            std::env::set_var("TAVILY_TEST_UNSET_ENV", "tvly-env");
-        }
-        assert!(config.is_configured(VendorId::Tavily));
-        unsafe {
-            std::env::remove_var("TAVILY_TEST_UNSET_ENV");
-        }
-        assert!(!config.is_configured(VendorId::Tavily));
+        config.opencode_go.api_key_env = "OPENCODE_GO_TEST_UNSET_ENV".into();
+        assert!(!config.is_configured(VendorId::OpenCodeGo));
+        config.opencode_go.api_key = Some("test-key".into());
+        assert!(config.is_configured(VendorId::OpenCodeGo));
+        config.opencode_go.api_key = None;
+        assert!(!config.is_configured(VendorId::OpenCodeGo));
     }
 
     #[test]
@@ -2442,14 +2375,6 @@ enabled = true
         assert!(!config.has_inline_secrets());
         config.antigravity.oauth_client_secret = Some("<redacted>".into());
         assert!(config.has_inline_secrets());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn tavily_inline_key_is_protected_like_other_api_keys() {
-        let mut config = Config::default();
-        config.tavily.api_key = Some("<redacted>".to_string());
-        assert!(config.has_inline_api_keys());
     }
 
     #[cfg(unix)]
@@ -4022,6 +3947,15 @@ value = "/tier"
             &custom_with(r#"id = "mytool""#, r#"id = "opencode-go""#),
             "is a built-in vendor",
         );
+    }
+
+    #[test]
+    fn custom_accepts_tavily_id_after_native_provider_removal() {
+        let config = Config::load_from(
+            write_toml(&custom_with(r#"id = "mytool""#, r#"id = "tavily""#)).path(),
+        )
+        .unwrap();
+        assert_eq!(config.custom[0].id, "tavily");
     }
 
     #[test]

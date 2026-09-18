@@ -141,14 +141,6 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         note: "usage quota",
     },
     KeyVendor {
-        id: VendorId::Tavily,
-        label: "Tavily",
-        section: VendorId::Tavily.config_section(),
-        config_key: "api_key",
-        secret_label: "API key",
-        note: "usage & quota",
-    },
-    KeyVendor {
         id: VendorId::Ollama,
         label: "Ollama Cloud",
         section: VendorId::Ollama.config_section(),
@@ -1345,9 +1337,9 @@ mod tests {
     #[test]
     fn from_config_marks_inline_keys_as_configured() {
         let mut cfg = Config::default();
-        cfg.tavily.api_key = Some("tvly-test".into());
+        cfg.opencode_go.api_key = Some("test-key".into());
         let s = SettingsState::from_config(&cfg);
-        assert!(s.configured[key_index(VendorId::Tavily)]);
+        assert!(s.configured[key_index(VendorId::OpenCodeGo)]);
         // An unconfigured API-key vendor is only grouped when no env var or
         // inline key resolves it.
         if std::env::var("KIMI_API_KEY")

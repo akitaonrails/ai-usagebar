@@ -1351,30 +1351,6 @@ func addAccountScript(binary: String, label: String, desktop: Bool) -> String {
         + "echo; read -n 1 -s -r -p 'Press any key to close…'\n"
 }
 
-<<<<<<< HEAD
-/// Rust defaults (`src/config.rs`): the OAuth/api-key vendors that ship enabled,
-/// versus the opt-in balance vendors that default to disabled. An omitted
-/// `[vendor].enabled` must reproduce these, not silently enable everything.
-func defaultEnabled(_ id: String) -> Bool {
-    switch id {
-    case "anthropic", "openai", "zai", "openrouter": return true
-    case "deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
-         "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode", "tavily": return false
-    default: return true
-    }
-}
-
-func vendorEnabled(_ v: VendorAuth) -> Bool {
-    if let explicit = configEnabledTOML(v.id) { return explicit }
-    return defaultEnabled(v.id)
-}
-
-func vendorConfigured(_ v: VendorCatalogEntry) -> Bool {
-    v.configured
-}
-
-=======
->>>>>>> upstream/main
 func cliInstalled(_ cli: String) -> Bool {
     let home = NSHomeDirectory()
     let fm = FileManager.default

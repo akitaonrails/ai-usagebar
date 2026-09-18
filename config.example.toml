@@ -401,18 +401,6 @@ enabled = false
 api_key_env = "OPENCODE_GO_API_KEY"
 # api_key = "[REDACTED]"  # optional inline fallback; prefer the environment
 
-# Tavily — credit usage from the documented /usage endpoint. Disabled by
-# default; enable once you've set a key (env var or inline).
-# Shows the plan's billing-cycle usage (used/limit, % when the plan has a
-# limit), pay-as-you-go, this key's usage, and the per-endpoint breakdown.
-[tavily]
-enabled = false
-api_key_env = "TAVILY_API_KEY"
-# api_key = "tvly-..."              # fallback; chmod 600 the file if you use it
-# Optional project id: sent as the X-Project-ID header and folded into the
-# cache-scope fingerprint, so one project's usage is never served for another.
-# project_id = "..."
-
 # Command Code (commandcode.ai). Disabled by default — enable it once any
 # local agent harness is signed in. There is no key to paste: the OAuth
 # credential written by the official `commandcode` CLI is reused as-is, and

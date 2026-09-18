@@ -9,14 +9,8 @@ Each release is also published at
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Added
 
-- Tavily usage from the documented `GET /usage` endpoint: plan billing-cycle
-  used/limit (with a percentage when the plan has a limit), pay-as-you-go,
-  this key's used/limit, and the per-endpoint breakdown. Opt-in via
-  `[tavily]` / `TAVILY_API_KEY`; an optional `[tavily] project_id` scopes the
-  query and cache to one project.
 - The TUI vendor menu is now navigated with the Up/Down arrow keys (wrapping),
   with `Tab`/`Shift+Tab`/`l`/`h`/`←`/`→` kept as secondary shortcuts. Mouse
   clicks work in the TUI: click a vendor menu entry to select it, click a
@@ -27,7 +21,11 @@ Each release is also published at
   Settings overlay, unconfigured key vendors are grouped under a collapsed
   "More providers" section (navigate past the last configured row or click the
   header to expand).
-=======
+
+### Removed
+
+- Native Tavily usage support. Configure Tavily with `[[custom]]` instead.
+
 ## [1.17.0] — 2026-09-12
 
 ### Added
@@ -113,7 +111,6 @@ Each release is also published at
   Security.framework write only as the oversized fallback. Existing affected
   users can clear the bad partition by running a fresh `claude` + `/login`.
 
->>>>>>> upstream/main
 ## [1.15.0] — 2026-09-10
 
 ### Added

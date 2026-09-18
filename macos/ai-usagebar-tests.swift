@@ -192,21 +192,6 @@ func testTomlParsing() {
               "malformed string array rejected")
 }
 
-<<<<<<< HEAD
-// ─── Rust enabled defaults (src/config.rs) ───────────────────────────────
-func testDefaultEnabled() {
-    print("Rust enabled defaults")
-    for id in ["anthropic", "openai", "zai", "openrouter"] {
-        assertEqual(defaultEnabled(id), true, "\(id) defaults enabled")
-    }
-    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity",
-               "copilot", "supergrok", "minimax", "kiro", "nous", "opencode-go", "commandcode", "tavily"] {
-        assertEqual(defaultEnabled(id), false, "\(id) defaults disabled (opt-in)")
-    }
-}
-
-=======
->>>>>>> upstream/main
 // ─── Parser: balances per vendor, no fake 0% rows ────────────────────────
 //
 // A balance-only vendor must surface its real balance and suppress the 5h/7d

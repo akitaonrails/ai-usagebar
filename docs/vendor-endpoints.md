@@ -26,7 +26,6 @@ defensive and includes opt-in live tests for catching response changes.
 | **Kiro CLI** | `codewhisperer.<region>.amazonaws.com` `GetUsageLimits` (undocumented; the same call kiro-cli's own `/usage` slash command makes) | Single credit pool this cycle — used/limit/%, plan, reset | No — widget/TUI only |
 | **Nous Research** | `portal.nousresearch.com/api/oauth/account` (OAuth-authenticated Portal account response) | Subscription usage %, subscription credits, top-up/purchased credits, total usable credits, renewal | Yes |
 | **OpenCode Go** | `opencode.ai/zen/go/v1/usage` | Rolling, weekly, and monthly `percent` windows with absolute reset timestamps | Yes |
-| **Tavily** | `api.tavily.com/usage` (documented; optional `X-Project-ID` header) | Plan billing-cycle used/limit (%), pay-as-you-go, this key's used/limit, per-endpoint breakdown (search/extract/crawl/map/research) | Yes |
 | **Command Code** | `api.commandcode.ai` `/alpha/billing/credits` + `/alpha/billing/subscriptions` (undocumented; the same calls the official `commandcode` CLI's `/usage` makes) | 5-hour and weekly rolling spend windows ($ used of $ cap), plan, and remaining monthly credits | No — widget/TUI only |
 | **Ollama Cloud** | `ollama.com/api/usage` (undocumented; the same route the official ollama.com/settings page calls) | 5-hour session % and weekly %, per-model request counts, last-4-weeks activity cost, config-supplied plan label | No — widget/TUI only |
 
@@ -59,7 +58,6 @@ or stored, and no vendor asks the user to paste a session cookie.
 | Cursor | Undocumented endpoint called by Cursor's dashboard. Its shape may change with Cursor pricing. |
 | MiniMax | The Token Plan route is official, but no formal response schema is published. |
 | Kiro CLI | `GetUsageLimits` is the same undocumented CodeWhisperer operation used by kiro-cli's `/usage` command. AWS SSO OIDC `CreateToken`, used for refresh, is documented. |
-| Tavily | Documented `/usage` route with published OpenAPI schema. The `plan_limit`/`key.limit` fields are `null` for unlimited plans; the payload carries no reset timestamp. |
 | Command Code | Undocumented `/alpha/*` routes called by the official `commandcode` CLI. The `alpha` path segment is the vendor's own signal that these may move. Windows are read by name (`fiveHour`, `weekly`) rather than by position, and `windowLimits` is accepted both at the top level and beside the ledger, so the most likely reshuffles are already tolerated. |
 | Ollama Cloud | Undocumented, but the route the official settings page itself calls. Auth is a static Bearer key minted at ollama.com/settings/keys — unrelated to the CLI's Ed25519 registry key, which ai-usagebar never reads. `usage` is a fraction (0..1), not a percent; the parser clamps it to a bounded percent. |
 
@@ -99,7 +97,6 @@ API keys. Command Code needs no key of its own — it reuses whichever local
 agent harness is signed in, and skips when none is. Kimi is optional: its test
 prints a skip reason when `KIMI_API_KEY` is unset (the smoke test covers the
 API-key path; a subscription login is exercised by `ai-usagebar --vendor kimi`).
-Tavily is likewise optional and skips without `TAVILY_API_KEY`.
 
 To test only Kimi:
 

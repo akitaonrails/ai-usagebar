@@ -42,7 +42,6 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "GITHUB_COPILOT_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
-    "TAVILY_API_KEY",
     "OLLAMA_API_KEY",
 ];
 
@@ -177,7 +176,6 @@ pub enum VendorId {
     OpenCodeGo,
     #[serde(rename = "commandcode")]
     CommandCode,
-    Tavily,
     Ollama,
 }
 
@@ -229,7 +227,6 @@ impl VendorId {
             VendorId::NousResearch => "nous",
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
-            VendorId::Tavily => "tavily",
             VendorId::Ollama => "ollama",
         }
     }
@@ -259,7 +256,6 @@ impl VendorId {
             VendorId::NousResearch => "Nous Research",
             VendorId::OpenCodeGo => "OpenCode Go",
             VendorId::CommandCode => "Command Code",
-            VendorId::Tavily => "Tavily",
             VendorId::Ollama => "Ollama Cloud",
         }
     }
@@ -291,7 +287,6 @@ impl VendorId {
             // No distinct Nerd Font mark for Ollama Cloud; the `oll` short
             // name is unique by construction and cannot render as tofu.
             VendorId::Ollama => VendorId::Ollama.short_name(),
-            VendorId::Tavily => VendorId::Tavily.short_name(),
         }
     }
 
@@ -321,7 +316,6 @@ impl VendorId {
             VendorId::NousResearch => "nrs",
             VendorId::OpenCodeGo => "ocg",
             VendorId::CommandCode => "cmc",
-            VendorId::Tavily => "tav",
             VendorId::Ollama => "oll",
         }
     }
@@ -356,7 +350,6 @@ impl VendorId {
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
             VendorId::Ollama => "ollama",
-            VendorId::Tavily => "tavily",
         }
     }
 
@@ -383,8 +376,7 @@ impl VendorId {
             | VendorId::Grok
             | VendorId::Minimax
             | VendorId::OpenCodeGo
-            | VendorId::Ollama
-            | VendorId::Tavily => AuthKind::ApiKey,
+            | VendorId::Ollama => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
             // the login. Antigravity has no credential file at all (the binary
             // probes whichever local server answers), Cursor and Kiro read the
@@ -414,7 +406,6 @@ impl VendorId {
             VendorId::Minimax => "MINIMAX_API_KEY",
             VendorId::OpenCodeGo => "OPENCODE_GO_API_KEY",
             VendorId::Ollama => "OLLAMA_API_KEY",
-            VendorId::Tavily => "TAVILY_API_KEY",
             // OAuth-first, with an environment override for CI and headless
             // use. Neither name is configurable, so neither has an
             // `api_key_env` field in its config section.
@@ -469,8 +460,7 @@ impl VendorId {
             | VendorId::Moonshot
             | VendorId::Minimax
             | VendorId::OpenCodeGo
-            | VendorId::Ollama
-            | VendorId::Tavily => "Add an API key in Settings, then Refresh.",
+            | VendorId::Ollama => "Add an API key in Settings, then Refresh.",
         }
     }
 
@@ -498,8 +488,7 @@ impl VendorId {
             | VendorId::Cursor
             | VendorId::Minimax
             | VendorId::OpenCodeGo
-            | VendorId::Ollama
-            | VendorId::Tavily => "",
+            | VendorId::Ollama => "",
         }
     }
 
@@ -525,7 +514,6 @@ impl VendorId {
             VendorId::NousResearch,
             VendorId::OpenCodeGo,
             VendorId::CommandCode,
-            VendorId::Tavily,
             VendorId::Ollama,
         ]
     }
@@ -643,12 +631,6 @@ mod tests {
             serde_json::to_value(VendorId::OpenCodeGo).unwrap(),
             serde_json::json!("opencode-go")
         );
-        assert_eq!(VendorId::Tavily.slug(), "tavily");
-        assert_eq!(VendorId::Tavily.display_name(), "Tavily");
-        assert_eq!(
-            serde_json::to_value(VendorId::Tavily).unwrap(),
-            serde_json::json!("tavily")
-        );
     }
 
     #[test]
@@ -665,7 +647,6 @@ mod tests {
             "XAI_MANAGEMENT_KEY",
             "ANTHROPIC_ADMIN_KEY",
             "GITHUB_COPILOT_TOKEN",
-            "TAVILY_API_KEY",
         ];
         for name in configured_defaults {
             assert!(VENDOR_SECRET_ENV_VARS.contains(&name), "missing {name}");
