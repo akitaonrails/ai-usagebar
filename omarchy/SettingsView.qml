@@ -16,6 +16,7 @@ Column {
   property string fontFamily: Style.font.family
   property bool showValue: true
   property bool showProvider: false
+  property bool showWindow: false
   property bool showAll: false
   property string barWindow: "auto"
   readonly property color dim: Qt.darker(foreground, 1.45)
@@ -42,6 +43,7 @@ Column {
   signal copilotLoginRequested()
   signal showValueRequested(bool enabled)
   signal showProviderRequested(bool enabled)
+  signal showWindowRequested(bool enabled)
   signal showAllRequested(bool enabled)
   signal barWindowRequested(string value)
   signal closeRequested()
@@ -240,6 +242,16 @@ Column {
       fontFamily: root.fontFamily
       enabled: !root.saving
       onClicked: root.showProviderRequested(!root.showProvider)
+    }
+    Toggle {
+      width: parent.width
+      label: "Show usage window in the top bar"
+      description: "Prefix the usage value with 5h, 7d, or mo. In Highest (auto) mode this identifies the quota currently shown. Off by default. Applies immediately."
+      checked: root.showWindow
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      enabled: !root.saving
+      onClicked: root.showWindowRequested(!root.showWindow)
     }
     Toggle {
       width: parent.width

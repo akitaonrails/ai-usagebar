@@ -9,6 +9,12 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Optional usage-window label in the Omarchy top bar.** A new `showWindow`
+  toggle prefixes the selected value with `5h`, `7d`, or `mo`; in the default
+  auto mode the label follows whichever quota currently has the highest usage.
+
 ## [1.20.1] — 2026-09-18
 
 ### Added

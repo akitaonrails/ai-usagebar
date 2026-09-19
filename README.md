@@ -650,6 +650,8 @@ The widget reads the providers and accounts already enabled in
   widget; this applies immediately and preserves the full panel and tooltip.
 - QML settings can also show the provider's `{vendor_short}` code before that
   value (`cld 29%`). It is off by default and applies immediately.
+- QML settings can show the selected usage window (`5h`, `7d`, or `mo`) before
+  the value, including whichever highest-percentage window auto mode selects.
 - QML settings can pin the bar to one quota window — auto (highest),
   5-hour, weekly, or monthly — instead of always showing the highest
   percent. The tooltip and panel hero echo the pinned value; panel rows

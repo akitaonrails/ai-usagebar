@@ -111,6 +111,10 @@ omarchy bar set akitaonrails.ai-usagebar showValue false --json
 # Opt in to the Waybar-style provider tag. The default is false.
 omarchy bar set akitaonrails.ai-usagebar showProvider true --json
 
+# Identify the selected quota as 5h, 7d, or mo. This is especially useful
+# with the default auto window, where the highest percentage can change.
+omarchy bar set akitaonrails.ai-usagebar showWindow true --json
+
 # Show every configured provider's icon and usage at once. The default is false.
 omarchy bar set akitaonrails.ai-usagebar showAll true --json
 
@@ -122,7 +126,7 @@ omarchy bar set akitaonrails.ai-usagebar barWindow session
 The refresh interval is clamped to 30–3600 seconds. The `provider` setting
 prefers an exact entry id; if there is no exact match, a base id such as
 `anthropic` selects all accounts for that provider. `showValue`,
-`showProvider`, and `showAll` change only the top-bar label; `barWindow`
+`showProvider`, `showWindow`, and `showAll` change only the top-bar label; `barWindow`
 changes the top-bar value and its tooltip/hero echo; none hide report
 details or change provider fetching.
 Panel rows and alert state still follow the highest percent. `barWindow` falls
@@ -134,7 +138,9 @@ response, or no monthly pool), so the bar never goes blank.
 entry, so the codes never fork from Waybar's `{vendor_short}`: `cld 29%`,
 `gpt 95%`, `agy 81%`. Every account of one provider shares that provider's
 code — the panel and tooltip remain the place that tells `Claude · work` from
-`Claude · personal`. With both toggles on the bar reads icon + `cld 29%`; with
+`Claude · personal`. `showWindow` follows the metric selected by `barWindow`,
+including the winner in `auto` mode, so the bar can read `gpt 5h 29%` or
+`gpt 7d 95%`. With both existing toggles on the bar reads icon + `cld 29%`; with
 `showValue` off it is the icon and `cld`. `showAll` draws every visible
 entry as its own chip with a brand SVG (see [`icons/README.md`](icons/README.md)
 for source and licence). Grok and SuperGrok share a mark; Command Code has

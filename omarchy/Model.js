@@ -217,43 +217,51 @@ function booleanSetting(value, fallback) {
 // who never turns it on. A vertical bar has no width for either field and
 // keeps showing the icon alone.
 function barLabel(alarming, vertical, showValue, loading, hasEntry, summaryText,
-                  providerLabel, icon) {
+                  providerLabel, icon, windowLabel) {
   icon = autoTextSafe(icon || "").trim() || "󰚩"
   if (vertical) return alarming ? "󰅙" : icon
   if (loading && !hasEntry) return icon + "  …"
   if (!hasEntry) return alarming ? "󰅙" : icon
   var provider = autoTextSafe(providerLabel).trim()
   var summary = showValue ? autoTextSafe(summaryText).trim() : ""
-  if (provider === "") return summary === "" ? icon : icon + "  " + summary
-  // One space between tag and value, matching Waybar's
-  // `{vendor_short} {session_pct}%`; the wider gap stays next to the icon.
-  return summary === "" ? icon + "  " + provider
-    : icon + "  " + provider + " " + summary
+  var window = summary === "" ? "" : autoTextSafe(windowLabel).trim()
+  var parts = []
+  if (provider !== "") parts.push(provider)
+  if (window !== "") parts.push(window)
+  if (summary !== "") parts.push(summary)
+  return parts.length === 0 ? icon : icon + "  " + parts.join(" ")
 }
 
-function barChip(entry, showValue, showProvider, barWindow) {
+function barChip(entry, showValue, showProvider, barWindow, showWindow) {
   if (!entry) return ""
   var icon = providerIcon(entry)
   var provider = showProvider ? providerShort(entry) : ""
   var summary = ""
+  var window = ""
   if (showValue) {
     if (entry.error) summary = "!"
-    else summary = autoTextSafe(headline(entry, barWindow).text).trim()
+    else {
+      summary = autoTextSafe(headline(entry, barWindow).text).trim()
+      if (showWindow) window = usageWindowLabel(entry, barWindow)
+    }
   }
-  if (provider === "") return summary === "" ? icon : icon + "  " + summary
-  return summary === "" ? icon + "  " + provider : icon + "  " + provider + " " + summary
+  var parts = []
+  if (provider !== "") parts.push(provider)
+  if (window !== "") parts.push(window)
+  if (summary !== "") parts.push(summary)
+  return parts.length === 0 ? icon : icon + "  " + parts.join(" ")
 }
 
 // Every visible entry as its own icon+value chip. A vertical bar has no
 // width for the strip and keeps a single glyph, same as `barLabel`.
-function barStrip(entries, alarming, vertical, showValue, showProvider, loading, barWindow) {
+function barStrip(entries, alarming, vertical, showValue, showProvider, loading, barWindow, showWindow) {
   var list = Array.isArray(entries) ? entries : []
   if (vertical) return alarming ? "󰅙" : "󰚩"
   if (loading && list.length === 0) return "󰚩  …"
   if (list.length === 0) return alarming ? "󰅙" : "󰚩"
   var chips = []
   for (var i = 0; i < list.length; i++) {
-    var chip = barChip(list[i], showValue, showProvider, barWindow)
+    var chip = barChip(list[i], showValue, showProvider, barWindow, showWindow)
     if (chip !== "") chips.push(chip)
   }
   return chips.length === 0 ? "󰚩" : chips.join("  ")
@@ -323,7 +331,7 @@ function brandFileFor(provider) {
   }
 }
 
-function barChips(entries, selected, showAll, showValue, showProvider, loading, alarming, vertical, barWindow) {
+function barChips(entries, selected, showAll, showValue, showProvider, loading, alarming, vertical, barWindow, showWindow) {
   var list = Array.isArray(entries) ? entries : []
   if (vertical) {
     return [{ brand: "", icon: alarming ? "󰅙" : "󰚩", label: "", alarming: alarming === true }]
@@ -343,6 +351,8 @@ function barChips(entries, selected, showAll, showValue, showProvider, loading, 
     if (showProvider) label = providerShort(entry)
     if (showValue) {
       var summary = entry.error ? "!" : autoTextSafe(headline(entry, barWindow).text).trim()
+      var window = !entry.error && showWindow ? usageWindowLabel(entry, barWindow) : ""
+      if (window !== "") label = label === "" ? window : label + " " + window
       label = label === "" ? summary : (summary === "" ? label : label + " " + summary)
     }
     var brand = brandIconFile(entry)
@@ -437,6 +447,21 @@ function selectMetric(entry, barWindow) {
   // highest-percent value rather than blanking the bar.
   if (candidates.length === 0) return maxPercent(metrics)
   return maxPercent(candidates)
+}
+
+// Compact context for the metric selected for the top bar. In auto mode this
+// follows the winning metric, so equal-looking percentages remain unambiguous.
+// Unknown/provider-specific pools stay unlabeled rather than guessing.
+function usageWindowLabel(entry, barWindow) {
+  var metric = selectMetric(entry, barWindow)
+  if (!metric) return ""
+  var secs = Math.floor(Number(metric.window_secs))
+  if (isFinite(secs) && secs === SESSION_WINDOW_SECS) return "5h"
+  if (isFinite(secs) && secs === WEEKLY_WINDOW_SECS) return "7d"
+  if (metricMatchesWindow(metric, "session")) return "5h"
+  if (metricMatchesWindow(metric, "weekly")) return "7d"
+  if (metricMatchesWindow(metric, "monthly")) return "mo"
+  return ""
 }
 
 function headline(entry, barWindow) {

@@ -44,6 +44,7 @@ Panel {
   readonly property string rememberedEntryId: String(setting("lastSelectedEntryId", "") || "").trim()
   readonly property bool showValue: Model.booleanSetting(setting("showValue", true), true)
   readonly property bool showProvider: Model.booleanSetting(setting("showProvider", false), false)
+  readonly property bool showWindow: Model.booleanSetting(setting("showWindow", false), false)
   readonly property bool showAll: Model.booleanSetting(setting("showAll", false), false)
   readonly property string barWindow: Model.normalizeBarWindow(setting("barWindow", "auto"))
   readonly property var visibleEntries: Model.filteredEntries(entries, configuredProvider)
@@ -119,6 +120,12 @@ Panel {
     var next = enabled === true
     if (next === showProvider) return
     persistWidgetSettings({ showProvider: next })
+  }
+
+  function setShowWindow(enabled) {
+    var next = enabled === true
+    if (next === showWindow) return
+    persistWidgetSettings({ showWindow: next })
   }
 
   function setShowAll(enabled) {
@@ -233,14 +240,14 @@ Panel {
   }
 
   readonly property var barChips: Model.barChips(
-    visibleEntries, entry, showAll, showValue, showProvider, loading, alarming, vertical, barWindow)
+    visibleEntries, entry, showAll, showValue, showProvider, loading, alarming, vertical, barWindow, showWindow)
 
   function barText() {
     if (showAll)
-      return Model.barStrip(visibleEntries, alarming, vertical, showValue, showProvider, loading, barWindow)
+      return Model.barStrip(visibleEntries, alarming, vertical, showValue, showProvider, loading, barWindow, showWindow)
     return Model.barLabel(alarming, vertical, showValue, loading,
       entry !== null, summary.text, showProvider ? Model.providerShort(entry) : "",
-      Model.providerIcon(entry))
+      Model.providerIcon(entry), showWindow ? Model.usageWindowLabel(entry, barWindow) : "")
   }
 
   function tooltipText() {
@@ -424,11 +431,13 @@ Panel {
             fontFamily: root.fontFamily
             showValue: root.showValue
             showProvider: root.showProvider
+            showWindow: root.showWindow
             showAll: root.showAll
             barWindow: root.barWindow
             onSaved: root.startRefresh()
             onShowValueRequested: function(enabled) { root.setShowValue(enabled) }
             onShowProviderRequested: function(enabled) { root.setShowProvider(enabled) }
+            onShowWindowRequested: function(enabled) { root.setShowWindow(enabled) }
             onShowAllRequested: function(enabled) { root.setShowAll(enabled) }
             onBarWindowRequested: function(value) { root.setBarWindow(value) }
             onFallbackRequested: root.openTerminalSettings()

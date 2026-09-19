@@ -23,6 +23,10 @@ assert.equal(manifest.barWidget.defaults.showProvider, false);
 const showProviderSchema = manifest.barWidget.schema.find(row => row.key === 'showProvider');
 assert.equal(showProviderSchema.type, 'boolean');
 assert.equal(showProviderSchema.defaultValue, false);
+assert.equal(manifest.barWidget.defaults.showWindow, false);
+const showWindowSchema = manifest.barWidget.schema.find(row => row.key === 'showWindow');
+assert.equal(showWindowSchema.type, 'boolean');
+assert.equal(showWindowSchema.defaultValue, false);
 assert.equal(manifest.barWidget.defaults.showAll, false);
 const showAllSchema = manifest.barWidget.schema.find(row => row.key === 'showAll');
 assert.equal(showAllSchema.type, 'boolean');
@@ -58,6 +62,7 @@ assert.match(panelSource, /function\s+openSettings\s*\(/);
 assert.match(panelSource, /setting\("lastSelectedEntryId",\s*""\)/);
 assert.match(panelSource, /setting\("showValue",\s*true\)/);
 assert.match(panelSource, /setting\("showProvider",\s*false\)/);
+assert.match(panelSource, /setting\("showWindow",\s*false\)/);
 assert.match(panelSource, /setting\("showAll",\s*false\)/);
 assert.match(panelSource, /Model\.normalizeBarWindow\(setting\("barWindow",\s*"auto"\)\)/);
 // The pin covers the bar value and its echoes (hero detail, tooltip):
@@ -112,6 +117,8 @@ assert.match(settingsViewSource, /signal\s+showValueRequested\(bool\s+enabled\)/
 assert.match(settingsViewSource, /label:\s*"Show usage value in the top bar"/);
 assert.match(settingsViewSource, /signal\s+showProviderRequested\(bool\s+enabled\)/);
 assert.match(settingsViewSource, /label:\s*"Show provider name in the top bar"/);
+assert.match(settingsViewSource, /signal\s+showWindowRequested\(bool\s+enabled\)/);
+assert.match(settingsViewSource, /label:\s*"Show usage window in the top bar"/);
 assert.match(settingsViewSource, /signal\s+showAllRequested\(bool\s+enabled\)/);
 assert.match(settingsViewSource, /label:\s*"Show all providers in the top bar"/);
 assert.match(settingsViewSource, /signal\s+barWindowRequested\(string\s+value\)/);
@@ -121,6 +128,8 @@ assert.match(settingsViewSource, /\{\s*value:\s*"session",\s*label:\s*"5-hour \(
 assert.match(settingsViewSource, /\{\s*value:\s*"weekly",\s*label:\s*"7-day \(weekly\)"/);
 assert.match(settingsViewSource, /\{\s*value:\s*"monthly",\s*label:\s*"Monthly \(monthly\)"/);
 assert.match(panelSource, /barWindow:\s*root\.barWindow/);
+assert.match(panelSource, /showWindow:\s*root\.showWindow/);
+assert.match(panelSource, /onShowWindowRequested/);
 assert.match(panelSource, /onShowAllRequested/);
 assert.match(panelSource, /onShowProviderRequested/);
 assert.match(settingsViewSource, /Log in with Nous Research/);
@@ -548,6 +557,12 @@ assert.equal(model.headline(twoWindow, 'weekly').text, '59%');
 assert.equal(model.headline(twoWindow, 'bogus').text, '59%');
 // No monthly pool: falls back to highest rather than blanking.
 assert.equal(model.headline(twoWindow, 'monthly').text, '59%');
+assert.equal(model.usageWindowLabel(twoWindow, 'auto'), '7d');
+assert.equal(model.usageWindowLabel(twoWindow, 'session'), '5h');
+assert.equal(model.usageWindowLabel(twoWindow, 'weekly'), '7d');
+assert.equal(model.barChip(twoWindow, true, true, 'auto', true), '󰚩  openai 7d 59%');
+assert.equal(model.barChip(twoWindow, true, false, 'session', true), '󰚩  5h 44%');
+assert.equal(model.barChip(twoWindow, false, true, 'auto', true), '󰚩  openai');
 
 const threeWindow = model.parseReport(JSON.stringify({entries: [{
   id: 'opencode-go', error: null,
@@ -562,6 +577,8 @@ assert.equal(model.headline(threeWindow).text, '81%');
 assert.equal(model.headline(threeWindow, 'session').text, '0%');
 assert.equal(model.headline(threeWindow, 'weekly').text, '18%');
 assert.equal(model.headline(threeWindow, 'monthly').text, '81%');
+assert.equal(model.usageWindowLabel(threeWindow, 'auto'), 'mo');
+assert.equal(model.usageWindowLabel(threeWindow, 'session'), '5h');
 // Label-only match when the report predates window_secs.
 const legacyWeekly = model.parseReport(JSON.stringify({entries: [{
   id: 'openai', error: null,
@@ -638,6 +655,7 @@ const cursorLike = model.parseReport(JSON.stringify({entries: [{
 }]})).entries[0];
 assert.equal(model.headline(cursorLike, 'weekly').text, '80%');
 assert.equal(model.headline(cursorLike, 'session').text, '80%');
+assert.equal(model.usageWindowLabel(cursorLike, 'auto'), '');
 // Buckets without any window shape (Copilot-style) fall back to highest.
 const copilotLike = model.parseReport(JSON.stringify({entries: [{
   id: 'copilot', error: null,

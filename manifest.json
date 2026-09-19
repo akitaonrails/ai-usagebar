@@ -29,6 +29,7 @@
       "refreshIntervalSec": 300,
       "showValue": true,
       "showProvider": false,
+      "showWindow": false,
       "showAll": false,
       "barWindow": "auto"
     },
@@ -61,6 +62,13 @@
         "type": "boolean",
         "label": "Show provider name",
         "description": "Show the selected provider's short code (cld, gpt, zai, agy) before the usage value, the way Waybar's {vendor_short} does. Off by default.",
+        "defaultValue": false
+      },
+      {
+        "key": "showWindow",
+        "type": "boolean",
+        "label": "Show usage window",
+        "description": "Show a compact 5h, 7d, or mo label before the usage value so the active quota window is visible when auto selects the highest percentage. Off by default.",
         "defaultValue": false
       },
       {
