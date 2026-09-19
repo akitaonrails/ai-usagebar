@@ -260,7 +260,16 @@ async fn open_session(client: &reqwest::Client, bases: Option<&[String]>) -> Res
                     account: account_key(&v),
                 });
             }
-            Err(e) => errors.push(e),
+            Err(e) => {
+                let missing_csrf = is_missing_csrf(&e);
+                errors.push(e);
+                // agy exposes no token-discovery route and requires CSRF. Once
+                // confirmed, probing companion TLS listeners or further ports of
+                // this process only triggers spurious Go TLS handshake error logs.
+                if missing_csrf {
+                    break;
+                }
+            }
         }
     }
     Err(select_probe_error(errors))
@@ -2820,6 +2829,55 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("requires a CSRF token"), "{message}");
         assert!(message.contains("saved Google session"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn agys_missing_csrf_aborts_further_candidate_probes_to_spare_tls_listeners() {
+        let mut server1 = mockito::Server::new_async().await;
+        let mut server2 = mockito::Server::new_async().await;
+        let eps = endpoints(&server1);
+        let root1 = server1
+            .mock("GET", "/")
+            .with_status(404)
+            .expect(1)
+            .create_async()
+            .await;
+        let status_path = format!("/{STATUS_RPC}");
+        let status1 = server1
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body(r#"{"code":"unauthenticated","message":"missing CSRF token"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        // server2 represents the companion TLS listener: must NEVER be probed
+        let root2 = server2.mock("GET", "/").expect(0).create_async().await;
+        let status2 = server2
+            .mock("POST", status_path.as_str())
+            .expect(0)
+            .create_async()
+            .await;
+
+        let (_td, cache) = fixture();
+        let error = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Absent,
+                endpoints: Some(&eps),
+                local_bases: Some(vec![server1.url(), server2.url()]),
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("aborted probe returns agy missing csrf diagnosis");
+
+        root1.assert_async().await;
+        status1.assert_async().await;
+        root2.assert_async().await;
+        status2.assert_async().await;
+        let message = error.to_string();
+        assert!(message.contains("requires a CSRF token"), "{message}");
     }
 
     /// The refreshed token is persisted under the session's fingerprint, so

@@ -9,6 +9,14 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Abort Antigravity candidate probing immediately on missing CSRF.** When
+  the local language server status RPC responds with missing CSRF, further
+  probing of candidate ports (such as companion TLS listeners on `port + 1`)
+  is stopped immediately. This eliminates spurious `http: TLS handshake error: remote error: tls: unrecognized name`
+  diagnostics and avoids redundant network round-trips.
+
 ## [1.20.2] — 2026-09-19
 
 ### Fixed
