@@ -372,6 +372,17 @@ pub enum VendorSnapshot {
     CommandCode(crate::commandcode::types::Snapshot),
 }
 
+impl VendorSnapshot {
+    /// Banked, redeemable resets when this vendor has them (Codex, SuperGrok).
+    pub fn reset_credits(&self) -> Option<&ResetCredits> {
+        match self {
+            Self::Openai(snapshot) => Some(&snapshot.reset_credits),
+            Self::SuperGrok(snapshot) => Some(&snapshot.reset_credits),
+            _ => None,
+        }
+    }
+}
+
 /// Google Antigravity 2.0 / CLI snapshot. The API groups models into Gemini
 /// and third-party (Claude/GPT) buckets, and each group may carry a 5-hour and
 /// a weekly window — up to four, and not every product or plan offers all of

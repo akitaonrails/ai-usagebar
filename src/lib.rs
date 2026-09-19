@@ -5,7 +5,7 @@
 //! - the vendor abstraction (`vendor`, `vendors::*`, `usage`)
 //! - bin-specific composition (`widget`, `tui`) which lives next to its binary
 //!
-//! The binaries (`ai-usagebar`, `ai-usagebar-tui`, and on Windows
+//! The binaries (`ai-usagebar`, `ai-usagebar-tui`, and on Windows/macOS
 //! `ai-usagebar-tray`) are thin: they parse CLI args, instantiate vendors,
 //! and hand off to a renderer in this crate.
 

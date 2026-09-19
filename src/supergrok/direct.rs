@@ -59,6 +59,44 @@ pub async fn fetch_billing_with(auth_path: &Path, base_url: &str) -> Result<Bill
     })
 }
 
+/// Best-effort SKU label (`subscription_tier_display`) from `/v1/settings`.
+/// Billing often only has the short code `"SuperGrok"`; OpenUsage reads this
+/// field so Heavy/etc. show next to the card title. Failures are ignored by
+/// the caller — usage still works without the display name.
+pub async fn fetch_plan_display(auth_path: &Path) -> Result<Option<String>> {
+    fetch_plan_display_with(auth_path, DEFAULT_BASE_URL).await
+}
+
+pub async fn fetch_plan_display_with(auth_path: &Path, base_url: &str) -> Result<Option<String>> {
+    let key = read_billing_key(auth_path)?;
+    let client = reqwest::Client::builder()
+        .timeout(HTTP_CLIENT_TIMEOUT)
+        .redirect(same_origin_redirect_policy())
+        .build()
+        .map_err(|_| AppError::Other("failed to build the Grok settings HTTP client".into()))?;
+    let resp = client
+        .get(format!("{base_url}/v1/settings"))
+        .header("X-XAI-Token-Auth", TOKEN_AUTH_HEADER)
+        .header("Authorization", format!("Bearer {key}"))
+        .send()
+        .await
+        .map_err(|e| AppError::Transport(format!("Grok settings request failed: {e}")))?;
+    let status = resp.status();
+    let bytes = read_body_capped(resp, MAX_BODY_BYTES).await?;
+    if !status.is_success() {
+        return Ok(None);
+    }
+    let parsed: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let display = parsed
+        .get("subscription_tier_display")
+        .or_else(|| parsed.get("subscriptionTierDisplay"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    Ok(display)
+}
+
 /// Locate the Grok Build login's long-lived `key` in `auth.json`.
 ///
 /// The file maps issuer-prefixed client ids to login records that carry a

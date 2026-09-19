@@ -47,7 +47,9 @@ const WINDOW_WIDTH: f64 = 320.0;
 /// `resize` IPC command.
 const WINDOW_HEIGHT: f64 = 420.0;
 /// Smallest height a `resize` request can shrink the popover to.
-const MIN_POPOVER_HEIGHT: f64 = 120.0;
+/// Sized so the footer Options menu (seven rows, opens upward) fits without
+/// Radix scrolling the list on short screens like Customize / provider detail.
+const MIN_POPOVER_HEIGHT: f64 = 320.0;
 /// Breathing room kept between the popover and the monitor's edges.
 const WORK_AREA_MARGIN: f64 = 16.0;
 /// Used when no monitor can be resolved at all.
@@ -677,6 +679,12 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
         "set-refresh" => {
             if let Some(minutes) = value.get("minutes").and_then(Value::as_u64) {
                 set_refresh(state, minutes);
+            }
+        }
+        "strip" => {}
+        "open-url" => {
+            if let Some(url) = value.get("url").and_then(Value::as_str) {
+                super::browse::open(url);
             }
         }
         _ => {}

@@ -50,6 +50,16 @@ impl Default for HostFacts {
     }
 }
 
+fn host_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
 /// Build the object the WebView's `apply` function consumes.
 pub fn wrap_report(
     report_json: &str,
@@ -66,6 +76,7 @@ pub fn wrap_report(
         "next_refresh_at": now_ms.saturating_add(poll_ms),
         "refresh_minutes": facts.refresh_secs / 60,
         "startup_enabled": facts.startup_enabled,
+        "os": host_os(),
         "shortcut": facts.shortcut,
         "shortcut_error": sanitize_untrusted_field(&facts.shortcut_error),
         "host_error": host_error.map(sanitize_untrusted_field),
@@ -212,6 +223,11 @@ mod tests {
         assert_eq!(payload["next_refresh_at"], 301_000);
         assert_eq!(payload["refresh_minutes"], 5);
         assert_eq!(payload["startup_enabled"], true);
+        let os = payload["os"].as_str().unwrap_or("");
+        assert!(
+            os == "macos" || os == "windows" || os == "linux",
+            "unexpected os {os}"
+        );
         assert_eq!(payload["shortcut"], "");
         assert_eq!(payload["shortcut_error"], "");
         assert!(payload.get("updates").is_none());

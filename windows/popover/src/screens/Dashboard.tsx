@@ -25,7 +25,7 @@ interface DashboardProps {
   onToggleShowAs: () => void;
 }
 
-/** DashboardContentView: provider sections stacked with the density section gap. */
+/** DashboardContentView: provider sections stacked with the section gap. */
 export function Dashboard({
   cards,
   hint,

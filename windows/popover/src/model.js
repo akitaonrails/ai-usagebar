@@ -14,6 +14,8 @@
 
 export const LAYOUT_KEY = "aiub.tray.layout.v1";
 const COLLAPSED_METRIC_CAP = 2;
+/** At most two starred metrics per provider, matching OpenUsage. */
+export const MAX_STARS_PER_PROVIDER = 2;
 
 /** @returns {Payload} */
 export function parseHostPayload(raw) {
@@ -33,6 +35,7 @@ export function emptyPayload(hostError) {
     nextRefreshAt: 0,
     startupEnabled: false,
     hostError: hostError || "",
+    os: "",
     primary: "",
     entries: [],
     refreshMinutes: 5,
@@ -65,6 +68,7 @@ function normalizePayload(parsed) {
     nextRefreshAt: Number(parsed.next_refresh_at) || 0,
     startupEnabled: parsed.startup_enabled === true,
     hostError: clean(parsed.host_error, 1200),
+    os: normalizeOs(parsed.os),
     primary: clean(parsed.primary, 180),
     entries,
     refreshMinutes: normalizeRefreshMinutes(parsed.refresh_minutes),
@@ -85,6 +89,12 @@ function windowSeconds(value) {
 }
 
 const REFRESH_MINUTES = [1, 5, 10];
+
+function normalizeOs(value) {
+  const os = String(value || "").toLowerCase();
+  if (os === "macos" || os === "windows" || os === "linux") return os;
+  return "";
+}
 
 // The host's refresh interval; anything outside the offered set reads as the
 // 5-minute default.
@@ -113,7 +123,34 @@ function normalizeEntry(raw) {
     error,
     stale: raw.stale === true,
     sections,
+    resetCredits: normalizeResetCredits(raw.reset_credits),
   };
+}
+
+/** @returns {import("./lib/types").ResetCredits | null} */
+export function normalizeResetCredits(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const available = Math.max(0, Math.round(Number(raw.available) || 0));
+  const source = Array.isArray(raw.credits) ? raw.credits : [];
+  const credits = [];
+  for (let i = 0; i < source.length && i < 24; i++) {
+    const item = source[i];
+    if (!item || typeof item !== "object") continue;
+    const expiresAt = clean(item.expires_at, 80);
+    if (!expiresAt) continue;
+    credits.push({ title: clean(item.title, 240), expiresAt });
+  }
+  if (available === 0 && credits.length === 0) return null;
+  return { available: available || credits.length, credits };
+}
+
+/** Blue > 7 days, yellow within a week, red within 48 hours — OpenUsage bands. */
+export function expirySeverity(atMs, nowMs) {
+  const remaining = Number(atMs) - Number(nowMs);
+  if (!(remaining > 0)) return "red";
+  if (remaining <= 48 * 3600 * 1000) return "red";
+  if (remaining <= 7 * 24 * 3600 * 1000) return "yellow";
+  return "blue";
 }
 
 function normalizeSection(raw) {
@@ -217,7 +254,19 @@ export function headlineAlternate(row, showAs) {
   return headlineLabel(row, showAs === "used" ? "left" : "used");
 }
 
-export function meterColor(severity) {
+/**
+ * Bar color follows OpenUsage's pace verdict, not the current fill:
+ * blue while ≥10% is projected to spare, yellow inside the last 10% with
+ * at least 1% cushion, red when projected to run out (or already spent).
+ * Without a pace signal, fall back to the host's fill-level severity.
+ */
+export function meterColor(severity, pace, spent) {
+  if (spent) return "red";
+  if (pace && pace.state) {
+    if (pace.state === "behind") return "red";
+    if (pace.state === "onTrack") return pace.sparePercent >= 1 ? "yellow" : "red";
+    if (pace.state === "ahead") return "blue";
+  }
   switch (severity) {
     case "mid":
     case "high":
@@ -397,10 +446,11 @@ export function projectCards(payload, nowMs) {
       }
       if (section.type === "metric") {
         const left = Math.max(0, 100 - section.percent);
-        const label = metricLabel(entry.id, section.label);
+        const hostLabel = metricLabel(entry.id, section.label);
+        const keyed = group ? hostLabel + " (" + group + ")" : hostLabel;
         const row = {
           kind: "metric",
-          label: group ? label + " (" + group + ")" : label,
+          label: prettyMetricLabel(entry.id, hostLabel, group),
           leftPercent: left,
           usedPercent: section.percent,
           severity: section.severity,
@@ -408,17 +458,26 @@ export function projectCards(payload, nowMs) {
           resetAt: section.resetAt || "",
           window: section.window || 0,
         };
-        row.key = rowKey(row);
+        row.key = "metric:" + keyed;
         rows.push(row);
       } else if (section.type === "text" && (section.label || section.value)) {
         const row = { kind: "text", label: section.label, value: section.value };
         row.key = rowKey(row);
         rows.push(row);
       } else if (section.type === "block" && section.body && section.body.length) {
+        if (section.label === "Reset credits") {
+          if (entry.resetCredits && !rows.some((row) => row.kind === "resets")) {
+            rows.push(resetsRow(entry.resetCredits));
+          }
+          continue;
+        }
         const row = { kind: "block", label: section.label, body: section.body };
         row.key = rowKey(row);
         rows.push(row);
       }
+    }
+    if (entry.resetCredits && !rows.some((row) => row.kind === "resets")) {
+      rows.push(resetsRow(entry.resetCredits));
     }
     dropRedundantResetRows(rows);
     dedupeRowKeys(rows);
@@ -434,6 +493,7 @@ export function projectCards(payload, nowMs) {
       errorDetail: entry.error || "",
       rows,
       warning,
+      resetCredits: entry.resetCredits || null,
     });
   }
   return cards;
@@ -441,9 +501,55 @@ export function projectCards(payload, nowMs) {
 
 // SuperGrok names every meter "<Window> Build credits"; the card title already
 // says what is being counted, so the row keeps only the window.
+function resetsRow(credits) {
+  const row = {
+    kind: "resets",
+    label: "Rate Limit Resets",
+    available: Math.max(0, Number(credits.available) || 0),
+  };
+  row.key = rowKey(row);
+  return row;
+}
+
 function metricLabel(entryId, label) {
   if (vendorSlug(entryId) !== "supergrok") return label;
   return String(label || "").replace(/\s+Build credits$/i, "");
+}
+
+const PROVIDER_LABEL_PREFIX = {
+  anthropic: ["Claude"],
+  openai: ["Codex", "ChatGPT"],
+  cursor: ["Cursor"],
+  copilot: ["Copilot", "GitHub Copilot"],
+  grok: ["Grok", "SuperGrok"],
+  supergrok: ["Grok", "SuperGrok"],
+  zai: ["Z.AI", "GLM"],
+};
+
+/**
+ * Card-local names: drop well-known window lengths ("Session (5h)" → "Session")
+ * and a redundant provider prefix ("Codex weekly" → "Weekly"). Keep
+ * Antigravity's "Gemini (Session)" vs "Claude & GPT OSS (Session)".
+ */
+export function prettyMetricLabel(entryId, raw, group) {
+  let name = String(raw || "").trim();
+  name = name.replace(/\s*\((?:5h|7d)\)$/i, "");
+  const slug = vendorSlug(entryId);
+  const prefixes = PROVIDER_LABEL_PREFIX[slug] || [];
+  for (const prefix of prefixes) {
+    const re = new RegExp("^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s+", "i");
+    if (re.test(name)) {
+      const rest = name.replace(re, "");
+      if (/^(5h|weekly|session)$/i.test(rest)) {
+        name = rest;
+        break;
+      }
+    }
+  }
+  if (/^5h$/i.test(name)) name = "Session";
+  if (/^weekly$/i.test(name)) name = "Weekly";
+  if (group) return (name || raw) + " (" + group + ")";
+  return name || String(raw || "").trim();
 }
 
 /** @returns {Layout} */
@@ -453,20 +559,17 @@ export function emptyLayout() {
     cardOrder: [],
     hidden: {},
     collapsed: {},
-    density: "regular",
     hideExtras: false,
     hintDismissed: false,
     resetTimes: "countdown",
     rows: {},
     seeded: false,
     showAs: "left",
+    stars: {},
+    stripStyle: "bars",
     theme: "system",
     timeFormat: "auto",
   };
-}
-
-function normalizeDensity(value) {
-  return value === "compact" ? "compact" : "regular";
 }
 
 /** @returns {TimeFormat} */
@@ -484,6 +587,92 @@ function normalizeShowAs(value) {
 
 function normalizeTheme(value) {
   return value === "light" || value === "dark" ? value : "system";
+}
+
+/** @returns {Record<string, string[]>} */
+function normalizeStars(raw) {
+  const stars = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return stars;
+  for (const id of Object.keys(raw)) {
+    const key = clean(id, 180).trim();
+    if (!key) continue;
+    const keys = cleanIdList(raw[id]).slice(0, MAX_STARS_PER_PROVIDER);
+    if (keys.length) stars[key] = keys;
+  }
+  return stars;
+}
+
+/** First two metric rows on each card, used on first launch. */
+export function defaultStars(cards) {
+  const stars = {};
+  for (const card of cards || []) {
+    if (!card || !card.id) continue;
+    const keys = [];
+    for (const row of card.rows || []) {
+      if (row.kind !== "metric") continue;
+      keys.push(rowKey(row));
+      if (keys.length >= MAX_STARS_PER_PROVIDER) break;
+    }
+    if (keys.length) stars[card.id] = keys;
+  }
+  return stars;
+}
+
+/**
+ * Star or unstar a metric. Caps at two per provider; the extra click is a
+ * no-op that returns an error the Customize row can show.
+ * @returns {{ stars: Record<string, string[]>, error: string }}
+ */
+export function toggleStar(stars, providerId, key) {
+  const id = clean(providerId, 180).trim();
+  const metric = clean(key, 180).trim();
+  const current = Object.assign({}, stars && typeof stars === "object" ? stars : {});
+  if (!id || !metric) return { stars: current, error: "" };
+  const list = Array.isArray(current[id]) ? current[id].slice() : [];
+  const idx = list.indexOf(metric);
+  if (idx >= 0) {
+    list.splice(idx, 1);
+    if (list.length === 0) delete current[id];
+    else current[id] = list;
+    return { stars: current, error: "" };
+  }
+  if (list.length >= MAX_STARS_PER_PROVIDER) {
+    return { stars: current, error: "Up to 2 stars per provider" };
+  }
+  list.push(metric);
+  current[id] = list;
+  return { stars: current, error: "" };
+}
+
+export function isStarred(stars, providerId, key) {
+  const list = stars && stars[providerId];
+  return Array.isArray(list) && list.indexOf(key) >= 0;
+}
+
+/** Payload the host paints the menu-bar strip from. */
+export function stripCommand(layout, cards) {
+  const visible = applyCardLayout(cards || [], layout || emptyLayout());
+  const order = visible.map((card) => card.id);
+  const source = layout && layout.stars ? layout.stars : {};
+  const stars = {};
+  if (visible.length) {
+    for (const card of visible) {
+      const wanted = Array.isArray(source[card.id]) ? source[card.id] : [];
+      if (!wanted.length) continue;
+      const keys = [];
+      for (const row of card.rows || []) {
+        const key = rowKey(row);
+        if (wanted.indexOf(key) >= 0 && keys.indexOf(key) < 0) keys.push(key);
+      }
+      for (const key of wanted) {
+        if (keys.indexOf(key) < 0) keys.push(key);
+      }
+      if (keys.length) stars[card.id] = keys.slice(0, MAX_STARS_PER_PROVIDER);
+    }
+  } else {
+    for (const id of Object.keys(source)) stars[id] = source[id];
+  }
+  return { style: "bars", stars, order };
 }
 
 function cleanIdList(list) {
@@ -511,13 +700,14 @@ export function normalizeLayout(raw) {
   layout.cardOrder = cleanIdList(raw.cardOrder);
   copyFlagMap(raw.hidden, layout.hidden);
   copyFlagMap(raw.collapsed, layout.collapsed);
-  layout.density = normalizeDensity(raw.density);
   layout.timeFormat = normalizeTimeFormat(raw.timeFormat);
   layout.hideExtras = raw.hideExtras === true;
   layout.hintDismissed = raw.hintDismissed === true;
   layout.seeded = raw.seeded === true;
   layout.resetTimes = normalizeResetTimes(raw.resetTimes);
   layout.showAs = normalizeShowAs(raw.showAs);
+  layout.stars = normalizeStars(raw.stars);
+  layout.stripStyle = "bars";
   layout.theme = normalizeTheme(raw.theme);
   if (raw.rows && typeof raw.rows === "object" && !Array.isArray(raw.rows)) {
     for (const id of Object.keys(raw.rows)) {
@@ -596,16 +786,28 @@ export function syncLayout(layout, cardIds) {
     cardOrder: order,
     hidden,
     collapsed,
-    density: normalizeDensity(layout.density),
     hideExtras: layout.hideExtras === true,
     hintDismissed: layout.hintDismissed === true,
     resetTimes: normalizeResetTimes(layout.resetTimes),
     seeded: layout.seeded === true,
     rows,
     showAs: normalizeShowAs(layout.showAs),
+    stars: pruneStars(layout.stars, known),
+    stripStyle: "bars",
     theme: normalizeTheme(layout.theme),
     timeFormat: normalizeTimeFormat(layout.timeFormat),
   };
+}
+
+function pruneStars(source, known) {
+  const stars = {};
+  if (!source || typeof source !== "object") return stars;
+  for (const id of Object.keys(source)) {
+    if (!known.has(id)) continue;
+    const keys = Array.isArray(source[id]) ? source[id].slice(0, MAX_STARS_PER_PROVIDER) : [];
+    if (keys.length) stars[id] = keys;
+  }
+  return stars;
 }
 
 export function metricCount(card) {
@@ -719,6 +921,14 @@ export function seedLayout(layout, entries) {
   return Object.assign({}, layout, { hidden, seeded: true });
 }
 
+/** Fill default stars once, from projected cards (metric keys). */
+export function seedStars(layout, cards) {
+  if (!layout || (layout.stars && Object.keys(layout.stars).length)) return layout;
+  const stars = defaultStars(cards);
+  if (!Object.keys(stars).length) return layout;
+  return Object.assign({}, layout, { stars });
+}
+
 // What a fresh host payload does to the stored layout. A payload without
 // entries (the host's placeholder before the first report, or a host error)
 // must leave the layout alone: syncing against an empty id list would wipe
@@ -784,19 +994,19 @@ export function mergeRowPrefs(rows, prefs, opts) {
   const demand = [];
   const seen = new Set();
   for (const key of prefs.always || []) {
-    if (known.has(key) && !off[key] && !seen.has(key)) {
+    if (known.has(key) && !seen.has(key)) {
       always.push(key);
       seen.add(key);
     }
   }
   for (const key of prefs.demand || []) {
-    if (known.has(key) && !off[key] && !seen.has(key)) {
+    if (known.has(key) && !seen.has(key)) {
       demand.push(key);
       seen.add(key);
     }
   }
   for (const key of def.always.concat(def.demand)) {
-    if (!seen.has(key) && !off[key] && known.has(key)) {
+    if (!seen.has(key) && known.has(key)) {
       if (def.always.indexOf(key) >= 0) always.push(key);
       else demand.push(key);
       seen.add(key);
@@ -821,6 +1031,7 @@ export function visibleRowsFor(card, opts) {
   const keys = opts && opts.collapsed ? prefs.always : prefs.always.concat(prefs.demand);
   const out = [];
   for (const key of keys) {
+    if (prefs.off && prefs.off[key]) continue;
     const row = byKey.get(key);
     if (row) out.push(row);
   }
@@ -829,19 +1040,21 @@ export function visibleRowsFor(card, opts) {
 
 export function cardHasExtras(card, hideExtras, prefs) {
   const merged = mergeRowPrefs(card.rows || [], prefs, { hideExtras });
-  return merged.demand.length > 0;
+  return merged.demand.some((key) => !merged.off[key]);
 }
 
-/** @returns {RowPrefs} */
+/** Toggle a row on/off without moving it between Always / On Demand. */
 export function setRowEnabled(prefs, key, enabled) {
   const next = {
-    always: (prefs.always || []).filter((item) => item !== key),
-    demand: (prefs.demand || []).filter((item) => item !== key),
+    always: (prefs.always || []).slice(),
+    demand: (prefs.demand || []).slice(),
     off: Object.assign({}, prefs.off || {}),
   };
   if (enabled) {
     delete next.off[key];
-    next.demand.push(key);
+    if (next.always.indexOf(key) < 0 && next.demand.indexOf(key) < 0) {
+      next.demand.push(key);
+    }
   } else {
     next.off[key] = true;
   }
@@ -882,6 +1095,60 @@ function vendorSlug(entryId) {
 }
 
 const ICON_ALIAS = { supergrok: "grok" };
+
+/** OpenUsage-style Status / Dashboard / Usage links. Cap three; only http(s). */
+const PROVIDER_LINKS = {
+  anthropic: [
+    ["Status", "https://status.anthropic.com/"],
+    ["Dashboard", "https://claude.ai/settings/usage"],
+  ],
+  openai: [
+    ["Status", "https://status.openai.com/"],
+    ["Dashboard", "https://chatgpt.com/codex/settings/usage"],
+  ],
+  cursor: [
+    ["Status", "https://status.cursor.com/"],
+    ["Dashboard", "https://www.cursor.com/dashboard"],
+  ],
+  copilot: [
+    ["Status", "https://www.githubstatus.com/"],
+    ["Dashboard", "https://github.com/settings/billing"],
+  ],
+  openrouter: [
+    ["Activity", "https://openrouter.ai/activity"],
+    ["Credits", "https://openrouter.ai/settings/credits"],
+  ],
+  zai: [
+    ["Dashboard", "https://z.ai/manage-apikey/coding-plan/personal/my-plan"],
+    ["API Keys", "https://z.ai/manage-apikey/apikey-list"],
+  ],
+  grok: [["Usage", "https://grok.com/?_s=usage"]],
+  supergrok: [["Usage", "https://grok.com/?_s=usage"]],
+  anthropic_api: [["Dashboard", "https://console.anthropic.com/settings/usage"]],
+  deepseek: [["Usage", "https://platform.deepseek.com/usage"]],
+  kimi: [["Dashboard", "https://platform.moonshot.cn/console"]],
+  moonshot: [["Dashboard", "https://platform.moonshot.cn/console"]],
+};
+
+/** @returns {{ label: string, url: string }[]} */
+export function providerLinks(entryId) {
+  const rows = PROVIDER_LINKS[vendorSlug(entryId)] || [];
+  const out = [];
+  for (let i = 0; i < rows.length && out.length < 3; i++) {
+    const label = String(rows[i][0] || "").trim();
+    const url = String(rows[i][1] || "").trim();
+    if (!label || !isHttpUrl(url)) continue;
+    out.push({ label, url });
+  }
+  return out;
+}
+
+export function isHttpUrl(value) {
+  const url = String(value || "").trim();
+  if (url.length < 8 || url.length > 2048) return false;
+  if (/[\s\u0000-\u001f\u007f]/.test(url)) return false;
+  return url.indexOf("https://") === 0 || url.indexOf("http://") === 0;
+}
 
 // Icon slug for a card: the vendor half of "vendor@account", with product
 // aliases folded onto the shared icon.
@@ -1082,10 +1349,7 @@ export function applyTheme(theme) {
   document.documentElement.classList.toggle("dark", resolvedTheme(value) === "dark");
 }
 
-export function applyDensity(density) {
-  if (typeof document === "undefined") return;
-  document.documentElement.dataset.density = normalizeDensity(density);
-}
+
 
 function isPlainObject(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);

@@ -18,6 +18,10 @@ pub struct BillingResponse {
     /// compatibility with older/direct extension bridges.
     #[serde(alias = "subscriptionTier")]
     pub subscription_tier: Option<String>,
+    /// Human-facing SKU from `/v1/settings` (e.g. "SuperGrok Heavy"). Billing's
+    /// `subscription_tier` is often the short code "SuperGrok".
+    #[serde(alias = "subscriptionTierDisplay")]
+    pub subscription_tier_display: Option<String>,
     #[serde(skip)]
     pub reset_credits: ResetCredits,
 }
@@ -76,7 +80,11 @@ where
 }
 
 pub fn to_snapshot(resp: BillingResponse, account_scope: &str) -> Result<SuperGrokSnapshot> {
-    let plan = checked_plan(resp.subscription_tier.as_deref())?;
+    let plan = checked_plan(
+        resp.subscription_tier_display
+            .as_deref()
+            .or(resp.subscription_tier.as_deref()),
+    )?;
     let cfg = resp
         .config
         .ok_or_else(|| AppError::Schema("Grok Build billing response has no config".into()))?;
@@ -223,6 +231,23 @@ mod tests {
         assert_eq!(snapshot.period, SuperGrokPeriod::Weekly);
         assert_eq!(snapshot.plan, "SuperGrok Heavy");
         assert_eq!(snapshot.prepaid_balance, Some(12.5));
+    }
+
+    #[test]
+    fn subscription_tier_display_wins_over_the_short_code() {
+        let response: BillingResponse = serde_json::from_str(
+            r#"{
+              "config": {
+                "creditUsagePercent": 10,
+                "currentPeriod": { "type": "USAGE_PERIOD_TYPE_WEEKLY" }
+              },
+              "subscription_tier": "SuperGrok",
+              "subscription_tier_display": "SuperGrok Heavy"
+            }"#,
+        )
+        .unwrap();
+        let snapshot = to_snapshot(response, "scope").unwrap();
+        assert_eq!(snapshot.plan, "SuperGrok Heavy");
     }
 
     #[test]

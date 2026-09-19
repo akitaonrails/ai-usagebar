@@ -11,7 +11,6 @@ interface SettingsProps {
   layout: Layout;
   payload: Payload;
   onAlwaysShowPace: (on: boolean) => void;
-  onDensity: (density: string) => void;
   onOpenCustomize: () => void;
   onResetTimes: (resetTimes: string) => void;
   onShowAs: (showAs: string) => void;
@@ -24,7 +23,6 @@ export function Settings({
   layout,
   payload,
   onAlwaysShowPace,
-  onDensity,
   onOpenCustomize,
   onResetTimes,
   onShowAs,
@@ -75,16 +73,6 @@ export function Settings({
             ]}
             value={layout.theme}
             onChange={onTheme}
-          />
-        </SettingRow>
-        <SettingRow label="Density">
-          <Picker
-            options={[
-              ["regular", "Default"],
-              ["compact", "Compact"],
-            ]}
-            value={layout.density}
-            onChange={onDensity}
           />
         </SettingRow>
         <SettingRow label="Time Format">
@@ -159,7 +147,7 @@ interface SettingRowProps {
 
 function SettingRow({ children, label }: SettingRowProps) {
   return (
-    <div className="flex items-center gap-[10px] px-3 py-[var(--pad-control)]">
+    <div className="flex items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)]">
       <span>{label}</span>
       <span className="min-w-2 flex-1" />
       {children}
@@ -186,11 +174,11 @@ function Picker<T extends string>({ options, value, onChange }: PickerProps<T>) 
     <Select value={value} onValueChange={onValueChange}>
       <SelectTrigger
         size="sm"
-        className="h-6 gap-1 rounded-[6px] border-0 bg-[var(--control-fill)] px-2 text-[12px] shadow-none hover:bg-[var(--control-fill-hover)] focus-visible:ring-0 [&_svg]:size-3"
+        className="h-[var(--control-h)] gap-1 rounded-[var(--radius-sm)] border-0 bg-[var(--control-fill)] px-2 py-0 text-[12px] shadow-none hover:bg-[var(--control-fill-hover)] focus-visible:ring-0 data-[size=sm]:h-[var(--control-h)] [&_svg]:size-3"
       >
         <SelectValue />
       </SelectTrigger>
-      <SelectContent className="rounded-[8px]" position="popper" align="end">
+      <SelectContent className="rounded-[var(--radius-sm)] border-0" position="popper" align="end">
         {options.map(([optionValue, label]) => (
           <SelectItem key={optionValue} className="py-1 text-[12px]" value={optionValue}>
             {label}

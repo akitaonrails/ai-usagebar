@@ -58,7 +58,7 @@ export function Customize({ cards, layout, onOpen, onOpenSettings, onReorder, on
       </VerticalDnd>
       <ScreenCrossLinkRow
         icon={<MdiCogOutline />}
-        subtitle="Windows startup, appearance and more"
+        subtitle="Startup, appearance and more"
         title="Settings"
         onClick={onOpenSettings}
       />
@@ -80,7 +80,7 @@ function ProviderListRow({ card, enabled, handle, onOpen, onToggle }: ProviderLi
   return (
     <div
       data-card-id={card.id}
-      className={cn("flex items-center gap-[10px] px-3 py-[var(--pad-control)]", !enabled && "opacity-55")}
+      className={cn("flex items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)]", !enabled && "opacity-55")}
     >
       <DragHandle attributes={handle?.attributes} listeners={handle?.listeners} />
       <button type="button" className="plain-btn flex min-w-0 flex-1 items-center gap-[10px]" onClick={onOpen}>

@@ -5,6 +5,8 @@ import MdiChevronRight from "~icons/mdi/chevron-right";
 import MdiCogOutline from "~icons/mdi/cog-outline";
 import MdiConsole from "~icons/mdi/console";
 import MdiMagnifyScan from "~icons/mdi/magnify-scan";
+import MdiApple from "~icons/mdi/apple";
+import MdiLoginVariant from "~icons/mdi/login-variant";
 import MdiMicrosoftWindows from "~icons/mdi/microsoft-windows";
 import MdiPower from "~icons/mdi/power";
 import MdiRefresh from "~icons/mdi/refresh";
@@ -29,10 +31,10 @@ interface TopBarProps {
   title: string;
 }
 
-/** PopoverTopBar: 44pt bar, centered headline, circular Back on the left, circular Reset on the right. */
+/** PopoverTopBar: compact bar, centered headline, Back on the left, Reset on the right. */
 export function TopBar({ onBack, onReset, resetArmed, resetLabel, title }: TopBarProps) {
   return (
-    <div className="bar-glass grid h-[var(--topbar-h)] shrink-0 grid-cols-[28px_1fr_28px] items-center px-[var(--panel-pad)]">
+    <div className="bar-glass grid shrink-0 grid-cols-[28px_1fr_28px] items-center p-[var(--panel-pad)]">
       <button type="button" aria-label="Back" className="circle-btn" title="Back" onClick={onBack}>
         <MdiChevronLeft className="size-4" />
       </button>
@@ -79,7 +81,7 @@ export function Footer({
 }: FooterProps) {
   const nextLabel = nextUpdateLabel(payload, nowMs);
   return (
-    <footer className="bar-glass flex shrink-0 items-center gap-2 px-[var(--panel-pad)] py-3">
+    <footer className="bar-glass flex shrink-0 items-center gap-2 p-[var(--panel-pad)]">
       <div className="flex min-w-0 flex-col text-[10px] leading-[14px] text-label-2">
         <span className="flex items-center gap-[5px]">
           {payload.version ? `AI Usage ${payload.version}` : "AI Usage"}
@@ -101,7 +103,7 @@ export function Footer({
             <MdiChevronDown className="size-[13px]" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" side="top" sideOffset={6} className="min-w-[184px] rounded-[10px] p-[5px] shadow-lg">
+        <DropdownMenuContent align="end" side="top" sideOffset={6} className="min-w-[184px] rounded-[10px] border-0 p-[5px] shadow-lg">
           <MenuItem icon={<MdiTune />} label="Customize" onSelect={onOpenCustomize} />
           <MenuItem icon={<MdiCogOutline />} label="Settings" onSelect={onOpenSettings} />
           <DropdownMenuSeparator />
@@ -111,8 +113,8 @@ export function Footer({
           <DropdownMenuSeparator />
           <MenuItem
             checked={payload.startupEnabled}
-            icon={<MdiMicrosoftWindows />}
-            label="Start with Windows"
+            icon={startupIcon(payload.os)}
+            label="Start at Login"
             onSelect={() => sendCommand("toggle-startup")}
           />
           <MenuItem destructive icon={<MdiPower />} label="Quit" onSelect={() => sendCommand("quit")} />
@@ -130,11 +132,17 @@ interface MenuItemProps {
   onSelect: () => void;
 }
 
+function startupIcon(os: string) {
+  if (os === "macos") return <MdiApple />;
+  if (os === "windows") return <MdiMicrosoftWindows />;
+  return <MdiLoginVariant />;
+}
+
 function MenuItem({ checked, destructive, icon, label, onSelect }: MenuItemProps) {
   return (
     <DropdownMenuItem
       className={cn(
-        "gap-2 rounded-[6px] px-2 py-[5px] text-[13px] focus:bg-primary focus:text-white [&_svg]:size-[15px] [&_svg]:text-label-2 focus:[&_svg]:text-white",
+        "gap-2 rounded-[var(--radius-sm)] px-2 py-[5px] text-[13px] focus:bg-[var(--card)] focus:text-label-1 [&_svg]:size-[15px] [&_svg]:text-label-2 focus:[&_svg]:text-label-2",
         destructive && "text-destructive",
       )}
       variant={destructive ? "destructive" : "default"}
@@ -154,12 +162,12 @@ interface ScreenCrossLinkRowProps {
   onClick: () => void;
 }
 
-/** ScreenCrossLinkRow: one card-row button that hops between Customize and Settings. */
+/** ScreenCrossLinkRow: grouped card matching Settings/Customize rows (same pad + radius). */
 export function ScreenCrossLinkRow({ icon, subtitle, title, onClick }: ScreenCrossLinkRowProps) {
   return (
     <button
       type="button"
-      className="plain-btn card-surface flex w-full items-center gap-[10px] px-3 py-[var(--pad-control)] text-left"
+      className="card-surface cross-link flex w-full items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)] text-left"
       onClick={onClick}
     >
       <span className="grid size-[18px] shrink-0 place-items-center text-label-2 [&_svg]:size-[15px]">{icon}</span>

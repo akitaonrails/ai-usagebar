@@ -1,15 +1,25 @@
 # AI Usage Bar — macOS menu bar app
 
-A native macOS menu bar app for [`ai-usagebar`](../README.md). It shows the
-**5-hour (session)** and **weekly** usage bars — plus an optional
-dynamic **model-scoped** bar (for example, Fable) and **extra-usage (cost)**
-bar — in the menu bar next to the clock, with a native dropdown. For most
-vendors there are no usage windows to chart, so showing their **balance/credits**
-is the primary display mode (see [Vendor scope](#vendor-scope)). It's the macOS counterpart to the [GNOME Shell
-extension](https://github.com/akitaonrails/ai-usagebar/tree/main/gnome-extension): same binary, same One Dark colors and
-severity thresholds.
+The product UI is **`ai-usagebar-tray`**: an NSStatusItem plus a WKWebView
+popover that shares its dashboard with the [Windows tray](../windows/README.md)
+(OpenUsage layout: provider cards, capsule meters, Customize, Settings). The
+menu-bar glyph is a compact **usage chart** of starred metrics (at most two
+per provider).
 
-A single Swift file (`NSStatusItem` + `NSAttributedString`); no Xcode project.
+```bash
+cargo build --release --bin ai-usagebar-tray
+./target/release/ai-usagebar-tray
+```
+
+Needs Node.js 20+ on PATH for the first build (`windows/popover/` Vite bundle).
+Left-click the status item to toggle the popover; right-click for Refresh /
+Detect / Open TUI / Start at Login / Quit. No Dock icon.
+
+Star up to two metrics per provider from a row's right-click menu or from
+Customize; those fills are what the status item paints.
+
+A legacy Swift `NSMenu` (`ai-usagebar-menubar.swift`) remains in this folder
+for the old dropdown. Prefer the tray.
 
 > **Installing?** Follow the step-by-step in **[INSTALL.md](INSTALL.md)**.
 
@@ -42,26 +52,27 @@ time, so one of those must be running for quota to load.
 
 ## Requirements
 
-- macOS with the **Command Line Tools** (`xcode-select --install`) for `swiftc`.
-- The `ai-usagebar` binary on the Mac. Install it with `cargo install ai-usagebar`
-  (lands in `~/.cargo/bin`) — see the [main README](../README.md).
+- Rust (`rustc` 1.88+) and **Node.js 20+** (the tray embeds the Vite popover).
 - Run `claude` once on the Mac so its OAuth creds are in the login **Keychain**;
   ai-usagebar reads them there automatically (no env vars).
 
 ## Build & run
 
 ```bash
-cd macos
-./build.sh                 # swiftc -O → ./ai-usagebar-menubar
-./run-tests.sh             # optional: pure-logic test harness
-./ai-usagebar-menubar &    # appears in the menu bar (no Dock icon)
+cargo build --release --bin ai-usagebar-tray
+./target/release/ai-usagebar-tray
 ```
 
-Start at login — toggle **Preferences… → System → "Start at login"** in the
-app, or from the shell:
+Start at login from the popover **Settings → Launch at Login**, or the status
+item's right-click menu. That writes
+`~/Library/LaunchAgents/com.akitaonrails.ai-usagebar-tray.plist`.
+
+The legacy Swift dropdown:
 
 ```bash
-./install-agent.sh         # installs a LaunchAgent (RunAtLoad)
+cd macos
+./build.sh
+./ai-usagebar-menubar &
 ```
 
 > Not code-signed. It's a local binary you built yourself, so Gatekeeper

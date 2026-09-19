@@ -19,22 +19,26 @@ import {
   useTraySensors,
   type RowLists,
 } from "@/components/dnd";
+import MdiStar from "~icons/mdi/star";
+import MdiStarOutline from "~icons/mdi/star-outline";
 import { Switch } from "@/components/ui/switch";
 import type { Card, Layout, Row } from "@/lib/types";
-import { prefsForCard, rowKey } from "../model.js";
+import { isStarred, prefsForCard, rowKey } from "../model.js";
 
 interface ProviderDetailProps {
   card?: Card;
   layout: Layout;
+  starError?: string;
   onReorderRows: (lists: RowLists) => void;
   onToggleRow: (key: string, on: boolean) => void;
+  onToggleStar: (key: string) => void;
 }
 
 /**
  * CustomizeProviderDetailView (L2): Always Visible and On Demand grouped cards. Rows drag within
  * a card or across the divider; an empty card shows the dashed "Drag metrics here" target.
  */
-export function ProviderDetail({ card, layout, onReorderRows, onToggleRow }: ProviderDetailProps) {
+export function ProviderDetail({ card, layout, starError, onReorderRows, onToggleRow, onToggleStar }: ProviderDetailProps) {
   const sensors = useTraySensors();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState<RowLists | null>(null);
@@ -42,12 +46,11 @@ export function ProviderDetail({ card, layout, onReorderRows, onToggleRow }: Pro
   if (!card) return null;
   const prefs = prefsForCard(card, layout);
   const byKey = new Map<string, Row>((card.rows || []).map((row: Row) => [rowKey(row), row]));
-  const offKeys = Object.keys(prefs.off || {}).filter((key) => prefs.off[key] && byKey.has(key));
-  const lists: RowLists = draft || { always: prefs.always, demand: prefs.demand.concat(offKeys) };
+  const lists: RowLists = draft || { always: prefs.always, demand: prefs.demand };
   listsRef.current = lists;
 
   function onDragStart(event: DragStartEvent) {
-    const initial = { always: prefs.always.slice(), demand: prefs.demand.concat(offKeys) };
+    const initial = { always: prefs.always.slice(), demand: prefs.demand.slice() };
     listsRef.current = initial;
     setActiveId(String(event.active.id));
     setDraft(initial);
@@ -85,20 +88,29 @@ export function ProviderDetail({ card, layout, onReorderRows, onToggleRow }: Pro
       <div className="flex flex-col gap-[var(--section-gap)]">
         <MetricSection
           byKey={byKey}
+          cardId={card.id}
           id={LIST_ALWAYS}
           keys={lists.always}
+          layout={layout}
           prefs={prefs}
           title="Always Visible"
           onToggleRow={onToggleRow}
+          onToggleStar={onToggleStar}
         />
         <MetricSection
           byKey={byKey}
+          cardId={card.id}
           id={LIST_DEMAND}
           keys={lists.demand}
+          layout={layout}
           prefs={prefs}
           title="On Demand"
           onToggleRow={onToggleRow}
+          onToggleStar={onToggleStar}
         />
+        {starError ? (
+          <div className="px-1 text-[length:var(--sz-badge)] text-meter-red">{starError}</div>
+        ) : null}
       </div>
       <DragOverlay dropAnimation={null}>
         {overlayRow ? (
@@ -113,14 +125,27 @@ export function ProviderDetail({ card, layout, onReorderRows, onToggleRow }: Pro
 
 interface MetricSectionProps {
   byKey: Map<string, Row>;
+  cardId: string;
   id: string;
   keys: string[];
+  layout: Layout;
   prefs: { off: Record<string, boolean> };
   title: string;
   onToggleRow: (key: string, on: boolean) => void;
+  onToggleStar: (key: string) => void;
 }
 
-function MetricSection({ byKey, id, keys, prefs, title, onToggleRow }: MetricSectionProps) {
+function MetricSection({
+  byKey,
+  cardId,
+  id,
+  keys,
+  layout,
+  prefs,
+  title,
+  onToggleRow,
+  onToggleStar,
+}: MetricSectionProps) {
   return (
     <div className="flex flex-col gap-[var(--header-card-gap)]">
       <div className="section-title">{title}</div>
@@ -136,6 +161,8 @@ function MetricSection({ byKey, id, keys, prefs, title, onToggleRow }: MetricSec
                   enabled={!prefs.off[key]}
                   handle={{ attributes, listeners }}
                   row={row}
+                  starred={isStarred(layout.stars, cardId, key)}
+                  onStar={() => onToggleStar(key)}
                   onToggle={(on) => onToggleRow(key, on)}
                 />
               )}
@@ -151,16 +178,29 @@ interface MetricTuneRowProps {
   enabled: boolean;
   handle?: Parameters<typeof DragHandle>[0];
   row: Row;
+  starred?: boolean;
+  onStar?: () => void;
   onToggle?: (on: boolean) => void;
 }
 
-/** CustomizeMetricRow: grip, metric title, on/off switch. */
-function MetricTuneRow({ enabled, handle, row, onToggle }: MetricTuneRowProps) {
+/** CustomizeMetricRow: grip, metric title, star, on/off switch. */
+function MetricTuneRow({ enabled, handle, row, starred, onStar, onToggle }: MetricTuneRowProps) {
   const title = String(row.label || row.kind);
   return (
-    <div data-row-key={rowKey(row)} className="flex items-center gap-[10px] px-3 py-[var(--pad-control)]">
+    <div data-row-key={rowKey(row)} className="flex items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)]">
       <DragHandle attributes={handle?.attributes} listeners={handle?.listeners} />
       <span className="min-w-0 flex-1 truncate">{title}</span>
+      {onStar ? (
+        <button
+          type="button"
+          aria-label={starred ? `Unstar ${title}` : `Star ${title} for menu bar`}
+          aria-pressed={starred === true}
+          className="inline-flex size-[18px] items-center justify-center text-label-2 hover:text-foreground"
+          onClick={onStar}
+        >
+          {starred ? <MdiStar className="size-[14px] text-primary" /> : <MdiStarOutline className="size-[14px]" />}
+        </button>
+      ) : null}
       <Switch checked={enabled} aria-label={`Show ${title}`} onCheckedChange={(on) => onToggle?.(on === true)} />
     </div>
   );

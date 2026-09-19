@@ -183,7 +183,7 @@ fn echo_token(token: &str) -> String {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 mod binding {
     use global_hotkey::hotkey::HotKey;
     use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -345,7 +345,7 @@ mod binding {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub use binding::{HotkeyBinding, install_press_handler};
 
 #[cfg(test)]

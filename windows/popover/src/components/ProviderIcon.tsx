@@ -38,7 +38,7 @@ const MARKS: Record<string, Mark> = {
 
 interface ProviderIconProps {
   className?: string;
-  /** Pixel size, or a CSS length such as `var(--sz-icon)` so density can drive it. */
+  /** Pixel size, or a CSS length such as `var(--sz-icon)`. */
   size?: number | string;
   slug: string;
   title: string;

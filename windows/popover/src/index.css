@@ -41,45 +41,27 @@
   --bar-glass: rgba(255, 255, 255, 0.82);
   --lift-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.12);
 
-  /* Regular density (DensitySetting.regular). */
-  --sz-header: 14px;
-  --sz-icon: 16px;
-  --sz-badge: 11px;
-  --sz-label: 13px;
-  --sz-support: 12px;
-  --meter-h: 5px;
-  --pad-bar-row: 10px;
-  --pad-text-row: 6px;
-  --pad-text-row-condensed: 2px;
-  --row-inner: 4px;
-  --section-gap: 14px;
-  --header-card-gap: 4px;
-  --card-gutter: 5px;
-  --pad-control: 9px;
-  --content-top: 14px;
-
-  /* Fixed geometry. */
-  --panel-pad: 14px;
-  --card-radius: 12px;
-  --topbar-h: 44px;
-}
-
-:root[data-density="compact"] {
   --sz-header: 13px;
   --sz-icon: 14px;
   --sz-badge: 10px;
   --sz-label: 12px;
+  --sz-demand: 11px;
   --sz-support: 11px;
   --meter-h: 4px;
-  --pad-bar-row: 5px;
-  --pad-text-row: 4px;
+  /* One inset for the popover: sides, top/bottom, and the gap between cards. */
+  --panel-pad: 8px;
+  --card-pad: var(--panel-pad);
+  --section-gap: var(--panel-pad);
+  --pad-bar-row: var(--panel-pad);
+  --pad-text-row: 6px;
   --pad-text-row-condensed: 1px;
   --row-inner: 3px;
-  --section-gap: 8px;
   --header-card-gap: 2px;
   --card-gutter: 3px;
   --pad-control: 6px;
-  --content-top: 10px;
+
+  /* Fixed geometry. */
+  --card-radius: 10px;
 }
 
 .dark {
@@ -135,12 +117,16 @@
   --radius-md: 8px;
   --radius-lg: var(--card-radius);
   --radius-xl: 16px;
+  --control-h: 24px;
 }
 
 html,
 body,
 #root {
   height: 100%;
+  overflow: hidden;
+  /* Same 13pt continuous-style clip as the Windows DWM / macOS NSWindow host. */
+  border-radius: 13px;
 }
 
 body {
@@ -175,7 +161,7 @@ body {
 
 /* Section header text (.caption.weight(.semibold), secondary). */
 .section-title {
-  padding: 0 8px;
+  padding: 0 var(--panel-pad);
   font-size: 10px;
   font-weight: 600;
   color: var(--label-2);
@@ -249,15 +235,15 @@ body {
   cursor: grabbing;
 }
 
-/* Circular chrome buttons (glass, .circle, .large → 28pt). */
+/* Icon chrome buttons (28pt), same radius as the other controls. */
 .circle-btn {
   display: inline-grid;
   width: 28px;
   height: 28px;
   place-items: center;
   border: 0;
-  border-radius: 999px;
-  background: var(--control-fill);
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--label-1);
   cursor: default;
   padding: 0;
@@ -271,7 +257,7 @@ body {
   opacity: 0.7;
 }
 
-/* Options capsule (HeaderView.optionsButton in interactiveGlass Capsule). */
+/* Options control — same radius as Chip link / other buttons. */
 .capsule-btn {
   display: inline-flex;
   height: 28px;
@@ -279,7 +265,7 @@ body {
   gap: 5px;
   padding: 0 12px 0 14px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--control-fill);
   color: var(--label-1);
   font: inherit;
@@ -297,13 +283,13 @@ body {
    reads "Press keys…". Plain CSS for the same hover reason as .header-action. */
 .recorder {
   display: inline-flex;
-  height: 24px;
+  height: var(--control-h);
   min-width: 64px;
   align-items: center;
   justify-content: center;
   padding: 0 10px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   background: var(--control-fill);
   color: var(--label-1);
   font: inherit;
@@ -382,6 +368,17 @@ body {
   color: inherit;
   cursor: default;
   text-align: inherit;
+}
+
+/* Nav row between Customize and Settings: same card as the grouped list above it.
+   Do not use .plain-btn here — that reset zeroes padding and fights the row inset. */
+.cross-link {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: default;
 }
 
 /* Screen switch: 180ms ease-in-out slide (Motion.modeSwitch). */

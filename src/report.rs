@@ -41,6 +41,7 @@ struct Entry {
     error: Option<String>,
     stale: bool,
     fetched_at: Option<DateTime<Utc>>,
+    reset_credits: Option<crate::usage::ResetCredits>,
 }
 
 /// Lossless machine-readable projection of a TUI panel row. `metrics` remains
@@ -199,6 +200,14 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
             TabState::Ready(ready) => ready.fetched_at,
             _ => None,
         },
+        reset_credits: match state {
+            TabState::Ready(ready) => ready
+                .snapshot
+                .reset_credits()
+                .filter(|credits| !credits.is_empty())
+                .cloned(),
+            _ => None,
+        },
     };
     // The error is already a first-class entry field. Do not duplicate the
     // TUI's interactive retry instructions as report data.
@@ -316,7 +325,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            json!({
+            let mut row = json!({
                 "id": entry.id,
                 "name": entry.name,
                 "display_name": entry.display_name,
@@ -329,7 +338,14 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                 "fetched_at": entry.fetched_at,
                 "metrics": metrics,
                 "sections": entry.sections,
-            })
+            });
+            if let Some(credits) = &entry.reset_credits {
+                row["reset_credits"] = json!({
+                    "available": credits.available,
+                    "credits": credits.credits,
+                });
+            }
+            row
         })
         .collect()
 }
@@ -435,6 +451,7 @@ mod tests {
             error: None,
             stale: false,
             fetched_at: None,
+            reset_credits: None,
         }
     }
 

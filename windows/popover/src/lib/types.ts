@@ -12,7 +12,6 @@ export interface Layout {
   alwaysShowPace: boolean;
   cardOrder: string[];
   collapsed: Record<string, boolean>;
-  density: string;
   hidden: Record<string, boolean>;
   hideExtras: boolean;
   hintDismissed: boolean;
@@ -20,6 +19,10 @@ export interface Layout {
   rows: Record<string, RowPrefs>;
   seeded: boolean;
   showAs: string;
+  /** Provider id → starred metric keys (max 2). */
+  stars: Record<string, string[]>;
+  /** Menu-bar strip: compact bars glyph, or provider+values text. */
+  stripStyle: "bars" | "text";
   theme: string;
   timeFormat: TimeFormat;
 }
@@ -62,7 +65,14 @@ export interface BlockRow {
   label: string;
 }
 
-export type Row = BlockRow | MetricRow | TextRow;
+export interface ResetsRow {
+  available: number;
+  key?: string;
+  kind: "resets";
+  label: string;
+}
+
+export type Row = BlockRow | MetricRow | ResetsRow | TextRow;
 
 export interface ErrorAction {
   cmd: string;
@@ -81,6 +91,16 @@ export interface CardWarning {
   title: string;
 }
 
+export interface ResetCredit {
+  expiresAt: string;
+  title: string;
+}
+
+export interface ResetCredits {
+  available: number;
+  credits: ResetCredit[];
+}
+
 export interface Card {
   error: string;
   errorDetail: string;
@@ -88,6 +108,7 @@ export interface Card {
   errorTitle: string;
   id: string;
   plan: string;
+  resetCredits: ResetCredits | null;
   rows: Row[];
   stale: boolean;
   title: string;
@@ -123,6 +144,7 @@ export type Section = BlockSection | MetricSection | TextSection;
 export interface Entry {
   displayName: string;
   error: string;
+  resetCredits?: ResetCredits | null;
   id: string;
   plan: string;
   sections: Section[];
@@ -135,6 +157,8 @@ export interface Payload {
   entries: Entry[];
   generatedAt: number;
   hostError: string;
+  /** Host OS: macos, windows, or linux. */
+  os: string;
   nextRefreshAt: number;
   primary: string;
   /** Host refresh interval; one of 1, 5 or 10. */
