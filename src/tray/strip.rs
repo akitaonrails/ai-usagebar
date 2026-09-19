@@ -664,7 +664,7 @@ mod tests {
         assert_eq!(bytes[last], 0, "bottom-right stays transparent");
         let mut inked = 0usize;
         let mut soft = 0usize;
-        for pixel in bytes.chunks_exact(4) {
+        for pixel in bytes.as_chunks::<4>().0 {
             if pixel[3] > 0 {
                 inked += 1;
                 assert_eq!(&pixel[..3], &[0, 0, 0]);
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn empty_fractions_are_fully_transparent() {
         let bytes = bars_rgba(&[], BARS_PIXEL_SIDE);
-        assert!(bytes.chunks_exact(4).all(|p| p[3] == 0));
+        assert!(bytes.as_chunks::<4>().0.iter().all(|p| p[3] == 0));
     }
 
     #[test]
@@ -690,7 +690,7 @@ mod tests {
             let bytes = bars_rgba(&[0.4, 0.97], side);
             assert_eq!(bytes.len(), (side * side * 4) as usize, "scale {scale}");
             assert!(
-                bytes.chunks_exact(4).any(|p| p[3] > 0),
+                bytes.as_chunks::<4>().0.iter().any(|p| p[3] > 0),
                 "scale {scale} produced an empty glyph"
             );
         }
