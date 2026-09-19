@@ -9,6 +9,8 @@ Each release is also published at
 
 ## [Unreleased]
 
+## [1.20.2] — 2026-09-19
+
 ### Fixed
 
 - **`usage` exits 0 after printing a complete document.** Per-entry fetch or
@@ -2565,7 +2567,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.2...HEAD
+[1.20.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.1...v1.20.2
 [1.20.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.19.0...v1.20.1
 [1.19.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.1...v1.19.0
 [1.18.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.0...v1.18.1
