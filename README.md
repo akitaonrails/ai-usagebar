@@ -557,7 +557,8 @@ ai-usagebar --vendor kiro
 ai-usagebar --json
 
 # Everything at once: quota + time-to-reset for every configured vendor,
-# with one entry per named Claude account.
+# with one entry per named Claude account. Exits 0 after a complete document
+# (per-entry errors are data); non-zero only when the document cannot be produced.
 ai-usagebar usage
 ai-usagebar usage --json | jq '.entries[] | {id, metrics, sections}'
 
@@ -590,6 +591,11 @@ The JSON report has two views of each provider:
 The top-level `schema_version` is currently `1`. Consumers should ignore
 unknown fields and treat absent fields as not applicable. The version changes
 only when a tolerant reader could not safely absorb a change.
+
+`usage` (plain or `--json`) exits 0 after printing a complete document, even
+when every entry carries its own `error`. Non-zero means the command could not
+produce the document (missing or unreadable `--config`, unparseable TOML, no
+vendors enabled, or a runtime/bootstrap failure).
 
 `usage` reports only the providers that are **enabled**, which makes the
 switched-off and the never-credentialed exactly the rows it cannot describe.
