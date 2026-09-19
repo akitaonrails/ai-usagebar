@@ -47,9 +47,9 @@ use super::strip::{
 use super::{startup, tui_launch};
 use crate::config::Config;
 
-const INDEX_HTML: &str = include_str!("../../windows/popover/dist/index.html");
-const POPOVER_CSS: &str = include_str!("../../windows/popover/dist/popover.css");
-const POPOVER_JS: &str = include_str!("../../windows/popover/dist/popover.js");
+const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/index.html"));
+const POPOVER_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.css"));
+const POPOVER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.js"));
 
 enum UserEvent {
     Tray(TrayIconEvent),

@@ -49,10 +49,24 @@ fn main() {
         ensure_deps(&popover);
         npm(&popover, &["run", "build"]);
         assert_dist(&popover);
-    } else if !dist_complete(&popover) {
-        write_stub_dist(&popover);
+    }
+    // The hosts `include_str!` from OUT_DIR, never from the source tree: a
+    // read-only checkout (the Nix sandbox) has no dist and cannot take a stub,
+    // so the stub goes where cargo lets a build script write.
+    let staged =
+        PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set by cargo")).join("popover");
+    std::fs::create_dir_all(&staged).expect("create OUT_DIR/popover");
+    if dist_complete(&popover) {
+        for name in DIST_FILES {
+            std::fs::copy(popover.join("dist").join(name), staged.join(name))
+                .unwrap_or_else(|error| panic!("copy {name} into OUT_DIR: {error}"));
+        }
+    } else {
+        write_stub_dist(&staged);
     }
 }
+
+const DIST_FILES: [&str; 3] = ["index.html", "popover.js", "popover.css"];
 
 fn npm_available() -> bool {
     Command::new("npm")
@@ -65,20 +79,26 @@ fn npm_available() -> bool {
 }
 
 fn dist_complete(dir: &Path) -> bool {
-    ["index.html", "popover.js", "popover.css"]
+    DIST_FILES
         .iter()
         .all(|name| dir.join("dist").join(name).is_file())
 }
 
-fn write_stub_dist(dir: &Path) {
-    let dist = dir.join("dist");
-    let _ = std::fs::create_dir_all(&dist);
-    let _ = std::fs::write(
-        dist.join("index.html"),
-        "<!doctype html><title>ai-usagebar</title><p>popover dist missing</p>\n",
-    );
-    let _ = std::fs::write(dist.join("popover.js"), "/* stub */\n");
-    let _ = std::fs::write(dist.join("popover.css"), "/* stub */\n");
+/// A placeholder page for a build without Node: the tray links and says why
+/// the popover is empty instead of failing the whole workspace build.
+fn write_stub_dist(staged: &Path) {
+    let stub: [(&str, &str); 3] = [
+        (
+            "index.html",
+            "<!doctype html><title>ai-usagebar</title><p>popover dist missing: run npm run build in windows/popover</p>\n",
+        ),
+        ("popover.js", "/* stub */\n"),
+        ("popover.css", "/* stub */\n"),
+    ];
+    for (name, body) in stub {
+        std::fs::write(staged.join(name), body)
+            .unwrap_or_else(|error| panic!("write stub {name} into OUT_DIR: {error}"));
+    }
 }
 
 fn ensure_deps(dir: &Path) {
@@ -93,7 +113,7 @@ fn ensure_deps(dir: &Path) {
 }
 
 fn assert_dist(dir: &Path) {
-    for name in ["index.html", "popover.js", "popover.css"] {
+    for name in DIST_FILES {
         let path: PathBuf = dir.join("dist").join(name);
         if !path.is_file() {
             panic!(

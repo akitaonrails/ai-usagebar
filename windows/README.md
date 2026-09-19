@@ -38,7 +38,9 @@ standalone ZIP installs.
 - A Rust toolchain (`rustc` 1.88+).
 - **Node.js 20+** on PATH — `cargo build --bin ai-usagebar-tray` runs
   `npm ci` / `npm run build` in `windows/popover/` (Vite emits
-  `dist/popover.js` + `dist/popover.css`, which the host `include_str!`s).
+  `dist/popover.js` + `dist/popover.css`; `build.rs` stages them into
+  `OUT_DIR`, which the host `include_str!`s — without Node it stages a
+  placeholder page instead, so `cargo build` still links).
 - At least one provider enabled in `%APPDATA%\ai-usagebar\config\config.toml`.
 
 ## Build & run

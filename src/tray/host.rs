@@ -38,9 +38,9 @@ use crate::config::{Config, UpdateMode};
 use crate::update::{CHECK_INTERVAL, Release, UpdateState, sweep_old};
 
 // Emitted by `windows/popover` (`npm run build` / `build.rs` on Windows).
-const INDEX_HTML: &str = include_str!("../../windows/popover/dist/index.html");
-const POPOVER_CSS: &str = include_str!("../../windows/popover/dist/popover.css");
-const POPOVER_JS: &str = include_str!("../../windows/popover/dist/popover.js");
+const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/index.html"));
+const POPOVER_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.css"));
+const POPOVER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.js"));
 
 /// Compact fixed width in logical px. The previous 320 px became visually
 /// oversized on scaled Windows displays.
