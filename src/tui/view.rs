@@ -275,7 +275,9 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
     let mut x = inner.x + 1; // after the leading muted space
     let mut first = true;
     for (target, label, selected) in entries {
-        let label_w = label.chars().count() as u16;
+        // Column width, not character count: a CJK glyph is two cells and a
+        // combining mark is zero, so a char count misplaces every later rect.
+        let label_w = crate::display::text_width(&label) as u16;
         if !first {
             spans.push(theme.muted("  "));
             x += 2;
@@ -793,6 +795,81 @@ mod tests {
         let (first, second) = (hit.nav_entries[0].1, hit.nav_entries[1].1);
         assert_eq!(first.x + first.width + 2, second.x);
         assert_eq!(first.y, second.y);
+    }
+
+    #[test]
+    fn top_nav_hit_rect_spans_cjk_label_columns() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // `漢` is one character but two terminal columns. A char-count width
+        // would make this entry's rect one cell too narrow, so its rightmost
+        // visible cell falls outside the clickable region.
+        let mut app = App::with_theme(
+            vec![TabId {
+                source: TabSource::Custom {
+                    id: "cjk".into(),
+                    name: "漢".into(),
+                    short_name: "漢".into(),
+                },
+                account: None,
+                desktop: false,
+            }],
+            Theme::default(),
+        );
+        app.tabs = vec![TabState::Loading];
+        app.overview = true;
+        app.vendor_box = crate::config::VendorBoxStyle::Navbar;
+        let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let hit = app.hit.borrow();
+        let tab = &hit.nav_entries[1];
+        let label = compact_tab_label(&app.tabs_meta[0]);
+        assert_eq!(tab.0, NavTarget::Tab(0));
+        // Marker (1) + gap (1) + label columns == clickable width.
+        assert_eq!(tab.1.width, crate::display::text_width(&label) as u16 + 2);
+        // The rightmost visible label cell is the last cell of the rect.
+        assert_eq!(
+            tab.1.x + tab.1.width - 1,
+            tab.1.x + 1 + crate::display::text_width(&label) as u16
+        );
+    }
+
+    #[test]
+    fn top_nav_hit_rect_does_not_steal_separator_for_combining_mark() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // `e` + combining acute is two characters but one terminal column. A
+        // char-count width would make this entry's rect one cell too wide and
+        // swallow a separator column that belongs to no entry.
+        let mut app = App::with_theme(
+            vec![TabId {
+                source: TabSource::Custom {
+                    id: "comb".into(),
+                    name: "e\u{0301}".into(),
+                    short_name: "e\u{0301}".into(),
+                },
+                account: None,
+                desktop: false,
+            }],
+            Theme::default(),
+        );
+        app.tabs = vec![TabState::Loading];
+        app.overview = true;
+        app.vendor_box = crate::config::VendorBoxStyle::Navbar;
+        let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let hit = app.hit.borrow();
+        let tab = &hit.nav_entries[1];
+        let label = compact_tab_label(&app.tabs_meta[0]);
+        assert_eq!(tab.0, NavTarget::Tab(0));
+        assert_eq!(tab.1.width, crate::display::text_width(&label) as u16 + 2);
+        // Column-aware width (1) means the rect ends exactly at the label, not
+        // into the two-column separator.
+        assert_eq!(tab.1.width, 3);
     }
 
     #[test]
