@@ -9,6 +9,25 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **macOS Grok Bot.** `[grokbot]` reads
+  `~/Library/Application Support/Grok Bot/sand-secrets.json` with the
+  Chromium OSCrypt key from the login Keychain item `Grok Bot Safe Storage`
+  / `Grok Bot Key` (1003 PBKDF2 rounds, the same scheme as Claude Desktop).
+  The Mac app stores `cursor-accounts` as a JSON string wrapping the object
+  Linux writes directly; both shapes parse. Windows still fails closed.
+  Omarchy and the Windows tray draw Grok Bot's own head-and-eyes logomark
+  (`grokbot.svg`) instead of sharing Grok's mark.
+
+### Fixed
+
+- **Grok Bot live `usagePercent` and on-demand `enabled`.**
+  `GetSandUsageStatus` has been observed sending a fractional JSON number
+  (`19.150778`) and `onDemandSettings.enabled: null`. The parser rounds the
+  percent and treats null as off, so a real macOS session no longer dies as
+  schema drift.
+
 ## [1.20.2] — 2026-09-19
 
 ### Fixed

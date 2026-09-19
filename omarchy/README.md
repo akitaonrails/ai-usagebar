@@ -137,7 +137,8 @@ code — the panel and tooltip remain the place that tells `Claude · work` from
 `Claude · personal`. With both toggles on the bar reads icon + `cld 29%`; with
 `showValue` off it is the icon and `cld`. `showAll` draws every visible
 entry as its own chip with a brand SVG (see [`icons/README.md`](icons/README.md)
-for source and licence). Grok and SuperGrok share a mark; Command Code has
+for source and licence). Grok and SuperGrok share a mark; Grok Bot has its
+own head-and-eyes logomark. Command Code has
 none and falls back to its three-letter code. A `[[custom]]` provider can set
 `brand = "<built-in slug>"` to use one of these marks; without it, the custom
 entry keeps its three-letter tag. A vertical bar has room for none of this and
