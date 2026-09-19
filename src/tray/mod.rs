@@ -30,6 +30,7 @@ mod tui_launch;
 // tests — even though only the Windows host calls it.
 mod update_flow;
 
+pub use browse::http_url;
 pub use icon::{Severity, tray_icon_rgba};
 pub use payload::{POLL_INTERVAL, host_payload, worst_severity, wrap_report};
 pub use strip::{

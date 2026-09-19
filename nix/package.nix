@@ -24,6 +24,10 @@ rustPlatform.buildRustPackage {
     fileset = lib.fileset.unions [
       ../Cargo.toml
       ../Cargo.lock
+      # The tray hosts `include_str!` the popover from OUT_DIR, which only
+      # exists when the build script runs; without it the darwin build has no
+      # `OUT_DIR` at all. On Linux it returns at once.
+      ../build.rs
       ../src
       ../tests
       ../config.example.toml
