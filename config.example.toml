@@ -9,8 +9,8 @@
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.
 # Valid: anthropic | anthropic_api | openai | copilot | zai | openrouter | deepseek
-#        | kimi | kilo | novita | moonshot | grok | supergrok | antigravity
-#        | cursor | minimax | kiro | nous | opencode-go | commandcode
+#        | kimi | kilo | novita | moonshot | grok | supergrok | grokbot | antigravity
+#        | cursor | minimax | kiro | nous | opencode-go | commandcode | ollama
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
 # open directly on a vendor's tab instead.
 # primary = "anthropic"
@@ -21,7 +21,44 @@
 # Default sidebar (falls back to navbar on narrow terminals).
 # vendor_box = "sidebar"
 
-# Windows tray popover only. Both keys are written by the popover's Settings
+# Custom providers: any HTTP endpoint that answers a GET with a JSON document,
+# authenticated with a static token. One [[custom]] table per provider; each
+# gets a TUI tab and a `usage --json` entry (`custom:<id>`) next to the
+# built-in vendors, so every frontend that reads `usage --json` shows it.
+# Values are read from the response with RFC 6901 JSON Pointers ("/a/b/0").
+# OAuth, token refresh, request bodies and pagination are NOT supported — a
+# static key in one header is the whole contract. Not in the Waybar widget's
+# `--vendor` list, the TUI Settings overlay, `[ui] primary`, or `vendors`.
+# [[custom]]
+# id = "mytool"                  # [a-z0-9][a-z0-9_-]{0,31}; unique; not a built-in name
+# name = "My Tool"               # display name, up to 48 chars; defaults to id
+# short_name = "myt"             # exactly 3 lowercase letters; unique across all vendors
+# brand = "deepseek"             # optional built-in slug for supported UIs;
+#                                # unset keeps the short_name tag
+# enabled = true
+# url = "https://api.example.com/v1/usage"  # https:// unless allow_http; no user:pass@
+# allow_http = false             # permit http:// (localhost / LAN only)
+# api_key_env = "MYTOOL_API_KEY" # env var checked first; "" = inline api_key only
+# api_key = "..."                # inline fallback; chmod 600 the file if you use it
+# auth_header = "Authorization"  # header that carries the key
+# auth_scheme = "Bearer"         # sent as "<scheme> <key>"; "" sends the bare key
+# plan = "Pro"                   # literal plan label...
+# plan_path = "/plan/name"       # ...or a pointer to one (wins over `plan`)
+# cache_ttl_secs = 60            # 10..=3600
+# [custom.headers]               # extra non-secret headers
+# X-Org = "org_123"
+# [[custom.metrics]]             # a percentage row; at least one metric or text is required
+# label = "Requests"
+# used = "/requests/used"        # used + limit → "used of limit" under the bar...
+# limit = "/requests/limit"
+# # percent = "/requests/pct"    # ...or a ready-made percentage instead of both
+# resets_at = "/requests/reset"  # RFC 3339 string, or epoch seconds / milliseconds
+# window_secs = 3600             # window length for pacing (>= 60)
+# [[custom.texts]]               # a free-text row
+# label = "Tier"
+# value = "/account/tier"        # string, number or boolean
+
+# Windows tray popover only. Every key is written by the popover's Settings
 # screen; editing them here works too.
 # [tray]
 # Global shortcut that opens and closes the popover from any window.
@@ -30,6 +67,9 @@
 # How often the tray re-reads every provider: 1, 5 or 10 minutes; the footer's
 # Refresh is always immediate.
 # refresh_minutes = 5
+# New releases: auto (download, verify and restart unattended) | notify
+# (banner with an Install button; default) | off (no background checks).
+# updates = "notify"
 
 # Optional, TUI-only monitor for local Claude Code session context. When
 # enabled, press `c` in ai-usagebar-tui. The scanner reads only bounded tails
@@ -163,6 +203,18 @@ enabled = false
 api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
 
+[ollama]
+# Disabled by default. Ollama Cloud quota comes from the same route the
+# official settings page uses — https://ollama.com/api/usage — not from the
+# local Ollama daemon (127.0.0.1:11434 has no quota route). Mint a key at
+# https://ollama.com/settings/keys; the CLI's Ed25519 registry key in
+# ~/.ollama is never read. The API reports usage as a fraction of the limit
+# and no plan label — `plan` below is only the tooltip’s display name.
+enabled = false
+api_key_env = "OLLAMA_API_KEY"  # checked first; if set + non-empty, used
+# api_key = "..."               # fallback; chmod 600 the file if you use it
+# plan = "pro"                  # label shown in tooltips; the API reports none
+
 [kimi]
 # Disabled by default. Two ways to authenticate:
 #   1. An existing Kimi Code CLI login: log in with `kimi` and just set
@@ -248,7 +300,9 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # extension is a fallback when the HTTPS billing endpoint is unavailable.
 [supergrok]
 # Disabled by default — enable after installing official Grok Build and running
-# `grok login` at least once.
+# `grok login` at least once. This is included *usage* (overall % plus
+# Build/Chat/Imagine slices from the billing document), not the `[grok]`
+# Management API prepaid dollar balance.
 enabled = false
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok, avoiding unrelated PATH
 # programs with the same name. Override only for a trusted official install.
@@ -258,14 +312,35 @@ enabled = false
 # auth_path = "/home/you/.grok/auth.json"
 # config_path = "/home/you/.grok/config.toml"
 
-# Google Antigravity. No credentials: usage is read from whichever local
-# Antigravity product is running (Antigravity 2.0, the `agy` CLI, or the IDE) —
-# all three share one account-wide quota. Set ANTIGRAVITY_LS_ADDRESS to
+[grokbot]
+# Disabled by default. Linux-only for now. The Grok Bot desktop app's weekly
+# included-usage pool, from its own Connect-RPC dashboard call — distinct from
+# `[grok]` (Management API prepaid dollars) and `[supergrok]` (Grok Build
+# subscription). No API key of its own: the credential is the app's own OAuth
+# session in ~/.config/Grok Bot/sand-secrets.json (Chromium OSCrypt `v10`
+# blobs, decrypted read-only; refreshed tokens persist only in ai-usagebar's
+# cache, never back to the app's file). Install the app and sign in to it.
+enabled = false
+# secrets_path = "~/.config/Grok Bot/sand-secrets.json"  # credential file
+
+# Google Antigravity. Usage is read from a usable local Antigravity product.
+# The `agy` CLI requires a CSRF token it does not publish, so it uses the saved
+# Google session fallback described below. All products share one account-wide
+# quota. Set ANTIGRAVITY_LS_ADDRESS to
 # "host:port" only if auto-discovery of that local server ever fails. It is
 # tried first, not exclusively: if that address is dead — a stale port after a
 # restart, say — discovery still runs and its ports are probed as fallbacks.
 [antigravity]
 enabled = false
+# With no local product — or when `agy` cannot supply its CSRF token — quota
+# comes from Google's Cloud Code API using the session Antigravity saved in the
+# OS keyring or in `~/.gemini/antigravity-cli/antigravity-oauth-token`.
+# Renewing that session needs Antigravity's own OAuth client (a public
+# installed-app client; it is not shipped in source). Without it the fallback
+# works only while the saved access token lasts (about an hour after the CLI
+# last used it).
+# oauth_client_id = "<client id>"
+# oauth_client_secret = "<client secret>"   # chmod 600 the file if you set this
 
 # Cursor. No API key: usage is read from the session token the Cursor IDE
 # already wrote to its own local state database after you signed in there —

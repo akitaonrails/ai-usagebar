@@ -10,7 +10,6 @@ export interface ResetEvent {
 }
 
 interface ResetPopoverProps {
-  available?: number;
   children: ReactNode;
   events: ResetEvent[];
   nowMs: number;
@@ -21,8 +20,7 @@ interface ResetPopoverProps {
  * Click-opened timeline of upcoming resets, matching OpenUsage's
  * RateLimitResetsDetail: numbered dots on a rail, exact time, countdown.
  */
-export function ResetPopover({ available, children, events, nowMs, timeFormat }: ResetPopoverProps) {
-  const count = available ?? events.length;
+export function ResetPopover({ children, events, nowMs, timeFormat }: ResetPopoverProps) {
   const sorted = events
     .filter((event) => Number.isFinite(event.atMs))
     .slice()
@@ -31,7 +29,7 @@ export function ResetPopover({ available, children, events, nowMs, timeFormat }:
     <Popover>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent onOpenAutoFocus={(event) => event.preventDefault()}>
-        <ResetTimeline count={count} events={sorted} nowMs={nowMs} timeFormat={timeFormat} />
+        <ResetTimeline events={sorted} nowMs={nowMs} timeFormat={timeFormat} />
         <PopoverArrow />
       </PopoverContent>
     </Popover>
@@ -39,21 +37,12 @@ export function ResetPopover({ available, children, events, nowMs, timeFormat }:
 }
 
 interface ResetTimelineProps {
-  count: number;
   events: ResetEvent[];
   nowMs: number;
   timeFormat?: TimeFormat;
 }
 
-export function ResetTimeline({ count, events, nowMs, timeFormat }: ResetTimelineProps) {
-  if (events.length === 0 && count > 0) {
-    return (
-      <div className="flex flex-col items-center gap-2 py-2 text-center">
-        <span className="text-[length:var(--sz-support)] font-medium">{count} available</span>
-        <span className="text-[11px] text-label-2">Expiry times unavailable</span>
-      </div>
-    );
-  }
+export function ResetTimeline({ events, nowMs, timeFormat }: ResetTimelineProps) {
   if (events.length === 0) {
     return (
       <div className="py-2 text-center text-[length:var(--sz-support)] text-label-2">

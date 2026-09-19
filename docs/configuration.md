@@ -20,9 +20,9 @@ ai-usagebar-tui --config ./config.test.toml
 # Which vendor the widget shows when --vendor is omitted, AND which tab
 # is selected when the TUI opens. Defaults to anthropic when not set.
 # Only a vendor that is enabled can be primary.
-# primary = "anthropic"   # anthropic | anthropic_api | openai | copilot
+# primary = "anthropic"   # anthropic | anthropic_api | openai | copilot | ollama
 #                         # | zai | openrouter | deepseek | kimi | kilo | novita
-#                         # | moonshot | grok | supergrok | antigravity | cursor
+#                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
 
 [context]
@@ -103,6 +103,13 @@ enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "NOVITA_API_KEY"
 # api_key = "..."          # used if NOVITA_API_KEY is unset; chmod 600 the file!
 
+[ollama]
+# Disabled by default; enable after minting a key at
+# https://ollama.com/settings/keys (Bearer for https://ollama.com/api/usage).
+enabled = true
+api_key_env = "OLLAMA_API_KEY"
+# api_key = "..."          # used if OLLAMA_API_KEY is unset; chmod 600 the file!
+
 [moonshot]
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "MOONSHOT_API_KEY"
@@ -119,6 +126,8 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 
 [supergrok]
 enabled = true             # disabled by default; enable once you've run `grok login`
+# Included usage from Grok Build billing (overall % plus productUsage slices).
+# Distinct from `[grok]`, which is Management API prepaid dollars.
 # No API key of its own: billing and banked resets use the `key` already in
 # its auth.json (read-only, sent in an Authorization header, never copied or
 # rewritten). Billing is Grok Build's documented HTTPS endpoint, or its ACP
@@ -130,6 +139,30 @@ enabled = true             # disabled by default; enable once you've run `grok l
 # auth.json is also read for its billing `key`. Neither is copied or written.
 # auth_path = "/home/you/.grok/auth.json"
 # config_path = "/home/you/.grok/config.toml"
+
+[grokbot]
+enabled = false            # disabled by default; enable after signing in to the app
+# Grok Bot desktop app's weekly included-usage pool (Linux-only for now).
+# Distinct from `[grok]` (Management API prepaid dollars) and `[supergrok]`
+# (Grok Build subscription). No API key: the credential is the app's own
+# session in ~/.config/Grok Bot/sand-secrets.json, read-only. Refreshed
+# tokens persist only in ai-usagebar's cache, never back to the app's file.
+# secrets_path = "~/.config/Grok Bot/sand-secrets.json"
+
+[antigravity]
+enabled = false            # opt in after signing in with Antigravity
+# Antigravity is read locally first: the running desktop product or `agy`
+# language server supplies quota over its loopback RPC. When that source is
+# unavailable — including `agy` sessions whose CSRF token is not published —
+# ai-usagebar uses the saved Google session and the Cloud Code API instead.
+# The session is read-only from either the OS keyring or the CLI file:
+# ~/.gemini/antigravity-cli/antigravity-oauth-token
+# oauth_client_id = "<public installed-app client id>"
+# oauth_client_secret = "<public installed-app client secret>"
+# The OAuth client is needed only to refresh an expired saved session.
+#
+# Set ANTIGRAVITY_LS_ADDRESS=host:port only when automatic loopback discovery
+# fails; discovered ports are still tried after this address.
 
 [cursor]
 enabled = true             # disabled by default; enable once you've signed in to Cursor
@@ -177,3 +210,12 @@ Create the second login with `CODEX_HOME=~/.codex-work codex login` and point
 `codex_auth_path` at the file it writes. Select it with `--account work`; each
 account caches separately under `~/.cache/ai-usagebar/openai/<label>`. The
 singular `codex_auth_path` remains the default account and needs no migration.
+
+### Explicitly enable a provider
+
+Run `ai-usagebar settings enable anthropic` to set `[anthropic].enabled = true`,
+including when it was explicitly false. This is an explicit opt-in; automatic
+detection continues to respect disabled providers. The command preserves other
+settings, comments, and credentials, and supports `--config PATH` to edit an
+existing alternate configuration. It does not sign in or select a primary
+provider. Successful writes return `{"ok":true}`; failures exit nonzero.

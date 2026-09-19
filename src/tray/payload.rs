@@ -14,8 +14,8 @@ use crate::display::sanitize_untrusted_field;
 pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Everything the host knows that is not part of the usage report: its own
-/// version, the Run-key state, the registered shortcut and the poll interval.
-/// One struct so a new fact does not grow `wrap_report`'s arity.
+/// version, the Run-key state, the registered shortcut and the update
+/// machinery. One struct so a new fact does not grow `wrap_report`'s arity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostFacts {
     /// Seconds between full reports; `[tray] refresh_minutes` × 60.
@@ -25,6 +25,25 @@ pub struct HostFacts {
     /// Why the last `set-shortcut` was refused (already taken, unparsable), or empty.
     pub shortcut_error: String,
     pub startup_enabled: bool,
+    /// Latest known release when it is newer than `version`.
+    pub update: Option<UpdateFact>,
+    /// Wall-clock ms of the last successful or failed release check, 0 = never.
+    pub update_checked_at: i64,
+    /// "auto" | "notify" | "off".
+    pub updates: String,
+    pub version: String,
+}
+
+/// State of a newer release as the popover renders it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpdateFact {
+    /// Human-readable reason when `state` is "failed", or empty.
+    pub error: String,
+    /// "checking" | "available" | "downloading" | "installing" | "failed".
+    pub state: String,
+    /// Release page for the human; never opened by the host itself.
+    pub url: String,
+    /// Bare "X.Y.Z".
     pub version: String,
 }
 
@@ -32,6 +51,7 @@ impl HostFacts {
     pub fn new(version: &str, startup_enabled: bool) -> Self {
         Self {
             startup_enabled,
+            updates: "notify".into(),
             version: version.into(),
             ..Self::default()
         }
@@ -45,6 +65,9 @@ impl Default for HostFacts {
             shortcut: String::new(),
             shortcut_error: String::new(),
             startup_enabled: false,
+            update: None,
+            update_checked_at: 0,
+            updates: String::new(),
             version: String::new(),
         }
     }
@@ -70,6 +93,14 @@ pub fn wrap_report(
     let poll_ms = i64::try_from(facts.refresh_secs)
         .unwrap_or(i64::MAX / 1_000)
         .saturating_mul(1_000);
+    let update = facts.update.as_ref().map(|u| {
+        json!({
+            "version": sanitize_untrusted_field(&u.version),
+            "url": sanitize_untrusted_field(&u.url),
+            "state": u.state,
+            "error": sanitize_untrusted_field(&u.error),
+        })
+    });
     let mut payload = json!({
         "version": facts.version,
         "generated_at": now_ms,
@@ -79,6 +110,9 @@ pub fn wrap_report(
         "os": host_os(),
         "shortcut": facts.shortcut,
         "shortcut_error": sanitize_untrusted_field(&facts.shortcut_error),
+        "updates": facts.updates,
+        "update": update,
+        "update_checked_at": facts.update_checked_at,
         "host_error": host_error.map(sanitize_untrusted_field),
         "primary": Value::Null,
         "entries": [],
@@ -93,7 +127,7 @@ pub fn wrap_report(
                     obj.insert("primary".into(), primary.clone());
                 }
                 if let Some(entries) = map.get("entries") {
-                    obj.insert("entries".into(), entries.clone());
+                    obj.insert("entries".into(), with_sign_in_hints(entries));
                 }
             }
             payload
@@ -105,6 +139,40 @@ pub fn wrap_report(
             payload
         }
     }
+}
+
+/// Attach each entry's sign-in sentence from [`VendorId::sign_in_hint`].
+///
+/// The popover needs a "how do I fix this?" line on an error card. It must not
+/// keep its own table for that: a JS object literal silently omits a provider
+/// nobody remembered, while the Rust match cannot compile without one. The
+/// entry id is `vendor` or `vendor@account`, so the slug is the part before
+/// `@`; an id that matches no vendor is left without a hint rather than guessed.
+fn with_sign_in_hints(entries: &Value) -> Value {
+    let Some(list) = entries.as_array() else {
+        return entries.clone();
+    };
+    Value::Array(
+        list.iter()
+            .map(|entry| {
+                let mut entry = entry.clone();
+                let slug = entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| id.split('@').next().unwrap_or(id).to_ascii_lowercase());
+                let hint = slug.and_then(|slug| {
+                    crate::vendor::VendorId::all()
+                        .iter()
+                        .find(|v| v.slug() == slug)
+                        .map(|v| v.sign_in_hint())
+                });
+                if let (Some(hint), Some(obj)) = (hint, entry.as_object_mut()) {
+                    obj.insert("sign_in".into(), json!(hint));
+                }
+                entry
+            })
+            .collect(),
+    )
 }
 
 pub fn host_payload(value: &Value) -> String {
@@ -155,6 +223,53 @@ pub fn worst_severity(payload: &Value) -> Severity {
 
 #[cfg(test)]
 mod tests {
+
+    /// The popover renders "how do I fix this?" on an error card. That sentence
+    /// must come from the host: the frontend kept its own table first, and it
+    /// disagreed with `VendorId` for five of eight providers before shipping.
+    #[test]
+    fn every_entry_carries_its_sign_in_hint_from_the_vendor() {
+        let report = r#"{"primary":"anthropic","entries":[
+            {"id":"anthropic","status":"error","error":"not signed in"},
+            {"id":"openai@work","status":"error","error":"not signed in"},
+            {"id":"cursor","status":"ready"},
+            {"id":"custom:mytool","status":"ready"}
+        ]}"#;
+        let payload = wrap_report(report, &facts("1.0.0", false), 0, None);
+        let entries = payload["entries"].as_array().expect("entries");
+
+        assert_eq!(
+            entries[0]["sign_in"],
+            json!(crate::vendor::VendorId::Anthropic.sign_in_hint())
+        );
+        // "vendor@account" resolves on the vendor half.
+        assert_eq!(
+            entries[1]["sign_in"],
+            json!(crate::vendor::VendorId::Openai.sign_in_hint())
+        );
+        // A vendor that has no CLI login still says how to sign in.
+        assert_eq!(
+            entries[2]["sign_in"],
+            json!(crate::vendor::VendorId::Cursor.sign_in_hint())
+        );
+        // An id that is not a built-in vendor gets no invented hint.
+        assert!(entries[3].get("sign_in").is_none(), "{:?}", entries[3]);
+    }
+
+    /// Every id `usage --json` can emit must resolve, or the popover shows a
+    /// generic line for a provider we do know how to sign in.
+    #[test]
+    fn every_vendor_slug_resolves_to_a_hint() {
+        for vendor in crate::vendor::VendorId::all() {
+            let report = format!(
+                r#"{{"entries":[{{"id":"{}","status":"error","error":"x"}}]}}"#,
+                vendor.slug()
+            );
+            let payload = wrap_report(&report, &facts("1.0.0", false), 0, None);
+            let hint = payload["entries"][0]["sign_in"].as_str().unwrap_or("");
+            assert!(!hint.is_empty(), "{} has no sign-in hint", vendor.slug());
+        }
+    }
     use super::*;
 
     fn sample_report() -> String {
@@ -230,18 +345,27 @@ mod tests {
         );
         assert_eq!(payload["shortcut"], "");
         assert_eq!(payload["shortcut_error"], "");
-        assert!(payload.get("updates").is_none());
-        assert!(payload.get("update").is_none());
+        assert_eq!(payload["updates"], "notify");
+        assert!(payload["update"].is_null());
+        assert_eq!(payload["update_checked_at"], 0);
         assert!(payload["host_error"].is_null());
         assert_eq!(payload["primary"], "anthropic");
         assert_eq!(payload["entries"][0]["short_name"], "cld");
     }
 
     #[test]
-    fn wrap_carries_shortcut_facts_sanitized() {
+    fn wrap_carries_shortcut_and_update_facts_sanitized() {
         let mut host = facts("1.10.0", false);
         host.shortcut = "Ctrl+Shift+U".into();
         host.shortcut_error = "already taken\u{1b}[31m".into();
+        host.updates = "auto".into();
+        host.update_checked_at = 42;
+        host.update = Some(UpdateFact {
+            error: String::new(),
+            state: "available".into(),
+            url: "https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.11.0".into(),
+            version: "1.11.0".into(),
+        });
         let payload = wrap_report(&sample_report(), &host, 0, None);
         assert_eq!(payload["shortcut"], "Ctrl+Shift+U");
         assert!(
@@ -250,7 +374,11 @@ mod tests {
                 .unwrap()
                 .contains('\u{1b}')
         );
-        assert_eq!(payload["shortcut_error"], "already taken[31m");
+        assert_eq!(payload["updates"], "auto");
+        assert_eq!(payload["update_checked_at"], 42);
+        assert_eq!(payload["update"]["version"], "1.11.0");
+        assert_eq!(payload["update"]["state"], "available");
+        assert_eq!(payload["update"]["error"], "");
     }
 
     #[test]

@@ -10,6 +10,8 @@
 /** @typedef {import("./lib/types").RowPrefs} RowPrefs */
 /** @typedef {import("./lib/types").ExplainedError} ExplainedError */
 /** @typedef {import("./lib/types").Pace} Pace */
+/** @typedef {import("./lib/types").UpdateInfo} UpdateInfo */
+/** @typedef {import("./lib/types").UpdateMode} UpdateMode */
 /** @typedef {import("./lib/types").TimeFormat} TimeFormat */
 
 export const LAYOUT_KEY = "aiub.tray.layout.v1";
@@ -41,6 +43,9 @@ export function emptyPayload(hostError) {
     refreshMinutes: 5,
     shortcut: "",
     shortcutError: "",
+    updates: "notify",
+    update: null,
+    updateCheckedAt: 0,
   };
 }
 
@@ -74,6 +79,9 @@ function normalizePayload(parsed) {
     refreshMinutes: normalizeRefreshMinutes(parsed.refresh_minutes),
     shortcut: clean(parsed.shortcut, 64),
     shortcutError: clean(parsed.shortcut_error, 300),
+    updates: normalizeUpdateMode(parsed.updates),
+    update: normalizeUpdate(parsed.update),
+    updateCheckedAt: finiteNumber(parsed.update_checked_at),
   };
 }
 
@@ -103,6 +111,29 @@ function normalizeRefreshMinutes(value) {
   return REFRESH_MINUTES.indexOf(minutes) < 0 ? 5 : minutes;
 }
 
+/** @returns {UpdateMode} */
+function normalizeUpdateMode(value) {
+  return value === "auto" || value === "off" ? value : "notify";
+}
+
+const UPDATE_STATES = ["checking", "available", "downloading", "installing", "failed"];
+const UPDATE_URL_PREFIX = "https://github.com/";
+
+// The host's in-flight update, if any. Only a GitHub URL survives: it is the
+// one origin the release workflow publishes to, and the banner opens it.
+/** @returns {UpdateInfo|null} */
+function normalizeUpdate(raw) {
+  if (!isPlainObject(raw)) return null;
+  const state = String(raw.state || "");
+  const url = clean(raw.url, 400);
+  return {
+    error: clean(raw.error, 300),
+    state: UPDATE_STATES.indexOf(state) < 0 ? "available" : state,
+    url: url.startsWith(UPDATE_URL_PREFIX) ? url : "",
+    version: clean(raw.version, 32),
+  };
+}
+
 function normalizeEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
   const id = clean(raw.id, 180).trim();
@@ -119,29 +150,31 @@ function normalizeEntry(raw) {
     displayName: clean(raw.display_name || raw.name, 240),
     shortName: clean(raw.short_name, 24),
     plan: clean(raw.plan, 240),
+    resetCredits: normalizeResetCredits(raw.reset_credits),
     status: error !== "" || raw.status === "error" ? "error" : "ready",
     error,
     stale: raw.stale === true,
+    // How to sign this provider in, from VendorId::sign_in_hint on the host.
+    // Deliberately not a table in this file; see signInHint.
+    signIn: clean(raw.sign_in, 200),
     sections,
-    resetCredits: normalizeResetCredits(raw.reset_credits),
   };
 }
 
-/** @returns {import("./lib/types").ResetCredits | null} */
-export function normalizeResetCredits(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const available = Math.max(0, Math.round(Number(raw.available) || 0));
+function normalizeResetCredits(raw) {
+  if (!isPlainObject(raw)) return null;
+  const available = Math.max(0, Math.min(10_000, Math.floor(finiteNumber(raw.available))));
+  if (available === 0) return null;
   const source = Array.isArray(raw.credits) ? raw.credits : [];
   const credits = [];
-  for (let i = 0; i < source.length && i < 24; i++) {
-    const item = source[i];
-    if (!item || typeof item !== "object") continue;
-    const expiresAt = clean(item.expires_at, 80);
-    if (!expiresAt) continue;
-    credits.push({ title: clean(item.title, 240), expiresAt });
+  for (let i = 0; i < source.length && i < 64; i++) {
+    if (!isPlainObject(source[i])) continue;
+    credits.push({
+      title: clean(source[i].title, 120),
+      expiresAt: clean(source[i].expires_at, 80),
+    });
   }
-  if (available === 0 && credits.length === 0) return null;
-  return { available: available || credits.length, credits };
+  return { available, credits };
 }
 
 /** Blue > 7 days, yellow within a week, red within 48 hours — OpenUsage bands. */
@@ -311,6 +344,54 @@ export function formatResetExact(atMs, nowMs, opts) {
   return day + " at " + time;
 }
 
+// Banked reset credits always show a calendar date, even when they expire
+// today or tomorrow: unlike a rolling quota reset, each row is an inventory
+// item and the stable date makes neighboring expiries easy to compare.
+export function formatResetCreditDate(value, opts) {
+  const atMs = typeof value === "number" ? value : Date.parse(String(value || ""));
+  if (!Number.isFinite(atMs)) return "Date unavailable";
+  // `undefined` asks Intl for the WebView/Windows locale. Tests can still
+  // inject a locale explicitly to keep their expected strings deterministic.
+  const locale = opts && opts.locale ? opts.locale : undefined;
+  const timeZone = opts && opts.timeZone ? opts.timeZone : undefined;
+  const timeFormat = opts && opts.timeFormat;
+  const at = new Date(atMs);
+  const dayOptions = { month: "short", day: "numeric" };
+  const timeOptions = { hour: "numeric", minute: "2-digit" };
+  if (timeZone) {
+    dayOptions.timeZone = timeZone;
+    timeOptions.timeZone = timeZone;
+  }
+  if (timeFormat === "12") timeOptions.hour12 = true;
+  else if (timeFormat === "24") timeOptions.hourCycle = "h23";
+  const day = new Intl.DateTimeFormat(locale, dayOptions).format(at).replace(/ /g, " ");
+  const time = new Intl.DateTimeFormat(locale, timeOptions).format(at).replace(/ /g, " ");
+  return day + " at " + time;
+}
+
+export function resetCreditDetails(row, nowMs, opts) {
+  if (!row || row.kind !== "resetCredits") return { items: [], hidden: 0 };
+  const available = Math.max(0, Math.floor(finiteNumber(row.available)));
+  const credits = Array.isArray(row.credits) ? row.credits.slice() : [];
+  credits.sort((a, b) => {
+    const left = Date.parse(String(a && a.expiresAt || ""));
+    const right = Date.parse(String(b && b.expiresAt || ""));
+    return (Number.isNaN(left) ? Infinity : left) - (Number.isNaN(right) ? Infinity : right);
+  });
+  const shown = Math.min(available, 24);
+  const items = [];
+  for (let index = 0; index < shown; index++) {
+    const credit = credits[index] || {};
+    const atMs = Date.parse(String(credit.expiresAt || ""));
+    items.push({
+      date: formatResetCreditDate(credit.expiresAt, opts),
+      remaining: Number.isNaN(atMs) ? "—" : atMs <= nowMs ? "expired" : formatDuration(atMs - nowMs),
+      title: String(credit.title || ""),
+    });
+  }
+  return { items, hidden: Math.max(0, available - shown) };
+}
+
 function parseResetAt(row) {
   if (!row || !row.resetAt) return NaN;
   return Date.parse(row.resetAt);
@@ -436,7 +517,7 @@ export function projectCards(payload, nowMs) {
     let warning = null;
     for (const section of entry.sections || []) {
       if (isWarningSection(section)) {
-        const explained = explainError(section.value || section.label, entry.id);
+        const explained = explainError(section.value || section.label, entry);
         warning = { title: explained.title, hint: explained.hint, raw: shortenDiagnostic(section.value || section.label) };
         continue;
       }
@@ -465,23 +546,23 @@ export function projectCards(payload, nowMs) {
         row.key = rowKey(row);
         rows.push(row);
       } else if (section.type === "block" && section.body && section.body.length) {
-        if (section.label === "Reset credits") {
-          if (entry.resetCredits && !rows.some((row) => row.kind === "resets")) {
-            rows.push(resetsRow(entry.resetCredits));
-          }
-          continue;
-        }
-        const row = { kind: "block", label: section.label, body: section.body };
+        const resetCredits = entry.resetCredits;
+        const isResetCredits = resetCredits && /^reset credits$/i.test(section.label || "");
+        const row = isResetCredits
+          ? resetCreditsRow(resetCredits)
+          : { kind: "block", label: section.label, body: section.body };
         row.key = rowKey(row);
         rows.push(row);
       }
     }
-    if (entry.resetCredits && !rows.some((row) => row.kind === "resets")) {
-      rows.push(resetsRow(entry.resetCredits));
+    if (entry.resetCredits && !rows.some((row) => row.kind === "resetCredits")) {
+      const row = resetCreditsRow(entry.resetCredits);
+      row.key = rowKey(row);
+      rows.push(row);
     }
     dropRedundantResetRows(rows);
     dedupeRowKeys(rows);
-    const explained = explainError(entry.error, entry.id);
+    const explained = explainError(entry.error, entry);
     cards.push({
       id: entry.id,
       title: entry.displayName || entry.shortName || entry.id,
@@ -499,21 +580,26 @@ export function projectCards(payload, nowMs) {
   return cards;
 }
 
-// SuperGrok names every meter "<Window> Build credits"; the card title already
-// says what is being counted, so the row keeps only the window.
-function resetsRow(credits) {
-  const row = {
-    kind: "resets",
+// The banked-reset row the host's "Reset credits" block becomes; also appended
+// when the report carries `reset_credits` but no such block.
+function resetCreditsRow(credits) {
+  return {
+    kind: "resetCredits",
     label: "Rate Limit Resets",
-    available: Math.max(0, Number(credits.available) || 0),
+    available: credits.available,
+    credits: credits.credits,
   };
-  row.key = rowKey(row);
-  return row;
 }
 
+// SuperGrok names the overall meter "<Window> usage" (older reports used
+// "<Window> Build credits"). The card title already says SuperGrok, so the
+// row keeps only the window. Product slices (Grok Build, Grok Chat, …) keep
+// their full labels.
 function metricLabel(entryId, label) {
   if (vendorSlug(entryId) !== "supergrok") return label;
-  return String(label || "").replace(/\s+Build credits$/i, "");
+  return String(label || "")
+    .replace(/\s+Build credits$/i, "")
+    .replace(/\s+usage$/i, "");
 }
 
 const PROVIDER_LABEL_PREFIX = {
@@ -902,7 +988,7 @@ export function mergeVisibleOrder(fullOrder, visibleOrder) {
 // Only "No API key" counts — an expired sign-in means a credential exists.
 export function lacksCredentials(entry) {
   if (!entry || typeof entry !== "object") return false;
-  return explainError(entry.error, entry.id).title === "No API key";
+  return explainError(entry.error, entry).title === "No API key";
 }
 
 // Runs once, on the first payload that carries entries. A host error (no
@@ -1079,17 +1165,6 @@ export function moveRowToList(prefs, key, list, beforeKey) {
   return next;
 }
 
-const SIGN_IN_HINT = {
-  anthropic: "Run claude in a terminal, then Refresh.",
-  openai: "Run codex login in a terminal, then Refresh.",
-  copilot: "Run gh auth login in a terminal, then Refresh.",
-  cursor: "Sign in to the Cursor app, then Refresh.",
-  antigravity: "Sign in with agy, then Refresh.",
-  kiro: "Sign in with kiro-cli, then Refresh.",
-  grok: "Sign in with grok, then Refresh.",
-  supergrok: "Sign in with grok, then Refresh.",
-};
-
 function vendorSlug(entryId) {
   return String(entryId || "").split("@")[0].toLowerCase();
 }
@@ -1163,8 +1238,13 @@ export function initialsGlyph(title) {
   return (text.length >= 2 ? text.slice(0, 2) : text.charAt(0) || "?").toUpperCase();
 }
 
-function signInHint(entryId) {
-  return SIGN_IN_HINT[vendorSlug(entryId)] || "Open TUI → Settings to sign in.";
+// The host attaches `sign_in` per entry from VendorId::sign_in_hint, so this
+// file keeps no provider table: one that lived here disagreed with Rust for
+// five of eight providers before it shipped, and a JS object cannot fail to
+// compile when a provider is added.
+function signInHint(entry) {
+  const hint = entry && typeof entry === "object" ? entry.signIn : undefined;
+  return (typeof hint === "string" && hint.trim()) || "Open TUI → Settings to sign in.";
 }
 
 function joinError(explained) {
@@ -1198,7 +1278,7 @@ const REFRESH = { cmd: "refresh", label: "Refresh" };
 // can offer (a host command) when there is one. Errors whose fix is a terminal
 // command (sign-in) or waiting (429 backoff) carry no action.
 /** @returns {ExplainedError} */
-export function explainError(text, entryId) {
+export function explainError(text, entry) {
   const raw = clean(text, 1200);
   if (raw === "") return { title: "", hint: "" };
   if (/no vendors enabled/i.test(raw)) {
@@ -1224,7 +1304,7 @@ export function explainError(text, entryId) {
     };
   }
   if (/HTTP 401|HTTP 403|authentication rejected|not signed in|token refresh failed|re-auth|run `claude`|run `codex/i.test(raw)) {
-    return { title: "Sign-in expired", hint: signInHint(entryId) };
+    return { title: "Sign-in expired", hint: signInHint(entry) };
   }
   if (/HTTP 5\d\d|schema mismatch/i.test(raw)) {
     return { title: "Provider is unavailable", hint: "Try Refresh in a bit.", action: REFRESH };
@@ -1263,14 +1343,66 @@ function isWarningSection(section) {
   return section.type === "text" && (section.label === "Warning" || /schema drift/i.test(section.label));
 }
 
-export function friendlyError(text, entryId) {
-  return joinError(explainError(text, entryId));
+export function friendlyError(text, entry) {
+  return joinError(explainError(text, entry));
 }
 
 export function nextUpdateLabel(payload, nowMs) {
   const remaining = (Number(payload.nextRefreshAt) || 0) - (Number(nowMs) || 0);
   if (!(remaining > 0)) return "Updating…";
   return "Next update in " + formatDuration(remaining);
+}
+
+// "just now", "5m ago", "2h ago", "3d ago".
+export function formatAgo(milliseconds) {
+  const ms = Number(milliseconds) || 0;
+  if (ms < 60_000) return "just now";
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return minutes + "m ago";
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + "h ago";
+  return Math.floor(hours / 24) + "d ago";
+}
+
+// The Settings row under the update-mode picker.
+export function updateStatusLabel(payload, nowMs) {
+  const update = payload && payload.update;
+  if (!update) {
+    const checkedAt = finiteNumber(payload && payload.updateCheckedAt);
+    if (checkedAt === 0) return "Not checked yet";
+    return "Up to date · checked " + formatAgo((Number(nowMs) || 0) - checkedAt);
+  }
+  const version = update.version ? "v" + String(update.version).replace(/^v/i, "") : "";
+  switch (update.state) {
+    case "checking":
+      return "Checking…";
+    case "downloading":
+      return "Downloading " + (version || "update") + "…";
+    case "installing":
+      return "Installing…";
+    case "failed":
+      return update.error ? "Couldn't update: " + update.error : "Couldn't update";
+    default:
+      return (version || "An update") + " available";
+  }
+}
+
+// The dashboard shows an update banner while the host has one in hand.
+// A check in flight is Settings feedback, not something to install.
+export function updateBannerPending(payload) {
+  const update = payload && payload.update;
+  return !!update && update.state !== "checking";
+}
+
+export function updateModeLabel(mode) {
+  switch (normalizeUpdateMode(mode)) {
+    case "auto":
+      return "Automatic";
+    case "off":
+      return "Off";
+    default:
+      return "Notify me";
+  }
 }
 
 // Physical-key names for the shortcut recorder, keyed by `KeyboardEvent.code`.
@@ -1368,4 +1500,3 @@ export function sendCommand(cmd, extra) {
     window.ipc.postMessage(msg);
   }
 }
-

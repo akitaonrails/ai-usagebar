@@ -4,7 +4,7 @@
 // bundle. Instead, the app's `@main` entry point is guarded by
 // `#if !SWIFT_TEST_HARNESS`, and this file — compiled together with the app in
 // one module — supplies its own `@main TestRunner`, calling the app's helpers
-// (arcAngles, tomlValueInText, defaultEnabled, parse) directly.
+// (arcAngles, tomlValueInText, parse) directly.
 //
 // Run:  ./macos/run-tests.sh
 // Gate: pure-logic regression coverage for the review fixes.
@@ -81,31 +81,31 @@ func testRingArc() {
     assertEqual(zero.startDeg, zero.endDeg, "zero-length segment is degenerate")
 }
 
-// ─── TOML enabled / api_key_env parsing ──────────────────────────────────
+// ─── TOML parsing: booleans, api_key, arrays ─────────────────────────────
 func testTomlParsing() {
-    print("TOML enabled + api_key_env")
+    print("TOML booleans, keys and arrays")
     // Bare false.
     let bareFalse = """
-    [deepseek]
-    enabled = false
+    [anthropic]
+    show_default_account = false
     """
-    assertEqual(tomlValueInText(bareFalse, section: "deepseek", key: "enabled"), "false",
-                "bare enabled = false")
+    assertEqual(tomlValueInText(bareFalse, section: "anthropic", key: "show_default_account"), "false",
+                "bare show_default_account = false")
 
     // Bare true.
     let bareTrue = """
-    [kimi]
-    enabled = true
+    [openrouter]
+    show_default_account = true
     """
-    assertEqual(tomlValueInText(bareTrue, section: "kimi", key: "enabled"), "true",
-                "bare enabled = true")
+    assertEqual(tomlValueInText(bareTrue, section: "openrouter", key: "show_default_account"), "true",
+                "bare show_default_account = true")
 
     // Inline comment on a bare boolean.
     let commented = """
-    [kilo]
-    enabled = false  # opt-in balance vendor
+    [anthropic]
+    show_default_account = true  # per-account usage row
     """
-    assertEqual(tomlValueInText(commented, section: "kilo", key: "enabled"), "false",
+    assertEqual(tomlValueInText(commented, section: "anthropic", key: "show_default_account"), "true",
                 "bare bool with inline comment")
 
     // Quoted string still works (api_key).
@@ -145,19 +145,19 @@ func testTomlParsing() {
     [anthropic]
     credentials_path = "/tmp/creds.json"
     """
-    assertNil(tomlValueInText(omitted, section: "anthropic", key: "enabled"),
-              "omitted enabled is nil")
+    assertNil(tomlValueInText(omitted, section: "anthropic", key: "show_default_account"),
+              "omitted key is nil")
 
     // Section scoping: a key under another section must not leak.
     let scoped = """
     [openrouter]
-    enabled = true
+    show_default_account = true
 
     [deepseek]
     api_key = "ds-key"
     """
-    assertNil(tomlValueInText(scoped, section: "deepseek", key: "enabled"),
-              "enabled does not leak across sections")
+    assertNil(tomlValueInText(scoped, section: "deepseek", key: "show_default_account"),
+              "key does not leak across sections")
     assertEqual(tomlValueInText(scoped, section: "deepseek", key: "api_key"), "ds-key",
                 "api_key read from the right section")
 
@@ -190,17 +190,6 @@ func testTomlParsing() {
     """
     assertNil(tomlStringArrayInText(malformedOverview, section: "ui", key: "overview_vendors"),
               "malformed string array rejected")
-}
-
-// ─── Rust enabled defaults (src/config.rs) ───────────────────────────────
-func testDefaultEnabled() {
-    print("Rust enabled defaults")
-    for id in ["anthropic", "openai", "zai", "openrouter"] {
-        assertEqual(defaultEnabled(id), true, "\(id) defaults enabled")
-    }
-    for id in ["deepseek", "kimi", "kilo", "novita", "moonshot", "grok", "anthropic_api", "cursor", "antigravity"] {
-        assertEqual(defaultEnabled(id), false, "\(id) defaults disabled (opt-in)")
-    }
 }
 
 // ─── Parser: balances per vendor, no fake 0% rows ────────────────────────
@@ -372,6 +361,142 @@ func testParserBalances() {
     // A non-Cursor vendor keeps the default time-window labels.
     assertEqual(cld?.sessionLabel, "Session", "anthropic keeps the Session label")
     assertEqual(cld?.weeklyTag, "7d", "anthropic keeps the 7d tag")
+
+    let copilot = snapshot(FORMAT, vendor: "copilot",
+                           fields: fields(through: 49, set: [
+                              0: "Copilot Business", 1: "25", 2: "20d", 3: "50", 4: "20d", 16: "cop",
+                              38: "10", 39: "20d"
+                           ]))
+    assertEqual(copilot?.hasUsageWindows, true, "copilot shows windows")
+    assertNil(copilot?.creditBalance, "copilot has no balance")
+    assertEqual(copilot?.session?.pct, 25, "copilot premium pct")
+    assertEqual(copilot?.session?.unlimited, false, "copilot premium finite")
+    assertEqual(copilot?.sessionLabel, "Premium", "copilot premium label")
+    assertEqual(copilot?.sessionTag, "pm", "copilot premium tag")
+    assertEqual(copilot?.weekly?.pct, 50, "copilot chat pct")
+    assertEqual(copilot?.weekly?.unlimited, false, "copilot chat finite")
+    assertEqual(copilot?.weeklyLabel, "Chat", "copilot chat label")
+    assertEqual(copilot?.weeklyTag, "ch", "copilot chat tag")
+    assertEqual(copilot?.sonnet?.pct, 10, "copilot completions pct")
+    assertEqual(copilot?.sonnet?.unlimited, false, "copilot completions finite")
+    assertEqual(copilot?.sonnetLabel, "Completions", "copilot completions label")
+
+    let copilotUnlimited = snapshot(FORMAT, vendor: "copilot",
+                                    fields: fields(through: 49, set: [
+                                       0: "individual", 1: "11", 2: "22d 3h", 3: "0", 4: "22d 3h", 16: "ghc",
+                                       38: "0", 39: "22d 3h",
+                                       47: "unlimited", 48: "unlimited", 49: "200"
+                                    ]))
+    assertEqual(copilotUnlimited?.hasUsageWindows, true, "copilot individual shows windows")
+    assertEqual(copilotUnlimited?.session?.pct, 11, "copilot individual premium pct")
+    assertEqual(copilotUnlimited?.session?.unlimited, false, "copilot individual premium is finite")
+    assertEqual(copilotUnlimited?.weekly?.pct, 0, "copilot individual chat pct")
+    assertEqual(copilotUnlimited?.weekly?.unlimited, true, "copilot individual chat is unlimited")
+    assertEqual(copilotUnlimited?.sonnet?.pct, 0, "copilot individual completions pct")
+    assertEqual(copilotUnlimited?.sonnet?.unlimited, true, "copilot individual completions is unlimited")
+
+    let minimax = snapshot(FORMAT, vendor: "minimax",
+                           fields: fields(through: 46, set: [
+                              0: "Standard", 1: "30", 2: "3h", 3: "70", 4: "4d",
+                              13: "15", 14: "45", 16: "mmx",
+                              41: "5", 42: "2d", 43: "12",
+                              44: "99", 45: "6d", 46: "80"
+                           ]))
+    assertEqual(minimax?.hasUsageWindows, true, "minimax shows windows")
+    assertEqual(minimax?.session?.pct, 30, "minimax session pct")
+    assertEqual(minimax?.sessionLabel, "Text 5h", "minimax session label")
+    assertEqual(minimax?.weekly?.pct, 70, "minimax weekly pct")
+    assertEqual(minimax?.weeklyLabel, "Text Weekly", "minimax weekly label")
+    assertEqual(minimax?.session?.elapsed, 15, "minimax session elapsed")
+    assertEqual(minimax?.weekly?.elapsed, 45, "minimax weekly elapsed")
+    assertEqual(minimax?.sonnet?.pct, 5, "minimax video pct")
+    assertEqual(minimax?.sonnet?.elapsed, 12, "minimax video elapsed")
+    assertEqual(minimax?.sonnetLabel, "Video 5h", "minimax video label")
+    assertEqual(minimax?.secondaryWeekly?.pct, 99, "minimax video weekly pct")
+    assertEqual(minimax?.secondaryWeekly?.elapsed, 80, "minimax video weekly elapsed")
+    assertEqual(minimax?.secondaryWeeklyLabel, "Video Weekly", "minimax video weekly label")
+
+    let ocg = snapshot(FORMAT, vendor: "opencode-go",
+                       fields: fields(through: 35, set: [
+                          0: "OpenCode Go", 1: "0", 2: "1h 29m", 3: "0", 4: "5d 4h", 16: "ocg",
+                          34: "34", 35: "24d 0h"
+                       ]))
+    assertEqual(ocg?.hasUsageWindows, true, "opencode-go shows windows")
+    assertEqual(ocg?.session?.pct, 0, "opencode-go session pct")
+    assertEqual(ocg?.sessionLabel, "Session", "opencode-go session label")
+    assertEqual(ocg?.sessionTag, "5h", "opencode-go session tag")
+    assertEqual(ocg?.weekly?.pct, 0, "opencode-go weekly pct")
+    assertEqual(ocg?.weeklyLabel, "Weekly", "opencode-go weekly label")
+    assertEqual(ocg?.sonnet?.pct, 34, "opencode-go monthly pct")
+    assertEqual(ocg?.sonnet?.reset, "24d 0h", "opencode-go monthly reset")
+    assertEqual(ocg?.sonnetLabel, "Monthly", "opencode-go monthly label")
+
+    let ocgFloat = snapshot(FORMAT, vendor: "opencode-go",
+                            fields: fields(through: 35, set: [
+                               0: "OpenCode Go", 1: "78.9", 2: "2h", 3: "12.4", 4: "4d", 16: "ocg",
+                               34: "34.0", 35: "20d"
+                            ]))
+    assertEqual(ocgFloat?.session?.pct, 79, "opencode-go parses floating percentage")
+    assertEqual(ocgFloat?.weekly?.pct, 12, "opencode-go parses floating weekly")
+    assertEqual(ocgFloat?.sonnet?.pct, 34, "opencode-go parses floating monthly")
+
+    let cmd = snapshot(FORMAT, vendor: "commandcode",
+                       fields: fields(through: 37, set: [
+                          0: "Command Code", 1: "15", 2: "4h 30m", 3: "40", 4: "5d", 16: "cmd",
+                          36: "65", 37: "20d"
+                       ]))
+    assertEqual(cmd?.hasUsageWindows, true, "commandcode shows windows")
+    assertEqual(cmd?.session?.pct, 15, "commandcode session pct")
+    assertEqual(cmd?.sessionLabel, "Session", "commandcode session label")
+    assertEqual(cmd?.sessionTag, "5h", "commandcode session tag")
+    assertEqual(cmd?.weekly?.pct, 40, "commandcode weekly pct")
+    assertEqual(cmd?.weeklyLabel, "Weekly", "commandcode weekly label")
+    assertEqual(cmd?.sonnet?.pct, 65, "commandcode monthly pct")
+    assertEqual(cmd?.sonnetLabel, "Monthly", "commandcode monthly label")
+
+    let ollama = snapshot(FORMAT, vendor: "ollama",
+                          fields: fields(through: 16, set: [
+                             0: "pro", 1: "82", 2: "4h 59m", 3: "23", 4: "6d 0h",
+                             13: "10", 14: "45", 16: "oll"
+                          ]))
+    assertEqual(ollama?.hasUsageWindows, true, "ollama shows windows")
+    assertEqual(ollama?.session?.pct, 82, "ollama session pct")
+    assertEqual(ollama?.sessionLabel, "Session", "ollama session label")
+    assertEqual(ollama?.sessionTag, "5h", "ollama session tag")
+    assertEqual(ollama?.session?.elapsed, 10, "ollama session elapsed")
+    assertEqual(ollama?.weekly?.pct, 23, "ollama weekly pct")
+    assertEqual(ollama?.weeklyLabel, "Weekly", "ollama weekly label")
+    assertEqual(ollama?.weekly?.elapsed, 45, "ollama weekly elapsed")
+
+    let sgk = snapshot(FORMAT, vendor: "supergrok",
+                       fields: fields(through: 40, set: [
+                          0: "SuperGrok", 1: "45", 2: "3d", 3: "45", 4: "3d", 16: "sgk",
+                          40: "Weekly"
+                       ]))
+    assertEqual(sgk?.hasUsageWindows, true, "supergrok shows windows")
+    assertEqual(sgk?.session?.pct, 45, "supergrok session pct")
+    assertEqual(sgk?.sessionLabel, "Weekly usage", "supergrok session label")
+    assertNil(sgk?.weekly, "supergrok suppresses duplicate weekly window")
+
+    let nous = snapshot(FORMAT, vendor: "nous",
+                        fields: fields(through: 16, set: [
+                           0: "Nous Research", 1: "60", 2: "15d", 3: "60", 4: "15d", 16: "nous"
+                        ]))
+    assertEqual(nous?.hasUsageWindows, true, "nous shows windows")
+    assertEqual(nous?.session?.pct, 60, "nous session pct")
+    assertEqual(nous?.sessionLabel, "Usage", "nous session label")
+    assertEqual(nous?.sessionTag, "us", "nous session tag")
+    assertNil(nous?.weekly, "nous suppresses duplicate weekly window")
+
+    let kiro = snapshot(FORMAT, vendor: "kiro",
+                        fields: fields(through: 16, set: [
+                           0: "Kiro", 1: "80", 2: "7d", 3: "80", 4: "7d", 16: "kiro"
+                        ]))
+    assertEqual(kiro?.hasUsageWindows, true, "kiro shows windows")
+    assertEqual(kiro?.session?.pct, 80, "kiro session pct")
+    assertEqual(kiro?.sessionLabel, "Credits", "kiro session label")
+    assertEqual(kiro?.sessionTag, "cr", "kiro session tag")
+    assertNil(kiro?.weekly, "kiro suppresses duplicate weekly window")
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────────
@@ -402,6 +527,36 @@ func testOverviewHeadline() {
         weekly: Window(pct: 100, reset: "12d", elapsed: nil),
         sonnet: nil, sonnetLabel: "", extra: nil, cursorTotalPct: 62)
     assertEqual(app.overviewHeadline(cursor).pct, 62, "cursor = combined total (not max pool)")
+    let minimax = Snapshot(
+        plan: "Standard", hasUsageWindows: true, creditBalance: nil,
+        session: Window(pct: 30, reset: "3h", elapsed: 15),
+        weekly: Window(pct: 70, reset: "4d", elapsed: 45),
+        sonnet: Window(pct: 10, reset: "2d", elapsed: 12),
+        sonnetLabel: "Video 5h", extra: nil,
+        secondaryWeekly: Window(pct: 99, reset: "6d", elapsed: 80),
+        secondaryWeeklyLabel: "Video Weekly")
+    assertEqual(app.overviewHeadline(minimax).pct, 99,
+                "minimax overview selects 99% video weekly quota")
+    let copilotSnap = Snapshot(
+        plan: "individual", hasUsageWindows: true, creditBalance: nil,
+        session: Window(pct: 11, reset: "22d 3h", elapsed: nil, unlimited: false),
+        weekly: Window(pct: 0, reset: "22d 3h", elapsed: nil, unlimited: true),
+        sonnet: Window(pct: 0, reset: "22d 3h", elapsed: nil, unlimited: true),
+        sonnetLabel: "Completions", extra: nil,
+        secondaryWeekly: nil, secondaryWeeklyLabel: "")
+    let copilotHead = app.overviewHeadline(copilotSnap)
+    assertEqual(copilotHead.pct, 11, "copilot overview prioritizes finite quota over unlimited")
+    assertEqual(copilotHead.value, "11%", "copilot overview value is 11%")
+
+    let allUnlimitedSnap = Snapshot(
+        plan: "Unlimited Plan", hasUsageWindows: true, creditBalance: nil,
+        session: Window(pct: 0, reset: "20d", elapsed: nil, unlimited: true),
+        weekly: Window(pct: 0, reset: "20d", elapsed: nil, unlimited: true),
+        sonnet: nil, sonnetLabel: "", extra: nil,
+        secondaryWeekly: nil, secondaryWeeklyLabel: "")
+    let allUnlimitedHead = app.overviewHeadline(allUnlimitedSnap)
+    assertEqual(allUnlimitedHead.pct, 0, "all unlimited snapshot pct is 0")
+    assertEqual(allUnlimitedHead.value, "Unlimited", "all unlimited snapshot value is Unlimited")
 }
 
 func testVendorCycle() {
@@ -505,6 +660,13 @@ func testClaudeAccounts() {
     assertEqual(vendorArgs(for: "zai").joined(separator: " "), "--vendor zai", "vendor fetch args")
     assertEqual(entryDisplayName("anthropic@gmail"), "Claude · gmail", "account display name")
     assertEqual(entryDisplayName("overview"), "Overview", "overview display name")
+    assertEqual(vendorArgs(for: "copilot").joined(separator: " "), "--vendor copilot", "copilot fetch args")
+    assertEqual(vendorArgs(for: "supergrok").joined(separator: " "), "--vendor supergrok", "supergrok fetch args")
+    assertEqual(vendorArgs(for: "minimax").joined(separator: " "), "--vendor minimax", "minimax fetch args")
+    assertEqual(vendorArgs(for: "kiro").joined(separator: " "), "--vendor kiro", "kiro fetch args")
+    assertEqual(vendorArgs(for: "nous").joined(separator: " "), "--vendor nous", "nous fetch args")
+    assertEqual(vendorArgs(for: "opencode-go").joined(separator: " "), "--vendor opencode-go", "opencode-go fetch args")
+    assertEqual(vendorArgs(for: "commandcode").joined(separator: " "), "--vendor commandcode", "commandcode fetch args")
 
     let overviewEntries = [
         MenuEntry(id: "anthropic@struct", name: "Claude · struct"),
@@ -747,12 +909,202 @@ func testDesktopAccounts() {
                 "OpenRouter accounts use generic report ids")
 }
 
+func testSubprocessEnvironment() {
+    print("subprocess environment PATH injection")
+    let env = subprocessEnvironment()
+    let path = env["PATH"] ?? ""
+    assertEqual(path.contains("/opt/homebrew/bin"), true, "PATH contains /opt/homebrew/bin")
+    assertEqual(path.contains("/usr/local/bin"), true, "PATH contains /usr/local/bin")
+    assertEqual(path.contains(".cargo/bin"), true, "PATH contains .cargo/bin")
+}
+
+func testVendorCatalogContract() {
+    print("vendor catalog contract (ai-usagebar vendors --json)")
+    // `enabled` is the menubar's only source of a vendor's default state —
+    // the app keeps no slug list of its own (a hand copy once disagreed with
+    // Rust about Ollama Cloud), so the opt-in-or-enabled default a vendor
+    // ships with must ride this field.
+    let fixtureJson = """
+    {"vendors":[{"configured":true,"enabled":true,"env":"GITHUB_COPILOT_TOKEN","id":"copilot","kind":"oauth","login":"gh auth login","name":"GitHub Copilot","needs_credential":true,"short_name":"ghc"},{"configured":false,"enabled":false,"env":"","id":"supergrok","kind":"local","login":"","name":"SuperGrok","needs_credential":true,"short_name":"sgk"},{"configured":true,"enabled":true,"env":"","id":"antigravity","kind":"local","login":"","name":"Antigravity","needs_credential":false,"short_name":"agy"}]}
+    """
+    let data = Data(fixtureJson.utf8)
+    guard let catalog = parseVendorCatalog(data) else {
+        assertEqual(false, true, "parseVendorCatalog succeeded")
+        return
+    }
+    assertEqual(catalog.count, 3, "catalog decodes injected fixture entries")
+
+    let copilot = catalog.first { $0.id == "copilot" }
+    assertEqual(copilot?.kind, "oauth", "copilot kind is oauth")
+    assertEqual(copilot?.cli, "gh", "copilot cli is gh")
+    assertEqual(copilot?.login, "gh auth login", "copilot login command")
+    assertEqual(copilot?.env, "GITHUB_COPILOT_TOKEN", "copilot env var")
+    assertEqual(copilot?.enabled, true, "copilot enabled via catalog")
+
+    let supergrok = catalog.first { $0.id == "supergrok" }
+    assertEqual(supergrok?.kind, "local", "supergrok kind is local")
+    assertEqual(supergrok?.shortName, "sgk", "supergrok short name is sgk")
+    assertEqual(supergrok?.configured, false, "supergrok configured via catalog")
+    assertEqual(supergrok?.enabled, false, "supergrok opt-in default via catalog")
+
+    let antigravity = catalog.first { $0.id == "antigravity" }
+    assertEqual(antigravity?.needsCredential, false, "antigravity needs no credential")
+
+    let entries = vendorEntries(active: "overview", catalog: catalog)
+    let entryIds = entries.map { $0.id }
+    assertEqual(entryIds.contains("copilot"), true, "vendorEntries contains configured copilot")
+    assertEqual(entryIds.contains("supergrok"), false, "vendorEntries omits disabled supergrok")
+
+    assertEqual(entryDisplayName("copilot", catalog: catalog), "GitHub Copilot", "copilot display name from catalog")
+    assertEqual(entryDisplayName("supergrok", catalog: catalog), "SuperGrok", "supergrok display name from catalog")
+}
+
+func testVendorCatalogLifecycle() {
+    print("vendor catalog lifecycle (generation guard and overview refresh)")
+    let app = AppDelegate()
+    assertEqual(app.vendorCatalogGeneration, 0, "initial vendorCatalogGeneration is zero")
+
+    let originalCatalog = vendorCatalog
+    let originalOverride = app.refreshOverride
+    let originalInFlight = app.refreshInFlight
+    let originalQueued = app.refreshQueued
+    let prevVendor = DEF.string(forKey: "vendor")
+    defer {
+        vendorCatalog = originalCatalog
+        app.refreshOverride = originalOverride
+        app.refreshInFlight = originalInFlight
+        app.refreshQueued = originalQueued
+        DEF.set(prevVendor, forKey: "vendor")
+    }
+
+    let catalog1 = [
+        VendorCatalogEntry(id: "copilot", name: "GitHub Copilot", shortName: "ghc",
+                           kind: "oauth", enabled: true, configured: true,
+                           needsCredential: true, env: "GITHUB_COPILOT_TOKEN", login: "gh auth login")
+    ]
+    let catalog2 = [
+        VendorCatalogEntry(id: "supergrok", name: "SuperGrok", shortName: "sgk",
+                           kind: "local", enabled: true, configured: true,
+                           needsCredential: true, env: "", login: "")
+    ]
+
+    app.vendorCatalogGeneration = 1
+    let gen1 = app.vendorCatalogGeneration
+    app.vendorCatalogGeneration = 2
+    let gen2 = app.vendorCatalogGeneration
+
+    let appliedStale = app.applyVendorCatalog(catalog1, generation: gen1)
+    assertEqual(appliedStale, false, "stale catalog generation is rejected")
+    assertEqual(vendorCatalog.contains { $0.id == "copilot" }, false, "stale catalog is not stored")
+
+    let appliedRecent = app.applyVendorCatalog(catalog2, generation: gen2)
+    assertEqual(appliedRecent, true, "most recent catalog generation is applied")
+    assertEqual(vendorCatalog.contains { $0.id == "supergrok" }, true, "newest catalog is stored")
+
+    DEF.set("overview", forKey: "vendor")
+
+    app.refreshOverride = nil
+    app.refreshInFlight = true
+    app.refreshQueued = false
+    app.vendorCatalogGeneration = 3
+    app.applyVendorCatalog(catalog1, generation: 3)
+    assertEqual(app.refreshQueued, true, "catalog arrival marks refreshQueued when refresh is in flight")
+
+    var refreshInvoked = false
+    app.refreshOverride = { refreshInvoked = true }
+    app.refreshInFlight = false
+    app.refreshQueued = false
+    app.vendorCatalogGeneration = 4
+    app.applyVendorCatalog(catalog2, generation: 4)
+    assertEqual(refreshInvoked, true, "catalog arrival executes refresh when idle")
+}
+
+func testCodexAccounts() {
+    let config = """
+    [[openai.accounts]]
+    label = "work"
+    codex_auth_path = "/fixture/work/auth.json"
+    [[openrouter.accounts]]
+    label = "router"
+    [[openai.accounts]]
+    label = 'personal'
+    """
+    let labels = accountLabels(inTOML: config, vendor: "openai")
+    assertEqual(labels, ["work", "personal"], "Codex labels preserve order and exclude other providers")
+    func catalog(enabled: Bool, configured: Bool) -> [VendorCatalogEntry] {
+        [VendorCatalogEntry(id: "openai", name: "Codex", shortName: "cdx", kind: "oauth",
+            enabled: enabled, configured: configured, needsCredential: true, env: "", login: "codex login")]
+    }
+    let ready = catalog(enabled: true, configured: true)
+    let entries = vendorEntries(active: "overview", catalog: ready, codexLabels: { labels })
+    let ids = entries.map { $0.id }
+    assertEqual(ids, ["openai", "openai@work", "openai@personal"], "selector includes default and named Codex accounts")
+    assertEqual(entries.map { $0.name }, ["Codex", "Codex · work", "Codex · personal"], "names come from catalog")
+    assertEqual(vendorEntries(active: "overview", catalog: catalog(enabled: true, configured: false),
+                             codexLabels: { labels }).map { $0.id },
+                ["openai@work", "openai@personal"], "named accounts need no default login")
+    assertEqual(vendorEntries(active: "openai", catalog: catalog(enabled: true, configured: false),
+                             codexLabels: { [] }).map { $0.id }, ["openai"], "active default remains visible")
+    let disabled = catalog(enabled: false, configured: true)
+    assertEqual(vendorEntries(active: "openai@work", catalog: disabled, codexLabels: { labels }).count,
+                0, "disabled Codex exposes no accounts")
+    assertEqual(filterOverviewEntries(entries, requested: ["openai"]).map { $0.id }, ids,
+                "Overview filter includes every Codex account")
+    assertEqual(nextVendorId(current: "openai", in: ids), "openai@work", "shortcut cycles into named account")
+    assertEqual(nextVendorId(current: "openai@personal", in: ids), "openai", "shortcut wraps from named account")
+    assertEqual(vendorArgs(for: "openai@work"), ["--vendor", "openai", "--account", "work"],
+                "fetch selects the named auth file via Rust")
+    assertEqual(entryDisplayName("openai@work", catalog: ready), "Codex · work", "preference label uses catalog name")
+    assertEqual(preferenceVendorIds(catalog: ready, claude: [], openRouter: [], codex: labels), ids,
+                "Preferences includes named Codex accounts")
+    assertEqual(preferenceVendorIds(catalog: disabled, claude: [], openRouter: [], codex: labels), [],
+                "Preferences respects disabled Codex")
+}
+
+func testEnableVendorCommand() {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let script = dir.appendingPathComponent("backend")
+    try! "#!/bin/sh\n[ \"$#\" = 3 ] && [ \"$1\" = settings ] && [ \"$2\" = enable ] && [ \"$3\" = anthropic ]\n"
+        .write(to: script, atomically: true, encoding: .utf8)
+    try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    assertNil(enableVendor(binary: script.path, id: "anthropic"), "enable passes exact backend arguments")
+    assertNotNil(enableVendor(binary: script.path, id: "openai"), "backend failure remains visible")
+    assertNotNil(enableVendor(binary: dir.appendingPathComponent("missing").path, id: "anthropic"),
+                 "missing executable remains visible")
+}
+
+func testDisabledVendorPreferences() {
+    for enabled in [false, true] {
+        for configured in [false, true] {
+            let v = VendorCatalogEntry(id: "anthropic", name: "Claude", shortName: "cla",
+                kind: "oauth", enabled: enabled, configured: configured,
+                needsCredential: true, env: "", login: "claude")
+            let status = vendorStatusText(v, cliPresent: true)
+            let button = vendorButtonLabel(v, cliPresent: true)
+            if !enabled {
+                assertEqual(status, configured ? "Disabled — credential available" : "Disabled",
+                            "disabled status is independent of sign-in")
+                assertEqual(button, "Enable", "disabled provider offers explicit opt-in")
+            } else {
+                assertEqual(status, configured ? "✓ Configured" : "⚠ Not signed in — claude",
+                            "enabled provider keeps credential status")
+                assertEqual(button, configured ? "Sign in again" : "Sign in",
+                            "enabled provider keeps sign-in action")
+            }
+        }
+    }
+}
+
 @main
 struct TestRunner {
     static func main() {
+        testCodexAccounts()
+        testEnableVendorCommand()
+        testDisabledVendorPreferences()
         testRingArc()
         testTomlParsing()
-        testDefaultEnabled()
         testParserBalances()
         testOverviewHeadline()
         testVendorCycle()
@@ -765,6 +1117,9 @@ struct TestRunner {
         testOverviewProviderToggle()
         testAccountStatus()
         testSystemIntegrations()
+        testSubprocessEnvironment()
+        testVendorCatalogContract()
+        testVendorCatalogLifecycle()
         if failures > 0 {
             print("\n\(failures) test(s) FAILED")
             exit(1)

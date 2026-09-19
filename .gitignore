@@ -12,6 +12,11 @@
 .env.local
 *.credentials.json
 
+# Per-vendor config scratch files (config.<vendor>.toml) — never commit.
+# Only config.example.toml and the user's own config.toml are tracked.
+config.*.toml
+!config.example.toml
+
 # Snapshot review files from `cargo insta`
 *.snap.new
 

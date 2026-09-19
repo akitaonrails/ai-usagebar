@@ -39,6 +39,8 @@ import {
   resetText,
   resetAlternate,
   formatResetExact,
+  formatResetCreditDate,
+  resetCreditDetails,
   condensedTextRowIndexes,
   providerIconId,
   initialsGlyph,
@@ -58,11 +60,25 @@ import {
   seedStars,
   stripCommand,
   MAX_STARS_PER_PROVIDER,
-  normalizeResetCredits,
   expirySeverity,
   providerLinks,
   isHttpUrl,
+  formatAgo,
+  updateStatusLabel,
+  updateBannerPending,
+  updateModeLabel,
 } from './src/model.js';
+import { measurePanelHeight } from './src/panel-size.js';
+
+// The native window can retain a tall viewport while WebView2 is hidden. Its
+// stretched scroll region must not become the next requested panel height.
+const intrinsicContent = { offsetHeight: 420, scrollHeight: 510 };
+const stretchedScroller = { dataset: { scroll: '' }, offsetHeight: 900 };
+const footerChrome = { dataset: {}, offsetHeight: 44 };
+assert.equal(measurePanelHeight({
+  children: [stretchedScroller, footerChrome],
+  querySelector: () => intrinsicContent,
+}), 554);
 
 const report = {
   version: '1.10.0',
@@ -162,14 +178,15 @@ const errored = parseHostPayload({
     display_name: 'Codex',
     status: 'error',
     error: 'not signed in',
+      sign_in: 'Run `codex login` in a terminal, then Refresh.',
     stale: true,
     sections: [],
   }],
 });
 const errorCards = projectCards(errored, 0);
 assert.equal(errorCards[0].errorTitle, 'Sign-in expired');
-assert.equal(errorCards[0].errorHint, 'Run codex login in a terminal, then Refresh.');
-assert.equal(errorCards[0].error, 'Sign-in expired. Run codex login in a terminal, then Refresh.');
+assert.equal(errorCards[0].errorHint, 'Run `codex login` in a terminal, then Refresh.');
+assert.equal(errorCards[0].error, 'Sign-in expired. Run `codex login` in a terminal, then Refresh.');
 assert.equal(errorCards[0].errorDetail, 'not signed in');
 assert.equal(errorCards[0].stale, true);
 assert.equal(errorCards[0].rows.length, 0);
@@ -181,6 +198,7 @@ const claudeErrored = parseHostPayload({
     plan: 'Claude Max 5x',
     status: 'error',
     error: 'HTTP 401: authentication rejected — credentials may be missing, expired, or invalid',
+    sign_in: 'Run `claude` in a terminal, then Refresh.',
     sections: [],
   }],
 });
@@ -188,7 +206,7 @@ const claudeCards = projectCards(claudeErrored, 0);
 assert.equal(claudeCards[0].title, 'Claude');
 assert.equal(claudeCards[0].plan, 'Claude Max 5x');
 assert.equal(claudeCards[0].errorTitle, 'Sign-in expired');
-assert.equal(claudeCards[0].errorHint, 'Run claude in a terminal, then Refresh.');
+assert.equal(claudeCards[0].errorHint, 'Run `claude` in a terminal, then Refresh.');
 assert.equal(claudeCards[0].rows.length, 0);
 
 const none = parseHostPayload({ version: '1', entries: [] });
@@ -269,6 +287,56 @@ const withResets = parseHostPayload({
 const [resetsFolded, resetsKept] = projectCards(withResets, 0);
 assert.equal(resetsFolded.rows.map((r) => r.kind).join(','), 'metric');
 assert.equal(resetsKept.rows.map((r) => r.label).join(','), 'Balance,Resets');
+
+// Banked resets stay structured through normalization so the dashboard can
+// keep the compact count in the card and put every expiry in its tooltip.
+const bankedResets = parseHostPayload({
+  entries: [{
+    id: 'openai',
+    display_name: 'Codex',
+    reset_credits: {
+      available: 3,
+      credits: [
+        { title: 'Full reset', expires_at: '2026-10-05T04:18:00Z' },
+        { title: 'Full reset', expires_at: '2026-09-20T23:58:00Z' },
+      ],
+    },
+    sections: [{ type: 'block', label: 'Reset credits', body: ['legacy text'] }],
+  }],
+});
+assert.equal(bankedResets.entries[0].resetCredits.available, 3);
+assert.equal(bankedResets.entries[0].resetCredits.credits[0].expiresAt, '2026-10-05T04:18:00Z');
+const resetRow = projectCards(bankedResets, Date.parse('2026-09-15T10:00:00Z'))[0].rows[0];
+assert.equal(resetRow.kind, 'resetCredits');
+assert.equal(resetRow.label, 'Rate Limit Resets');
+assert.equal(resetRow.available, 3);
+
+const resetDetails = resetCreditDetails(resetRow, Date.parse('2026-09-15T10:00:00Z'), {
+  locale: 'en-US',
+  timeZone: 'UTC',
+  timeFormat: '24',
+});
+assert.deepEqual(resetDetails.items.map((item) => item.date), [
+  'Sep 20 at 23:58',
+  'Oct 5 at 04:18',
+  'Date unavailable',
+]);
+assert.deepEqual(resetDetails.items.map((item) => item.remaining), ['5d 13h', '19d 18h', '—']);
+assert.equal(resetDetails.hidden, 0);
+assert.equal(
+  formatResetCreditDate('2026-09-20T23:58:00Z', { locale: 'en-US', timeZone: 'UTC', timeFormat: '12' }),
+  'Sep 20 at 11:58 PM',
+);
+
+// Older hosts do not send `reset_credits`; their existing text block remains visible.
+const legacyResetCard = projectCards(parseHostPayload({
+  entries: [{
+    id: 'openai',
+    display_name: 'Codex',
+    sections: [{ type: 'block', label: 'Reset credits', body: ['2 resets available'] }],
+  }],
+}), 0)[0];
+assert.equal(legacyResetCard.rows[0].kind, 'block');
 
 const extraOnAlways = moveRowToList(
   defaultRowPrefs(cursorCard.rows),
@@ -457,14 +525,17 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(cleaned.alwaysShowPace, false);
 }
 
-// --- host payload: shortcut / window_secs --------------------------------------
+// --- host payload: shortcut / updates / update / window_secs ------------------
 
 {
-  // ARRANGE: every host key populated
+  // ARRANGE: every new host key populated, with a GitHub release URL
   const full = parseHostPayload({
     version: '1.11.0',
     shortcut: 'Ctrl+Shift+U',
     shortcut_error: 'already taken',
+    updates: 'auto',
+    update: { state: 'downloading', version: 'v1.12.0', url: 'https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.12.0', error: '' },
+    update_checked_at: 1_700_000_000_000,
     entries: [{
       id: 'anthropic',
       display_name: 'Claude',
@@ -478,6 +549,14 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   // ASSERT: the camelCase fields
   assert.equal(full.shortcut, 'Ctrl+Shift+U');
   assert.equal(full.shortcutError, 'already taken');
+  assert.equal(full.updates, 'auto');
+  assert.deepEqual(full.update, {
+    error: '',
+    state: 'downloading',
+    url: 'https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.12.0',
+    version: 'v1.12.0',
+  });
+  assert.equal(full.updateCheckedAt, 1_700_000_000_000);
   assert.equal(full.entries[0].sections[0].window, 18000);
   assert.equal(full.entries[0].sections[1].window, 0);
   assert.equal(full.entries[0].sections[2].window, 0);
@@ -487,16 +566,31 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(rows[1].window, 0);
 
   // ASSERT: defensive fallbacks
+  const loose = parseHostPayload({
+    updates: 'sometimes',
+    update: { state: 'exploding', version: 'x'.repeat(50), url: 'https://evil.example/x', error: 'e'.repeat(400) },
+    update_checked_at: 'yesterday',
+  });
+  assert.equal(loose.updates, 'notify');
+  assert.equal(loose.update.state, 'available');
+  assert.equal(loose.update.url, '');
+  assert.equal(loose.update.version.length, 32);
+  assert.equal(loose.update.error.length, 300);
+  assert.equal(loose.updateCheckedAt, 0);
+  assert.equal(parseHostPayload({ update: 'soon' }).update, null);
+  assert.equal(parseHostPayload({ update: ['x'] }).update, null);
+  assert.equal(parseHostPayload({ update_checked_at: Infinity }).updateCheckedAt, 0);
   assert.equal(parseHostPayload({ shortcut: 's'.repeat(80) }).shortcut.length, 64);
-  assert.equal(parseHostPayload({ shortcut_error: 'e'.repeat(400) }).shortcutError.length, 300);
-  // Keys the host does not send stay off the payload (no updater in the tray).
-  assert.equal('update' in parseHostPayload({ update: { state: 'available' } }), false);
-  assert.equal('updates' in emptyPayload(), false);
 
   // ASSERT: emptyPayload carries the defaults
   const empty = emptyPayload();
   assert.equal(empty.shortcut, '');
   assert.equal(empty.shortcutError, '');
+  assert.equal(empty.updates, 'notify');
+  assert.equal(empty.update, null);
+  assert.equal(empty.updateCheckedAt, 0);
+  assert.equal(payload.updates, 'notify');
+  assert.equal(payload.update, null);
 
   // ASSERT: refresh_minutes keeps only the offered intervals, else the 5-minute default
   assert.equal(parseHostPayload({ refresh_minutes: 10 }).refreshMinutes, 10);
@@ -671,10 +765,54 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(shortcutFromKeyEvent(null), null);
 }
 
+// --- update status helpers -------------------------------------------------------
+
+{
+  const now = 1_700_000_000_000;
+  assert.equal(formatAgo(0), 'just now');
+  assert.equal(formatAgo(59_000), 'just now');
+  assert.equal(formatAgo(5 * 60_000), '5m ago');
+  assert.equal(formatAgo(2 * 3600_000 + 5 * 60_000), '2h ago');
+  assert.equal(formatAgo(3 * 86_400_000 + 3600_000), '3d ago');
+  assert.equal(formatAgo(-5), 'just now');
+
+  const noUpdate = (checkedAt) => ({ ...emptyPayload(), updateCheckedAt: checkedAt });
+  assert.equal(updateStatusLabel(noUpdate(0), now), 'Not checked yet');
+  assert.equal(updateStatusLabel(noUpdate(now - 5 * 60_000), now), 'Up to date · checked 5m ago');
+  assert.equal(updateStatusLabel(noUpdate(now - 10_000), now), 'Up to date · checked just now');
+
+  const withUpdate = (state, extra) => ({
+    ...emptyPayload(),
+    updateCheckedAt: now,
+    update: { error: '', state, url: '', version: '1.11.0', ...extra },
+  });
+  assert.equal(updateStatusLabel(withUpdate('available'), now), 'v1.11.0 available');
+  assert.equal(updateStatusLabel(withUpdate('available', { version: 'v1.11.0' }), now), 'v1.11.0 available');
+  assert.equal(updateStatusLabel(withUpdate('downloading'), now), 'Downloading v1.11.0…');
+  assert.equal(updateStatusLabel(withUpdate('installing'), now), 'Installing…');
+  assert.equal(updateStatusLabel(withUpdate('failed', { error: 'checksum mismatch' }), now), "Couldn't update: checksum mismatch");
+  assert.equal(updateStatusLabel(withUpdate('failed'), now), "Couldn't update");
+  assert.equal(updateStatusLabel(withUpdate('checking'), now), 'Checking…');
+  assert.equal(parseHostPayload({ update: { state: 'checking', version: '' } }).update.state, 'checking');
+
+  assert.equal(updateBannerPending(emptyPayload()), false);
+  assert.equal(updateBannerPending(withUpdate('available')), true);
+  assert.equal(updateBannerPending(withUpdate('failed')), true);
+  assert.equal(updateBannerPending(withUpdate('checking')), false);
+  assert.equal(updateBannerPending(null), false);
+
+  assert.equal(updateModeLabel('auto'), 'Automatic');
+  assert.equal(updateModeLabel('notify'), 'Notify me');
+  assert.equal(updateModeLabel('off'), 'Off');
+  assert.equal(updateModeLabel('whenever'), 'Notify me');
+  assert.equal(updateModeLabel(undefined), 'Notify me');
+}
+
 // --- SuperGrok labels / displayPlan equality ----------------------------------
 
 {
-  // ARRANGE: SuperGrok names every meter "<Window> Build credits"; Grok proper does not
+  // ARRANGE: SuperGrok names the overall meter "<Window> usage" (older
+  // reports used "<Window> Build credits"); Grok proper does not.
   const grok = parseHostPayload({
     entries: [
       { id: 'supergrok', display_name: 'SuperGrok', plan: 'SuperGrok', sections: [
@@ -697,6 +835,18 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.deepEqual(personal.rows.map(rowKey), ['metric:Weekly', 'metric:Monthly', 'metric:Build credits']);
   assert.deepEqual(work.rows.map((r) => r.label), ['Weekly']);
   assert.deepEqual(plain.rows.map((r) => r.label), ['Weekly Build credits']);
+
+  const usageNamed = parseHostPayload({
+    entries: [
+      { id: 'supergrok', display_name: 'SuperGrok', plan: 'SuperGrok', sections: [
+        { type: 'metric', label: 'Weekly usage', percent: 90, severity: 'critical' },
+        { type: 'metric', label: 'Grok Build', percent: 87, severity: 'high' },
+        { type: 'metric', label: 'Grok Chat', percent: 3, severity: 'low' },
+      ] },
+    ],
+  });
+  const [usageCard] = projectCards(usageNamed, 0);
+  assert.deepEqual(usageCard.rows.map((r) => r.label), ['Weekly', 'Grok Build', 'Grok Chat']);
 
   // ASSERT: a plan equal to the title vanishes; a prefixed plan keeps its tail
   assert.equal(displayPlan(personal.title, personal.plan), '');
@@ -1077,15 +1227,8 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.equal(expirySeverity(1_000 + 3 * 24 * 3600 * 1000, 1_000), 'yellow');
   assert.equal(expirySeverity(1_000 + 2 * 3600 * 1000, 1_000), 'red');
   assert.equal(expirySeverity(500, 1_000), 'red');
-  const credits = normalizeResetCredits({
-    available: 2,
-    credits: [
-      { title: 'Full reset', expires_at: '2026-10-03T23:00:00Z' },
-      { title: '', expires_at: '2026-10-05T01:18:00Z' },
-    ],
-  });
-  assert.equal(credits.available, 2);
-  assert.equal(credits.credits.length, 2);
+  // A host that sends `reset_credits` without the text block still gets the
+  // row, and it starts On Demand like every non-metric row.
   const payload = parseHostPayload({
     entries: [{
       id: 'openai',
@@ -1093,19 +1236,19 @@ assert.equal(resolvedTheme('system'), 'light');
       reset_credits: { available: 2, credits: [{ expires_at: '2026-10-03T23:00:00Z' }] },
       sections: [
         { type: 'metric', label: 'Weekly', percent: 10, reset_at: '2026-10-01T00:00:00Z' },
-        { type: 'block', label: 'Reset credits', body: ['hidden'] },
       ],
     }],
   });
   const [card] = projectCards(payload, 0);
   assert.equal(card.resetCredits.available, 2);
-  assert.equal(card.rows.some((row) => row.label === 'Reset credits'), false);
-  const resets = card.rows.find((row) => row.kind === 'resets');
+  const resets = card.rows.find((row) => row.kind === 'resetCredits');
   assert.equal(resets.label, 'Rate Limit Resets');
   assert.equal(resets.available, 2);
+  assert.equal(resets.credits.length, 1);
+  assert.equal(card.rows.filter((row) => row.kind === 'resetCredits').length, 1);
   const prefs = defaultRowPrefs(card.rows);
-  assert.ok(prefs.demand.indexOf('resets:Rate Limit Resets') >= 0);
-  assert.ok(prefs.always.indexOf('resets:Rate Limit Resets') < 0);
+  assert.ok(prefs.demand.indexOf('resetCredits:Rate Limit Resets') >= 0);
+  assert.ok(prefs.always.indexOf('resetCredits:Rate Limit Resets') < 0);
 }
 
 {

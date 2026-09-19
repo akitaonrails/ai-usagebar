@@ -30,12 +30,19 @@ codebase.
   Waybar setups.
 - Network failures keep the previous data visible; HTTP errors appear in the
   tooltip.
+- A vendor that answers HTTP 429 is left alone for five minutes: the last good
+  snapshot keeps showing, or the entry reads "rate limited; next attempt in 4m"
+  and no request is made until then (every vendor on the shared cache; Nous
+  Research has its own path).
 - `--pretty`, `--watch N`, and `make smoke` help with local testing and API
   response changes.
 
 ## Reference guides
 
 - [Configuration](docs/configuration.md)
+- [Development guide](DEVELOPMENT.md)
+- [Windows build guide](docs/windows-build.md)
+- [Ollama Cloud integration](docs/ollama-setup.md)
 - [Claude accounts](docs/claude-accounts.md)
 - [Format placeholders](docs/format-placeholders.md)
 - [Provider endpoints and live tests](docs/vendor-endpoints.md)
@@ -125,13 +132,20 @@ Alternatively, apply the overlay when you want the package available as
 ### Omarchy Quattro
 
 The native plugin is a display frontend and does not bundle the
-`ai-usagebar` executable. Install the binary first, then add and enable the
-plugin:
+`ai-usagebar` executable. Both are needed, and they install through different
+managers — the binary is a system package, the plugin is per-user shell config
+under `~/.config/omarchy/plugins/` — so this is one paste rather than one
+command:
 
 ```bash
-omarchy pkg aur add ai-usagebar-bin
-omarchy plugin add https://github.com/akitaonrails/ai-usagebar.git --enable
+omarchy pkg aur add ai-usagebar-bin &&
+  omarchy plugin add https://github.com/akitaonrails/ai-usagebar.git --enable
 ```
+
+If you found the plugin through [plugins.omarchy.org](https://plugins.omarchy.org/plugin.html?id=akitaonrails.ai-usagebar),
+its **Install** button copies the `omarchy plugin add` line on its own. That
+installs the widget but not the binary it reads, and the bar will say
+`ai-usagebar is not installed` until you run the `omarchy pkg aur add` half too.
 
 Quattro enables its own `omarchy.agents` status widget by default. Disable it
 if you want AI Usage to be the only agent status item in the bar:
@@ -148,7 +162,10 @@ wheel to switch providers. In QML settings, turn off **Show usage value in the
 top bar** for an icon-only widget; the panel and tooltip keep the full details.
 Turn on **Show provider name in the top bar** to prefix the entry with the same
 three-letter code Waybar's `{vendor_short}` prints, so a bar cycling several
-providers says which one it is showing.
+providers says which one it is showing. Use **Top bar usage window** to pin the
+bar to one quota window — auto (highest), 5-hour, weekly, or monthly — instead
+of always showing the highest percent; the tooltip and panel hero echo the
+pinned value while panel rows and alert state still follow the highest quota.
 
 The source-built `ai-usagebar` AUR package can replace `ai-usagebar-bin` in
 the first command.
@@ -189,6 +206,16 @@ The **Waybar widget is Wayland-only and does not apply to Windows.** Use the
 reads the same `usage --json` report as the KDE plasmoid, in-process — no
 console window. `ai-usagebar --json` / `--pretty` still work for scripting.
 
+Install with [Scoop](https://scoop.sh) from the official bucket:
+
+```powershell
+scoop bucket add akitaonrails https://github.com/akitaonrails/scoop-bucket
+scoop install ai-usagebar
+```
+
+Scoop owns updates for Scoop installs (`scoop update ai-usagebar`); the
+tray's built-in updater applies to standalone ZIP installs.
+
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](screenshots/windows-tray-dashboard.png)
 
 Build with a standard Rust toolchain plus **Node.js 20+** (the tray WebView is
@@ -207,11 +234,13 @@ with Windows, and Quit; left-click opens the popover. On its first run the
 tray detects which vendors already have a credential on this PC (local files
 and keys only, never the network) and turns exactly those on in
 `config.toml` — it never turns a vendor off. Settings adds a global shortcut
-that toggles the popover from anywhere and the poll interval; both live in
-the `[tray]` section of `config.toml` (`shortcut`, `refresh_minutes` = 1, 5
-or 10; default 5). See [windows/README.md](windows/README.md).
+that toggles the popover from anywhere, the poll interval, and an update mode
+(Automatic / Notify me / Off) that installs new releases from GitHub after
+verifying their `.sha256`; all three live in the `[tray]` section of
+`config.toml` (`shortcut`, `refresh_minutes` = 1, 5 or 10; default 5;
+`updates`). See [windows/README.md](windows/README.md).
 
-![Windows tray icon in the notification area — a bar-chart-in-circle mark next to the clock](screenshots/windows-tray-icon.png)
+![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](screenshots/windows-tray-icon.png)
 
 Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
@@ -239,9 +268,10 @@ come from environment variables or `config.toml`.
 | Novita | API key (`NOVITA_API_KEY` env or `[novita] api_key` in config) | Set either. Opt-in. |
 | Moonshot | API key (`MOONSHOT_API_KEY` or config) | Opt in. Set region `cn` for CNY; `global` uses USD. |
 | Grok (xAI) | Management key | Opt in with `XAI_MANAGEMENT_KEY` or config. An inference key does not work. |
-| SuperGrok | Existing `grok login` (its `auth.json` key, or its ACP extension) | Opt in, install Grok Build, and run `grok login`. This reports subscription usage, not the Management API balance. |
+| SuperGrok | Existing `grok login` (its `auth.json` key, or its ACP extension) | Opt in, install Grok Build, and run `grok login`. This reports subscription usage — overall included credits plus per-product slices (Build, Chat, Imagine) — not the Management API balance. |
+| Grok Bot | Existing Grok Bot desktop sign-in (Linux) | Opt in, install the Grok Bot desktop app, and sign in to it once. This reports the app's weekly included-usage pool — not the Management API balance, and not the Grok Build subscription. Refreshed tokens stay in ai-usagebar's cache; the app's own file is never written. |
 | MiniMax | Token Plan subscription key | Opt in with `MINIMAX_API_KEY` or config. Choose the matching global or China region; pay-as-you-go keys do not work. |
-| Google Antigravity | Local Antigravity server | Opt in and keep Antigravity or an interactive `agy` session running. |
+| Google Antigravity | Local Antigravity server, or the saved Google session | Opt in. The desktop products provide quota through their local server. The `agy` CLI currently requires a CSRF token it does not publish, so ai-usagebar uses the Google OAuth session saved in the OS keyring or `~/.gemini/antigravity-cli/antigravity-oauth-token` and asks the Cloud Code API instead. The TUI labels this fallback `Google API`. The same fallback applies when no product is running. |
 | Cursor | Existing Cursor IDE or `cursor-agent` login | Opt in and sign in once. `cursor-agent` is the headless fallback. |
 | Kiro CLI | Existing kiro-cli login | Opt in and run `kiro-cli login` once. ai-usagebar refreshes the session when needed. |
 | Nous Research | OAuth device flow | Enable `[nous]`, click **Log in with Nous Research** in the Omarchy settings panel, or run `ai-usagebar auth nous login`. Credentials are kept in ai-usagebar's separate platform config directory (`~/.config/ai-usagebar/credentials.json` on Linux). |
@@ -315,8 +345,8 @@ rather than silently querying the wrong URL.
 ### Enabling a vendor
 
 `enabled = true` is what makes a vendor fetch. Anthropic API, GitHub Copilot,
-DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok, SuperGrok, Antigravity, Cursor,
-MiniMax, and Kiro CLI all default to **disabled** so that existing
+DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok, SuperGrok, Grok Bot, Antigravity,
+Cursor, MiniMax, and Kiro CLI all default to **disabled** so that existing
 installs are unaffected until you opt in. Use either method:
 
 - Use the gear or `s` in the Omarchy panel, or run
@@ -330,8 +360,8 @@ after signing in with GitHub CLI, selecting it as primary explicitly enables
 `[copilot]` at the same time.
 
 Vendors that authenticate through a local login rather than a key — Cursor,
-Kiro CLI, SuperGrok, Antigravity, and Kimi when you have a Kimi For Coding
-subscription — have no key to save, so enable them with `enabled = true` in
+Kiro CLI, SuperGrok, Grok Bot, Antigravity, and Kimi when you have a Kimi For
+Coding subscription — have no key to save, so enable them with `enabled = true` in
 `config.toml`.
 
 GitHub Copilot has no token field in the Omarchy or terminal Settings forms.
@@ -342,6 +372,57 @@ fetchable. At fetch time ai-usagebar runs only the fixed, structured
 stores, editor state, or browser state, and never writes the token to config or
 cache. `GITHUB_COPILOT_TOKEN` is an optional explicit environment override and
 takes precedence over GitHub CLI OAuth.
+
+### Custom providers (static token)
+
+A service ai-usagebar does not know can still get a TUI tab and a
+`usage --json` entry — and so a card in every frontend that reads
+`usage --json` — when it exposes a JSON endpoint and accepts a static token.
+Declare it as a `[[custom]]` table in `config.toml`; the JSON is mapped with
+[RFC 6901 JSON Pointers](https://datatracker.ietf.org/doc/html/rfc6901):
+
+```toml
+[[custom]]
+id = "mytool"                    # slug; the entry id becomes custom:mytool
+name = "My Tool"                 # header / tab label
+short_name = "myt"               # three lowercase letters, unique
+brand = "deepseek"               # optional built-in slug for supported UIs
+enabled = true
+url = "https://api.example.com/v1/usage"   # https unless allow_http = true
+api_key_env = "MYTOOL_API_KEY"   # env var first, inline api_key second
+# api_key = "..."
+# auth_header = "Authorization"  # default; auth_scheme = "Bearer" (empty sends the raw key)
+# headers = { "X-Org" = "acme" } # extra non-secret headers
+# plan = "Pro"                   # literal, or plan_path = "/subscription/tier"
+# cache_ttl_secs = 60
+
+[[custom.metrics]]
+label = "Requests"
+used = "/usage/requests/used"    # numbers or numeric strings
+limit = "/usage/requests/limit"  # or percent = "/usage/pct" instead of used + limit
+resets_at = "/usage/requests/reset_at"   # RFC 3339, epoch seconds or epoch ms
+window_secs = 86400              # window length; reported as `window_secs` for pacing
+
+[[custom.texts]]
+label = "Balance"
+value = "/balance/display"
+```
+
+Each metric renders as a meter with the usual severity colours; texts render
+as one-line rows. `brand` lets supporting frontends, currently the Omarchy
+widget, draw a built-in vendor's mark for the custom entry; omit it to keep the
+`short_name` tag. The cache under `<cache>/ai-usagebar/custom/<id>` holds the
+projected snapshot (only the values the pointers selected, never the response
+body) with the same stale-while-revalidate rules as the built-in vendors, and
+an error names the failing pointer, never the response body or the key. The
+`api_key_env` variable is scrubbed from every child process ai-usagebar
+spawns, like the built-in ones.
+
+Limits by design: static tokens only (no OAuth or refresh flows); GET
+requests; no scripting. Custom providers appear in the TUI, in `usage --json`,
+and in every frontend that reads `usage --json`, but not in the Waybar
+widget's `--vendor` list, the TUI Settings overlay, `[ui] primary`, or the
+`vendors` catalog.
 
 ### Credential resolution order (for API-key vendors)
 
@@ -363,6 +444,15 @@ For each API-key vendor, ai-usagebar checks in this order:
   caches, refreshes, or writes that key back. Auth/config files are also
   hashed as opaque bytes to separate caches between logins.
 - Cursor's `state.vscdb` and `cursor-agent` fallback `auth.json` are read-only.
+- Antigravity's keyring entry and CLI OAuth file are read-only. A refreshed
+  access token goes to `antigravity/oauth.json` in the cache dir (mode `600` on
+  Unix), keyed by a fingerprint of the refresh token so a different login
+  never reuses it.
+  Renewing the session needs Antigravity's own OAuth client id and secret in
+  `[antigravity] oauth_client_id` / `oauth_client_secret`; they are public
+  installed-app credentials, but nothing secret-shaped ships in this
+  repository, so without them the fallback lasts only as long as the saved
+  access token.
 - kiro-cli's `data.sqlite3` is read-only. Refreshed credentials go to an
   account-scoped `kiro/oauth.json` file, mode `600` on Unix.
 
@@ -467,14 +557,16 @@ ai-usagebar --vendor kiro
 ai-usagebar --json
 
 # Everything at once: quota + time-to-reset for every configured vendor,
-# with one entry per named Claude account.
+# with one entry per named Claude account. Exits 0 after a complete document
+# (per-entry errors are data); non-zero only when the document cannot be produced.
 ai-usagebar usage
 ai-usagebar usage --json | jq '.entries[] | {id, metrics, sections}'
 
 # Turn on every vendor that already has a credential on this machine
 # (local files, keychains, saved keys, env vars — never the network).
 # Only vendors never checked before are probed; --all re-checks everything.
-# Detection only ever sets enabled = true; it never turns a vendor off.
+# Detection only ever sets enabled = true; it never turns a vendor off, and
+# never overrules an `enabled = false` you wrote yourself — not even --all.
 ai-usagebar detect
 ai-usagebar detect --all --json
 
@@ -495,6 +587,15 @@ The JSON report has two views of each provider:
 - `metrics` contains percentage gauges only.
 - `sections` preserves the complete ordered display, including balances,
   grouped rows, and spacers. Rows without a percentage do not invent one.
+
+The top-level `schema_version` is currently `1`. Consumers should ignore
+unknown fields and treat absent fields as not applicable. The version changes
+only when a tolerant reader could not safely absorb a change.
+
+`usage` (plain or `--json`) exits 0 after printing a complete document, even
+when every entry carries its own `error`. Non-zero means the command could not
+produce the document (missing or unreadable `--config`, unparseable TOML, no
+vendors enabled, or a runtime/bootstrap failure).
 
 `usage` reports only the providers that are **enabled**, which makes the
 switched-off and the never-credentialed exactly the rows it cannot describe.
@@ -555,6 +656,10 @@ The widget reads the providers and accounts already enabled in
   widget; this applies immediately and preserves the full panel and tooltip.
 - QML settings can also show the provider's `{vendor_short}` code before that
   value (`cld 29%`). It is off by default and applies immediately.
+- QML settings can pin the bar to one quota window — auto (highest),
+  5-hour, weekly, or monthly — instead of always showing the highest
+  percent. The tooltip and panel hero echo the pinned value; panel rows
+  and alert state still follow the highest quota.
 - Right-click launches the TUI.
 - Middle-click or the mouse wheel switches providers.
 - The selected provider or named account is remembered across shell reloads
@@ -592,6 +697,10 @@ repositories and are maintained by their authors, not here.
 - [AI Usage for Noctalia](https://github.com/noctalia-dev/community-plugins/tree/main/ai-usagebar)
   — bar widget and panel for the Noctalia v5 shell, installable from its
   plugin browser as `felipeartur/ai-usagebar`.
+
+- [usage for Codex CLI](https://github.com/wellorbetter/ai-usagebar-codex-skill)
+  — Codex skill for checking remaining quotas, balances, and reset times with
+  `$usage`, using the usage and vendor JSON reports.
 
 ## Waybar config
 
@@ -762,6 +871,9 @@ Native desktop coverage varies by integration. The
 reported metric, desktop selector, stability note, and live-test command.
 
 Run `make smoke` to check live response shapes.
+
+For Ollama Cloud setup (Bearer key from ollama.com/settings/keys), see the
+[Ollama integration guide](docs/ollama-setup.md).
 
 ## Format placeholders
 

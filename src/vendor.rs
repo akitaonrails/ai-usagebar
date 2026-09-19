@@ -3,6 +3,8 @@
 //! Snapshots remain a discriminated `VendorSnapshot` enum because the vendors
 //! have genuinely different shapes — see `usage.rs`.
 
+use std::collections::BTreeSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use clap::ValueEnum;
@@ -40,12 +42,51 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "GITHUB_COPILOT_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
+    "OLLAMA_API_KEY",
 ];
 
+/// Env var names a `[[custom]]` provider reads its token from. They are not
+/// known until the config is parsed, so they cannot sit in the static list
+/// above, but they are exactly as secret as `DEEPSEEK_API_KEY` and must be
+/// scrubbed from every subprocess the same way.
+fn registered_secret_env_vars() -> &'static Mutex<BTreeSet<&'static str>> {
+    static REGISTERED: OnceLock<Mutex<BTreeSet<&'static str>>> = OnceLock::new();
+    REGISTERED.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+/// Extra env var names (custom providers' `api_key_env`) that must be
+/// scrubbed from every child process. Additive and idempotent; names that are
+/// not valid env var names, or already in [`VENDOR_SECRET_ENV_VARS`], are
+/// ignored.
+///
+/// A name is interned once, on first registration, so the removal list keeps
+/// its `&'static str` element type and the three call sites and their tests
+/// stay untouched. The set is bounded by the user's config, and re-loading
+/// the same config registers nothing new, so the leak is a handful of short
+/// strings for the life of the process.
+pub fn register_secret_env_vars(names: &[String]) {
+    let mut registered = registered_secret_env_vars()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for name in names {
+        if !crate::config::is_valid_env_var_name(name)
+            || VENDOR_SECRET_ENV_VARS.contains(&name.as_str())
+            || registered.contains(name.as_str())
+        {
+            continue;
+        }
+        registered.insert(Box::leak(name.clone().into_boxed_str()));
+    }
+}
+
 pub(crate) fn vendor_secret_env_vars_to_remove(keep: &[&str]) -> Vec<&'static str> {
+    let registered = registered_secret_env_vars()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     VENDOR_SECRET_ENV_VARS
         .iter()
         .copied()
+        .chain(registered.iter().copied())
         .filter(|var| !keep.contains(var))
         .collect()
 }
@@ -125,6 +166,7 @@ pub enum VendorId {
     Moonshot,
     Grok,
     Supergrok,
+    Grokbot,
     Antigravity,
     Cursor,
     Minimax,
@@ -135,6 +177,7 @@ pub enum VendorId {
     OpenCodeGo,
     #[serde(rename = "commandcode")]
     CommandCode,
+    Ollama,
 }
 
 /// How a provider authenticates. Drives what a frontend offers a provider that
@@ -178,6 +221,7 @@ impl VendorId {
             VendorId::Moonshot => "moonshot",
             VendorId::Grok => "grok",
             VendorId::Supergrok => "supergrok",
+            VendorId::Grokbot => "grokbot",
             VendorId::Antigravity => "antigravity",
             VendorId::Cursor => "cursor",
             VendorId::Minimax => "minimax",
@@ -185,6 +229,7 @@ impl VendorId {
             VendorId::NousResearch => "nous",
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
+            VendorId::Ollama => "ollama",
         }
     }
 
@@ -206,6 +251,7 @@ impl VendorId {
             VendorId::Moonshot => "Moonshot",
             VendorId::Grok => "Grok",
             VendorId::Supergrok => "SuperGrok",
+            VendorId::Grokbot => "Grok Bot",
             VendorId::Antigravity => "Antigravity",
             VendorId::Cursor => "Cursor",
             VendorId::Minimax => "MiniMax",
@@ -213,6 +259,7 @@ impl VendorId {
             VendorId::NousResearch => "Nous Research",
             VendorId::OpenCodeGo => "OpenCode Go",
             VendorId::CommandCode => "Command Code",
+            VendorId::Ollama => "Ollama Cloud",
         }
     }
 
@@ -233,6 +280,7 @@ impl VendorId {
             VendorId::Novita => "󰄔",
             VendorId::Moonshot => VendorId::Moonshot.short_name(),
             VendorId::Grok | VendorId::Supergrok => "󰇷",
+            VendorId::Grokbot => VendorId::Grokbot.short_name(),
             VendorId::Antigravity => VendorId::Antigravity.short_name(),
             VendorId::Cursor => "❯",
             VendorId::Minimax => VendorId::Minimax.short_name(),
@@ -240,6 +288,9 @@ impl VendorId {
             VendorId::NousResearch => VendorId::NousResearch.short_name(),
             VendorId::OpenCodeGo => VendorId::OpenCodeGo.short_name(),
             VendorId::CommandCode => VendorId::CommandCode.short_name(),
+            // No distinct Nerd Font mark for Ollama Cloud; the `oll` short
+            // name is unique by construction and cannot render as tofu.
+            VendorId::Ollama => VendorId::Ollama.short_name(),
         }
     }
 
@@ -262,6 +313,7 @@ impl VendorId {
             VendorId::Moonshot => "msh",
             VendorId::Grok => "grk",
             VendorId::Supergrok => "sgk",
+            VendorId::Grokbot => "gbt",
             VendorId::Antigravity => "agy",
             VendorId::Cursor => "cur",
             VendorId::Minimax => "mmx",
@@ -269,6 +321,7 @@ impl VendorId {
             VendorId::NousResearch => "nrs",
             VendorId::OpenCodeGo => "ocg",
             VendorId::CommandCode => "cmc",
+            VendorId::Ollama => "oll",
         }
     }
 
@@ -294,6 +347,7 @@ impl VendorId {
             VendorId::Moonshot => "moonshot",
             VendorId::Grok => "grok",
             VendorId::Supergrok => "supergrok",
+            VendorId::Grokbot => "grokbot",
             VendorId::Antigravity => "antigravity",
             VendorId::Cursor => "cursor",
             VendorId::Minimax => "minimax",
@@ -301,6 +355,7 @@ impl VendorId {
             VendorId::NousResearch => "nous",
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
+            VendorId::Ollama => "ollama",
         }
     }
 
@@ -326,15 +381,19 @@ impl VendorId {
             | VendorId::Moonshot
             | VendorId::Grok
             | VendorId::Minimax
-            | VendorId::OpenCodeGo => AuthKind::ApiKey,
+            | VendorId::OpenCodeGo
+            | VendorId::Ollama => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
             // the login. Antigravity has no credential file at all (the binary
             // probes whichever local server answers), Cursor and Kiro read the
-            // IDE's and kiro-cli's own state, and SuperGrok uses the Grok Build
-            // CLI's login.
-            VendorId::Supergrok | VendorId::Antigravity | VendorId::Cursor | VendorId::Kiro => {
-                AuthKind::Local
-            }
+            // IDE's and kiro-cli's own state, SuperGrok uses the Grok Build
+            // CLI's login, and Grok Bot reads the desktop app's own
+            // OSCrypt-protected session file.
+            VendorId::Supergrok
+            | VendorId::Antigravity
+            | VendorId::Cursor
+            | VendorId::Kiro
+            | VendorId::Grokbot => AuthKind::Local,
         }
     }
 
@@ -355,6 +414,7 @@ impl VendorId {
             VendorId::Grok => "XAI_MANAGEMENT_KEY",
             VendorId::Minimax => "MINIMAX_API_KEY",
             VendorId::OpenCodeGo => "OPENCODE_GO_API_KEY",
+            VendorId::Ollama => "OLLAMA_API_KEY",
             // OAuth-first, with an environment override for CI and headless
             // use. Neither name is configurable, so neither has an
             // `api_key_env` field in its config section.
@@ -363,6 +423,7 @@ impl VendorId {
             VendorId::Anthropic
             | VendorId::Openai
             | VendorId::Supergrok
+            | VendorId::Grokbot
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Kiro
@@ -374,6 +435,46 @@ impl VendorId {
     /// somewhere this cannot name — a desktop app's own window. The strings
     /// are the ones the vendor modules' own credential errors already print,
     /// so a status row and a failed fetch tell the user to run the same thing.
+    /// One sentence telling the user how to sign this provider in, for a UI
+    /// that has an error card and no room for a manual.
+    ///
+    /// This is product knowledge, so it lives beside [`Self::login_command`]
+    /// rather than in a frontend table. The Windows popover grew its own copy
+    /// first and it disagreed with this one for five of eight providers before
+    /// it had shipped — the match here is exhaustive, so a new provider cannot
+    /// be added without saying how a person signs into it.
+    pub const fn sign_in_hint(self) -> &'static str {
+        match self {
+            VendorId::Anthropic => "Run `claude` in a terminal, then Refresh.",
+            VendorId::Openai => "Run `codex login` in a terminal, then Refresh.",
+            VendorId::Copilot => "Run `gh auth login` in a terminal, then Refresh.",
+            VendorId::Kiro => "Run `kiro-cli login` in a terminal, then Refresh.",
+            VendorId::Kimi => "Run `kimi` in a terminal, or set an API key.",
+            VendorId::CommandCode => "Run `commandcode` in a terminal, then Refresh.",
+            VendorId::NousResearch => {
+                "Run `ai-usagebar auth nous login` in a terminal, then Refresh."
+            }
+            VendorId::Cursor => "Sign in to the Cursor app, then Refresh.",
+            VendorId::Antigravity => "Open Antigravity or run `agy`, then Refresh.",
+            VendorId::Grok | VendorId::Supergrok => "Sign in with `grok`, then Refresh.",
+            VendorId::Grokbot => "Install and sign in to the Grok Bot desktop app, then Refresh.",
+            // Key-only providers: there is nothing to log into, only a key to
+            // put in the config. Ollama Cloud's key is minted at
+            // ollama.com/settings/keys; the local `ollama` CLI's Ed25519 key
+            // is a registry credential, not a quota one, and is never read.
+            VendorId::AnthropicApi
+            | VendorId::Zai
+            | VendorId::Openrouter
+            | VendorId::Deepseek
+            | VendorId::Kilo
+            | VendorId::Novita
+            | VendorId::Moonshot
+            | VendorId::Minimax
+            | VendorId::OpenCodeGo
+            | VendorId::Ollama => "Add an API key in Settings, then Refresh.",
+        }
+    }
+
     pub const fn login_command(self) -> &'static str {
         match self {
             VendorId::Anthropic => "claude",
@@ -394,10 +495,12 @@ impl VendorId {
             | VendorId::Moonshot
             | VendorId::Grok
             | VendorId::Supergrok
+            | VendorId::Grokbot
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Minimax
-            | VendorId::OpenCodeGo => "",
+            | VendorId::OpenCodeGo
+            | VendorId::Ollama => "",
         }
     }
 
@@ -416,6 +519,7 @@ impl VendorId {
             VendorId::Moonshot,
             VendorId::Grok,
             VendorId::Supergrok,
+            VendorId::Grokbot,
             VendorId::Antigravity,
             VendorId::Cursor,
             VendorId::Minimax,
@@ -423,6 +527,7 @@ impl VendorId {
             VendorId::NousResearch,
             VendorId::OpenCodeGo,
             VendorId::CommandCode,
+            VendorId::Ollama,
         ]
     }
 }
@@ -568,7 +673,34 @@ mod tests {
         assert!(!removed.contains(&"GROK_API_KEY"));
         assert!(removed.contains(&"ANTHROPIC_ADMIN_KEY"));
         assert!(removed.contains(&"OPENROUTER_API_KEY"));
-        assert_eq!(removed.len(), VENDOR_SECRET_ENV_VARS.len() - 2);
+        // Counted against the static list: another test in this process may
+        // have registered a custom provider's env var, which belongs here too.
+        let builtins = removed
+            .iter()
+            .filter(|var| VENDOR_SECRET_ENV_VARS.contains(var))
+            .count();
+        assert_eq!(builtins, VENDOR_SECRET_ENV_VARS.len() - 2);
+    }
+
+    #[test]
+    fn a_registered_custom_env_var_is_scrubbed_like_a_builtin_one() {
+        let name = "AI_USAGEBAR_TEST_CUSTOM_TOKEN_7F3A";
+        assert!(!vendor_secret_env_vars_to_remove(&[]).contains(&name));
+
+        register_secret_env_vars(&[name.to_string(), "not a name!".to_string()]);
+        register_secret_env_vars(&[name.to_string()]);
+
+        let removed = vendor_secret_env_vars_to_remove(&[]);
+        assert_eq!(
+            removed.iter().filter(|var| **var == name).count(),
+            1,
+            "registering twice must not list it twice: {removed:?}"
+        );
+        assert!(!removed.contains(&"not a name!"), "{removed:?}");
+        assert!(
+            !vendor_secret_env_vars_to_remove(&[name]).contains(&name),
+            "`keep` applies to registered names too"
+        );
     }
 
     #[test]

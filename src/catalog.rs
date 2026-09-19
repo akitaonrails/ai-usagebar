@@ -157,6 +157,8 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         // SuperGrok rides the Grok Build CLI's own login; its executable is the
         // only local artifact, and config pins the trusted path.
         VendorId::Supergrok => (probes.exists)(&cfg.supergrok.grok_binary),
+        // The Grok Bot desktop app's own credential file is the login.
+        VendorId::Grokbot => any_exists(probes, [crate::grokbot::secrets_path(&cfg.grokbot)]),
         // Nothing to check: handled by `needs_credential`, never reached.
         VendorId::Antigravity => true,
         // Key-only providers: the environment and inline checks above are the
@@ -170,7 +172,8 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         | VendorId::Moonshot
         | VendorId::Grok
         | VendorId::Minimax
-        | VendorId::OpenCodeGo => false,
+        | VendorId::OpenCodeGo
+        | VendorId::Ollama => false,
     }
 }
 
@@ -419,6 +422,12 @@ mod tests {
         assert_eq!(vendors.len(), VendorId::all().len());
         assert_eq!(vendors[0]["id"], "anthropic");
         assert_eq!(vendors[0]["kind"], "oauth");
+        // The macOS menu bar decides a vendor's default state solely by
+        // `enabled`, so the wire name is frontend contract: a serde rename
+        // here would silently empty its selector, failing no Swift test.
+        assert_eq!(vendors[0]["enabled"], true);
+        assert_eq!(vendors[0]["configured"], false);
+        assert_eq!(vendors[0]["short_name"], "cld");
         let agy = vendors
             .iter()
             .find(|v| v["id"] == "antigravity")

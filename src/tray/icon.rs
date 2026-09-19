@@ -114,7 +114,7 @@ mod tests {
             assert_eq!(bytes[last], 0, "bottom-right corner at {size}");
             let mut inked = 0usize;
             let mut soft = 0usize;
-            for pixel in bytes.chunks_exact(4) {
+            for pixel in bytes.as_chunks::<4>().0 {
                 if pixel[3] > 0 {
                     inked += 1;
                     assert_eq!(&pixel[..3], &[0, 0, 0], "NotifyIcon strokes are black");

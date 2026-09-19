@@ -18,12 +18,14 @@ use crate::cursor;
 use crate::deepseek;
 use crate::error::{AppError, Result};
 use crate::grok;
+use crate::grokbot;
 use crate::kilo;
 use crate::kimi;
 use crate::kiro;
 use crate::minimax;
 use crate::moonshot;
 use crate::novita;
+use crate::ollama;
 use crate::openai;
 use crate::openrouter;
 use crate::pango::escape;
@@ -156,6 +158,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Moonshot => moonshot_output(cli, &config).await,
         Vendor::Grok => grok_output(cli, &config).await,
         Vendor::Supergrok => supergrok_output(cli, &config).await,
+        Vendor::Grokbot => grokbot_output(cli, &config).await,
         Vendor::Antigravity => antigravity_output(cli, &config).await,
         Vendor::Cursor => cursor_output(cli, &config).await,
         Vendor::Minimax => minimax_output(cli, &config).await,
@@ -163,6 +166,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::NousResearch => nous_output(cli).await,
         Vendor::OpenCodeGo => opencode_go_output(cli, &config).await,
         Vendor::CommandCode => commandcode_output(cli, &config).await,
+        Vendor::Ollama => ollama_output(cli, &config).await,
     }
 }
 
@@ -283,16 +287,63 @@ async fn commandcode_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> 
     ))
 }
 
+/// Ollama Cloud: Bearer key against `ollama.com/api/usage`. The local
+/// `ollama` daemon at 127.0.0.1:11434 has no quota route and is never
+/// contacted; the Ed25519 key the CLI keeps in `~/.ollama/id_ed25519` is a
+/// registry credential, not a quota one, and is never read.
+async fn ollama_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "Ollama",
+        &config.ollama.api_key_env,
+        config.ollama.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "ollama")?;
+    let endpoints = ollama::fetch::Endpoints::default();
+    let outcome = match ollama::fetch_snapshot(
+        &client,
+        &api_key,
+        &config.ollama.plan,
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
+    let snapshot = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    Ok(ollama::vendor::render(
+        &vendor_outcome,
+        &snapshot,
+        &theme_from_cli(cli),
+        &RenderOpts::from_cli(cli),
+        Utc::now(),
+    ))
+}
+
 /// Antigravity authenticates through whichever local product is running (the
-/// 2.0 app, the `agy` CLI, or the IDE) — there is no API key to resolve.
-async fn antigravity_output(cli: &Cli, _config: &Config) -> Result<WaybarOutput> {
+/// 2.0 app, the `agy` CLI, or the IDE) — there is no API key to resolve. With
+/// none running, the Google session it saved is used instead; the config only
+/// supplies the OAuth client that session is refreshed with.
+async fn antigravity_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
     let cache = vendor_cache(cli, "antigravity")?;
-    let outcome = match antigravity::fetch_snapshot(&client, &cache, DEFAULT_TTL).await {
-        Ok(o) => o,
-        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
-        Err(e) => return Err(e),
-    };
+    let oauth = antigravity::cloud::OauthClient::from_config(
+        config.antigravity.oauth_client_id.as_deref(),
+        config.antigravity.oauth_client_secret.as_deref(),
+    );
+    let outcome =
+        match antigravity::fetch_snapshot(&client, &cache, DEFAULT_TTL, oauth.as_ref()).await {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
 
     let theme = theme_from_cli(cli);
     let snap = outcome.snapshot.clone();
@@ -821,6 +872,35 @@ async fn kimi_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let vendor_outcome: VendorOutcome = outcome.into();
     let opts = RenderOpts::from_cli(cli);
     Ok(kimi::vendor::render(
+        &vendor_outcome,
+        &snap,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+/// Grok Bot has no key of its own: the desktop app's session is the login, so
+/// the only config input is where that file lives.
+async fn grokbot_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let creds = grokbot::resolve_credentials(&config.grokbot)?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "grokbot")?;
+    let endpoints = grokbot::fetch::Endpoints::default();
+    let outcome =
+        match grokbot::fetch::fetch_snapshot_with(&client, &creds, &cache, &endpoints, DEFAULT_TTL)
+            .await
+        {
+            Ok(o) => o,
+            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+            Err(e) => return Err(e),
+        };
+
+    let theme = theme_from_cli(cli);
+    let snap = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(grokbot::vendor::render(
         &vendor_outcome,
         &snap,
         &theme,

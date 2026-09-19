@@ -29,6 +29,11 @@ rustPlatform.buildRustPackage {
       ../config.example.toml
       ../README.md
       ../LICENSE
+      # `src/tray/icon.rs` is not Windows-gated — it `include_bytes!`s the tray
+      # glyphs on every target, so the build fails without them here. Only the
+      # .rgba files: the popover's TypeScript is built by `build.rs` on Windows
+      # only, and pulling it in would rebuild this derivation on every UI edit.
+      (lib.fileset.fileFilter (file: file.hasExt "rgba") ../windows)
     ];
   };
 

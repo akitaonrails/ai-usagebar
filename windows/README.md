@@ -2,7 +2,7 @@
 
 A NotifyIcon + WebView2 popover for [`ai-usagebar`](../README.md). Left-click
 the tray icon for a dashboard that follows the OpenUsage (SwiftUI edition)
-design: a 320 px panel that sizes itself to its content, provider sections
+design: a compact 300 px panel that sizes itself to its content, provider sections
 with capsule meters, reset countdowns and spend rows. It is the Windows
 counterpart to the
 [KDE plasmoid](../kde-plasmoid/README.md): same `usage --json` report, same
@@ -12,6 +12,22 @@ The host is `ai-usagebar-tray.exe` (Rust, in-process fetch). The UI is a
 Vite + React + shadcn app in `windows/popover/` (Iconify icons via
 `unplugin-icons`). The view-model in `src/model.js` has a Node contract
 test that does not need `npm install`.
+
+## Install
+
+From [Scoop](https://scoop.sh), via the official bucket:
+
+```powershell
+scoop bucket add akitaonrails https://github.com/akitaonrails/scoop-bucket
+scoop install ai-usagebar
+```
+
+Or grab `ai-usagebar-windows-x86_64.zip` from the latest
+[GitHub release](https://github.com/akitaonrails/ai-usagebar/releases) and
+unzip it anywhere. Update ownership differs between the two paths: **Scoop
+owns updates for Scoop installs** (`scoop update ai-usagebar`), while the
+tray's built-in updater (below, **Settings → Updates**) applies to
+standalone ZIP installs.
 
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](../screenshots/windows-tray-dashboard.png)
 
@@ -42,15 +58,15 @@ visible.
 |---|---|
 | Left-click | Toggle the popover |
 | Right-click | Refresh, Detect Providers, Open TUI, Start with Windows, Quit |
-| Footer Options ▾ | Customize, Settings, Refresh, Detect Providers, Open TUI, Start with Windows, Quit |
+| Footer Options ▾ | Customize, Settings, Refresh, Detect Providers, Open TUI, Start at Login, Quit |
 | Footer “Next update in …” | Refresh now |
 | Click `52% left` under a bar | Flip Used ⟷ Left everywhere (hover shows the other reading) |
-| Click `Resets in …` | Flip countdown ⟷ exact time everywhere |
+| Click `Resets in …` | Timeline popover with the exact reset time and countdown (Settings → Reset Times switches the row text itself) |
 | Options → Customize (or Return) | Provider list: toggle, drag the grip to reorder, open a provider |
 | Provider Customize | Always Visible vs On Demand rows (toggle + drag across the divider); Reset in the top bar |
-| Options → Settings | Launch at Login, Refresh Every (1/5/10 min), Global Shortcut, Theme, Density (Default/Compact), Time Format, Show Usage As, Reset Times, Always Show Pacing |
+| Options → Settings | Launch at Login, Refresh Every (1/5/10 min), Global Shortcut, Theme, Time Format, Show Usage As, Reset Times, Always Show Pacing, Updates |
 | Provider header icons (right) | Customize that provider's rows, or reset them to the defaults |
-| Right-click a row | Hide row · Always show / Show on demand · Refresh provider · Customize provider |
+| Right-click a row | Hide row · Star for menu bar (macOS glyph) · Always show / Show on demand · Refresh provider · Customize provider |
 | Drag a provider header | Reorder provider sections |
 | Caret inside the card | Show or hide On Demand rows |
 | Global shortcut | Toggle the popover from anywhere (set in Settings → Global Shortcut) |
@@ -82,6 +98,32 @@ Exact reset times ("Resets today at 6:38 PM") follow the Windows locale by
 default. **Settings → Time Format** pins them to 12-hour or 24-hour clocks
 regardless of the system setting.
 
+## Updates
+
+The tray checks GitHub Releases of the repository named in `Cargo.toml`'s
+`repository` field (`CARGO_PKG_REPOSITORY` at build time) for a newer build, so
+a fork that builds its own tray updates from its own releases. **Settings → Updates**
+picks the mode: **Automatic** downloads and installs a release as soon as it
+is found, **Notify** only shows a banner at the top of the dashboard with an
+"Install Update" button (✕ snoozes it; a blue dot next to the version in the
+footer remembers it is waiting), and **Off** stops the hourly background
+check. **Check Now** runs a check on demand in every mode and the line under
+it says when the last one ran. Once a release is known the same button reads
+**Update** and installs it. The mode is the `updates` key of the `[tray]`
+section in `config.toml`, next to the shortcut and the poll interval.
+
+![Settings screen — General (Launch at Login, Refresh Every, Global Shortcut), Appearance (Theme, Density, Time Format), Usage Display (Show Usage As, Reset Times, Always Show Pacing) and Updates (mode picker, Check for Updates with "Up to date · checked 33m ago" and a Check Now button)](../screenshots/windows-tray-settings.png)
+
+The download is verified against the release's `.sha256` sidecar, which
+proves the file arrived intact — integrity, not authenticity: anyone who can
+publish a release can publish a matching sidecar. Installing swaps the
+running executable for the new one and leaves the previous build as
+`ai-usagebar-tray.exe.old`, which the next start removes. Debug builds
+(`cargo build` without `--release`) check but refuse to install. The release
+assets it looks for (`ai-usagebar-<bin>-windows-x86_64.exe` + `.sha256`) are
+produced by the Windows job in `.github/workflows/release.yml`, so the first
+release cut after this change is the first one the tray can install.
+
 ## When the popover closes
 
 The popover is transient: it hides when you click outside it, click the tray
@@ -104,7 +146,7 @@ numbers and shows an orange ⚠ in its header plus a one-line note at the
 bottom of the card; hovering either shows the raw diagnosis. Antigravity
 only reports "isn't running" when there is no local server *and* no saved
 Google session to fall back on: with the app closed but signed in, the card
-shows the quota from Google's API with a "Source · Google API (app closed)"
+shows the quota from Google's API with a "Source · Google API"
 row. A
 provider with nothing to show gets a red ⚠ and a card with the verdict, a
 hint, and — when the fix is something the tray can do — a button (Open TUI
@@ -150,7 +192,7 @@ Settings.
 Open TUI launches `ai-usagebar-tui` in Windows Terminal (`wt.exe -e …`) when
 present, otherwise `conhost.exe`. Provider keys stay in the TUI (`s`).
 Provider order, hidden providers, Always Visible / On Demand rows, theme,
-density, “show usage as” and reset-time format are remembered in the popover.
+“show usage as” and reset-time format are remembered in the popover.
 Provider marks live in `windows/popover/src/icons/providers/` (OpenUsage, MIT;
 simple-icons, CC0) and load through an `unplugin-icons` custom collection;
 a provider without a mark shows its initials — including `[[custom]]`
@@ -159,14 +201,14 @@ providers from `config.toml` (see the root README, "Custom providers").
 The tray re-reads every provider every 5 minutes by default (**Settings →
 Refresh Every**: 1, 5 or 10; `[tray] refresh_minutes`). The cache TTL stays
 60 s, so the footer's Refresh is always allowed to fetch. A stale or failed vendor is
-shown on its card. The global shortcut and the poll interval are the two keys
-of the `[tray]` section in `config.toml`; the popover's Settings screen writes
-them. The NotifyIcon is a bar-chart-in-circle mark, three bars inside a ring
+shown on its card. The global shortcut, the poll interval and the update mode
+are the keys of the `[tray]` section in `config.toml`; the popover's Settings
+screen writes them. The NotifyIcon is a bar-chart-in-circle mark, three bars inside a ring
 (source in `windows/tray-icon.svg`), shipped as anti-aliased rasters
 at 16/20/24/32/40/48 px so the shell gets the exact size for the current DPI.
 It has no hover tip; the popover is the readout.
 
-![Windows tray icon in the notification area — a bar-chart-in-circle mark next to the clock](../screenshots/windows-tray-icon.png)
+![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](../screenshots/windows-tray-icon.png)
 
 ## Tray icon rasters
 

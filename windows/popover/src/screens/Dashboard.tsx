@@ -2,9 +2,10 @@ import MdiTune from "~icons/mdi/tune-variant";
 import { HintCard } from "@/components/HintCard";
 import { ErrorRow, ProviderSection } from "@/components/ProviderSection";
 import type { RowAction } from "@/components/RowMenu";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { SortableItem, VerticalDnd } from "@/components/dnd";
 import type { Card, Layout, Payload } from "@/lib/types";
-import { explainError } from "../model.js";
+import { explainError, updateBannerPending } from "../model.js";
 
 interface DashboardProps {
   cards: Card[];
@@ -21,7 +22,6 @@ interface DashboardProps {
   onRowAction: (providerId: string, rowKey: string, action: RowAction) => void;
   onRowMenuOpenChange: (open: boolean) => void;
   onToggleCollapse: (id: string) => void;
-  onToggleResetTimes: () => void;
   onToggleShowAs: () => void;
 }
 
@@ -41,7 +41,6 @@ export function Dashboard({
   onRowAction,
   onRowMenuOpenChange,
   onToggleCollapse,
-  onToggleResetTimes,
   onToggleShowAs,
 }: DashboardProps) {
   if (payload.hostError) {
@@ -63,10 +62,17 @@ export function Dashboard({
       />
     </div>
   ) : null;
+  const banner =
+    payload.update && updateBannerPending(payload) ? (
+      <div className="mb-[var(--section-gap)]">
+        <UpdateBanner update={payload.update} />
+      </div>
+    ) : null;
   if (visible.length === 0) {
     return (
       <>
         {welcome}
+        {banner}
         <p className="m-0 px-4 py-6 text-center text-[11px] text-label-2">
           {cards.length
             ? "Turn on Customize to choose what to show."
@@ -79,6 +85,7 @@ export function Dashboard({
   return (
     <>
     {welcome}
+    {banner}
     <VerticalDnd
       items={ids}
       onReorder={onReorder}
@@ -102,7 +109,6 @@ export function Dashboard({
                 onRowAction={(key, action) => onRowAction(card.id, key, action)}
                 onRowMenuOpenChange={onRowMenuOpenChange}
                 onToggleCollapse={() => onToggleCollapse(card.id)}
-                onToggleResetTimes={onToggleResetTimes}
                 onToggleShowAs={onToggleShowAs}
               />
             )}

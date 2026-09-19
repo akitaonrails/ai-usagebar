@@ -214,6 +214,8 @@ mod tests {
             total_pct: 99,
             unlimited: false,
             on_demand_enabled: false,
+            on_demand_used_cents: None,
+            on_demand_limit_cents: None,
             reset_at: Some(now() + chrono::Duration::days(9)),
             cycle_start: None,
         }

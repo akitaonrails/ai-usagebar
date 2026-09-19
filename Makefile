@@ -50,6 +50,9 @@ test:
 	$(MAKE) desktop-test
 	$(MAKE) plugin-test
 
+changelog-check:
+	./scripts/check-changelog-immutable.sh
+
 desktop-test:
 	node gnome-extension/marker-logic.test.mjs
 	node kde-plasmoid/plasmoid-logic.test.mjs

@@ -25,6 +25,10 @@ mod tui_launch;
 #[cfg(target_os = "macos")]
 #[path = "tui_launch_macos.rs"]
 mod tui_launch;
+// Release check, download and verification: `reqwest` and paths, no Windows
+// API. It follows this module's rule — compile everywhere so Linux CI runs its
+// tests — even though only the Windows host calls it.
+mod update_flow;
 
 pub use icon::{Severity, tray_icon_rgba};
 pub use payload::{POLL_INTERVAL, host_payload, worst_severity, wrap_report};

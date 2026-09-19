@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::error::{AppError, Result};
-use crate::usage::{ResetCredits, SuperGrokPeriod, SuperGrokSnapshot};
+use crate::usage::{ResetCredits, SuperGrokPeriod, SuperGrokProduct, SuperGrokSnapshot};
 
 const MAX_PLAN_CHARS: usize = 128;
 const MAX_BENIGN_PERCENT: f64 = 100.5;
@@ -40,6 +40,15 @@ pub struct BillingConfig {
     pub is_unified_billing_user: Option<bool>,
     pub billing_period_start: Option<String>,
     pub billing_period_end: Option<String>,
+    #[serde(default)]
+    pub product_usage: Vec<ProductUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProductUsage {
+    pub product: Option<String>,
+    pub usage_percent: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -91,8 +100,10 @@ pub fn to_snapshot(resp: BillingResponse, account_scope: &str) -> Result<SuperGr
     let period = resolve_period(&cfg);
     let weekly_pct = resolve_usage_percent(&cfg)?;
     let reset_at = resolve_reset_at(&cfg)?;
+    let products = parse_products(&cfg)?;
     let prepaid_balance = cfg
         .prepaid_balance
+        .as_ref()
         .map(|cents| checked_prepaid(cents.val))
         .transpose()?;
 
@@ -104,7 +115,64 @@ pub fn to_snapshot(resp: BillingResponse, account_scope: &str) -> Result<SuperGr
         reset_at,
         prepaid_balance,
         reset_credits: resp.reset_credits,
+        products,
     })
+}
+
+const MAX_PRODUCTS: usize = 16;
+
+fn parse_products(cfg: &BillingConfig) -> Result<Vec<SuperGrokProduct>> {
+    let mut products = Vec::new();
+    for item in cfg.product_usage.iter().take(MAX_PRODUCTS) {
+        let Some(raw) = item
+            .product
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        if raw.chars().count() > MAX_PLAN_CHARS || raw.chars().any(char::is_control) {
+            return Err(AppError::Schema(
+                "Grok Build product name is invalid".into(),
+            ));
+        }
+        let percent = match item.usage_percent {
+            Some(value) => checked_percent(value)?,
+            None => 0,
+        };
+        products.push(SuperGrokProduct {
+            label: product_label(raw),
+            percent,
+        });
+    }
+    Ok(products)
+}
+
+fn product_label(raw: &str) -> String {
+    match raw {
+        "GrokBuild" => "Grok Build".into(),
+        "GrokChat" => "Grok Chat".into(),
+        "GrokImagine" => "Grok Imagine".into(),
+        "GrokTasks" => "Grok Tasks".into(),
+        "Api" => "xAI API".into(),
+        other if other.starts_with("Grok") && other.len() > 4 => {
+            let rest = &other[4..];
+            let spaced = rest.chars().fold(String::new(), |mut out, ch| {
+                if ch.is_uppercase() && !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push(ch);
+                out
+            });
+            if spaced.is_empty() {
+                "Grok".into()
+            } else {
+                format!("Grok {spaced}")
+            }
+        }
+        other => other.to_string(),
+    }
 }
 
 fn checked_plan(value: Option<&str>) -> Result<String> {
@@ -231,6 +299,43 @@ mod tests {
         assert_eq!(snapshot.period, SuperGrokPeriod::Weekly);
         assert_eq!(snapshot.plan, "SuperGrok Heavy");
         assert_eq!(snapshot.prepaid_balance, Some(12.5));
+        assert!(snapshot.products.is_empty());
+    }
+
+    #[test]
+    fn product_usage_rows_are_labelled_and_rounded() {
+        let response: BillingResponse = serde_json::from_str(
+            r#"{
+              "config": {
+                "creditUsagePercent": 90.0,
+                "currentPeriod": {
+                  "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                  "end": "2026-09-20T13:26:44Z"
+                },
+                "productUsage": [
+                  {"product": "GrokBuild", "usagePercent": 87.4},
+                  {"product": "GrokChat", "usagePercent": 2.6},
+                  {"product": "GrokImagine"},
+                  {"product": "Api", "usagePercent": 0.0}
+                ]
+              }
+            }"#,
+        )
+        .unwrap();
+        let snapshot = to_snapshot(response, "scope").unwrap();
+        assert_eq!(
+            snapshot
+                .products
+                .iter()
+                .map(|p| (p.label.as_str(), p.percent))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Grok Build", 87),
+                ("Grok Chat", 3),
+                ("Grok Imagine", 0),
+                ("xAI API", 0),
+            ]
+        );
     }
 
     #[test]

@@ -64,13 +64,33 @@ pub fn build_placeholders(
     let plan = snap.plan.as_deref().unwrap_or("Kimi");
     let weekly_pct = snap.weekly_pct();
     let window_pct = snap.window_pct();
+    // The newer response shape has no weekly bucket: the weekly placeholders
+    // resolve to empty strings (the codebase's missing-placeholder
+    // convention) rather than a fabricated 0.
+    let weekly = |value: String| {
+        if snap.has_weekly {
+            value
+        } else {
+            String::new()
+        }
+    };
+    let monthly = |value: String| {
+        if snap.monthly_pct.is_some() {
+            value
+        } else {
+            String::new()
+        }
+    };
     placeholders(vec![
         ("icon", "󰚩".to_string()),
         ("vendor_short", VendorId::Kimi.short_name().to_string()),
         // Cross-vendor aliases.
         ("plan", plan.to_string()),
-        ("weekly_pct", weekly_pct.to_string()),
-        ("weekly_reset", countdown::format(snap.weekly_reset_at, now)),
+        ("weekly_pct", weekly(weekly_pct.to_string())),
+        (
+            "weekly_reset",
+            weekly(countdown::format(snap.weekly_reset_at, now)),
+        ),
         ("session_pct", window_pct.to_string()),
         (
             "session_reset",
@@ -78,13 +98,24 @@ pub fn build_placeholders(
         ),
         // Kimi-specific placeholders.
         ("kimi_plan", plan.to_string()),
-        ("kimi_weekly_pct", weekly_pct.to_string()),
-        ("kimi_weekly_used", snap.weekly_used.to_string()),
-        ("kimi_weekly_limit", snap.weekly_limit.to_string()),
-        ("kimi_weekly_remaining", snap.weekly_remaining.to_string()),
+        ("kimi_weekly_pct", weekly(weekly_pct.to_string())),
+        ("kimi_weekly_used", weekly(snap.weekly_used.to_string())),
+        ("kimi_weekly_limit", weekly(snap.weekly_limit.to_string())),
+        (
+            "kimi_weekly_remaining",
+            weekly(snap.weekly_remaining.to_string()),
+        ),
         (
             "kimi_weekly_reset",
-            countdown::format(snap.weekly_reset_at, now),
+            weekly(countdown::format(snap.weekly_reset_at, now)),
+        ),
+        (
+            "kimi_monthly_pct",
+            monthly(snap.monthly_pct.unwrap_or(0).to_string()),
+        ),
+        (
+            "kimi_monthly_reset",
+            monthly(countdown::format(snap.monthly_reset_at, now)),
         ),
         ("kimi_window_pct", window_pct.to_string()),
         ("kimi_window_used", snap.window_used.to_string()),
@@ -98,7 +129,7 @@ pub fn build_placeholders(
 }
 
 pub fn severity(snap: &KimiSnapshot) -> PaceSeverity {
-    severity_for(snap.weekly_pct().max(snap.window_pct()))
+    severity_for(snap.worst_pct())
 }
 
 pub fn render(
@@ -159,8 +190,7 @@ fn render_tooltip(
     let dim = &theme.dim;
     let fg = &theme.fg;
 
-    let weekly_pct = snap.weekly_pct();
-    let weekly_color = severity_color(severity_for(weekly_pct), theme);
+    let plan_color = severity_color(severity(snap), theme);
 
     let mut lines: Vec<TooltipLine> = Vec::new();
     lines.push(TooltipLine::Center(format!(
@@ -174,7 +204,7 @@ fn render_tooltip(
         " <span foreground='{fg}'>  󰣖  Plan</span>"
     )));
     lines.push(TooltipLine::Body(format!(
-        "   <span font_weight='bold' foreground='{weekly_color}'>{}</span>",
+        "   <span font_weight='bold' foreground='{plan_color}'>{}</span>",
         escape(plan)
     )));
 
@@ -193,15 +223,36 @@ fn render_tooltip(
         );
     }
 
-    lines.push(TooltipLine::Body("".into()));
-    push_window_with_row(
-        &mut lines,
-        "  󰅄  Weekly quota",
-        &window(weekly_pct, snap.weekly_reset_at, WEEKLY_WINDOW),
-        theme,
-        now,
-        WindowRow::default(),
-    );
+    if snap.has_weekly {
+        lines.push(TooltipLine::Body("".into()));
+        push_window_with_row(
+            &mut lines,
+            "  󰅄  Weekly quota",
+            &window(snap.weekly_pct(), snap.weekly_reset_at, WEEKLY_WINDOW),
+            theme,
+            now,
+            WindowRow::default(),
+        );
+    }
+
+    if let Some(monthly_pct) = snap.monthly_pct {
+        lines.push(TooltipLine::Body("".into()));
+        push_window_with_row(
+            &mut lines,
+            "  󰃰  Monthly",
+            // The monthly pool resets from the order date, so there is no
+            // fixed window length to pace against; with a default row the
+            // tooltip helper never reads the duration.
+            &UsageWindow {
+                utilization_pct: monthly_pct,
+                resets_at: snap.monthly_reset_at,
+                window_duration: chrono::Duration::zero(),
+            },
+            theme,
+            now,
+            WindowRow::default(),
+        );
+    }
 
     if let Some((code, msg)) = outcome.last_error.as_ref() {
         let (label, icon, ecolor) = match warning_kind(*code, msg) {
@@ -259,6 +310,28 @@ mod tests {
             weekly_used: 26,
             weekly_remaining: 74,
             weekly_reset_at: Some(now() + chrono::Duration::days(4)),
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
+            window_limit: 100,
+            window_used: 15,
+            window_remaining: 85,
+            window_reset_at: Some(now() + chrono::Duration::hours(2)),
+        }
+    }
+
+    /// An account on the newer `usages`-map shape: no weekly bucket, a
+    /// monthly pool instead.
+    fn monthly_snap() -> KimiSnapshot {
+        KimiSnapshot {
+            plan: Some("Allegretto".into()),
+            weekly_limit: 0,
+            weekly_used: 0,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            has_weekly: false,
+            monthly_pct: Some(42),
+            monthly_reset_at: Some(now() + chrono::Duration::days(30)),
             window_limit: 100,
             window_used: 15,
             window_remaining: 85,
@@ -468,6 +541,8 @@ mod tests {
             "kimi_weekly_limit",
             "kimi_weekly_remaining",
             "kimi_weekly_reset",
+            "kimi_monthly_pct",
+            "kimi_monthly_reset",
             "kimi_window_pct",
             "kimi_window_used",
             "kimi_window_limit",
@@ -555,5 +630,78 @@ mod tests {
         let outcome = sample_outcome(snap.clone());
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
         assert!(out.text.contains("5h 15% · 7d 26%"), "{}", out.text);
+    }
+
+    #[test]
+    fn monthly_shape_toolbar_omits_the_weekly_row_and_adds_a_monthly_row() {
+        let snap = monthly_snap();
+        let outcome = sample_outcome(snap.clone());
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        assert!(
+            out.tooltip.contains("Rolling window (5h)"),
+            "{}",
+            out.tooltip
+        );
+        assert!(!out.tooltip.contains("Weekly quota"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("Monthly"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("42%"), "{}", out.tooltip);
+        // The code slice inside the pool never gets a row of its own.
+        assert!(!out.tooltip.contains("Code"), "{}", out.tooltip);
+        assert_eq!(
+            out.tooltip.matches('░').count() + out.tooltip.matches('█').count(),
+            2 * crate::pango::BAR_LEN as usize,
+            "one bar per present window: {}",
+            out.tooltip
+        );
+    }
+
+    #[test]
+    fn monthly_shape_weekly_placeholders_render_empty_and_monthly_ones_resolve() {
+        let snap = monthly_snap();
+        let values = build_placeholders(&snap, now());
+        for key in [
+            "kimi_weekly_pct",
+            "kimi_weekly_used",
+            "kimi_weekly_limit",
+            "kimi_weekly_remaining",
+            "kimi_weekly_reset",
+            "weekly_pct",
+            "weekly_reset",
+        ] {
+            assert_eq!(values[key], "", "{key} must render empty");
+        }
+        assert_eq!(values["kimi_monthly_pct"], "42");
+        assert!(!values["kimi_monthly_reset"].is_empty());
+        // No placeholder exposes the code slice inside the monthly pool.
+        assert!(
+            !values.keys().any(|k| k.contains("code")),
+            "a code-slice placeholder must not exist"
+        );
+    }
+
+    /// DEFAULT_FORMAT stays `5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%`:
+    /// with the weekly placeholder resolving to empty, substitution must
+    /// tolerate the shape — no literal braces left behind.
+    #[test]
+    fn monthly_shape_default_format_tolerates_the_empty_weekly_placeholder() {
+        let snap = monthly_snap();
+        let outcome = sample_outcome(snap.clone());
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        assert!(!out.text.contains('{'), "{}", out.text);
+        assert!(!out.text.contains('}'), "{}", out.text);
+        assert!(out.text.contains("5h 15%"), "{}", out.text);
+        assert!(out.text.contains("7d %"), "{}", out.text);
+    }
+
+    #[test]
+    fn severity_is_the_max_over_the_present_windows() {
+        let mut snap = monthly_snap();
+        snap.window_used = 10;
+        snap.window_remaining = 90;
+        snap.monthly_pct = Some(95);
+        // The monthly pool alone can drive severity.
+        assert_eq!(severity(&snap), PaceSeverity::Critical);
+        snap.monthly_pct = None;
+        assert_eq!(severity(&snap), PaceSeverity::Low);
     }
 }

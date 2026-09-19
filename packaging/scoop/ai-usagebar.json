@@ -1,0 +1,34 @@
+{
+  "version": "1.20.2",
+  "description": "Widgets, tray and TUI for tracking multi-provider AI plan usage",
+  "homepage": "https://github.com/akitaonrails/ai-usagebar",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/akitaonrails/ai-usagebar/releases/download/v1.19.0/ai-usagebar-windows-x86_64.zip",
+      "hash": "24f8bb386920c555f1d776ae228036cb070d741237b10001a884b806a36552b6"
+    }
+  },
+  "bin": [
+    "ai-usagebar.exe",
+    "ai-usagebar-tui.exe",
+    "ai-usagebar-tray.exe"
+  ],
+  "shortcuts": [
+    [
+      "ai-usagebar-tray.exe",
+      "AI Usage"
+    ]
+  ],
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/akitaonrails/ai-usagebar/releases/download/v$version/ai-usagebar-windows-x86_64.zip"
+      }
+    },
+    "hash": {
+      "url": "$url.sha256"
+    }
+  }
+}

@@ -7,7 +7,14 @@ pub fn open() {
     let Some(tui) = resolve_tui() else {
         return;
     };
-    if Command::new("wt.exe").args(["-e", &tui]).spawn().is_ok() {
+    // `wt -e` is not a real Windows Terminal flag (it belongs to wezterm);
+    // wt rejects it, prints its Usage page, and exits — the TUI never starts.
+    // The correct syntax is `wt new-tab -- <command>`.
+    if Command::new("wt.exe")
+        .args(["new-tab", "--", &tui])
+        .spawn()
+        .is_ok()
+    {
         return;
     }
     let _ = Command::new("conhost.exe").arg(&tui).spawn();

@@ -65,14 +65,23 @@ export interface BlockRow {
   label: string;
 }
 
-export interface ResetsRow {
+export interface ResetCredit {
+  expiresAt: string;
+  title: string;
+}
+
+export interface ResetCredits {
   available: number;
+  credits: ResetCredit[];
+}
+
+export interface ResetCreditsRow extends ResetCredits {
   key?: string;
-  kind: "resets";
+  kind: "resetCredits";
   label: string;
 }
 
-export type Row = BlockRow | MetricRow | ResetsRow | TextRow;
+export type Row = BlockRow | MetricRow | ResetCreditsRow | TextRow;
 
 export interface ErrorAction {
   cmd: string;
@@ -144,13 +153,25 @@ export type Section = BlockSection | MetricSection | TextSection;
 export interface Entry {
   displayName: string;
   error: string;
-  resetCredits?: ResetCredits | null;
   id: string;
   plan: string;
+  resetCredits: ResetCredits | null;
   sections: Section[];
   shortName: string;
   stale: boolean;
   status: string;
+}
+
+export type UpdateMode = "auto" | "notify" | "off";
+
+export type UpdateState = "available" | "checking" | "downloading" | "failed" | "installing";
+
+export interface UpdateInfo {
+  error: string;
+  state: UpdateState;
+  /** Release page; only a `https://github.com/` URL is kept, else "". */
+  url: string;
+  version: string;
 }
 
 export interface Payload {
@@ -166,6 +187,9 @@ export interface Payload {
   shortcut: string;
   shortcutError: string;
   startupEnabled: boolean;
+  update: UpdateInfo | null;
+  updateCheckedAt: number;
+  updates: UpdateMode;
   version: string;
 }
 

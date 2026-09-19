@@ -45,6 +45,7 @@ Panel {
   readonly property bool showValue: Model.booleanSetting(setting("showValue", true), true)
   readonly property bool showProvider: Model.booleanSetting(setting("showProvider", false), false)
   readonly property bool showAll: Model.booleanSetting(setting("showAll", false), false)
+  readonly property string barWindow: Model.normalizeBarWindow(setting("barWindow", "auto"))
   readonly property var visibleEntries: Model.filteredEntries(entries, configuredProvider)
   readonly property int entryIndex: Model.selectedIndex(visibleEntries, selectedEntryId)
   readonly property var entry: entryIndex >= 0 ? visibleEntries[entryIndex] : null
@@ -52,8 +53,13 @@ Panel {
     if (!entry) return ""
     return String(entry.fetched_at || "")
   }
-  readonly property var summary: Model.headline(entry)
-  readonly property var entrySections: entry ? entry.sections : []
+  readonly property var summary: Model.headline(entry, barWindow)
+  // barWindow pins the bar value and its echoes (hero detail, tooltip).
+  // Panel rows and alert state keep the historical highest-percent headline,
+  // matching every other frontend (Waybar class, KDE isAlarming, TUI).
+  // Grouped sub-rows (SuperGrok's product slices) gain a heading row here so
+  // they render as a breakdown of the meter above, not peers of it.
+  readonly property var entrySections: entry ? Model.groupedSections(entry.sections) : []
   readonly property bool filterMiss: configuredProvider !== "" && entries.length > 0 && visibleEntries.length === 0
   readonly property bool entryAlarming: Model.isAlarming(entry)
   readonly property bool alarming: loadError !== "" || filterMiss
@@ -121,12 +127,18 @@ Panel {
     persistWidgetSettings({ showAll: next })
   }
 
+  function setBarWindow(value) {
+    var next = Model.normalizeBarWindow(value)
+    if (next === barWindow) return
+    persistWidgetSettings({ barWindow: next })
+  }
+
   function selectEntry(index) {
     if (visibleEntries.length === 0) return
     var wrapped = ((index % visibleEntries.length) + visibleEntries.length) % visibleEntries.length
     selectedEntryId = visibleEntries[wrapped].id
     persistSelection(selectedEntryId)
-    if (providerList.visible) providerList.positionViewAtIndex(wrapped, ListView.Contain)
+    if (providerList.visible) providerList.forceLayout()
     if (panelFlick) panelFlick.contentY = 0
   }
 
@@ -221,11 +233,11 @@ Panel {
   }
 
   readonly property var barChips: Model.barChips(
-    visibleEntries, entry, showAll, showValue, showProvider, loading, alarming, vertical)
+    visibleEntries, entry, showAll, showValue, showProvider, loading, alarming, vertical, barWindow)
 
   function barText() {
     if (showAll)
-      return Model.barStrip(visibleEntries, alarming, vertical, showValue, showProvider, loading)
+      return Model.barStrip(visibleEntries, alarming, vertical, showValue, showProvider, loading, barWindow)
     return Model.barLabel(alarming, vertical, showValue, loading,
       entry !== null, summary.text, showProvider ? Model.providerShort(entry) : "",
       Model.providerIcon(entry))
@@ -237,7 +249,7 @@ Panel {
       for (var i = 0; i < visibleEntries.length; i++) {
         var item = visibleEntries[i]
         var bit = Model.providerName(item)
-        var value = Model.autoTextSafe(Model.headline(item).text).trim()
+        var value = Model.autoTextSafe(Model.headline(item, barWindow).text).trim()
         if (value !== "") bit += " · " + value
         if (item.stale) bit += " · cached"
         chips.push(bit)
@@ -413,46 +425,53 @@ Panel {
             showValue: root.showValue
             showProvider: root.showProvider
             showAll: root.showAll
+            barWindow: root.barWindow
             onSaved: root.startRefresh()
             onShowValueRequested: function(enabled) { root.setShowValue(enabled) }
             onShowProviderRequested: function(enabled) { root.setShowProvider(enabled) }
             onShowAllRequested: function(enabled) { root.setShowAll(enabled) }
+            onBarWindowRequested: function(value) { root.setBarWindow(value) }
             onFallbackRequested: root.openTerminalSettings()
             onNousLoginRequested: root.openNousLogin()
             onCopilotLoginRequested: root.openCopilotLogin()
             onCloseRequested: root.closeSettings()
           }
 
-          ListView {
+          // Providers wrap into additional rows instead of being clipped by
+          // the panel edge once there are more configured entries than fit
+          // on one line — a fixed-width ListView silently hid entries past
+          // the visible edge, with no way to reach them (see #173).
+          Flow {
             id: providerList
             visible: !root.settingsOpen && root.visibleEntries.length > 1
             width: parent.width
-            height: visible ? Style.spacing.controlHeight : 0
-            orientation: ListView.Horizontal
+            height: visible ? childrenRect.height : 0
+            flow: Flow.LeftToRight
             spacing: Style.spacing.md
-            clip: true
-            boundsBehavior: Flickable.StopAtBounds
-            model: root.visibleEntries
-            currentIndex: root.entryIndex
 
-            delegate: Button {
-              required property var modelData
-              required property int index
+            Repeater {
+              model: root.visibleEntries
 
-              height: providerList.height
-              text: Model.providerName(modelData)
-              selected: index === root.entryIndex
-              hasCursor: root.cursorActive && index === root.entryIndex
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              fontSize: Style.font.bodySmall
-              verticalPadding: Style.spacing.controlPaddingY
-              onClicked: {
-                root.cursorActive = true
-                root.selectEntry(index)
+              delegate: Button {
+                required property var modelData
+                required property int index
+
+                height: Style.spacing.controlHeight
+                width: implicitWidth
+                text: Model.providerName(modelData)
+                selected: index === root.entryIndex
+                hasCursor: root.cursorActive && index === root.entryIndex
+                bordered: true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                fontSize: Style.font.bodySmall
+                verticalPadding: Style.spacing.controlPaddingY
+                onClicked: {
+                  root.cursorActive = true
+                  root.selectEntry(index)
+                }
+                onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
               }
-              onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
             }
           }
 
@@ -590,11 +609,23 @@ Panel {
   component MetricRow: Column {
     id: metricRow
     property var row: null
-    readonly property bool critical: row && row.severity === "critical"
+    // A grouped metric is a sub-row (SuperGrok's product slices under
+    // "Breakdown"): dim label, thin muted gauge, no critical colouring — the
+    // overall meter above stays the binding constraint. The indent is applied
+    // as margins inside full-width children, never as positioner padding: a
+    // Column's leftPadding shifts children without narrowing them, which
+    // pushes right-anchored values past the panel edge.
+    readonly property bool grouped: row ? String(row.group || "") !== "" : false
+    readonly property bool critical: !grouped && row && row.severity === "critical"
+    readonly property color labelColor: grouped ? root.dim : root.foreground
+    readonly property color fillColor: grouped
+      ? root.alpha(root.foreground, 0.38)
+      : (critical ? root.urgent : root.foreground)
+    readonly property int indent: grouped ? Style.space(10) : 0
     readonly property string detailText: Model.metricDetail(row)
     readonly property string resetText: row ? Model.formatReset(row.reset_at, root.nowMs) : ""
 
-    spacing: Style.space(6)
+    spacing: Style.space(grouped ? 4 : 6)
 
     Item {
       width: parent.width
@@ -604,11 +635,12 @@ Panel {
         id: metricLabel
         text: metricRow.row ? metricRow.row.label : ""
         textFormat: Text.PlainText
-        color: root.foreground
+        color: metricRow.labelColor
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
+        font.pixelSize: metricRow.grouped ? Style.font.caption : Style.font.body
         elide: Text.ElideRight
         anchors.left: parent.left
+        anchors.leftMargin: metricRow.indent
         anchors.right: metricValue.left
         anchors.rightMargin: Style.spacing.sm
         anchors.verticalCenter: parent.verticalCenter
@@ -619,10 +651,10 @@ Panel {
         text: metricRow.row && metricRow.row.value !== ""
           ? metricRow.row.value : (metricRow.row ? metricRow.row.percent + "%" : "")
         textFormat: Text.PlainText
-        color: metricRow.critical ? root.urgent : root.foreground
+        color: metricRow.critical ? root.urgent : metricRow.labelColor
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        font.bold: true
+        font.bold: !metricRow.grouped
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
       }
@@ -630,13 +662,14 @@ Panel {
 
     Item {
       width: parent.width
-      implicitHeight: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.14))
+      implicitHeight: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * (metricRow.grouped ? 0.10 : 0.14)))
 
       Rectangle {
         id: meterTrack
         anchors.fill: parent
+        anchors.leftMargin: metricRow.indent
         radius: height / 2
-        color: root.track
+        color: metricRow.grouped ? root.alpha(root.foreground, 0.10) : root.track
       }
 
       Rectangle {
@@ -645,7 +678,7 @@ Panel {
         height: meterTrack.height
         radius: meterTrack.radius
         width: meterTrack.width * root.clamp(metricRow.row ? metricRow.row.percent / 100 : 0, 0, 1)
-        color: metricRow.critical ? root.urgent : root.foreground
+        color: metricRow.fillColor
 
         Behavior on width {
           NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
@@ -656,6 +689,7 @@ Panel {
     Text {
       visible: text !== ""
       width: parent.width
+      leftPadding: metricRow.indent
       text: metricRow.detailText
       textFormat: Text.PlainText
       color: root.dim
@@ -667,6 +701,7 @@ Panel {
     Text {
       visible: text !== ""
       width: parent.width
+      leftPadding: metricRow.indent
       text: metricRow.resetText
       textFormat: Text.PlainText
       color: root.dim

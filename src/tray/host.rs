@@ -32,17 +32,19 @@ use wry::{WebView, WebViewBuilder};
 
 use super::hotkey::{self, HotkeyBinding};
 use super::icon::{Severity, tray_icon_rgba};
-use super::payload::{HostFacts, host_payload, worst_severity, wrap_report};
-use super::{startup, tui_launch};
-use crate::config::Config;
+use super::payload::{HostFacts, UpdateFact, host_payload, worst_severity, wrap_report};
+use super::{startup, tui_launch, update_flow};
+use crate::config::{Config, UpdateMode};
+use crate::update::{CHECK_INTERVAL, Release, UpdateState, sweep_old};
 
 // Emitted by `windows/popover` (`npm run build` / `build.rs` on Windows).
 const INDEX_HTML: &str = include_str!("../../windows/popover/dist/index.html");
 const POPOVER_CSS: &str = include_str!("../../windows/popover/dist/popover.css");
 const POPOVER_JS: &str = include_str!("../../windows/popover/dist/popover.js");
 
-/// Fixed popover width in logical px, matching the OpenUsage macOS panel.
-const WINDOW_WIDTH: f64 = 320.0;
+/// Compact fixed width in logical px. The previous 320 px became visually
+/// oversized on scaled Windows displays.
+const WINDOW_WIDTH: f64 = 300.0;
 /// Initial height only: the web content drives it afterwards via the
 /// `resize` IPC command.
 const WINDOW_HEIGHT: f64 = 420.0;
@@ -60,6 +62,12 @@ const DARK_BACKGROUND: (u8, u8, u8, u8) = (30, 30, 30, 255);
 /// Absorb the mouse-up that opened the popover so it cannot hit the ⋮.
 const CLICK_LOCK_MS: u64 = 400;
 
+/// Set on the process an update relaunches, so it waits for the old one to
+/// release the single-instance mutex instead of quitting at once.
+const RELAUNCH_ENV: &str = "AIUB_TRAY_RELAUNCH";
+/// How long a relaunched process keeps retrying the mutex.
+const RELAUNCH_WAIT: Duration = Duration::from_secs(10);
+
 /// Shown on the NotifyIcon when WebView2 is missing (older Windows 10).
 /// The popover cannot open; the icon and right-click menu still work.
 const WEBVIEW2_MISSING: &str = "Install the WebView2 Evergreen Runtime to open the popover.";
@@ -71,21 +79,28 @@ enum UserEvent {
     Report(Value),
     /// One refreshed entry (Refresh <provider>), merged into the last report.
     Entry(Value),
+    /// The shared facts changed (shortcut, update state); re-stamp the payload.
+    Facts,
     FocusPopover,
     /// The global shortcut fired.
     Hotkey,
+    /// A verified update is in place; start it and quit.
+    Restart(PathBuf),
 }
 
 enum WorkerCmd {
     Refresh,
     RefreshEntry(String),
     Detect,
+    CheckUpdate { manual: bool },
+    InstallUpdate,
+    SnoozeUpdate,
+    SetUpdates(UpdateMode),
     Shutdown,
 }
 
-/// Host facts are owned jointly: the event-loop thread edits the shortcut and
-/// the refresh interval, the worker reads them for its poll deadline, and
-/// every report snapshots the whole thing.
+/// Host facts are owned jointly: the event-loop thread edits the shortcut, the
+/// worker edits the update state, and every report snapshots the whole thing.
 type SharedFacts = Arc<Mutex<HostFacts>>;
 
 fn facts_snapshot(facts: &SharedFacts) -> HostFacts {
@@ -156,7 +171,8 @@ struct TrayState {
 }
 
 pub fn run() -> i32 {
-    let Some(_mutex) = SingleInstance::acquire() else {
+    let relaunched = std::env::var_os(RELAUNCH_ENV).is_some();
+    let Some(_mutex) = SingleInstance::acquire_waiting(relaunched) else {
         return 0;
     };
     match run_loop() {
@@ -211,6 +227,11 @@ fn run_loop() -> Result<(), String> {
         let outcome = bind_shortcut(hotkey_binding.as_mut(), configured);
         with_facts(&facts, |f| apply_shortcut_outcome(f, outcome));
     }
+    // Leftovers from the swap that put this exe in place.
+    if let Ok(dir) = update_flow::install_dir() {
+        let _ = sweep_old(&dir);
+    }
+
     let (cmd_tx, cmd_rx) = mpsc::channel();
     spawn_worker(proxy.clone(), cmd_rx, facts.clone());
     let _ = cmd_tx.send(WorkerCmd::Refresh);
@@ -268,8 +289,15 @@ fn run_loop() -> Result<(), String> {
             Event::UserEvent(UserEvent::Entry(entry)) => {
                 apply_entry(&mut state, entry);
             }
+            Event::UserEvent(UserEvent::Facts) => {
+                apply_facts(&mut state);
+            }
             Event::UserEvent(UserEvent::Hotkey) => {
                 toggle_popover_from_keyboard(&mut state);
+            }
+            Event::UserEvent(UserEvent::Restart(exe)) => {
+                relaunch(&exe);
+                *control_flow = ControlFlow::Exit;
             }
             Event::UserEvent(UserEvent::FocusPopover) => {
                 if state.popover_open {
@@ -332,12 +360,16 @@ fn spawn_worker(
             let Ok(rt) = rt else {
                 return;
             };
-            // First launch (and every vendor that arrived with a newer build):
+            // First launch (and every provider that arrived with an update):
             // turn on the vendors whose credentials already exist locally, so the
             // very first report already carries them.
             run_detection(false);
+            let mut updates = Updates::new(facts.clone(), proxy.clone());
             loop {
                 rt.block_on(push_report(&proxy, &facts));
+                if updates.due() {
+                    rt.block_on(updates.check(false));
+                }
                 // Commands that do not need a whole new report are served
                 // until the poll deadline, so a Refresh <provider> does not
                 // postpone the next full report.
@@ -355,6 +387,20 @@ fn spawn_worker(
                         Ok(WorkerCmd::RefreshEntry(id)) => {
                             rt.block_on(push_entry(&proxy, &id));
                         }
+                        Ok(WorkerCmd::CheckUpdate { manual }) => {
+                            rt.block_on(updates.check(manual));
+                        }
+                        Ok(WorkerCmd::InstallUpdate) => {
+                            if updates.pending.is_some() {
+                                rt.block_on(updates.install());
+                            } else {
+                                rt.block_on(updates.check(true));
+                            }
+                        }
+                        Ok(WorkerCmd::SnoozeUpdate) => updates.snooze(),
+                        Ok(WorkerCmd::SetUpdates(mode)) => {
+                            rt.block_on(updates.set_mode(mode));
+                        }
                         Ok(WorkerCmd::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                             return;
                         }
@@ -363,6 +409,188 @@ fn spawn_worker(
             }
         })
         .ok();
+}
+
+/// Worker-side update machinery: the hourly check, the snooze file and the
+/// install. Every state change lands in the shared facts and is announced
+/// with `UserEvent::Facts` so the popover re-renders at once.
+struct Updates {
+    client: Option<reqwest::Client>,
+    facts: SharedFacts,
+    pending: Option<Release>,
+    proxy: EventLoopProxy<UserEvent>,
+    state: UpdateState,
+    state_path: Option<PathBuf>,
+}
+
+impl Updates {
+    fn new(facts: SharedFacts, proxy: EventLoopProxy<UserEvent>) -> Self {
+        let state_path = crate::update::default_state_path().ok();
+        let state = state_path
+            .as_deref()
+            .map(UpdateState::load_at)
+            .unwrap_or_default();
+        Self {
+            client: update_flow::http_client().ok(),
+            facts,
+            pending: None,
+            proxy,
+            state,
+            state_path,
+        }
+    }
+
+    fn mode(&self) -> UpdateMode {
+        self.facts
+            .lock()
+            .ok()
+            .and_then(|f| UpdateMode::parse(&f.updates))
+            .unwrap_or_default()
+    }
+
+    fn due(&self) -> bool {
+        if self.mode() == UpdateMode::Off {
+            return false;
+        }
+        let elapsed = now_ms().saturating_sub(self.state.last_check_ms);
+        elapsed >= CHECK_INTERVAL.as_millis() as i64
+    }
+
+    fn persist(&mut self) {
+        if let Some(path) = self.state_path.as_deref() {
+            let _ = self.state.save_at(path);
+        }
+    }
+
+    fn announce(&self) {
+        let _ = self.proxy.send_event(UserEvent::Facts);
+    }
+
+    async fn check(&mut self, manual: bool) {
+        if !manual && self.mode() == UpdateMode::Off {
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let now = now_ms();
+        self.state.last_check_ms = now;
+        self.persist();
+        if manual {
+            // Feedback before the network answers: the button reads "Checking…".
+            let pending = self.pending.as_ref();
+            with_facts(&self.facts, |f| {
+                f.update = Some(UpdateFact {
+                    error: String::new(),
+                    state: "checking".into(),
+                    url: pending.map(|r| r.html_url.clone()).unwrap_or_default(),
+                    version: pending.map(|r| r.version.clone()).unwrap_or_default(),
+                });
+            });
+            self.announce();
+        }
+        let outcome = update_flow::check(&client, env!("CARGO_PKG_VERSION")).await;
+        match outcome {
+            Ok(Some(release)) => {
+                let snoozed =
+                    !manual && self.state.snoozed_version.as_deref() == Some(&release.version);
+                let fact = UpdateFact {
+                    error: String::new(),
+                    state: "available".into(),
+                    url: release.html_url.clone(),
+                    version: release.version.clone(),
+                };
+                self.pending = Some(release);
+                with_facts(&self.facts, |f| {
+                    f.update_checked_at = now;
+                    f.update = if snoozed { None } else { Some(fact) };
+                });
+                self.announce();
+                if self.mode() == UpdateMode::Auto && !cfg!(debug_assertions) {
+                    self.install().await;
+                }
+            }
+            Ok(None) => {
+                self.pending = None;
+                with_facts(&self.facts, |f| {
+                    f.update_checked_at = now;
+                    f.update = None;
+                });
+                self.announce();
+            }
+            Err(error) => {
+                // A background check that fails (offline, rate limited) stays
+                // quiet; a manual one owes the user an answer.
+                with_facts(&self.facts, |f| {
+                    f.update_checked_at = now;
+                    if manual {
+                        f.update = Some(UpdateFact {
+                            error,
+                            state: "failed".into(),
+                            url: String::new(),
+                            version: String::new(),
+                        });
+                    }
+                });
+                self.announce();
+            }
+        }
+    }
+
+    /// Install the pending release. The caller decides what "nothing
+    /// pending" means (a failed check's Try Again re-checks instead).
+    async fn install(&mut self) {
+        let Some(release) = self.pending.clone() else {
+            return;
+        };
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+        let set_state = |facts: &SharedFacts, state: &str, error: String| {
+            with_facts(facts, |f| {
+                f.update = Some(UpdateFact {
+                    error,
+                    state: state.into(),
+                    url: release.html_url.clone(),
+                    version: release.version.clone(),
+                });
+            });
+        };
+        set_state(&self.facts, "downloading", String::new());
+        self.announce();
+        match update_flow::install(&client, &release).await {
+            Ok(exe) => {
+                set_state(&self.facts, "installing", String::new());
+                self.announce();
+                let _ = self.proxy.send_event(UserEvent::Restart(exe));
+            }
+            Err(error) => {
+                set_state(&self.facts, "failed", error);
+                self.announce();
+            }
+        }
+    }
+
+    fn snooze(&mut self) {
+        if let Some(release) = self.pending.as_ref() {
+            self.state.snoozed_version = Some(release.version.clone());
+            self.persist();
+        }
+        with_facts(&self.facts, |f| f.update = None);
+        self.announce();
+    }
+
+    async fn set_mode(&mut self, mode: UpdateMode) {
+        with_facts(&self.facts, |f| f.updates = mode.as_str().into());
+        self.announce();
+        match mode {
+            UpdateMode::Auto if self.pending.is_some() && !cfg!(debug_assertions) => {
+                self.install().await;
+            }
+            UpdateMode::Auto | UpdateMode::Notify if self.due() => self.check(false).await,
+            _ => {}
+        }
+    }
 }
 
 /// Best-effort: detection never blocks or fails the report. `force` re-probes
@@ -375,10 +603,11 @@ fn run_detection(force: bool) {
     }
 }
 
-/// Facts about this process at startup; the shortcut fields are filled in
-/// as the host learns them.
+/// Facts about this process at startup; the shortcut and update fields are
+/// filled in as the host learns them.
 fn host_facts(config: &Config) -> HostFacts {
     let mut facts = HostFacts::new(env!("CARGO_PKG_VERSION"), startup::is_enabled());
+    facts.updates = config.tray.updates().as_str().into();
     facts.refresh_secs = config.tray.refresh_minutes() * 60;
     facts
 }
@@ -435,15 +664,22 @@ fn apply_payload(state: &mut TrayState, payload: Value) {
     }
 }
 
-/// Copy the shared facts onto the payload in place, so a shortcut or refresh
-/// interval change shows up without waiting for the next report.
+/// Copy the shared facts onto the payload in place, so a shortcut or update
+/// change shows up without waiting for the next report.
 fn stamp_facts(state: &mut TrayState) {
     let facts = facts_snapshot(&state.facts);
     let stamped = wrap_report("{}", &facts, 0, None);
     let Some(obj) = state.payload.as_object_mut() else {
         return;
     };
-    for key in ["shortcut", "shortcut_error", "refresh_minutes"] {
+    for key in [
+        "shortcut",
+        "shortcut_error",
+        "updates",
+        "update",
+        "update_checked_at",
+        "refresh_minutes",
+    ] {
         obj.insert(key.into(), stamped[key].clone());
     }
 }
@@ -492,6 +728,12 @@ fn toggle_popover_from_keyboard(state: &mut TrayState) {
         guard_blur(state);
         state.window.set_focus();
     }
+}
+
+fn relaunch(exe: &std::path::Path) {
+    let _ = std::process::Command::new(exe)
+        .env(RELAUNCH_ENV, "1")
+        .spawn();
 }
 
 enum ShortcutOutcome {
@@ -567,6 +809,16 @@ fn set_shortcut(state: &mut TrayState, value: &str) {
     }
     with_facts(&state.facts, |f| apply_shortcut_outcome(f, outcome));
     apply_facts(state);
+}
+
+fn set_updates(state: &mut TrayState, mode_text: &str) {
+    let Some(mode) = UpdateMode::parse(mode_text) else {
+        return;
+    };
+    if let Some(path) = config_path() {
+        let _ = crate::config::set_tray_value(&path, "updates", Some(mode.as_str().into()));
+    }
+    let _ = state.worker.send(WorkerCmd::SetUpdates(mode));
 }
 
 /// `set-refresh {minutes}`: persist the poll interval and hand it to the
@@ -676,6 +928,10 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             let text = value.get("value").and_then(Value::as_str).unwrap_or("");
             set_shortcut(state, text);
         }
+        "set-updates" => {
+            let mode = value.get("mode").and_then(Value::as_str).unwrap_or("");
+            set_updates(state, mode);
+        }
         "set-refresh" => {
             if let Some(minutes) = value.get("minutes").and_then(Value::as_u64) {
                 set_refresh(state, minutes);
@@ -686,6 +942,15 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             if let Some(url) = value.get("url").and_then(Value::as_str) {
                 super::browse::open(url);
             }
+        }
+        "check-update" => {
+            let _ = state.worker.send(WorkerCmd::CheckUpdate { manual: true });
+        }
+        "install-update" => {
+            let _ = state.worker.send(WorkerCmd::InstallUpdate);
+        }
+        "snooze-update" => {
+            let _ = state.worker.send(WorkerCmd::SnoozeUpdate);
         }
         _ => {}
     }
@@ -1088,6 +1353,24 @@ fn now_ms() -> i64 {
 struct SingleInstance(HANDLE);
 
 impl SingleInstance {
+    /// A relaunch after an update races the old process's exit; keep
+    /// retrying for a bounded time instead of silently quitting.
+    fn acquire_waiting(wait: bool) -> Option<Self> {
+        if !wait {
+            return Self::acquire();
+        }
+        let deadline = Instant::now() + RELAUNCH_WAIT;
+        loop {
+            if let Some(instance) = Self::acquire() {
+                return Some(instance);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     fn acquire() -> Option<Self> {
         let name: Vec<u16> = "Local\\ai-usagebar-tray\0".encode_utf16().collect();
         // SAFETY: `name` is a NUL-terminated UTF-16 mutex name in the Local

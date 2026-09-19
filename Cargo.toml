@@ -1,6 +1,6 @@
 [package]
 name = "ai-usagebar"
-version = "1.12.0"
+version = "1.20.2"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -79,6 +79,7 @@ ratatui-bubbletea-theme = "0.2"
 # links SQLite via cc, so no system libsqlite3-dev is required — keeping the
 # AUR source build's hermeticity (see CLAUDE.md's release checklist).
 rusqlite = { version = "0.40", default-features = false, features = ["bundled"] }
+unicode-width = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }
@@ -86,9 +87,9 @@ rustix = { version = "1", features = ["process"] }
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
 # Same tray popover host as Windows: NSStatusItem + WKWebView.
-tao = "0.34"
-wry = "0.53"
-tray-icon = "0.21"
+tao = "0.37"
+wry = "0.57"
+tray-icon = "0.24"
 global-hotkey = "0.8"
 objc2 = "0.6"
 objc2-foundation = "0.3"
@@ -122,6 +123,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Graphics_Dwm",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
+    "Win32_Security_Credentials",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",
@@ -131,9 +133,9 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 # Tray popover host: NotifyIcon + WebView2. Linux/macOS never compile these so
 # the AUR source build does not pull GTK/WebKit.
-tao = "0.34"
-wry = "0.53"
-tray-icon = "0.21"
+tao = "0.37"
+wry = "0.57"
+tray-icon = "0.24"
 # Global toggle shortcut for the popover: owns a message-only window and
 # delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.
 global-hotkey = "0.8"

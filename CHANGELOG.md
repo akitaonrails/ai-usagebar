@@ -9,13 +9,6 @@ Each release is also published at
 
 ## [Unreleased]
 
-### Fixed
-
-- On macOS, a leftover `~/.claude/.credentials.json` no longer shadows Claude
-  Code's live Keychain item. That file-first read 400'd "Refresh token expired"
-  and the tray showed **Sign-in expired** while `claude` itself was still
-  logged in.
-
 ### Added
 
 - **macOS WebView tray** (`ai-usagebar-tray`). Same OpenUsage-style popover as
@@ -23,23 +16,357 @@ Each release is also published at
   the menu bar from starred metrics (at most two per provider).
   `cargo build --release --bin ai-usagebar-tray`.
 
-- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
-  date once the reset is past today — instead of the countdown, under
-  **Preferences → Display**. Off by default; the countdown is unchanged unless
-  you turn it on. It follows the system's 12h/24h convention.
+### Fixed
 
+- On macOS, a leftover `~/.claude/.credentials.json` no longer shadows Claude
+  Code's live Keychain item. That file-first read 400'd "Refresh token expired"
+  and the tray showed **Sign-in expired** while `claude` itself was still
+  logged in.
 
+## [1.20.2] — 2026-09-19
 
-- **`ai-usagebar vendors --json`** — the provider catalog: one row per
-  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
-  config has it `enabled`, whether this machine holds the credential it needs
-  (`configured`), the environment variable it reads (honoring an `api_key_env`
-  override), and the `login` command that fixes it. It contacts nothing.
-  `usage --json` reports only *enabled* providers, so the switched-off and the
-  never-credentialed were exactly the rows a "is anything broken?" list could
-  not describe; this is the answer for them. `needs_credential` is `false` only
-  for Antigravity, which has no credential to be missing, so a frontend never
-  offers to fix one that cannot be.
+### Fixed
+
+- **`usage` exits 0 after printing a complete document.** Per-entry fetch or
+  auth failures stay inside each entry's `error` field instead of making the
+  command itself fail, so a script that captures `usage --json` still gets the
+  diagnosis when every account is broken. Non-zero remains only when the
+  document cannot be produced (missing or unreadable `--config`, unparseable
+  TOML, no vendors enabled, or a runtime/bootstrap failure). (#217)
+
+## [1.20.1] — 2026-09-18
+
+### Added
+
+- **Official Scoop manifest for the Windows release.**
+  `packaging/scoop/ai-usagebar.json` installs the release ZIP with all three
+  binaries and an "AI Usage" Start-menu shortcut for the tray, and a
+  `publish-scoop` job in the release workflow pushes the freshly pinned
+  manifest (version from the tag, hash recomputed from the published
+  `.sha256` sidecar) to the `akitaonrails/scoop-bucket` repo when
+  `SCOOP_BUCKET_TOKEN` is set. Proposal: #216.
+- **Reset-credit expiry tooltip on Windows.** The Codex and SuperGrok reset
+  credit row keeps its compact available-count badge and now reveals each
+  credit's expiry date and remaining time on hover or keyboard focus.
+
+### Changed
+
+- The Windows tray popover is 300 logical pixels wide for a more compact
+  footprint, including on scaled displays.
+
+### Fixed
+
+- The Windows tray popover remeasures its intrinsic content height whenever it
+  opens or receives updated data, instead of retaining a stale work-area-sized
+  window with empty space above the footer.
+- The Scoop manifest's `version` is bumped in lockstep with the release (the
+  new `verify-version` guard caught the never-published v1.20.0's stale
+  manifest before anything shipped; that tag remains unused).
+
+## [1.19.0] — 2026-09-17
+
+### Added
+
+- **Grok Bot as its own opt-in vendor** (`[grokbot]`, `--vendor grokbot`,
+  Linux-only for now): the Grok Bot desktop app's weekly included-usage
+  pool, from its Connect-RPC dashboard call
+  (`api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus`).
+  Distinct from `[grok]` (Management API prepaid dollars) and
+  `[supergrok]` (Grok Build subscription). The credential is the app's own
+  OAuth session in `~/.config/Grok Bot/sand-secrets.json` — Chromium
+  OSCrypt `v10` blobs decrypted read-only with the Linux OSCrypt key (one
+  PBKDF2 round; `secret-tool lookup application "Grok Bot"`, falling back
+  to Chromium's documented default). Refresh goes through Cursor's public
+  installed-app OAuth client, and rotated tokens persist only in
+  ai-usagebar's vendor cache (`oauth.json`, mode 0600), never back to the
+  app's file. The window length is derived from the reported period bounds
+  rather than assumed to be 7 days; an account with
+  `hasNonZeroIncludedLimit: false` shows a "no included allowance" state
+  rather than a 0% meter, and at 100% with the account still serving, an
+  on-demand footnote appears when on-demand is enabled. New placeholders:
+  `{gbt_plan}`, `{gbt_weekly_pct}`, `{gbt_weekly_reset}`,
+  `{gbt_on_demand}`. macOS and Windows fail closed with a credentials
+  error explaining the Linux-only support. (#206)
+- **SuperGrok included usage, not a single Build-credits bar.** SuperGrok
+  already fetched Grok Build's billing document; the parser only kept the
+  overall `creditUsagePercent` and labelled it "Build credits". It now
+  shows that figure as **weekly/monthly usage** and lists the
+  `productUsage` slices beside it (Grok Build, Grok Chat, Grok Imagine,
+  and any other named product) — in the tooltip and `--pretty` box each
+  slice is one dim line with an aligned percentage, no gauge and no
+  severity colour, so only the overall meter reads as the binding
+  constraint. `[grok]` is unchanged: that vendor is
+  still the Management API prepaid dollar balance.
+- **Grouped sub-rows in the report and the Omarchy panel.** Product slices
+  now carry a `group` field (`"Breakdown"`) in `usage --json`'s `sections`
+  and `metrics`, and the Quattro panel renders grouped rows compactly —
+  dim label, thin muted gauge — under a `BREAKDOWN` heading, instead of as
+  full meters beside the overall usage row. The field is additive: older
+  frontends keep rendering the rows as plain metrics.
+
+### Fixed
+
+- **Kimi accounts on the newer `/coding/v1/usages` response shape no longer
+  hard-error as schema drift.** Such accounts return no top-level `usage`
+  block — only a `usages` map of ratios — which the parser rejected
+  outright. The snapshot now reads the combined monthly pool from
+  `limit_month_total` (`used_ratio` × 100, a spelling validated against the
+  vendor's own website), exposed as the new `{kimi_monthly_pct}` /
+  `{kimi_monthly_reset}` placeholders and a "Monthly" row in the tooltip and
+  the detail panel. These accounts have **no weekly window**: the weekly row
+  is dropped and the `kimi_weekly_*` placeholders resolve to empty rather
+  than a fabricated 0. `limit_month_code` — the Code slice *inside* that
+  same pool — is never added to the total or rendered as its own allowance,
+  and the 5h rolling window still comes from `limits[]`, which the website
+  matches.
+- **SuperGrok product names are escaped before reaching the tooltip's Pango
+  markup.** A hostile billing document could otherwise inject markup through
+  a crafted `productUsage` name. Width-based label alignment happens before
+  the escape, so padded columns still line up.
+- **SuperGrok no longer shows a "$0.00 Prepaid API" line.** The billing
+  document reports `prepaidBalance: 0` unless credit was purchased on top
+  of the subscription, and a zero row read as "no money" — especially for
+  unified billing accounts, whose real dollars sit in the Management API
+  wallet that `[grok]` reports. The row (TUI, tooltip and report) now
+  appears only when there is credit to show; `{sgk_prepaid}` still
+  publishes the raw figure.
+
+### Security
+
+- **Updated rustls to 0.23.45** (from 0.23.40), fixing RUSTSEC-2026-0285 —
+  TLS 1.3 handshake messages incorrectly accepted across encryption-level
+  boundaries — in the stack that carries every vendor credential request.
+  Added `.cargo/audit.toml` documenting the two remaining transitive-only
+  gtk/glib advisories the tray stack pins and ai-usagebar never reaches.
+
+## [1.18.1] — 2026-09-16
+
+### Fixed
+
+- **Column alignment with double-width text.** Labels were measured and padded
+  by character count, so any text containing CJK glyphs — a Japanese account
+  label, a plan name — left the value column short by one space per ideograph
+  in the text report, the tooltip box, and the TUI. Width is now measured in
+  terminal columns, and padding is computed from that rather than from
+  `format!`'s character-based fill. Combining marks now correctly measure zero.
+
+## [1.18.0] — 2026-09-16
+
+### Added
+
+- **`ai-usagebar settings enable <vendor>`.** A new CLI subcommand that turns one
+  provider on, preserving every other setting, comment and credential in
+  `config.toml`. Unlike discovery, it is an explicit opt-in and therefore does
+  overrule a previous `enabled = false`. It is what the macOS Preferences
+  Enable button calls.
+- **Ollama Cloud monthly window placeholders.** `{oll_monthly_pct}`,
+  `{oll_monthly_reset}`, `{oll_monthly_elapsed}`, `{oll_monthly_pace}` and
+  `{oll_monthly_pace_indicator}`, plus a `Monthly` metric in the tooltip, TUI
+  panel and report, for accounts whose plan reports a calendar-month quota.
+
+### Fixed
+
+- **macOS named Codex accounts.** Accounts in `[[openai.accounts]]` now appear
+  in the provider selector, Overview, Preferences and vendor-cycle shortcut,
+  including when no default Codex login exists.
+- **macOS disabled providers.** Preferences now distinguish disabled providers
+  from missing credentials and offer an explicit Enable action, backed by
+  `ai-usagebar settings enable <vendor>`. Other settings and credentials are
+  preserved, and write failures remain visible in Preferences.
+- **English-only UI strings.** The GNOME preferences and the macOS provider
+  list showed `verificando…`, `Configurar (TUI)` and `Re-logar` — Portuguese
+  left over from an early draft. They now read `checking…`,
+  `Configure (TUI)` and `Sign in again`, matching every other frontend.
+
+- **Ollama Cloud monthly-quota accounts no longer show a bare "Ready".**
+  Some Ollama Cloud accounts report `limits.monthly` instead of
+  `limits.session` + `limits.weekly` for the same `"pro"` plan label. The
+  parser only understood the session/weekly shape, so a monthly account had
+  no window to render and every frontend fell back to a plain "Ready"/status
+  pill with no percentage. `limits.monthly` is now parsed into a `Monthly`
+  metric (bar, tooltip, TUI panel, and top models), alongside the existing
+  session/weekly windows for accounts that report those instead.
+
+## [1.17.1] — 2026-09-16
+
+### Fixed
+
+- **Antigravity CLI session fallback.** When `agy` requires an undiscoverable
+  CSRF token, ai-usagebar now reads the CLI's saved Google session from
+  `~/.gemini/antigravity-cli/antigravity-oauth-token` when the OS keyring is
+  unavailable.
+
+- **Antigravity's fallback source no longer claims the app is closed.** Since
+  v1.17.0 the Cloud Code fallback also answers when `agy` is running but will
+  not publish its CSRF token, yet the TUI labelled those figures
+  `Google API (app closed)` — false while the app is open. The source row now
+  reads `Google API`, which is true for both reasons the fallback fires.
+
+## [1.17.0] — 2026-09-12
+
+### Added
+
+- **Custom provider brand marks.** A `[[custom]]` provider can set
+  `brand = "<vendor slug>"` to use a built-in vendor's mark in the Omarchy
+  widget. The brand is chosen explicitly and need not match the provider URL;
+  leaving it unset keeps the custom provider's three-letter tag.
+
+- **Versioned usage JSON.** Both aggregate and single-provider `usage --json`
+  reports now include top-level `"schema_version": 1`. The documented contract
+  remains tolerant: consumers ignore unknown fields and treat absent fields as
+  not applicable; the version changes only for incompatible shapes.
+
+### Fixed
+
+- **Antigravity works while the `agy` CLI is running.** When `agy` exposes a
+  local RPC server but rejects quota probes because its CSRF token is not
+  discoverable, ai-usagebar now uses the saved Google session fallback. Other
+  local `401`/`403` responses still surface as signed-out errors.
+
+- **Release-integrity checks now run on pull requests.** CI fetches the tag
+  history and runs the existing immutable-changelog and version check before
+  changes can reach `main`.
+
+## [1.16.0] — 2026-09-11
+
+### Added
+
+- **Omarchy top bar usage-window picker.** The Quattro settings page gains a
+  **Top bar usage window** dropdown (`auto` / `session` / `weekly` /
+  `monthly`), also settable with
+  `omarchy bar set akitaonrails.ai-usagebar barWindow session` that pins the
+  bar label to one quota window instead of always showing the highest percent;
+  the tooltip and panel hero echo the pinned value. `session` pins the 5-hour
+  window, `weekly` the 7-day window, and `monthly` the monthly pool where one
+  exists; `auto` keeps the historical highest-percent behavior and is the
+  default, so existing installs are unchanged. A pinned window a vendor does
+  not offer falls back to the highest percent rather than blanking the bar.
+  Panel rows and alert state still follow the highest percent regardless.
+
+### Changed
+
+- **macOS menu bar keeps no second copy of Rust's enabled defaults.**
+  The `defaultEnabled` slug list is deleted, together with the helpers the
+  catalog migration had orphaned (`vendorEnabled`, `configEnabledTOML`,
+  `configHasApiKeyTOML`, `vendorConfigured`). Every enabled decision in the
+  menu bar had already read the catalog's `enabled` field from
+  `vendors --json` since the #170 migration — which is why the slug list's
+  disagreement about Ollama Cloud (#185) was latent, never user-visible —
+  and now nothing else exists to drift: the Rust wire test pins the
+  `enabled` field name, and the Swift contract test pins that the field
+  decides. A provider added in Rust reaches the menu bar with its own
+  default, no Swift change needed.
+
+- **Omarchy install is one paste, and the marketplace card says what it needs.**
+  The plugin is the display frontend; it reads the `ai-usagebar` binary, which
+  installs through a different manager (the binary is a system package, the
+  plugin is per-user config under `~/.config/omarchy/plugins/`), so the two
+  steps cannot become one command. They are now one copy-paste, and the
+  manifest description — which plugins.omarchy.org shows verbatim on the card —
+  names the binary requirement, because the marketplace's Install button copies
+  only the `omarchy plugin add` half.
+
+### Fixed
+
+- **macOS menu bar knew the wrong default for Ollama Cloud.**
+  `defaultEnabled("ollama")` fell through to `true` while Rust ships
+  `[ollama] enabled = false` (opt-in) — a latent disagreement only, since
+  the catalog migration had already moved the menu bar's live decisions to
+  `vendors --json`. The slug list is now deleted outright (see the Changed
+  entry above); the catalog's `enabled` field decides, and the Rust wire
+  test pins the field name. Ollama's Session/Weekly bars already rendered
+  through the generic `parse()` path — no format change.
+
+- **Cursor on-demand usage:** Cursor Enterprise reports now show the amount
+  spent and configured limit when `onDemand.used` and `onDemand.limit` are
+  available, instead of showing only whether on-demand billing is enabled.
+
+- **macOS Claude Code Keychain prompts.** Write normal-sized refreshed OAuth
+  credentials through `/usr/bin/security -i` so the item keeps the
+  `apple-tool:` partition that Claude Code can read, while retaining the native
+  Security.framework write only as the oversized fallback. Existing affected
+  users can clear the bad partition by running a fresh `claude` + `/login`.
+
+## [1.15.0] — 2026-09-10
+
+### Added
+
+- **macOS menu bar support for remaining CLI vendors.** Copilot, SuperGrok,
+  MiniMax, Kiro, Nous Research, OpenCode Go, and Command Code are now available
+  in the macOS menu bar, resolving metadata dynamically via `ai-usagebar vendors --json`.
+
+- **macOS specific quota pools.** Support monthly usage windows, MiniMax video
+  quotas, Copilot completions, and explicit unlimited quota display without
+  misleading 0% progress bars.
+
+- **macOS environment PATH injection.** Injects `/opt/homebrew/bin`,
+  `/usr/local/bin`, and `~/.cargo/bin` into subprocess environments for vendor
+  tools.
+
+- **Ollama Cloud vendor.** `ollama.com/api/usage`, the quota route the
+  official settings page itself uses, behind a Bearer key minted at
+  <https://ollama.com/settings/keys>. The local daemon at
+  `127.0.0.1:11434` has no quota route, and the Ed25519 key the `ollama`
+  CLI keeps in `~/.ollama/id_ed25519` is the registry's signing key, not
+  a quota credential — the widget never reads it. The native Rust
+  provider adds an `Ollama Cloud` tab, a `[ollama]` config block
+  (disabled by default, opt in with `enabled = true` or via the TUI
+  Settings overlay), `{oll_session_pct}` / `{oll_weekly_pct}` placeholders
+  with the usual pace and reset aliases, a per-model breakdown of the
+  five heaviest models in each window in the tooltip, and a
+  `usage --json` entry keyed `ollama`. Plan label comes from config; the
+  API itself does not report one. `tests/fixtures/ollama/good_full.json`
+  pins the real shape, and `tests::live::ollama_live` is the live smoke
+  against the real API. The cache stores the projected snapshot only —
+  the raw body, and the Bearer key with it, is never written to disk.
+- **OpenCode Go pacing.** The rolling (5h) and weekly (7d) windows now expose
+  `{ocg_rolling|weekly_elapsed}`, `{ocg_rolling|weekly_pace}`, and
+  `{ocg_rolling|weekly_pace_indicator}` placeholders plus `{session_elapsed}`
+  / `{weekly_elapsed}` aliases, pace arrows in the Waybar tooltip, and paced
+  rows in the TUI panel and `usage --json` report footnotes. The monthly
+  window keeps its reset countdown but is not paced: its cycle follows the
+  subscription date, so no fixed length is exact and no `window_secs` is
+  published for it. Window lengths are constants: the usage endpoint reports
+  only `percent` and `resetsAt`.
+
+### Fixed
+
+- **`detect` sees Antigravity with the app closed.** Since v1.14.0 Antigravity
+  reports from the Google session it saved, with every product shut — but
+  detection still looked only for a *running* local server, so `detect` skipped
+  a provider that works, and because a vendor is considered once the miss stuck
+  until `--all`. It now also counts the token in our own vendor cache. The
+  keyring is deliberately not read: that can raise a Keychain prompt on macOS,
+  and a background probe must not pop a dialog. The trade is the very first
+  run, before any fetch has persisted a token.
+
+- **Windows tray: "Open TUI" works.** The menu item launched Windows Terminal
+  with `wt -e <command>`, but `-e` is wezterm's flag, not Windows Terminal's:
+  `wt` rejected it, printed its usage page and exited, so the TUI never
+  started and the user saw a flash of help text. It now uses
+  `wt new-tab -- <command>`. `spawn()` reports only that the process started,
+  which is why the wrong flag looked like a success and fell through to no
+  fallback.
+
+- **Omarchy Quattro panel:** the provider tab strip is a wrapping `Flow` again
+  instead of a fixed-width horizontal `ListView`. With five or more providers
+  enabled the list overflowed the panel's edge and the extra entries were
+  simply unreachable — no scrollbar, no way to click them. They now wrap onto
+  additional rows.
+
+- **Settings overlay can pick env-only key vendors.** `KEY_VENDORS` in
+  `tui::settings` were excluded from the primary list whenever neither an
+  inline `api_key` nor a non-empty env var resolved at startup, so a fresh
+  install that only ever exports `OLLAMA_API_KEY` (or any other key
+  vendor's env var) could not select the matching tab in the TUI to
+  flip `enabled = true` without first editing the TOML by hand. The
+  overlay now treats a present env var as a sufficient signal that the
+  vendor is reachable, surfaces it in the primary list and writes
+  `enabled = true` on save like the inline-key path did.
+
+## [1.14.0] — 2026-09-08
+
+### Added
 
 - **Local provider detection.** `detect::has_local_credentials` is a cheap,
   local-only probe per vendor (credential files, sqlite stores, saved API keys,
@@ -48,8 +375,11 @@ Each release is also published at
   count. `detect::run_once` writes `enabled = true` into `config.toml` for the
   vendors that have one and are still off — so Cursor, Kiro, Grok, Copilot and
   friends show up without editing the config by hand. Detection only ever
-  enables; `detect.json` in the cache dir remembers which vendors were already
-  checked, so a vendor the user turned off afterwards stays off.
+  enables, and never overrules an explicit `enabled = false` — that is the
+  user's answer, it lives in the config file, and not even `--all` rewrites it.
+  `detect.json` in the cache dir remembers which vendors were already checked so
+  repeat runs probe nothing; because it is a cache file and may be deleted, it
+  is a shortcut, not the thing protecting a decision.
   `config::enable_vendors_in` and `VendorId::config_section` are the shared
   toml_edit write path the TUI Settings overlay now reuses, with a guard test
   that every section name parses to its own vendor's `enabled` switch.
@@ -61,21 +391,42 @@ Each release is also published at
   `{"enabled": [...], "known": [...], "probed": n}` with vendor slugs and no
   paths or secrets.
 
-- **Omarchy bar: show every provider at once.** A new **Show all providers in
-  the top bar** toggle (and `showAll` widget setting) draws each configured
-  provider as its own chip with a brand mark and usage. Claude, Codex,
-  Copilot, Grok/SuperGrok, DeepSeek, Kimi, Cursor, OpenRouter, MiniMax,
-  Moonshot, Z.AI, Kilo, Novita, Antigravity, Kiro, Nous, and OpenCode Go
-  ship an SVG; Command Code (no public mark) falls back to its three-letter
-  code rather than a shared robot. The panel hero uses the same mark,
-  colored only when that provider is critical. Off by default.
-
 - `usage --json` metrics carry `window_secs`, the exact length of the reset
-  window, for the vendors that know it (Anthropic, Codex, Z.AI, Antigravity,
-  MiniMax, Kimi, SuperGrok weekly, and Cursor from `billingCycleStart` /
-  `billingCycleEnd`, assuming 30 days when the start is missing); absent
-  otherwise, so a frontend that reads the report can pace a metric without a
-  per-vendor window table of its own.
+  window, for the vendors that state it (Anthropic, Codex, Z.AI, Antigravity,
+  MiniMax, Kimi, SuperGrok weekly, and Cursor when the API sends both
+  `billingCycleStart` and `billingCycleEnd`); absent otherwise — an unstated
+  window omits the field rather than guessing — so a frontend that reads the
+  report can pace a metric without a per-vendor window table of its own.
+
+- **Custom providers.** `[[custom]]` tables in `config.toml` declare a
+  provider from a JSON endpoint and a static token: `url`, `api_key_env` /
+  `api_key`, optional auth header/scheme and extra headers, a literal or
+  pointed `plan`, and `[[custom.metrics]]` / `[[custom.texts]]` mapped with
+  RFC 6901 JSON Pointers (`used` + `limit` or `percent`, `resets_at` as RFC
+  3339 or epoch seconds/milliseconds, `window_secs`). Each gets a TUI tab and
+  a `usage --json` entry (`custom:<id>`) with the same cache, severity and
+  reset metadata as a built-in vendor, so every frontend that reads
+  `usage --json` shows it. The cache stores the projected snapshot, not the
+  response body. Validation rejects duplicate ids and short names, non-https
+  URLs (unless `allow_http`), bad pointers and header names; the token's env
+  var is scrubbed from child processes. Not covered: OAuth, the Waybar
+  `--vendor` list, the TUI Settings overlay, `[ui] primary` and the `vendors`
+  catalog.
+
+- **Antigravity with the app closed.** When no Antigravity product answers
+  locally, the vendor reads the Google OAuth session Antigravity saved in the
+  OS keyring (Windows Credential Manager `gemini:antigravity`, macOS
+  Keychain, `secret-tool` on Linux), refreshes it through Google when it
+  expired (cached in `antigravity/oauth.json`, never written back to the
+  keyring) and asks the Cloud Code API for the same quota summary the local
+  RPC serves, plus the plan from `loadCodeAssist`. The TUI panel and every
+  frontend that reads `usage --json` carry a "Source · Google API (app
+  closed)" row on that path; the "no local server found" error only remains
+  when there is no saved session either, and a server that is up but signed
+  out is still reported as such. Renewing the session needs `[antigravity]
+  oauth_client_id` / `oauth_client_secret` (Antigravity's public
+  installed-app client, not shipped in source); without them the fallback
+  lasts while the saved access token does.
 
 - **Windows system-tray popover.** `ai-usagebar-tray` shows a NotifyIcon whose
   left-click opens an OpenUsage-style dashboard fed in-process by
@@ -110,6 +461,70 @@ Each release is also published at
   (`gh auth token`) children run with `CREATE_NO_WINDOW`, so a refresh from a
   GUI process no longer flashes a console that takes the foreground.
 
+- **Windows tray: in-app updates.** **Settings → Updates** (Automatic /
+  Notify me / Off; `[tray] updates`, default `notify`) checks GitHub Releases
+  of the repository in `Cargo.toml` (`CARGO_PKG_REPOSITORY`) once an hour.
+  Notify shows a dashboard banner with an Install button (✕ snoozes that
+  version; a blue dot by the footer version remembers it) and **Check Now**
+  in Settings says when the last check ran; Automatic installs unattended.
+  Installing downloads the bare `*-windows-x86_64.exe` assets, verifies each
+  against its `.sha256` sidecar (integrity, not authenticity), swaps the
+  binaries beside the running exe leaving `ai-usagebar-tray.exe.old` for the
+  next start to remove, and relaunches — the relaunched process waits for
+  the old one to release the single-instance mutex. Debug builds check but
+  refuse to install. The Windows release job now also publishes the bare
+  exes and their sidecars next to the zip; the first release cut after this
+  change is the first one the tray can install.
+
+### Fixed
+
+- **Rate-limit backoff.** A vendor that answers HTTP 429 arms a five-minute
+  backoff in its cache dir (`.retry_after`). While it is armed
+  `Cache::fresh_payload` — the one pre-network step every vendor takes —
+  serves the last good snapshot if there is one and otherwise reports
+  `rate limited; next attempt in 4m` without touching the network, so the
+  60-second poll no longer prolongs the block. A successful fetch clears it.
+  Nous Research has its own fetch path without the shared cache and is not
+  covered. Frontends that read `usage --json` see the same message in the
+  vendor's error field.
+
+- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
+  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
+  plan-less error. Quotas are not invented; only the label from
+  `~/.claude/.credentials.json` is kept.
+
+## [1.13.0] — 2026-09-08
+
+### Added
+
+- The macOS menu bar can show *when* a window resets — a wall-clock time, or a
+  date once the reset is past today — instead of the countdown, under
+  **Preferences → Display**. Off by default; the countdown is unchanged unless
+  you turn it on. It follows the system's 12h/24h convention.
+
+
+
+- **`ai-usagebar vendors --json`** — the provider catalog: one row per
+  provider with how it authenticates (`oauth` / `apikey` / `local`), whether
+  config has it `enabled`, whether this machine holds the credential it needs
+  (`configured`), the environment variable it reads (honoring an `api_key_env`
+  override), and the `login` command that fixes it. It contacts nothing.
+  `usage --json` reports only *enabled* providers, so the switched-off and the
+  never-credentialed were exactly the rows a "is anything broken?" list could
+  not describe; this is the answer for them. `needs_credential` is `false` only
+  for Antigravity, which has no credential to be missing, so a frontend never
+  offers to fix one that cannot be.
+
+
+- **Omarchy bar: show every provider at once.** A new **Show all providers in
+  the top bar** toggle (and `showAll` widget setting) draws each configured
+  provider as its own chip with a brand mark and usage. Claude, Codex,
+  Copilot, Grok/SuperGrok, DeepSeek, Kimi, Cursor, OpenRouter, MiniMax,
+  Moonshot, Z.AI, Kilo, Novita, Antigravity, Kiro, Nous, and OpenCode Go
+  ship an SVG; Command Code (no public mark) falls back to its three-letter
+  code rather than a shared robot. The panel hero uses the same mark,
+  colored only when that provider is critical. Off by default.
+
 - `--config <PATH>` on both binaries to read and write an alternate config
   file instead of the default location. Accepted in any position (including
   beside a subcommand); the file must already exist, and the override applies
@@ -140,11 +555,6 @@ Each release is also published at
   reference — so in optimised builds ARC was free to release it after the
   assignment, since nothing later in the function mentions it, taking the
   status item with it. The delegate is now held for the program's lifetime.
-
-- Claude error cards in `usage --json` and the TUI keep the OAuth plan label
-  when the usage endpoint fails, so a 401/429 still shows Max/Pro instead of a
-  plan-less error. Quotas are not invented; only the label from
-  `~/.claude/.credentials.json` is kept.
 
 
 ## [1.12.0] — 2026-09-06
@@ -2171,7 +2581,18 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.2...HEAD
+[1.20.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.1...v1.20.2
+[1.20.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.19.0...v1.20.1
+[1.19.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.1...v1.19.0
+[1.18.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.18.0...v1.18.1
+[1.18.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.1...v1.18.0
+[1.17.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.17.0...v1.17.1
+[1.17.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.16.0...v1.17.0
+[1.16.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.15.0...v1.16.0
+[1.15.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.14.0...v1.15.0
+[1.14.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.13.0...v1.14.0
+[1.13.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.9.1...v1.10.0

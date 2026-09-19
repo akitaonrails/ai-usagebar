@@ -10,6 +10,7 @@ use ratatui_bubbletea_components::{Help, KeyBinding, ListItem, SelectList};
 use crate::format::local_time_hms;
 use crate::tui::app::App;
 use crate::tui::app::TabId;
+use crate::tui::app::TabSource;
 use crate::tui::app::TabState;
 use crate::tui::panels;
 use crate::tui::style::{bubble_theme, color, severity_color};
@@ -79,12 +80,30 @@ fn vendor_label(id: VendorId) -> &'static str {
     }
 }
 
+/// The source's own name: the wide vendor label for a built-in, the
+/// configured `name` for a custom provider.
+fn source_label(tab: &TabId) -> &str {
+    match &tab.source {
+        TabSource::Builtin(vendor) => vendor_label(*vendor),
+        TabSource::Custom { name, .. } => name,
+    }
+}
+
+/// The source's compact name: the canonical vendor name for a built-in, the
+/// configured `short_name` for a custom provider.
+fn compact_source_label(tab: &TabId) -> &str {
+    match &tab.source {
+        TabSource::Builtin(vendor) => vendor.display_name(),
+        TabSource::Custom { short_name, .. } => short_name,
+    }
+}
+
 /// Tab label for the header/sidebar/detail title. A named account appends its
 /// label, e.g. `Claude · work` or `OpenRouter · personal`.
 fn tab_label(tab: &TabId) -> String {
     let label = match &tab.account {
-        Some(acct) => format!("{} · {}", vendor_label(tab.vendor), acct),
-        None => vendor_label(tab.vendor).to_string(),
+        Some(acct) => format!("{} · {}", source_label(tab), acct),
+        None => source_label(tab).to_string(),
     };
     crate::display::sanitize_untrusted_field(&label)
 }
@@ -92,8 +111,8 @@ fn tab_label(tab: &TabId) -> String {
 /// Compact variant for the narrow top-nav strip.
 fn compact_tab_label(tab: &TabId) -> String {
     let label = match &tab.account {
-        Some(acct) => format!("{} · {}", tab.vendor.display_name(), acct),
-        None => tab.vendor.display_name().to_string(),
+        Some(acct) => format!("{} · {}", compact_source_label(tab), acct),
+        None => compact_source_label(tab).to_string(),
     };
     crate::display::sanitize_untrusted_field(&label)
 }
@@ -277,7 +296,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     // widest name (bounded so one long account label can't blow out the layout).
     let name_w = idxs
         .iter()
-        .map(|&i| tab_label(&app.tabs_meta[i]).chars().count())
+        .map(|&i| crate::display::text_width(&tab_label(&app.tabs_meta[i])))
         .max()
         .unwrap_or(6)
         .clamp(6, 22);
@@ -285,7 +304,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     for &i in &idxs {
         let name = tab_label(&app.tabs_meta[i]);
-        let pad = name_w.saturating_sub(name.chars().count());
+        let pad = name_w.saturating_sub(crate::display::text_width(&name));
         let mut spans = vec![
             Span::styled(name, theme.text),
             theme.span(" ".repeat(pad + 2)),

@@ -30,6 +30,7 @@ import {
   stripCommand,
   toggleStar,
 } from "./model.js";
+import { measurePanelHeight } from "./panel-size.js";
 
 type Direction = "back" | "forward";
 
@@ -64,6 +65,7 @@ export default function App() {
   const [rowMenuOpen, setRowMenuOpen] = useState(false);
   const [resetArmed, setResetArmed] = useState(false);
   const [starError, setStarError] = useState("");
+  const [popoverVisible, setPopoverVisible] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const cards = useMemo(() => (payload.hostError ? [] : projectCards(payload, nowMs)), [payload, nowMs]);
@@ -114,6 +116,10 @@ export default function App() {
       });
     };
     window.__AIUB_VISIBLE__ = (visible) => {
+      // Visibility changes are also sizing boundaries. ResizeObserver callbacks
+      // can be suspended while WebView2 is hidden, so force a fresh measurement
+      // as soon as the native host opens the popover again.
+      setPopoverVisible(visible);
       if (visible) return;
       // Closing the popover resets navigation: back to the dashboard, scrolled to the top,
       // menus closed (OpenUsage "Closing").
@@ -151,16 +157,10 @@ export default function App() {
     let last = -1;
     const report = () => {
       frame = 0;
-      const content = shell.querySelector<HTMLElement>("[data-scroll-content]");
-      let height = 0;
-      for (const child of Array.from(shell.children)) {
-        const el = child as HTMLElement;
-        height += el.dataset.scroll !== undefined && content ? content.offsetHeight : el.offsetHeight;
-      }
-      height = Math.ceil(height);
+      const measured = measurePanelHeight(shell);
       // Same floor as tray MIN_POPOVER_HEIGHT: keep room for the Options menu
       // (side=top from the footer) so Radix does not scroll the list.
-      if (height > 0) height = Math.max(height, 320);
+      const height = measured > 0 ? Math.max(measured, 320) : measured;
       if (height <= 0 || height === last) return;
       last = height;
       sendCommand("resize", { height, theme: resolvedTheme(layout.theme) });
@@ -178,7 +178,7 @@ export default function App() {
       observer.disconnect();
       if (frame !== 0) window.clearTimeout(frame);
     };
-  }, [screen, layout.theme]);
+  }, [screen, payload, layout, popoverVisible]);
 
   function onKeyDown(event: KeyboardEvent) {
     if (locked || event.defaultPrevented || optionsOpen || rowMenuOpen) return;
@@ -208,10 +208,6 @@ export default function App() {
 
   function toggleShowAs() {
     commit({ ...layout, showAs: layout.showAs === "used" ? "left" : "used" });
-  }
-
-  function toggleResetTimes() {
-    commit({ ...layout, resetTimes: layout.resetTimes === "exact" ? "countdown" : "exact" });
   }
 
   // Two clicks within three seconds; a native confirm() would steal focus and the
@@ -337,7 +333,6 @@ export default function App() {
                 else collapsed[id] = true;
                 commit({ ...layout, collapsed });
               }}
-              onToggleResetTimes={toggleResetTimes}
               onToggleShowAs={toggleShowAs}
             />
           ) : null}
@@ -384,6 +379,7 @@ export default function App() {
           {screen === "settings" ? (
             <Settings
               layout={layout}
+              nowMs={nowMs}
               payload={payload}
               onAlwaysShowPace={(alwaysShowPace) => commit({ ...layout, alwaysShowPace })}
               onOpenCustomize={() => go("customize")}
@@ -400,6 +396,7 @@ export default function App() {
         nowMs={nowMs}
         optionsOpen={optionsOpen}
         payload={payload}
+        updatePending={payload.update !== null}
         onOpenCustomize={() => {
           setOptionsOpen(false);
           go("customize");

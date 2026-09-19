@@ -19,6 +19,7 @@ metrics expand to an empty string unless noted otherwise.
 | Cursor | `cur` | MiniMax | `mmx` |
 | Kiro CLI | `kir` | Nous Research | `nrs` |
 | OpenCode Go | `ocg` | Command Code | `cmc` |
+| Ollama Cloud | `oll` | | |
 
 The same codes ride the `ai-usagebar usage --json` report as each entry's
 `short_name`, so a native frontend can draw a Waybar-style provider tag without
@@ -31,7 +32,7 @@ and Other Models to the weekly slot; both reset with the billing cycle. Kiro
 has one pool, so it maps `kiro_pct` to both percentage slots.
 
 Claude and Codex also provide `*_elapsed`, `*_pace`, and `*_bar` families.
-Z.AI and MiniMax provide elapsed aliases plus provider-specific pace families.
+Z.AI, MiniMax, and OpenCode Go provide elapsed aliases plus provider-specific pace families.
 Antigravity provides elapsed values plus `{session_model}`, `{weekly_model}`,
 `{scoped_model}`, and `{extra_model}` for whichever of its four windows the
 running product reports — a product that exposes only weekly buckets leaves the
@@ -126,6 +127,22 @@ its reset uses the shared neutral pacing values: elapsed `0` and arrow `→`.
 windows return `—` when absent. As with Z.AI, a present window without a reset
 uses elapsed `0` and the neutral `→` pace marker.
 
+## OpenCode Go
+
+`{ocg_plan}`, `{ocg_rolling_pct}`, `{ocg_rolling_reset}`,
+`{ocg_rolling_elapsed}`, `{ocg_rolling_pace}`,
+`{ocg_rolling_pace_indicator}`, `{ocg_weekly_pct}`, `{ocg_weekly_reset}`,
+`{ocg_weekly_elapsed}`, `{ocg_weekly_pace}`,
+`{ocg_weekly_pace_indicator}`, `{ocg_monthly_pct}`, `{ocg_monthly_reset}`,
+`{ocg_rolling_status}`, `{ocg_weekly_status}`, `{ocg_monthly_status}`
+
+`{session_elapsed}` and `{weekly_elapsed}` are cross-provider aliases for the
+rolling (5h) and weekly (7d) windows. An absent window returns empty elapsed
+and pace values. The monthly window keeps `pct`/`reset`/`status` but has no
+pace family: its cycle follows the subscription date, so no fixed length is
+exact. Rolling (5h) and weekly (7d) lengths are constants: the usage endpoint
+reports only `percent` and `resetsAt`, never a duration.
+
 ## OpenRouter
 
 `{or_label}`, `{or_balance}`, `{or_total}`, `{or_used}`,
@@ -145,7 +162,8 @@ currencies are present; otherwise they use CNY.
 `{kimi_plan}`, `{kimi_weekly_pct}`, `{kimi_weekly_used}`,
 `{kimi_weekly_limit}`, `{kimi_weekly_remaining}`, `{kimi_weekly_reset}`,
 `{kimi_window_pct}`, `{kimi_window_used}`, `{kimi_window_limit}`,
-`{kimi_window_remaining}`, `{kimi_window_reset}`
+`{kimi_window_remaining}`, `{kimi_window_reset}`,
+`{kimi_monthly_pct}`, `{kimi_monthly_reset}`
 
 These cover the subscription quota and rolling five-hour window from
 `api.kimi.com/coding/v1/usages`. The default format is
@@ -153,6 +171,28 @@ These cover the subscription quota and rolling five-hour window from
 every other two-window vendor. Generic aliases are `{plan}` for the plan,
 `{weekly_pct}` for weekly usage, and `{session_pct}` for the five-hour
 window.
+
+Accounts on the newer response shape have no weekly bucket — only the
+combined monthly pool — so the weekly placeholders (`kimi_weekly_*` and the
+`weekly_pct`/`weekly_reset` aliases) render empty there, and
+`{kimi_monthly_pct}` / `{kimi_monthly_reset}` carry the monthly pool
+instead. On legacy-shape accounts the monthly placeholders render empty.
+
+## Grok Bot
+
+`{gbt_plan}`, `{gbt_weekly_pct}`, `{gbt_weekly_reset}`, `{gbt_on_demand}`
+
+These cover the desktop app's weekly included-usage pool from
+`api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus`
+(Linux-only for now). The default format is `{gbt_weekly_pct}%`. Generic
+aliases are `{plan}` and `{weekly_pct}` / `{weekly_reset}`.
+`{gbt_on_demand}` renders `on`/`off` for pay-as-you-go past the included
+pool.
+
+An account with no included allowance (`hasNonZeroIncludedLimit: false`) is
+a distinct state, not 0%: the weekly placeholders (`gbt_weekly_*` and the
+`weekly_pct`/`weekly_reset` aliases) render empty there, and the tooltip
+says "No included allowance" instead of drawing a meter.
 
 ## Kilo
 
@@ -182,6 +222,16 @@ USD; the China service uses CNY.
 - `{sgk_period}` is `Weekly`, `Monthly`, or `Current period`.
 - The default bar format is `{sgk_pct}% · {sgk_reset}`.
 - `{session_pct}` and `{weekly_pct}` remain aliases for `sgk_pct`.
+- Per-product slices (Grok Build, Grok Chat, Grok Imagine, …) appear beside
+  the overall meter everywhere: full meters in the TUI, one dim line each
+  (no gauge, no severity colour, aligned percentages) in the tooltip and
+  `--pretty` box, and metric rows in `usage --json`. They share the same
+  reset as `{sgk_pct}` and do not have their own placeholders. In the report
+  each slice carries `group: "Breakdown"` (absent on the overall meter), so a
+  frontend can draw it under a heading; the Omarchy panel does exactly that.
+- The prepaid line is shown only when the billing document reports credit —
+  a `prepaidBalance` of zero draws no row, while `{sgk_prepaid}` still
+  publishes the raw figure.
 - `{plan}` is the subscription tier when Grok Build supplies one.
 - `{sgk_resets_available}` is the number of banked resets you can redeem by
   hand, and `{sgk_resets}` the compact count (`1 reset available`). These are
@@ -274,3 +324,22 @@ derived from the credit ledger against the plan pool, and
 ledger refills. A plan the release does not know, or a response without the
 credit ledger, leaves the monthly family and `{cc_credits_reset}` at `—`.
 `{session_pct}` and `{weekly_pct}` alias the 5-hour and weekly windows.
+
+
+## Ollama Cloud
+
+`{oll_session_pct}`, `{oll_session_reset}`, `{oll_session_pace}`,
+`{oll_weekly_pct}`, `{oll_weekly_reset}`, `{oll_weekly_pace}`,
+`{oll_monthly_pct}`, `{oll_monthly_reset}`, `{oll_monthly_pace}`,
+`{oll_plan}`, `{oll_cost}`
+
+Ollama Cloud reports either a 5-hour session + weekly pair, or a single
+calendar-month window, as a fraction of the plan limit — never both in the
+same response — so all three percentage placeholders are whole numbers
+after clamping to 0..=100, and the pair the account does not report stays
+at `0`. The API does not publish reset timestamps, pace deltas, or a plan
+label: `{oll_plan}` falls back to the `plan` string from your config, and
+the reset/pace families render neutral values when the window projection
+is unavailable. `{oll_cost}` is the dollar figure the settings page reports
+for the last four weeks of activity. `{session_pct}` and `{weekly_pct}`
+alias the session and weekly windows.

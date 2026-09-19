@@ -11,6 +11,9 @@
 //! Only [`macos_key`] touches the Keychain (macOS-gated); the derive/decrypt/
 //! encrypt transform is pure and platform-independent, so it is exercised by a
 //! round-trip test on Linux CI without any real secret (the hermeticity rule).
+//! The same transform also serves Chromium OSCrypt stores on Linux (the Grok
+//! Bot desktop app's `sand-secrets.json`), where the only difference is the
+//! PBKDF2 round count — hence [`derive_key_with_rounds`] / [`derive_key_linux`].
 
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, block_padding::Pkcs7};
 use base64::Engine;
@@ -21,6 +24,9 @@ use crate::error::{AppError, Result};
 /// every Chromium build.
 const SALT: &[u8] = b"saltysalt";
 const ROUNDS: u32 = 1003;
+/// Chromium's Linux OSCrypt derivation uses a single PBKDF2 round (macOS uses
+/// [`ROUNDS`]). Same salt, same key length, same `v10` envelope.
+pub const ROUNDS_LINUX: u32 = 1;
 const KEY_LEN: usize = 16;
 const IV: [u8; 16] = [b' '; 16];
 const PREFIX: &[u8] = b"v10";
@@ -32,11 +38,27 @@ pub const SERVICE: &str = "Claude Safe Storage";
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 
-/// Derive the 16-byte AES key from the Keychain secret (PBKDF2-HMAC-SHA1).
+/// Derive the 16-byte AES key from the Keychain secret (PBKDF2-HMAC-SHA1,
+/// macOS's 1003 rounds). Byte-identical to what it has always been; the
+/// compatibility-vector test below pins that.
 pub fn derive_key(secret: &[u8]) -> [u8; KEY_LEN] {
+    derive_key_with_rounds(secret, ROUNDS)
+}
+
+/// Derive the 16-byte AES key with an explicit PBKDF2 round count. The round
+/// count is the only platform difference in Chromium's OSCrypt: Linux uses
+/// [`ROUNDS_LINUX`].
+pub fn derive_key_with_rounds(secret: &[u8], rounds: u32) -> [u8; KEY_LEN] {
     let mut key = [0u8; KEY_LEN];
-    pbkdf2::pbkdf2_hmac::<sha1::Sha1>(secret, SALT, ROUNDS, &mut key);
+    pbkdf2::pbkdf2_hmac::<sha1::Sha1>(secret, SALT, rounds, &mut key);
     key
+}
+
+/// The Linux OSCrypt key — Chromium's documented one-round derivation. The
+/// `secret` comes from the app's Secret Service item (or the documented
+/// `"peanuts"` fallback when no secret is stored).
+pub fn derive_key_linux(secret: &[u8]) -> [u8; KEY_LEN] {
+    derive_key_with_rounds(secret, ROUNDS_LINUX)
 }
 
 /// Decrypt a base64 `v10…` safeStorage value into its plaintext bytes.
@@ -148,5 +170,35 @@ mod tests {
         let enc = encrypt(&key(), b"secret payload here, long enough to pad");
         let other = derive_key(b"different-secret");
         assert!(decrypt(&other, &enc).is_err());
+    }
+
+    #[test]
+    fn linux_derivation_matches_the_chromium_compatibility_vector() {
+        // PBKDF2-HMAC-SHA1("peanuts", "saltysalt", 1 round, 16 bytes),
+        // reproduced independently with OpenSSL's PBKDF2 implementation —
+        // this is the key every Chromium-derivative app on Linux uses when no
+        // Secret Service item overrides it.
+        assert_eq!(
+            derive_key_linux(b"peanuts"),
+            [
+                0xfd, 0x62, 0x1f, 0xe5, 0xa2, 0xb4, 0x02, 0x53, 0x9d, 0xfa, 0x14, 0x7c, 0xa9, 0x27,
+                0x27, 0x78,
+            ]
+        );
+        // The explicit-rounds form is the same call.
+        assert_eq!(
+            derive_key_with_rounds(b"peanuts", ROUNDS_LINUX),
+            derive_key_linux(b"peanuts")
+        );
+    }
+
+    #[test]
+    fn linux_key_round_trips_through_the_same_envelope() {
+        let k = derive_key_linux(b"peanuts");
+        let msg = b"cursor-access-token-value";
+        let enc = encrypt(&k, msg);
+        assert_eq!(decrypt(&k, &enc).unwrap(), msg);
+        // A macOS-derived key must not open a Linux blob, and vice versa.
+        assert!(decrypt(&derive_key(b"peanuts"), &enc).is_err());
     }
 }

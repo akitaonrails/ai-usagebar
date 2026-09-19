@@ -7,8 +7,12 @@ these are invariants we keep almost-forgetting, not a project tour.
 
 When cutting a new version (patch, minor, or major):
 
-1. **Bump both versions** — `Cargo.toml` `version` and the root Omarchy
-   `manifest.json` `version` must match the release tag.
+1. **Bump all version surfaces** — `Cargo.toml` `version`, the root Omarchy
+   `manifest.json` `version`, and `packaging/scoop/ai-usagebar.json`
+   `version` must match the release tag. The Scoop manifest's URL/hash keep
+   the previous release's values in-tree; `publish-scoop` rewrites them
+   from the published sidecar at release time (verify-version only gates
+   `version` — v1.20.0 never shipped because the bump missed this file).
 2. **Update `CHANGELOG.md`**:
    - Add a new `## [X.Y.Z] — YYYY-MM-DD` section above the previous one.
    - Categorize entries by **Added / Changed / Fixed / Security** (Keep-A-Changelog).
@@ -27,9 +31,16 @@ When cutting a new version (patch, minor, or major):
      to a shipped release with no removed line for the grep to find. It passed
      clean while the section was wrong.
 
-     `make test` now also enforces this without git: a guard test fails if any
-     changelog entry appears under two versions, or if one section repeats a
-     category heading. The manual comparison above stays because it is
+     **`make changelog-check` now does this comparison for you** — it diffs
+     every released section against its own tag and refuses a version file
+     that moved backwards, which is the other half of the same hazard (four
+     branches once came back reading 1.12.0 after v1.13.0 shipped). Run it
+     instead of composing the diff by hand; the manual form below is kept
+     because it documents what the script checks.
+
+     `make test` also enforces part of this without git: a guard test fails if
+     any changelog entry appears under two versions, or if one section repeats
+     a category heading. The manual comparison above stays because it is
      stronger for the newest section — the guard cannot tell a *reworded*
      entry from a new one — but the automated check is what catches a
      conflict resolution that quietly copies an entry into a published
@@ -58,13 +69,18 @@ When cutting a new version (patch, minor, or major):
    The committed files keep `sha256sums = SKIP`; CI pins the real hashes later.
 6. **Run gate before tagging**:
    ```
+   make changelog-check                        # released sections + version files intact
    make test                                   # cargo test + the desktop JS gate
+   cargo fmt --all -- --check                  # CI runs this; it is a hard gate
    cargo clippy --all-targets -- -D warnings   # clean
    cargo machete                               # no unused deps
    omarchy plugin validate .                   # plugin manifest + entry points
    ```
    `make test` rather than `cargo test`: it also runs the GNOME, KDE, and
-   Omarchy frontend contract suites. If `kde-plasmoid/` changed, also bump
+   Omarchy frontend contract suites. `cargo fmt --all -- --check` is on this
+   list because CI's ubuntu job runs it and fails the build on a diff — it was
+   missing here once, and a correctly-working commit landed on `main` red for
+   nothing but a rustfmt line-wrap. If `kde-plasmoid/` changed, also bump
    `KPlugin.Version` in `kde-plasmoid/package/metadata.json`; it is versioned
    independently of `Cargo.toml`, like the GNOME `metadata.json`.
 7. **Commit, tag, push**:
@@ -132,7 +148,11 @@ patch version instead.
 - **No secrets in tracked files.** Inline API keys in config.toml are
   the user's choice (and `chmod 600`ed by the Settings overlay), but
   **never commit** a real key. The `.gitignore` covers `.env`,
-  `*.credentials.json`, and `.claude/`.
+  `*.credentials.json`, and `.claude/`. That includes secret-*shaped*
+  public values: Antigravity's installed-app OAuth client secret is public by
+  Google's definition, yet it lives in the user's config, never in source,
+  because a literal with Google's client-secret prefix trips every secret
+  scanner for ever. Test fixtures use plain words (`test-client`).
 - **One fetch outcome, one fallback policy.** `outcome::Outcome<T>` is the
   four-field record every vendor returns (`VendorOutcome` is
   `Outcome<VendorSnapshot>`; each vendor's `FetchOutcome` is an alias, so
@@ -146,9 +166,14 @@ patch version instead.
   parses its own cache format. A guard test forbids a second caller of
   `Cache::fallback_payload`: that function is the entry point to this decision,
   and eighteen private copies of it had already drifted into two generations
-  that disagreed for five vendors. The one sanctioned synthesized error is
-  `handle_auth_failure`'s — "run `claude`/`codex login` to re-auth" is
-  actionable where the underlying OAuth error is not.
+  that disagreed for five vendors. Two synthesized errors are sanctioned, both
+  on the same ground — they tell the user something actionable that the
+  underlying failure does not. `handle_auth_failure`'s "run `claude`/`codex
+  login` to re-auth", and `fresh_payload`'s "rate limited; next attempt in 4m"
+  after a 429 armed the backoff. The second is a *pre-network refusal*, not a
+  failed refresh: it is reached only when there is also no payload inside
+  `MAX_STALE` to show instead, so it never replaces a figure with a note about
+  the cache. Anything beyond these two returns the error that caused it.
 - **Frontend adapters stay thin.** Provider fetching, credentials, canonical
   product names, metric projection, and reset metadata belong in Rust.
   `VendorId::display_name` is the shared label source; do not add a complete
@@ -210,20 +235,34 @@ vendor's response shape drifts:
 - `src/active.rs` — scroll-cycle active vendor state file
 - `src/anthropic/`, `src/openai/`, `src/openrouter/`, `src/zai/`,
   `src/deepseek/` — per-vendor types + fetch + render
-- `src/antigravity/` — Google Antigravity. Unlike every other vendor it has
-  no credential and no remote endpoint: quota comes from whichever local
-  Antigravity product is running (2.0, the IDE, or an interactive `agy`
-  session), over a loopback RPC on a **dynamically assigned** port that is
-  discovered from `/proc` on Linux, `lsof` on macOS, and the process/TCP-table
-  APIs on Windows. `ANTIGRAVITY_LS_ADDRESS` is a *first* candidate, not an
-  exclusive one — discovered ports are still probed behind it, so a stale
-  override degrades to a slower success instead of a hard failure.
+- `src/antigravity/` — Google Antigravity. Two sources, local first: quota
+  comes from whichever local Antigravity product is running (2.0, the IDE, or
+  an interactive `agy` session), over a loopback RPC on a **dynamically
+  assigned** port that is discovered from `/proc` on Linux, `lsof` on macOS,
+  and the process/TCP-table APIs on Windows. `ANTIGRAVITY_LS_ADDRESS` is a
+  *first* candidate, not an exclusive one — discovered ports are still probed
+  behind it, so a stale override degrades to a slower success instead of a
+  hard failure.
   Discovered ports are grouped per pid and emitted rank by rank (`probe_order`),
   so with two products up every RPC listener is probed before any TLS one.
-  Tests must never probe `/proc`, `lsof` or the wall clock — use
-  `candidate_bases_with`, `probe_order`, `matching_windows_ports`,
-  `parse_lsof_pcn` and `parse_cache_at`/`fetch_snapshot_at`, not their
-  production wrappers.
+  With no local server at all, or when `agy` reports its undiscoverable CSRF
+  token (a genuinely signed-out server keeps its own diagnosis), `fetch.rs`
+  falls back to the Google
+  OAuth session Antigravity saved in the OS keyring or the CLI file
+  `~/.gemini/antigravity-cli/antigravity-oauth-token` (`credential.rs`:
+  Credential Manager on Windows, `security` on macOS, `secret-tool` on
+  Linux; read-only) and asks the Cloud Code API (`cloud.rs`) for the same
+  quota summary. A refreshed token goes to the vendor cache's
+  `oauth.json`, keyed by a fingerprint of the refresh token, never back to
+  the keyring. The OAuth client that refresh needs is config-only.
+  Tests must never probe `/proc`, `lsof`, the keyring, the CLI token file, Google or the wall
+  clock — use `candidate_bases_with`, `probe_order`,
+  `matching_windows_ports`, `parse_lsof_pcn`, `parse_cache_at`, and
+  `fetch_snapshot_at` with a `RemoteOverride` (`SavedCredential::Blob` /
+  `Absent`, mockito `Endpoints`, `local_bases: Some(vec![])`), not their
+  production wrappers. The two tests that touch the real keyring
+  (`reading_the_real_windows_credential_never_errors`, `antigravity_remote_live`)
+  are `#[ignore]`d.
 - `src/kiro/` — Kiro CLI. Reads kiro-cli's own `data.sqlite3` (read-only) for
   the AWS SSO OIDC session, refreshes the ~1h access token via the documented
   CreateToken API, and calls the undocumented `GetUsageLimits` — same operation
@@ -237,8 +276,13 @@ vendor's response shape drifts:
   auth file and pass the paths in; never touch the real ones.
 - `src/anthropic/keychain.rs` — macOS-only Keychain fallback when
   `~/.claude/.credentials.json` is absent (Claude Code on macOS stores
-  the OAuth blob in the login Keychain). Reads use `security(1)`; writes use
-  Security.framework so OAuth JSON never enters process arguments. Module-gated with
+  the OAuth blob in the login Keychain). Reads, deletes and normal-sized writes
+  use `security(1)`: the writer's code identity is what macOS stamps onto the item's
+  XARA partition list, so a native write left the item owned by
+  `cdhash:<ai-usagebar>` and made every `/usr/bin/security` read — ours and
+  Claude Code's — raise a Keychain dialog (#148). OAuth JSON still never enters
+  process arguments: the command goes to `security -i` on stdin. Only a blob
+  over that reader's line cap falls back to Security.framework. Module-gated with
   `#[cfg(target_os = "macos")]`; Linux build never compiles it.
 - `src/cache.rs` — atomic per-vendor cache writes + flock, plus the shared
   cross-platform path resolvers (`xdg_cache_dir`, `home_dir`). `home_dir`
