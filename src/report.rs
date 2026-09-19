@@ -291,8 +291,13 @@ fn reset_credits_for(state: &TabState) -> Option<crate::usage::ResetCredits> {
     (!credits.is_empty()).then(|| credits.clone())
 }
 
+/// Process status after a complete document has been printed.
+///
+/// Per-entry fetch/auth failures are data inside the document, not a command
+/// failure. Empty is not a document — [`collect_entries`] already fails before
+/// this when nothing is enabled.
 fn report_exit_code(entries: &[Entry]) -> i32 {
-    i32::from(entries.iter().all(|entry| entry.error.is_some()))
+    i32::from(entries.is_empty())
 }
 
 /// Stable machine id shared by aggregate views and the macOS menu bar:
@@ -1192,14 +1197,19 @@ mod tests {
     }
 
     #[test]
-    fn exit_is_nonzero_only_when_every_entry_failed() {
+    fn produced_document_exits_zero_even_when_every_entry_failed() {
         let mut failed = entry("openai", Vec::new());
         failed.error = Some("not signed in".into());
-        assert_eq!(report_exit_code(&[failed]), 1);
+        assert_eq!(report_exit_code(&[failed]), 0);
 
         let mut failed = entry("openai", Vec::new());
         failed.error = Some("not signed in".into());
         assert_eq!(report_exit_code(&[failed, entry("cursor", Vec::new())]), 0);
+
+        assert_eq!(report_exit_code(&[entry("cursor", Vec::new())]), 0);
+        // Empty is not a produced document — collect_entries already fails
+        // before this helper when nothing is enabled.
+        assert_ne!(report_exit_code(&[]), 0);
     }
 
     fn custom_spec(id: &str, enabled: bool) -> crate::config::CustomProviderConfig {

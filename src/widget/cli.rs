@@ -149,6 +149,11 @@ pub enum Command {
     },
 
     /// Quota and time-to-reset for every configured vendor and account.
+    ///
+    /// Exits 0 after printing a complete document, even when every entry
+    /// carries its own error. Non-zero only when the document cannot be
+    /// produced (missing or unreadable `--config`, unparseable TOML, no
+    /// vendors enabled, or a runtime/bootstrap failure).
     Usage {
         /// Machine-readable output.
         #[arg(long)]
@@ -516,6 +521,26 @@ mod tests {
     fn usage_subcommand_parses_machine_readable_mode() {
         let cli = Cli::parse_from(["ai-usagebar", "usage", "--json"]);
         assert!(matches!(cli.command, Some(Command::Usage { json: true })));
+    }
+
+    #[test]
+    fn usage_help_states_complete_document_exits_zero() {
+        let err = Cli::try_parse_from(["ai-usagebar", "usage", "--help"])
+            .expect_err("help exits through clap's display path");
+        assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+        let help = err.to_string();
+        assert!(
+            help.contains("Exits 0 after printing a complete document"),
+            "{help}"
+        );
+        assert!(
+            help.contains("even when every entry") && help.contains("error"),
+            "{help}"
+        );
+        assert!(
+            help.contains("Non-zero only when the document cannot be produced"),
+            "{help}"
+        );
     }
 
     #[test]
