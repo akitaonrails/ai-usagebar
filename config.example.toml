@@ -313,15 +313,17 @@ enabled = false
 # config_path = "/home/you/.grok/config.toml"
 
 [grokbot]
-# Disabled by default. Linux-only for now. The Grok Bot desktop app's weekly
+# Disabled by default. Linux and macOS. The Grok Bot desktop app's weekly
 # included-usage pool, from its own Connect-RPC dashboard call — distinct from
 # `[grok]` (Management API prepaid dollars) and `[supergrok]` (Grok Build
 # subscription). No API key of its own: the credential is the app's own OAuth
-# session in ~/.config/Grok Bot/sand-secrets.json (Chromium OSCrypt `v10`
-# blobs, decrypted read-only; refreshed tokens persist only in ai-usagebar's
-# cache, never back to the app's file). Install the app and sign in to it.
+# session in sand-secrets.json (Chromium OSCrypt `v10` blobs, decrypted
+# read-only; refreshed tokens persist only in ai-usagebar's cache, never back
+# to the app's file). Default path is ~/.config/Grok Bot/sand-secrets.json on
+# Linux and ~/Library/Application Support/Grok Bot/sand-secrets.json on macOS.
+# Install the app and sign in to it.
 enabled = false
-# secrets_path = "~/.config/Grok Bot/sand-secrets.json"  # credential file
+# secrets_path = "~/Library/Application Support/Grok Bot/sand-secrets.json"
 
 # Google Antigravity. Usage is read from a usable local Antigravity product.
 # The `agy` CLI requires a CSRF token it does not publish, so it uses the saved
