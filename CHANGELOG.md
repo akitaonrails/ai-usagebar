@@ -9,6 +9,15 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- The `changelog-check` CI guard no longer demands a CHANGELOG section from a
+  tag that never shipped a release. The v1.20.0 tag was abandoned before
+  publishing (its stale manifest was what the new `verify-version` guard
+  caught, as the [1.20.1] section records) and its section was withdrawn in
+  the same release, but the tag itself survived — and no changelog state could
+  satisfy both it and v1.20.1, so every pull request failed the check.
+
 ### Added
 
 - The TUI vendor menu is now navigated with the Up/Down arrow keys (wrapping),
