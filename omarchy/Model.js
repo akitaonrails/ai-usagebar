@@ -306,6 +306,8 @@ function brandFileFor(provider) {
     case "grok":
     case "supergrok":
       return "grok.svg"
+    case "grokbot":
+      return "grokbot.svg"
     case "antigravity":
       return "antigravity.svg"
     case "cursor":

@@ -22,8 +22,9 @@ The selector dynamically discovers **all providers** that ship in the binary via
   Claude & GPT OSS — each with its own 5h/weekly pair), MiniMax (chat and video
   pools, each with 5h/weekly tracking), GitHub Copilot (premium finite pool,
   with unlimited chat and completions reported cleanly), SuperGrok, Kiro,
-  Nous Research, OpenCode Go (session, weekly, and monthly pools), and Command Code
-  (session, weekly, and monthly pools).
+  Nous Research, OpenCode Go (session, weekly, and monthly pools), Command Code
+  (session, weekly, and monthly pools), and Grok Bot (weekly included-usage
+  pool from the Grok Bot desktop app).
 - **Included-usage pools:** Cursor (Cursor Models and Other Models, both reset
   on the billing cycle).
 - **Balance-only:** OpenRouter, DeepSeek, Kimi, Kilo, Novita, Moonshot, Grok

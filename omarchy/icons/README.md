@@ -4,8 +4,9 @@ Monochrome SVGs for the Omarchy bar and panel hero. Each file is path
 geometry only (no scripts, no external refs) and is tinted to the bar
 foreground at runtime.
 
-Grok and SuperGrok share `grok.svg` — same brand, two products. Command
-Code has no public mark; the bar falls back to its `short_name` (`cmc`).
+Grok and SuperGrok share `grok.svg`. Grok Bot has its own head-and-eyes
+mark (`grokbot.svg`). Command Code has no public mark; the bar falls
+back to its `short_name` (`cmc`).
 
 | File | Used for | Source | Licence |
 |---|---|---|---|
@@ -19,6 +20,7 @@ Code has no public mark; the bar falls back to its `short_name` (`cmc`).
 | `openrouter.svg` | OpenRouter | Simple Icons `openrouter` | CC0-1.0 |
 | `cursor.svg` | Cursor | Simple Icons `cursor` | CC0-1.0 |
 | `grok.svg` | Grok, SuperGrok | [lobe-icons](https://github.com/lobehub/lobe-icons) `grok` | [MIT](https://github.com/lobehub/lobe-icons/blob/master/LICENSE) |
+| `grokbot.svg` | Grok Bot | Official logomark from [x.ai/bot](https://x.ai/bot) / Grok Bot.app (head with eye cutouts) | Identification use; [xAI brand guidelines](https://x.ai/legal/brand-guidelines) |
 | `zhipu.svg` | Z.AI | lobe-icons `zhipu` | MIT |
 | `moonshot.svg` | Moonshot | lobe-icons `moonshot` | MIT |
 | `kilo.svg` | Kilo | lobe-icons `kilocode` | MIT |

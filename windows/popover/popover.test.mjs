@@ -1078,6 +1078,7 @@ assert.deepEqual(condensedTextRowIndexes('nope'), []);
 assert.equal(providerIconId('anthropic@work'), 'anthropic');
 assert.equal(providerIconId('supergrok'), 'grok');
 assert.equal(providerIconId('SuperGrok@personal'), 'grok');
+assert.equal(providerIconId('grokbot'), 'grokbot');
 assert.equal(providerIconId(' OpenAI '), 'openai');
 assert.equal(providerIconId(''), '');
 assert.equal(providerIconId(undefined), '');

@@ -32,13 +32,16 @@ pub struct SandUsageStatus {
 struct OnDemandSettings {
     visible: bool,
     eligible: bool,
-    enabled: bool,
+    /// Live captures have sent `null` here; treat that as off.
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 enum PercentOrString {
     Int(i64),
+    /// Live captures have sent a fractional JSON number (`19.150778`).
+    Float(f64),
     Text(String),
 }
 
@@ -80,7 +83,7 @@ impl SandUsageStatus {
             has_included_allowance: self.has_non_zero_included_limit,
             weekly_pct,
             has_available_usage: self.has_available_usage,
-            on_demand_enabled: self.on_demand_settings.enabled,
+            on_demand_enabled: self.on_demand_settings.enabled.unwrap_or(false),
             period_start,
             reset_at,
             window,
@@ -94,6 +97,7 @@ impl SandUsageStatus {
 fn parse_percent(value: PercentOrString) -> Result<i32> {
     let raw = match value {
         PercentOrString::Int(n) => n as f64,
+        PercentOrString::Float(n) => n,
         PercentOrString::Text(s) => s.trim().parse::<f64>().map_err(|_| {
             AppError::Schema(format!("grokbot: usagePercent is not numeric (got {s:?})"))
         })?,
@@ -159,10 +163,26 @@ mod tests {
     }
 
     #[test]
+    fn a_live_macos_shape_parses_fractional_percent_and_null_on_demand() {
+        // Redacted 2026-09-19 capture from GetSandUsageStatus against a macOS
+        // Grok Bot 0.57.1 session: fractional usagePercent, enabled: null.
+        let json = r#"{"currentPeriodStart":"2026-09-16T15:56:23.315Z","nextResetTimestampUtc":"2026-09-23T15:56:23.315Z","usagePercent":19.150778,"hasAvailableUsage":true,"hasNonZeroIncludedLimit":true,"onDemandSettings":{"visible":true,"eligible":true,"enabled":null},"grokPlanLabel":"Grok Bot Plan","cursorPlanName":"Ultra"}"#;
+        let snap = serde_json::from_str::<SandUsageStatus>(json)
+            .unwrap()
+            .into_snapshot()
+            .unwrap();
+        assert_eq!(snap.plan, "Grok Bot Plan");
+        assert_eq!(snap.weekly_pct, 19);
+        assert!(!snap.on_demand_enabled);
+        assert_eq!(snap.window, Some(chrono::Duration::days(7)));
+    }
+
+    #[test]
     fn usage_percent_accepts_an_int_or_a_numeric_string() {
         for (raw, expected) in [
             (r#""usagePercent": 42"#, 42),
             (r#""usagePercent": "42""#, 42),
+            (r#""usagePercent": 19.150778"#, 19),
         ] {
             let json = format!(r#"{{"hasNonZeroIncludedLimit": true, {raw}}}"#);
             let snap = serde_json::from_str::<SandUsageStatus>(&json)
