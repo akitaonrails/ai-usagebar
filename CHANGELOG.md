@@ -9,15 +9,6 @@ Each release is also published at
 
 ## [Unreleased]
 
-### Fixed
-
-- The `changelog-check` CI guard no longer demands a CHANGELOG section from a
-  tag that never shipped a release. The v1.20.0 tag was abandoned before
-  publishing (its stale manifest was what the new `verify-version` guard
-  caught, as the [1.20.1] section records) and its section was withdrawn in
-  the same release, but the tag itself survived — and no changelog state could
-  satisfy both it and v1.20.1, so every pull request failed the check.
-
 ### Added
 
 - The TUI vendor menu is now navigated with the Up/Down arrow keys (wrapping),
@@ -30,6 +21,28 @@ Each release is also published at
   Settings overlay, unconfigured key vendors are grouped under a collapsed
   "More providers" section (navigate past the last configured row or click the
   header to expand).
+- **macOS Grok Bot.** `[grokbot]` reads
+  `~/Library/Application Support/Grok Bot/sand-secrets.json` with the
+  Chromium OSCrypt key from the login Keychain item `Grok Bot Safe Storage`
+  / `Grok Bot Key` (1003 PBKDF2 rounds, the same scheme as Claude Desktop).
+  The Mac app stores `cursor-accounts` as a JSON string wrapping the object
+  Linux writes directly; both shapes parse. Windows still fails closed.
+  Omarchy and the Windows tray draw Grok Bot's own head-and-eyes logomark
+  (`grokbot.svg`) instead of sharing Grok's mark.
+
+### Fixed
+
+- The `changelog-check` CI guard no longer demands a CHANGELOG section from a
+  tag that never shipped a release. The v1.20.0 tag was abandoned before
+  publishing (its stale manifest was what the new `verify-version` guard
+  caught, as the [1.20.1] section records) and its section was withdrawn in
+  the same release, but the tag itself survived — and no changelog state could
+  satisfy both it and v1.20.1, so every pull request failed the check.
+- **Grok Bot live `usagePercent` and on-demand `enabled`.**
+  `GetSandUsageStatus` has been observed sending a fractional JSON number
+  (`19.150778`) and `onDemandSettings.enabled: null`. The parser rounds the
+  percent and treats null as off, so a real macOS session no longer dies as
+  schema drift.
 
 ## [1.20.2] — 2026-09-19
 
