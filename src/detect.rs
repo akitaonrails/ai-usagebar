@@ -60,8 +60,9 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
             config.supergrok.config_path.as_deref(),
         )
         .is_ok_and(|paths| crate::supergrok::direct::read_billing_key(&paths.auth).is_ok()),
-        // File-exists only: decrypting would mean a `secret-tool` subprocess,
-        // and a probe that runs at every frontend start must not spawn one.
+        // File-exists only: decrypting would mean a `secret-tool` / Keychain
+        // subprocess, and a probe that runs at every frontend start must not
+        // spawn one.
         VendorId::Grokbot => crate::grokbot::secrets_path(&config.grokbot)
             .map(|path| crate::grokbot::creds::secrets_present_at(&path))
             .unwrap_or(false),

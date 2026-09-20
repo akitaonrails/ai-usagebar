@@ -92,6 +92,7 @@ assert.match(brandMarkSource, /icons\/" \+ root\.brand/);
 assert.ok(fs.existsSync(new URL('./icons/claude.svg', import.meta.url)));
 assert.ok(fs.existsSync(new URL('./icons/openai.svg', import.meta.url)));
 assert.ok(fs.existsSync(new URL('./icons/grok.svg', import.meta.url)));
+assert.ok(fs.existsSync(new URL('./icons/grokbot.svg', import.meta.url)));
 assert.ok(fs.existsSync(new URL('./icons/copilot.svg', import.meta.url)));
 assert.match(panelSource, /function\s+persistSelection\s*\(/);
 assert.match(panelSource, /Model\.settingsWithOverrides\(root\.settings,\s*root\.moduleName,\s*values\)/);
@@ -268,12 +269,14 @@ assert.equal(model.brandIconFile({id: 'anthropic'}), 'claude.svg');
 assert.equal(model.brandIconFile({id: 'anthropic@work'}), 'claude.svg');
 assert.equal(model.brandIconFile({id: 'openai'}), 'openai.svg');
 assert.equal(model.brandIconFile({id: 'supergrok'}), 'grok.svg');
+assert.equal(model.brandIconFile({id: 'grokbot'}), 'grokbot.svg');
 assert.equal(model.brandIconFile({id: 'copilot'}), 'copilot.svg');
 assert.equal(model.brandIconFile({id: 'kimi'}), 'kimi.svg');
 assert.equal(model.brandIconFile({id: 'opencode-go'}), 'opencode.svg');
 assert.equal(model.brandIconFile({id: 'commandcode'}), '');
 assert.equal(model.brandIconFile({id: 'anthropic_api'}), 'anthropic.svg');
 assert.equal(model.brandIconFile({id: 'grok'}), model.brandIconFile({id: 'supergrok'}));
+assert.notEqual(model.brandIconFile({id: 'grokbot'}), model.brandIconFile({id: 'grok'}));
 
 // A custom provider carries no built-in slug, so the mark comes from the
 // `brand` the report relays. A second key for the same service is the same
@@ -289,7 +292,7 @@ assert.equal(model.brandIconFile({id: 'anthropic', brand: 'openai'}), 'openai.sv
 
 const slugs = [
   'anthropic', 'anthropic_api', 'openai', 'copilot', 'zai', 'openrouter',
-  'deepseek', 'kimi', 'kilo', 'novita', 'moonshot', 'grok', 'supergrok',
+  'deepseek', 'kimi', 'kilo', 'novita', 'moonshot', 'grok', 'supergrok', 'grokbot',
   'antigravity', 'cursor', 'minimax', 'kiro', 'nous', 'opencode-go', 'commandcode'
 ];
 const byMark = {};

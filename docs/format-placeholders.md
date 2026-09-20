@@ -184,7 +184,7 @@ instead. On legacy-shape accounts the monthly placeholders render empty.
 
 These cover the desktop app's weekly included-usage pool from
 `api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus`
-(Linux-only for now). The default format is `{gbt_weekly_pct}%`. Generic
+(Linux and macOS). The default format is `{gbt_weekly_pct}%`. Generic
 aliases are `{plan}` and `{weekly_pct}` / `{weekly_reset}`.
 `{gbt_on_demand}` renders `on`/`off` for pay-as-you-go past the included
 pool.

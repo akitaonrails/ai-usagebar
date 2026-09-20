@@ -142,12 +142,14 @@ enabled = true             # disabled by default; enable once you've run `grok l
 
 [grokbot]
 enabled = false            # disabled by default; enable after signing in to the app
-# Grok Bot desktop app's weekly included-usage pool (Linux-only for now).
+# Grok Bot desktop app's weekly included-usage pool (Linux and macOS).
 # Distinct from `[grok]` (Management API prepaid dollars) and `[supergrok]`
 # (Grok Build subscription). No API key: the credential is the app's own
-# session in ~/.config/Grok Bot/sand-secrets.json, read-only. Refreshed
-# tokens persist only in ai-usagebar's cache, never back to the app's file.
-# secrets_path = "~/.config/Grok Bot/sand-secrets.json"
+# session in sand-secrets.json, read-only. Default:
+# ~/.config/Grok Bot/sand-secrets.json (Linux) or
+# ~/Library/Application Support/Grok Bot/sand-secrets.json (macOS).
+# Refreshed tokens persist only in ai-usagebar's cache, never back to the app's file.
+# secrets_path = "~/Library/Application Support/Grok Bot/sand-secrets.json"
 
 [antigravity]
 enabled = false            # opt in after signing in with Antigravity
