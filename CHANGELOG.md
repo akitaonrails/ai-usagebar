@@ -15,6 +15,14 @@ Each release is also published at
   Windows (WKWebView instead of WebView2), plus a compact usage-chart glyph in
   the menu bar from starred metrics (at most two per provider).
   `cargo build --release --bin ai-usagebar-tray`.
+- **macOS Grok Bot.** `[grokbot]` reads
+  `~/Library/Application Support/Grok Bot/sand-secrets.json` with the
+  Chromium OSCrypt key from the login Keychain item `Grok Bot Safe Storage`
+  / `Grok Bot Key` (1003 PBKDF2 rounds, the same scheme as Claude Desktop).
+  The Mac app stores `cursor-accounts` as a JSON string wrapping the object
+  Linux writes directly; both shapes parse. Windows still fails closed.
+  Omarchy and the Windows tray draw Grok Bot's own head-and-eyes logomark
+  (`grokbot.svg`) instead of sharing Grok's mark.
 
 ### Fixed
 
@@ -22,6 +30,11 @@ Each release is also published at
   Code's live Keychain item. That file-first read 400'd "Refresh token expired"
   and the tray showed **Sign-in expired** while `claude` itself was still
   logged in.
+- **Grok Bot live `usagePercent` and on-demand `enabled`.**
+  `GetSandUsageStatus` has been observed sending a fractional JSON number
+  (`19.150778`) and `onDemandSettings.enabled: null`. The parser rounds the
+  percent and treats null as off, so a real macOS session no longer dies as
+  schema drift.
 
 ## [1.20.2] — 2026-09-19
 

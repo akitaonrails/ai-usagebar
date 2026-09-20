@@ -7,6 +7,7 @@ import CopilotMark from "~icons/aiub/copilot";
 import CursorMark from "~icons/aiub/cursor";
 import DeepseekMark from "~icons/aiub/deepseek";
 import GrokMark from "~icons/aiub/grok";
+import GrokbotMark from "~icons/aiub/grokbot";
 import KimiMark from "~icons/aiub/kimi";
 import MinimaxMark from "~icons/aiub/minimax";
 import MoonshotMark from "~icons/aiub/moonshot";
@@ -27,6 +28,7 @@ const MARKS: Record<string, Mark> = {
   cursor: CursorMark,
   deepseek: DeepseekMark,
   grok: GrokMark,
+  grokbot: GrokbotMark,
   kimi: KimiMark,
   minimax: MinimaxMark,
   moonshot: MoonshotMark,

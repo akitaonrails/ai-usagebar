@@ -9,7 +9,7 @@
 //! [openrouter] enabled = true
 //! [deepseek]   enabled = false
 //! [kimi]       enabled = false
-//! [grokbot]    enabled = false  # Grok Bot desktop app's own session (Linux)
+//! [grokbot]    enabled = false  # Grok Bot desktop app's own session
 //! [[custom]]   id = "mytool"   # user-defined HTTP provider, static token
 //! ```
 //!
@@ -1160,7 +1160,7 @@ impl Default for SuperGrokConfig {
 /// Connect-RPC dashboard call. Distinct from `[grok]` (Management API prepaid
 /// dollars) and `[supergrok]` (Grok Build subscription). No API key: the
 /// credential is the app's own session in `sand-secrets.json` (read-only).
-/// Linux-only for now — other platforms fail closed at fetch time.
+/// Linux and macOS; Windows fails closed at fetch time.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct GrokbotConfig {
@@ -1168,8 +1168,9 @@ pub struct GrokbotConfig {
     /// session.
     pub enabled: bool,
     /// Override for the app's credential file (default
-    /// `~/.config/Grok Bot/sand-secrets.json`), mirroring `[cursor] db_path`
-    /// and `[kimi] credentials_path`.
+    /// `~/.config/Grok Bot/sand-secrets.json` on Linux,
+    /// `~/Library/Application Support/Grok Bot/sand-secrets.json` on macOS),
+    /// mirroring `[cursor] db_path` and `[kimi] credentials_path`.
     pub secrets_path: Option<PathBuf>,
 }
 

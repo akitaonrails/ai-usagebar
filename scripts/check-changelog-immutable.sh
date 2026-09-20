@@ -22,7 +22,21 @@ fail=0
 tags=$(git tag --list 'v*' --sort=-v:refname | head -"${CHANGELOG_TAGS_TO_CHECK:-8}")
 [ -z "$tags" ] && { echo "no v* tags found — nothing to compare"; exit 0; }
 
+# Tags cut but abandoned before their release ever shipped: v1.20.0 was caught
+# by verify-version with a stale Scoop manifest and never published, and the
+# release that replaced it (1.20.1) folded its section away in the same
+# stroke — no linear changelog can satisfy both that tag and v1.20.1, because
+# each section's trailing next-heading is part of the comparison. The tag
+# survives (repository rules forbid deleting it), so it is skipped here.
+abandoned_tags="v1.20.0"
+
 for tag in $tags; do
+  case " $abandoned_tags " in
+    *" $tag "*)
+      echo "skip: $tag was never published — no section to keep intact"
+      continue
+      ;;
+  esac
   v=${tag#v}
   a=$(git show "$tag:CHANGELOG.md" 2>/dev/null | sed -n "/^## \[$v\]/,/^## \[/p")
   b=$(sed -n "/^## \[$v\]/,/^## \[/p" CHANGELOG.md)
