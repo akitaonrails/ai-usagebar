@@ -88,16 +88,16 @@ pub fn usd(v: f64) -> String {
 /// (`0.0 / 0.0`) or an out-of-range ratio, and each caller inventing its own
 /// guard is how two gauges end up disagreeing about what "100%" means.
 ///
-/// **Not yet every gauge.** This is the one home for the `u16` percentages a
-/// [`crate::tui::panels::Section::Metric`] carries; about a dozen vendor
-/// parsers still write `value.round().clamp(0.0, 100.0) as i32` inline
-/// (`src/zai/types.rs`, `src/copilot/types.rs`, `src/commandcode/types.rs`,
-/// `src/supergrok/types.rs`, `src/opencode_go/vendor.rs`, `src/nous/vendor.rs`
-/// and several in `src/tui/panels.rs`). Those agree with this by accident
-/// rather than by construction — a float-to-int `as` cast saturates and turns
-/// NaN into `0`, so they land on the same answers — and collapsing them is a
-/// separate change against a different signature. Add callers here; do not read
-/// this as a claim that none are left.
+/// **A shared helper, not a chokepoint.** Only [`crate::balance::consumed_pct`]
+/// and `custom::mapping` route through it today. Most percentages that reach a
+/// [`crate::tui::panels::Section::Metric`] are still rounded and clamped inline
+/// as `i32` by a vendor parser and cast at the call site, and several reach
+/// `Metric.pct` by a cast alone. They do agree with this function — the same
+/// round-then-clamp order, and a float-to-int `as` cast maps NaN to `0` — but
+/// they agree because each one happens to do the steps in that order, not
+/// because anything makes them. (Saturation is not what saves them: they clamp
+/// to `100.0` *before* casting, so it never runs.) Prefer this for new callers.
+/// Do not read it as a claim that no other copy of the rule is left.
 ///
 /// # Examples
 ///
