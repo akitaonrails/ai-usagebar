@@ -69,11 +69,12 @@ pub(crate) struct SectionProjection {
     /// row beneath a heading instead of a peer of the overall meter. The TUI
     /// renders grouped metrics like any other; only the report carries this.
     pub group: Option<&'static str>,
-    /// Which of the metric's two numbers a frontend puts on the bar. Every
-    /// metric is a percentage unless its vendor says otherwise, so this is
-    /// [`MetricHeadline::Percent`] by default — a bar draws it and leaves the
-    /// money figure in the detail. A prepaid-balance vendor flips it, and that
-    /// declaration is what a frontend reads instead of guessing from the label.
+    /// Which of the metric's two numbers a report-driven frontend puts on the
+    /// bar. Every metric is a percentage unless its vendor says otherwise, so
+    /// this is [`MetricHeadline::Percent`] by default — the bar draws it and
+    /// leaves the money figure in the detail. A prepaid-balance vendor flips
+    /// it, and that declaration is what the frontend reads instead of guessing
+    /// from the label.
     pub headline: MetricHeadline,
 }
 

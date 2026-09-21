@@ -9,8 +9,11 @@
 //!
 //! Which of the two numbers a frontend puts on the bar is a separate choice.
 //! [`Headline`] is the user's preference; [`MetricHeadline`] is what a report
-//! metric actually declares after the preference meets the available data, and
-//! it is the field every frontend reads instead of guessing from a label.
+//! metric actually declares after the preference meets the available data. The
+//! report-driven frontends — the Omarchy panel and the KDE plasmoid — read that
+//! declaration instead of guessing from a label. Waybar, GNOME and the macOS
+//! menu bar are fed by the per-vendor `{placeholder}` formats rather than by
+//! report sections, so neither setting reaches them.
 
 use serde::{Deserialize, Serialize};
 
@@ -110,10 +113,10 @@ fn usable(limit: &f64) -> bool {
 
 /// Whole percent of `limit` already consumed, given how much is left.
 ///
-/// Consumed rather than remaining, to match every other meter in the app, and
-/// shaped by the same [`crate::format::clamp_pct`] every other gauge uses: a
-/// balance above the cap reads as 0% used (the money figure still says how far
-/// above), and an overdrawn balance stops at 100%.
+/// Consumed rather than remaining, so the meter fills the way the quota meters
+/// do, and clamped through [`crate::format::clamp_pct`]: a balance above the cap
+/// reads as 0% used (the money figure still says how far above), and an
+/// overdrawn balance stops at 100%.
 ///
 /// # Examples
 ///

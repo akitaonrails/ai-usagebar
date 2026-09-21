@@ -68,9 +68,9 @@ enum ReportSection {
         value: String,
         detail: String,
         /// Which of `percent` and `value` this metric puts on the bar —
-        /// `"percent"` or `"value"`. A frontend draws the named one and leaves
-        /// the other in the detail line. Always present, so no consumer has to
-        /// infer a balance row from its label.
+        /// `"percent"` or `"value"`. A consumer draws the named one and leaves
+        /// the other in the detail line. Always present, so none has to infer a
+        /// balance row from its label.
         headline: String,
         severity: String,
         reset_at: Option<DateTime<Utc>>,
