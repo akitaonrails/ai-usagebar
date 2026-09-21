@@ -68,9 +68,11 @@ enum ReportSection {
         value: String,
         detail: String,
         /// Which of `percent` and `value` this metric puts on the bar —
-        /// `"percent"` or `"value"`. A consumer draws the named one and leaves
-        /// the other in the detail line. Always present, so none has to infer a
-        /// balance row from its label.
+        /// `"percent"` or `"value"`. A consumer that honours it draws the named
+        /// one and leaves the other in the detail line, rather than inferring a
+        /// balance row from its label. Always present, so no consumer has to
+        /// guess; not every consumer reads it — the Windows popover ignores the
+        /// field and always draws the percentage.
         headline: String,
         severity: String,
         reset_at: Option<DateTime<Utc>>,

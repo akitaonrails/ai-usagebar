@@ -9,11 +9,18 @@
 //!
 //! Which of the two numbers a frontend puts on the bar is a separate choice.
 //! [`Headline`] is the user's preference; [`MetricHeadline`] is what a report
-//! metric actually declares after the preference meets the available data. The
-//! report-driven frontends — the Omarchy panel and the KDE plasmoid — read that
-//! declaration instead of guessing from a label. Waybar, GNOME and the macOS
-//! menu bar are fed by the per-vendor `{placeholder}` formats rather than by
-//! report sections, so neither setting reaches them.
+//! metric actually declares after the preference meets the available data.
+//!
+//! Who acts on it, as of this commit:
+//! - The Omarchy panel and the KDE plasmoid read the declaration and draw the
+//!   number it names, instead of guessing from the row's label.
+//! - The Windows tray popover also consumes `usage --json`, but its
+//!   `normalizeSection` drops the field, so it always draws the percentage. A
+//!   `display_limit` still reaches it — the row it receives turns from a text
+//!   balance into a meter — but `headline = "amount"` does not.
+//! - Waybar, GNOME and the macOS menu bar are fed by the per-vendor
+//!   `{placeholder}` formats rather than by report sections, so neither setting
+//!   reaches them at all.
 
 use serde::{Deserialize, Serialize};
 
