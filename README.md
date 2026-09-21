@@ -345,6 +345,25 @@ team_id = "your-team-id"
 Without it, an organization-scoped key reports an error saying exactly this
 rather than silently querying the wrong URL.
 
+#### Giving a prepaid balance a tank
+
+DeepSeek, Kilo, Novita, Moonshot and prepaid Grok report money **left** and no
+denominator, so their row is a plain balance rather than a meter. Tell them how
+big the tank is and it becomes one:
+
+```toml
+[deepseek]
+display_limit = 200        # in the currency that vendor already reports
+headline = "percent"       # "amount" (default here) puts the money on the bar
+```
+
+The percentage is consumed — `(display_limit - balance) / display_limit`,
+clamped to 0–100 — and whichever number is not the headline stays in the detail
+line. There is no default limit: without one nothing changes. A vendor that
+states its own limit keeps it, so `display_limit` never applies to OpenRouter,
+which reports credits purchased against credits used. Full rules in
+[docs/configuration.md](docs/configuration.md#balance-tanks).
+
 ### Enabling a vendor
 
 `enabled = true` is what makes a vendor fetch. Anthropic API, GitHub Copilot,
@@ -621,7 +640,10 @@ of the reset window in seconds. `window_secs` is present only when the vendor
 states the window (rolling 5h/7d windows; Cursor's billing cycle from
 `billingCycleStart`/`billingCycleEnd`, assumed to be 30 days when the start is
 missing) and is omitted, not `null`, otherwise — a calendar month or an unstated
-window gives a frontend nothing to pace against. These fields are additive, so
+window gives a frontend nothing to pace against. Every metric row also carries
+`headline` — `"percent"` or `"value"` — naming which of its two numbers belongs
+on the bar; a frontend draws that one and leaves the other in the detail line,
+rather than inferring a balance row from its label. These fields are additive, so
 existing consumers remain compatible. `short_name` is the same three-letter
 code `{vendor_short}` prints, so a frontend that wants a compact provider tag
 takes it from the report instead of keeping its own table.

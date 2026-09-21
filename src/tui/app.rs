@@ -40,6 +40,12 @@ pub struct ReadyTab {
     /// timestamp stays stable across redraws instead of drifting with the
     /// passing wall clock.
     pub fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Bar-number settings this vendor was configured with — the tank size a
+    /// prepaid balance is metered against, and which of the two numbers goes on
+    /// the bar. Resolved from config at fetch time rather than stored in the
+    /// snapshot, so editing config.toml takes effect on the next redraw instead
+    /// of waiting for the cache to expire.
+    pub display: crate::balance::DisplayPrefs,
 }
 
 /// Where a tab's usage comes from: a built-in vendor, or a user-declared
@@ -487,6 +493,12 @@ pub async fn refresh_one(client: &Client, config: &Config, tab: &TabId) -> TabSt
                     (code, crate::display::sanitize_untrusted_field(&message))
                 }),
                 fetched_at,
+                display: match &tab.source {
+                    TabSource::Builtin(vendor) => config.display_prefs(*vendor),
+                    // A `[[custom]]` provider states its own percentages; it has
+                    // no balance to meter and no headline to choose.
+                    TabSource::Custom { .. } => crate::balance::DisplayPrefs::default(),
+                },
             }))
         }
         Err(e) => TabState::error_with_plan(
@@ -1361,6 +1373,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: Some(fetched_at),
+            display: Default::default(),
         }))
     }
 

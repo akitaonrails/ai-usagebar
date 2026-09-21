@@ -46,12 +46,16 @@ function normalizeSection(raw) {
       severity = percent >= 90 ? "critical" : percent >= 75 ? "high" : percent >= 50 ? "mid" : "low"
     var windowSecs = Math.floor(Number(raw.window_secs))
     if (!isFinite(windowSecs) || windowSecs <= 0) windowSecs = null
+    // Which number the bar draws. Anything but an explicit "value" — including
+    // a report old enough not to carry the field — leaves it a percentage.
+    var headline = raw.headline === "value" ? "value" : "percent"
     return {
       type: "metric",
       label: cleanText(raw.label, 160),
       percent: percent,
       value: cleanText(raw.value, 240),
       detail: cleanText(raw.detail, 1000),
+      headline: headline,
       severity: severity,
       reset_at: cleanText(raw.reset_at, 80),
       window_secs: windowSecs,
@@ -445,7 +449,11 @@ function headline(entry, barWindow) {
   if (!entry) return { text: "", percent: null, severity: "low", label: "" }
   var best = selectMetric(entry, barWindow)
   if (best) {
-    var bestText = /balance/i.test(best.label) && best.value !== ""
+    // The metric names which of its two numbers goes on the bar; the other one
+    // stays in the detail. Reading that beats guessing from the label, which
+    // put OpenRouter's dollar figure on the bar and hid its consumed percent.
+    // An older report omits the field, and a metric is a percentage by default.
+    var bestText = best.headline === "value" && best.value !== ""
       ? best.value : best.percent + "%"
     return {
       text: bestText,

@@ -256,6 +256,34 @@ assert.equal(headline(anthropic).label, 'Weekly (7d)');
 assert.equal(headline(zai).text, 'Error');
 assert.equal(headline(null).text, '');
 
+// The metric names which of its two numbers goes on the panel; its label plays
+// no part. A metric that says nothing is a percentage — which is what
+// OpenRouter's "Credit balance" row is, and what the old label check hid.
+const metered = (h) => parseReport(JSON.stringify({entries: [{
+    id: 'openrouter', error: null,
+    sections: [Object.assign(
+        {type: 'metric', label: 'Credit balance', percent: 25, value: '$75.00', detail: ''},
+        h === undefined ? {} : {headline: h})],
+}]})).entries[0];
+assert.equal(headline(metered(undefined)).text, '25%', 'an older report is a percentage');
+assert.equal(headline(metered('percent')).text, '25%');
+assert.equal(headline(metered('value')).text, '$75.00');
+assert.equal(headline(metered('dollars')).text, '25%', 'an unknown word is not a third rendering');
+// A 'value' headline with nothing to show falls back rather than blanking.
+const emptyValue = parseReport(JSON.stringify({entries: [{
+    id: 'deepseek', error: null,
+    sections: [{type: 'metric', label: 'Balance', percent: 60, value: '', detail: '',
+                headline: 'value'}],
+}]})).entries[0];
+assert.equal(headline(emptyValue).text, '60%');
+// A percent headline on a row whose label says "balance" is drawn as a percent.
+const meteredTank = parseReport(JSON.stringify({entries: [{
+    id: 'deepseek', error: null,
+    sections: [{type: 'metric', label: 'Balance', percent: 75, value: '$50.00',
+                detail: '$50.00 of $200.00 left (75% used)', headline: 'percent'}],
+}]})).entries[0];
+assert.equal(headline(meteredTank).text, '75%');
+
 assert.equal(isAlarming(anthropic), true, 'a critical window is alarming');
 assert.equal(isAlarming(openai), true, 'so is stale data');
 assert.equal(isAlarming(zai), true, 'so is an errored vendor');

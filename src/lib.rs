@@ -14,6 +14,7 @@ pub mod active;
 pub mod anthropic;
 pub mod anthropic_api;
 pub mod antigravity;
+pub mod balance;
 pub mod cache;
 pub mod catalog;
 pub mod claude_desktop;

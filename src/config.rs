@@ -26,6 +26,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use serde::{Deserialize, Serialize};
 
 use crate::anthropic::creds::CredsTarget;
+use crate::balance::{DisplayPrefs, Headline};
 use crate::cache::Cache;
 use crate::error::{AppError, Result};
 use crate::vendor::VendorId;
@@ -929,6 +930,14 @@ pub struct OpenRouterConfig {
     pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
+    /// Accepted for symmetry with the balance-only vendors, and ignored in
+    /// practice: OpenRouter states its own denominator (credits purchased, and
+    /// a per-key limit when the key has one), and an API limit always wins.
+    /// See [`DisplayPrefs`].
+    pub display_limit: Option<f64>,
+    /// Which number goes on the bar. OpenRouter always has an API denominator,
+    /// so it is a quota vendor and defaults to `percent`. See [`DisplayPrefs`].
+    pub headline: Headline,
 }
 
 impl Default for OpenRouterConfig {
@@ -939,6 +948,8 @@ impl Default for OpenRouterConfig {
             show_default_account: true,
             api_key_env: "OPENROUTER_API_KEY".to_string(),
             api_key: None,
+            display_limit: None,
+            headline: Headline::Percent,
         }
     }
 }
@@ -1002,6 +1013,11 @@ pub struct DeepseekConfig {
     pub enabled: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
+    /// Tank size in the currency `/user/balance` reports, so the remaining
+    /// balance can be drawn as a meter. See [`DisplayPrefs`].
+    pub display_limit: Option<f64>,
+    /// Which number goes on the bar. See [`DisplayPrefs`].
+    pub headline: Headline,
 }
 
 impl Default for DeepseekConfig {
@@ -1010,6 +1026,8 @@ impl Default for DeepseekConfig {
             enabled: false,
             api_key_env: "DEEPSEEK_API_KEY".to_string(),
             api_key: None,
+            display_limit: None,
+            headline: Headline::Amount,
         }
     }
 }
@@ -1054,6 +1072,11 @@ pub struct KiloConfig {
     /// Optional Kilo organization id — scopes the balance to a team via the
     /// `x-kilocode-organizationid` header. Omit for the personal balance.
     pub organization_id: Option<String>,
+    /// Tank size in USD, so the remaining balance can be drawn as a meter.
+    /// See [`DisplayPrefs`].
+    pub display_limit: Option<f64>,
+    /// Which number goes on the bar. See [`DisplayPrefs`].
+    pub headline: Headline,
 }
 
 impl Default for KiloConfig {
@@ -1065,6 +1088,8 @@ impl Default for KiloConfig {
             api_key_env: "KILO_API_KEY".to_string(),
             api_key: None,
             organization_id: None,
+            display_limit: None,
+            headline: Headline::Amount,
         }
     }
 }
@@ -1075,6 +1100,12 @@ pub struct NovitaConfig {
     pub enabled: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
+    /// Tank size in USD, so the available balance can be drawn as a meter.
+    /// Novita's `credit_limit` is a credit line, not a spend cap, so it is not
+    /// a denominator. See [`DisplayPrefs`].
+    pub display_limit: Option<f64>,
+    /// Which number goes on the bar. See [`DisplayPrefs`].
+    pub headline: Headline,
 }
 
 impl Default for NovitaConfig {
@@ -1084,6 +1115,8 @@ impl Default for NovitaConfig {
             enabled: false,
             api_key_env: "NOVITA_API_KEY".to_string(),
             api_key: None,
+            display_limit: None,
+            headline: Headline::Amount,
         }
     }
 }
@@ -1122,6 +1155,11 @@ pub struct MoonshotConfig {
     pub api_key: Option<String>,
     /// `"global"` → api.moonshot.ai (USD); `"cn"` → api.moonshot.cn (CNY).
     pub region: String,
+    /// Tank size in the currency the chosen region reports — USD for `global`,
+    /// CNY for `cn`. See [`DisplayPrefs`].
+    pub display_limit: Option<f64>,
+    /// Which number goes on the bar. See [`DisplayPrefs`].
+    pub headline: Headline,
 }
 
 impl Default for MoonshotConfig {
@@ -1132,6 +1170,8 @@ impl Default for MoonshotConfig {
             api_key_env: "MOONSHOT_API_KEY".to_string(),
             api_key: None,
             region: "global".to_string(),
+            display_limit: None,
+            headline: Headline::Amount,
         }
     }
 }
@@ -1146,6 +1186,10 @@ pub struct GrokConfig {
     /// Optional team id. When absent, it's auto-resolved from the management
     /// key via `/auth/management-keys/validation`.
     pub team_id: Option<String>,
+    /// Tank size in USD for the prepaid credit balance. See [`DisplayPrefs`].
+    pub display_limit: Option<f64>,
+    /// Which number goes on the bar. See [`DisplayPrefs`].
+    pub headline: Headline,
 }
 
 impl Default for GrokConfig {
@@ -1156,6 +1200,8 @@ impl Default for GrokConfig {
             api_key_env: "XAI_MANAGEMENT_KEY".to_string(),
             api_key: None,
             team_id: None,
+            display_limit: None,
+            headline: Headline::Amount,
         }
     }
 }
@@ -1916,6 +1962,30 @@ impl Config {
         raw.filter(|key| !key.is_empty())
     }
 
+    /// Bar-number settings for one vendor.
+    ///
+    /// Only the prepaid-balance vendors declare these; everything else keeps
+    /// the quota shape ([`DisplayPrefs::default`]) and is unaffected.
+    pub fn display_prefs(&self, vendor: VendorId) -> DisplayPrefs {
+        match vendor {
+            VendorId::Deepseek => {
+                DisplayPrefs::balance(self.deepseek.display_limit, self.deepseek.headline)
+            }
+            VendorId::Kilo => DisplayPrefs::balance(self.kilo.display_limit, self.kilo.headline),
+            VendorId::Novita => {
+                DisplayPrefs::balance(self.novita.display_limit, self.novita.headline)
+            }
+            VendorId::Moonshot => {
+                DisplayPrefs::balance(self.moonshot.display_limit, self.moonshot.headline)
+            }
+            VendorId::Grok => DisplayPrefs::balance(self.grok.display_limit, self.grok.headline),
+            VendorId::Openrouter => {
+                DisplayPrefs::balance(self.openrouter.display_limit, self.openrouter.headline)
+            }
+            _ => DisplayPrefs::default(),
+        }
+    }
+
     pub fn enabled_vendors(&self) -> Vec<VendorId> {
         VendorId::all()
             .iter()
@@ -1960,6 +2030,26 @@ impl Config {
                  remove it to show spend without a limit"
                     .into(),
             ));
+        }
+        // Same rule as `monthly_limit` above: a tank size that cannot divide is
+        // a typo, and silently ignoring it would draw a meter the user never
+        // asked for — or none, with no diagnostic either way.
+        for (section, limit) in [
+            ("deepseek", self.deepseek.display_limit),
+            ("kilo", self.kilo.display_limit),
+            ("novita", self.novita.display_limit),
+            ("moonshot", self.moonshot.display_limit),
+            ("grok", self.grok.display_limit),
+            ("openrouter", self.openrouter.display_limit),
+        ] {
+            if let Some(limit) = limit
+                && (!limit.is_finite() || limit <= 0.0)
+            {
+                return Err(AppError::Other(format!(
+                    "[{section}] display_limit must be finite and greater than zero; \
+                     remove it to show the balance without a limit"
+                )));
+            }
         }
         if crate::kimi::oauth::Region::parse(&self.kimi.region).is_none()
             && !self.kimi.region.eq_ignore_ascii_case("auto")
@@ -2513,6 +2603,121 @@ enabled = false
                 .monthly_limit,
             Some(1000.0)
         );
+    }
+
+    #[test]
+    fn display_limit_must_be_positive_and_finite_on_every_balance_vendor() {
+        let sections = [
+            "deepseek",
+            "kilo",
+            "novita",
+            "moonshot",
+            "grok",
+            "openrouter",
+        ];
+        for section in sections {
+            for value in ["0", "-1", "inf", "nan"] {
+                let file = write_toml(&format!("[{section}]\ndisplay_limit = {value}\n"));
+                let error = Config::load_from(file.path()).unwrap_err().to_string();
+                assert!(
+                    error.contains(&format!("[{section}] display_limit")),
+                    "{section} = {value}: {error}"
+                );
+            }
+            let file = write_toml(&format!("[{section}]\ndisplay_limit = 200\n"));
+            let config = Config::load_from(file.path()).unwrap();
+            assert_eq!(
+                config.display_prefs(vendor_of(section)).display_limit,
+                Some(200.0),
+                "{section}"
+            );
+        }
+    }
+
+    /// No baked-in tank: a vendor nobody configured has no denominator.
+    #[test]
+    fn display_limit_is_absent_until_the_user_states_one() {
+        let config = Config::default();
+        for vendor in VendorId::all() {
+            assert_eq!(
+                config.display_prefs(*vendor).display_limit,
+                None,
+                "{vendor:?}"
+            );
+        }
+    }
+
+    /// A balance vendor headlines its money; a vendor with a denominator of its
+    /// own headlines the percentage. Everything else keeps the quota default.
+    #[test]
+    fn the_default_headline_follows_the_kind_of_vendor() {
+        let config = Config::default();
+        for vendor in [
+            VendorId::Deepseek,
+            VendorId::Kilo,
+            VendorId::Novita,
+            VendorId::Moonshot,
+            VendorId::Grok,
+        ] {
+            assert_eq!(
+                config.display_prefs(vendor).headline,
+                Headline::Amount,
+                "{vendor:?}"
+            );
+        }
+        assert_eq!(
+            config.display_prefs(VendorId::Openrouter).headline,
+            Headline::Percent
+        );
+        assert_eq!(
+            config.display_prefs(VendorId::Anthropic),
+            DisplayPrefs::default()
+        );
+    }
+
+    #[test]
+    fn the_headline_is_configurable_per_vendor_and_a_typo_is_loud() {
+        let file = write_toml("[deepseek]\nheadline = \"percent\"\n");
+        assert_eq!(
+            Config::load_from(file.path())
+                .unwrap()
+                .display_prefs(VendorId::Deepseek)
+                .headline,
+            Headline::Percent
+        );
+
+        let file = write_toml("[openrouter]\nheadline = \"amount\"\n");
+        assert_eq!(
+            Config::load_from(file.path())
+                .unwrap()
+                .display_prefs(VendorId::Openrouter)
+                .headline,
+            Headline::Amount
+        );
+
+        let file = write_toml("[deepseek]\nheadline = \"dollars\"\n");
+        let error = Config::load_from(file.path()).unwrap_err().to_string();
+        assert!(error.contains("headline"), "{error}");
+    }
+
+    /// Setting a tank does not move the money off the bar by itself; the two
+    /// are independent choices.
+    #[test]
+    fn a_display_limit_alone_leaves_the_headline_where_it_was() {
+        let file = write_toml("[deepseek]\ndisplay_limit = 200\n");
+        let prefs = Config::load_from(file.path())
+            .unwrap()
+            .display_prefs(VendorId::Deepseek);
+        assert_eq!(prefs.display_limit, Some(200.0));
+        assert_eq!(prefs.headline, Headline::Amount);
+    }
+
+    fn vendor_of(section: &str) -> VendorId {
+        VendorId::all()
+            .iter()
+            .copied()
+            .find(|vendor| vendor.config_section() == section)
+            .unwrap_or_else(|| panic!("no vendor for [{section}]"))
     }
 
     #[test]
