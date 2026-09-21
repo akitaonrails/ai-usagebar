@@ -360,8 +360,9 @@ headline = "percent"       # "amount" (default here) puts the money on the bar
 The percentage is consumed — `(display_limit - balance) / display_limit`,
 clamped to 0–100 — and whichever number is not the headline stays in the detail
 line. There is no default limit: without one nothing changes. A vendor that
-states its own limit keeps it, so `display_limit` never applies to OpenRouter,
-which reports credits purchased against credits used. Full rules in
+states its own limit keeps it, which is why `[openrouter]` has no
+`display_limit` — it reports credits purchased against credits used. It does
+take `headline`. Full rules in
 [docs/configuration.md](docs/configuration.md#balance-tanks).
 
 ### Enabling a vendor

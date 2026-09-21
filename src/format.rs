@@ -81,6 +81,33 @@ pub fn usd(v: f64) -> String {
     money(v, "USD")
 }
 
+/// A raw percentage as a whole number a meter can draw: rounded, held to
+/// 0–100, and NaN-safe.
+///
+/// One rule for every gauge in the app, for the same reason [`money`] is one
+/// rule for every currency figure. A meter whose denominator came off the wire
+/// can be handed a NaN (`0.0 / 0.0`) or an out-of-range ratio, and each caller
+/// inventing its own guard is how two gauges end up disagreeing about what
+/// "100%" means.
+///
+/// # Examples
+///
+/// ```
+/// use ai_usagebar::format::clamp_pct;
+///
+/// assert_eq!(clamp_pct(24.5), 25);
+/// assert_eq!(clamp_pct(-3.0), 0);
+/// assert_eq!(clamp_pct(140.0), 100);
+/// assert_eq!(clamp_pct(f64::NAN), 0);
+/// ```
+pub fn clamp_pct(v: f64) -> u16 {
+    if v.is_nan() {
+        0
+    } else {
+        v.round().clamp(0.0, 100.0) as u16
+    }
+}
+
 pub fn local_time_hm(when: DateTime<Utc>) -> String {
     when.with_timezone(&Local).format("%H:%M").to_string()
 }
@@ -200,6 +227,27 @@ mod tests {
 
     fn pm(pairs: &[(&'static str, &str)]) -> HashMap<&'static str, String> {
         placeholders(pairs.iter().map(|(k, v)| (*k, v.to_string())))
+    }
+
+    /// The doc example above is not a CI gate — `.github/workflows/ci.yml` runs
+    /// `cargo test --all-targets`, which skips doctests — so the rule every
+    /// gauge in the app clamps through is asserted here as well.
+    #[test]
+    fn a_percentage_is_rounded_held_to_the_meter_and_nan_safe() {
+        assert_eq!(clamp_pct(0.0), 0);
+        assert_eq!(clamp_pct(100.0), 100);
+        assert_eq!(clamp_pct(24.5), 25);
+        assert_eq!(clamp_pct(24.4), 24);
+        // Out of range in either direction stops at the end of the meter
+        // rather than drawing past it or wrapping.
+        assert_eq!(clamp_pct(-0.4), 0);
+        assert_eq!(clamp_pct(-9_999.0), 0);
+        assert_eq!(clamp_pct(140.0), 100);
+        assert_eq!(clamp_pct(f64::INFINITY), 100);
+        assert_eq!(clamp_pct(f64::NEG_INFINITY), 0);
+        // A denominator off the wire can be zero, and `0.0 / 0.0` is NaN. That
+        // is "nothing to draw", not a panic and not a cast to garbage.
+        assert_eq!(clamp_pct(f64::NAN), 0);
     }
 
     fn offer(title: Option<&str>, expires: &str) -> ResetCredit {

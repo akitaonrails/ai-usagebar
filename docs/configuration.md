@@ -60,13 +60,13 @@ api_key_env = "ZAI_API_KEY"
 enabled = true
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
+# headline = "percent"          # "percent" | "amount"; see "Balance tanks" below
 # show_default_account = false  # hide default when named accounts exist
 
 # [[openrouter.accounts]]
 # label = "work"
 # api_key_env = "OPENROUTER_WORK_API_KEY"
 # api_key = "sk-or-v1-..."      # optional fallback; chmod 600 if inline
-# headline = "percent"          # "percent" | "amount"; see "Balance tanks" below
 
 [deepseek]
 enabled = true             # disabled by default; enable once you add an API key
@@ -215,10 +215,17 @@ It must be finite and greater than zero; anything else fails at load with the
 offending section named. There is no default and no built-in figure: leave it
 out and nothing changes.
 
-It is a fallback, never an override. A vendor that states a limit of its own
-keeps it — `[openrouter]` reports credits purchased against credits used (and a
-per-key limit when the key has one), so a `display_limit` there is ignored. The
-Anthropic Admin API's `monthly_limit` is a separate, older setting and is
+It is a fallback, never an override: a vendor that states a limit of its own
+keeps it. That is why **`[openrouter]` has no `display_limit` at all**. It
+reports credits purchased against credits used (and a per-key limit when the key
+has one), so there is nothing to fall back to — and in the one case where a tank
+would not simply be ignored, a free-tier account that purchased nothing,
+honouring it would be actively wrong: that row's percentage comes from the API,
+not from the tank, so the bar would read `0%` for an account with money in it.
+A free-tier OpenRouter account therefore keeps its dollar figure on the bar even
+at the `"percent"` default. `[openrouter]` does take `headline`.
+
+The Anthropic Admin API's `monthly_limit` is a separate, older setting and is
 unaffected.
 
 The percentage is **consumed**, matching every other meter in the app:

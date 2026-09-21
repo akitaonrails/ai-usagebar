@@ -898,10 +898,15 @@ fn openrouter_sections(
         right: None,
     }]);
     let pct = s.consumed_pct().clamp(0, 100) as u16;
-    // OpenRouter states its own denominator — credits purchased — so a
-    // `display_limit` on this vendor never applies. A free-tier-only account
-    // buys nothing, has no denominator, and keeps the money on the bar.
-    let denominator = balance::denominator(Some(s.total_credits), prefs.display_limit);
+    // OpenRouter states its own denominator — credits purchased — so there is
+    // no user tank to fall back to and `None` is passed literally rather than
+    // `prefs.display_limit`. A free-tier-only account buys nothing, so
+    // `total_credits` is 0, `denominator` is `None`, and the money stays on the
+    // bar. Routing `prefs.display_limit` in here instead would let a tank take
+    // over in exactly that case and name the headline `percent` — while `pct`
+    // below still came from `consumed_pct()`, which is 0 without credits. The
+    // bar would read "0%" for an account with money in it.
+    let denominator = balance::denominator(Some(s.total_credits), None);
     v.push(Section::Spacer);
     v.push_metric_with_headline(
         Section::Metric {
@@ -3493,6 +3498,8 @@ mod tests {
             limit_remaining: None,
         });
         // A wildly different tank size changes nothing: 25 of 100 is 25%.
+        // `[openrouter]` carries no `display_limit`, so this can only arrive
+        // through a hand-built `DisplayPrefs` — and the call site drops it.
         let prefs = DisplayPrefs::balance(Some(10_000.0), crate::balance::Headline::Percent);
         let sections = sections_with_metadata_for(&ready_with(snapshot, prefs), now(), 5);
         let metric = only_metric(&sections);
@@ -3536,6 +3543,14 @@ mod tests {
 
     /// A free-tier-only OpenRouter account bought no credits, so there is no
     /// denominator and the money stays on the bar even at the percent default.
+    ///
+    /// The `prefs` loop is the regression: `openrouter_sections` used to route
+    /// `prefs.display_limit` into `balance::denominator`, and with credits at 0
+    /// the API value was dropped as unusable, so a tank took over and named the
+    /// headline `percent` — while `pct` still came from `consumed_pct()`, which
+    /// is 0 without credits. The bar read "0%" for an account holding money. No
+    /// `[openrouter] display_limit` exists any more, and the call site passes
+    /// `None` literally, so neither half of that can come back.
     #[test]
     fn a_free_tier_openrouter_account_has_no_denominator_and_shows_the_money() {
         let snapshot = VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
@@ -3549,8 +3564,55 @@ mod tests {
             limit: None,
             limit_remaining: None,
         });
-        let sections = sections_with_metadata_for(&ready(snapshot), now(), 5);
-        assert_eq!(only_metric(&sections).headline, MetricHeadline::Value);
+        for prefs in [
+            DisplayPrefs::default(),
+            DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Percent),
+            DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Amount),
+        ] {
+            let sections =
+                sections_with_metadata_for(&ready_with(snapshot.clone(), prefs), now(), 5);
+            let metric = only_metric(&sections);
+            assert_eq!(metric.headline, MetricHeadline::Value, "{prefs:?}");
+            match &metric.section {
+                Section::Metric { value_label, .. } => {
+                    assert_eq!(value_label, "$0.00", "{prefs:?}")
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// The same corner with money actually in the account: an overdrawn or
+    /// zero-credit snapshot must never be metered against a tank, because the
+    /// percentage on that row does not come from one.
+    #[test]
+    fn a_credit_less_openrouter_snapshot_is_never_metered_against_a_tank() {
+        let snapshot = VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
+            label: "OpenRouter".into(),
+            total_credits: 0.0,
+            total_usage: 0.0,
+            usage_daily: 0.0,
+            usage_weekly: 0.0,
+            usage_monthly: 0.0,
+            is_free_tier: false,
+            limit: Some(50.0),
+            limit_remaining: Some(50.0),
+        });
+        let prefs = DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(snapshot, prefs), now(), 5);
+        let metric = only_metric(&sections);
+        assert_eq!(metric.headline, MetricHeadline::Value);
+        match &metric.section {
+            // Not "0%": the row reports the money, which is what this snapshot
+            // actually knows.
+            Section::Metric {
+                pct, value_label, ..
+            } => {
+                assert_eq!(*pct, 0);
+                assert_eq!(value_label, "$0.00");
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// Nothing else moved: a quota vendor's metrics stay percentages.

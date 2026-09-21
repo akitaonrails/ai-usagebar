@@ -110,9 +110,10 @@ fn usable(limit: &f64) -> bool {
 
 /// Whole percent of `limit` already consumed, given how much is left.
 ///
-/// Consumed rather than remaining, to match every other meter in the app.
-/// Clamped to 0–100: a balance above the cap reads as 0% used (the money figure
-/// still says how far above), and an overdrawn balance stops at 100%.
+/// Consumed rather than remaining, to match every other meter in the app, and
+/// shaped by the same [`crate::format::clamp_pct`] every other gauge uses: a
+/// balance above the cap reads as 0% used (the money figure still says how far
+/// above), and an overdrawn balance stops at 100%.
 ///
 /// # Examples
 ///
@@ -127,11 +128,7 @@ pub fn consumed_pct(limit: f64, remaining: f64) -> u16 {
     if !usable(&limit) {
         return 0;
     }
-    let pct = (limit - remaining) / limit * 100.0;
-    if pct.is_nan() {
-        return 0;
-    }
-    pct.round().clamp(0.0, 100.0) as u16
+    crate::format::clamp_pct((limit - remaining) / limit * 100.0)
 }
 
 /// Which number this metric puts on the bar.

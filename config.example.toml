@@ -186,6 +186,11 @@ api_key_env = "ZAI_API_KEY"      # checked first; if set + non-empty, used
 enabled = true
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
+# Which number goes on the bar. OpenRouter reports credits purchased against
+# credits used, so it has a denominator of its own and defaults to "percent";
+# "amount" puts the dollar balance there instead. There is deliberately no
+# display_limit here — see the "Account-balance vendors" note below.
+# headline = "percent"           # "percent" | "amount"
 # Named keys appear as separate TUI/report entries and use isolated caches.
 # The default key above stays visible unless this is false. It is always kept
 # when no named accounts exist.
@@ -194,10 +199,6 @@ api_key_env = "OPENROUTER_API_KEY"
 # label = "work"
 # api_key_env = "OPENROUTER_WORK_API_KEY"
 # api_key = "sk-or-v1-..."  # optional fallback; chmod 600 when inline
-# OpenRouter states its own denominator (credits purchased), so display_limit
-# never applies here; it is accepted only for symmetry with the balance-only
-# vendors. The headline defaults to "percent" for the same reason.
-# headline = "percent"      # "percent" | "amount"
 
 [deepseek]
 # Disabled by default — enable once you've set a key (env var or inline).
@@ -245,8 +246,8 @@ api_key_env = "KIMI_API_KEY"      # checked first; if set + non-empty, used
 # These report your REMAINING credit as money, rather than plan usage as a %.
 # All are opt-in and never fetch until enabled with a key present.
 #
-# Two optional display settings apply to every vendor in this group, and to
-# [openrouter] above:
+# Two optional display settings apply to every vendor in this group.
+# [openrouter] takes `headline` too, but NOT `display_limit`:
 #
 #   display_limit = 200   Your tank size, in the currency that vendor already
 #                         reports. These APIs state only what is LEFT, never
@@ -254,8 +255,14 @@ api_key_env = "KIMI_API_KEY"      # checked first; if set + non-empty, used
 #                         draw a meter against until you supply one. There is
 #                         no default: leave it out and the row stays a plain
 #                         balance. It is a fallback, never an override — a
-#                         vendor that states a limit of its own (OpenRouter's
-#                         credits purchased) keeps it and ignores this.
+#                         vendor that states a limit of its own keeps it. That
+#                         is why [openrouter] has no display_limit at all: it
+#                         reports credits purchased, and in the one case where
+#                         a tank would not simply be ignored — a free-tier
+#                         account that purchased nothing — honouring it would
+#                         put "0%" on the bar for an account with money in it,
+#                         because that row's percentage comes from the API and
+#                         not from the tank.
 #
 #   headline = "amount"   Which of the two numbers goes on the bar: "amount"
 #                         (the money) or "percent" (how much of the tank is

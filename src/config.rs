@@ -930,13 +930,17 @@ pub struct OpenRouterConfig {
     pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
-    /// Accepted for symmetry with the balance-only vendors, and ignored in
-    /// practice: OpenRouter states its own denominator (credits purchased, and
-    /// a per-key limit when the key has one), and an API limit always wins.
+    /// Which number goes on the bar. OpenRouter states its own denominator —
+    /// credits purchased — so it is a quota vendor and defaults to `percent`.
     /// See [`DisplayPrefs`].
-    pub display_limit: Option<f64>,
-    /// Which number goes on the bar. OpenRouter always has an API denominator,
-    /// so it is a quota vendor and defaults to `percent`. See [`DisplayPrefs`].
+    ///
+    /// There is deliberately **no** `display_limit` here. A setting that is
+    /// accepted and then always ignored is a footgun, and the one case where it
+    /// would not be ignored — a free-tier account whose `total_credits` is 0 —
+    /// is the case where honouring it would be wrong: the percentage on the bar
+    /// comes from `OpenRouterSnapshot::consumed_pct`, which is 0 without
+    /// credits, so a tank would name the headline `percent` and then show 0%
+    /// for an account with money in it.
     pub headline: Headline,
 }
 
@@ -948,7 +952,6 @@ impl Default for OpenRouterConfig {
             show_default_account: true,
             api_key_env: "OPENROUTER_API_KEY".to_string(),
             api_key: None,
-            display_limit: None,
             headline: Headline::Percent,
         }
     }
@@ -1979,9 +1982,9 @@ impl Config {
                 DisplayPrefs::balance(self.moonshot.display_limit, self.moonshot.headline)
             }
             VendorId::Grok => DisplayPrefs::balance(self.grok.display_limit, self.grok.headline),
-            VendorId::Openrouter => {
-                DisplayPrefs::balance(self.openrouter.display_limit, self.openrouter.headline)
-            }
+            // No tank: OpenRouter reports its own credits. See
+            // [`OpenRouterConfig::headline`].
+            VendorId::Openrouter => DisplayPrefs::balance(None, self.openrouter.headline),
             _ => DisplayPrefs::default(),
         }
     }
@@ -2040,7 +2043,6 @@ impl Config {
             ("novita", self.novita.display_limit),
             ("moonshot", self.moonshot.display_limit),
             ("grok", self.grok.display_limit),
-            ("openrouter", self.openrouter.display_limit),
         ] {
             if let Some(limit) = limit
                 && (!limit.is_finite() || limit <= 0.0)
@@ -2607,15 +2609,8 @@ enabled = false
 
     #[test]
     fn display_limit_must_be_positive_and_finite_on_every_balance_vendor() {
-        let sections = [
-            "deepseek",
-            "kilo",
-            "novita",
-            "moonshot",
-            "grok",
-            "openrouter",
-        ];
-        for section in sections {
+        // `[openrouter]` is absent on purpose: it has no `display_limit`.
+        for section in ["deepseek", "kilo", "novita", "moonshot", "grok"] {
             for value in ["0", "-1", "inf", "nan"] {
                 let file = write_toml(&format!("[{section}]\ndisplay_limit = {value}\n"));
                 let error = Config::load_from(file.path()).unwrap_err().to_string();
@@ -2698,6 +2693,20 @@ enabled = false
         let file = write_toml("[deepseek]\nheadline = \"dollars\"\n");
         let error = Config::load_from(file.path()).unwrap_err().to_string();
         assert!(error.contains("headline"), "{error}");
+    }
+
+    /// `[openrouter]` has no tank at all. The API reports credits purchased, so
+    /// there is nothing to fall back to — and in the one case where a tank
+    /// would not be ignored (a free-tier account with `total_credits == 0`)
+    /// honouring it would put "0%" on the bar for an account with money in it,
+    /// because the percentage comes from the snapshot, not from the tank.
+    #[test]
+    fn openrouter_has_no_display_limit_to_be_ignored() {
+        let file = write_toml("[openrouter]\ndisplay_limit = 200\nheadline = \"percent\"\n");
+        let config = Config::load_from(file.path()).unwrap();
+        let prefs = config.display_prefs(VendorId::Openrouter);
+        assert_eq!(prefs.display_limit, None);
+        assert_eq!(prefs.headline, Headline::Percent);
     }
 
     /// Setting a tank does not move the money off the bar by itself; the two
