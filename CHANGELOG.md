@@ -22,6 +22,17 @@ Each release is also published at
 
 ### Fixed
 
+- **A named Anthropic account keeps reading its own credential file** while
+  that file is there. `resolve_active_label` matches `~/.claude.json`'s
+  account marker, and two `CLAUDE_CONFIG_DIR` directories can hold the *same*
+  account — each with its own live login. Every fetch for such a label was
+  routed to `~/.claude/.credentials.json` on the assumption that
+  `account switch` had moved the credential into that default slot, so an
+  account whose own file was live and unread next to it reported "token
+  refresh failed; run `claude` to re-auth" from a slot the user never logs
+  into. The default slot is now used only when the account's own file really
+  is gone, which is what a switch leaves behind.
+
 - **Grok Bot live `usagePercent` and on-demand `enabled`.**
   `GetSandUsageStatus` has been observed sending a fractional JSON number
   (`19.150778`) and `onDemandSettings.enabled: null`. The parser rounds the

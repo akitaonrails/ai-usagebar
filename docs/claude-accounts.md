@@ -206,8 +206,16 @@ that behavior.
 
 The CLI has one default credential slot. A switch first saves the outgoing
 credential under its account, then moves the target credential into the
-default slot. ai-usagebar reads an active account from that default slot, so a
+default slot. ai-usagebar reads an active account from that default slot while
+its own file is gone — which is exactly what the switch leaves behind — so a
 rotating refresh token is never live in two places.
+
+A `CLAUDE_CONFIG_DIR` layout is the other case. There every directory keeps its
+own live login, and two of them can hold the *same* account, which is what the
+active-account marker records. An account whose own credential file is still
+there is therefore read from that file, not from the default slot: otherwise a
+perfectly good account reports a re-auth prompt from a slot its owner never
+signs into.
 
 If the current CLI login is not managed by ai-usagebar, the switch stops before
 discarding it. `--force` overrides that safeguard and removes the unmanaged
