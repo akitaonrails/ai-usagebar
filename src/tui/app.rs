@@ -1038,6 +1038,7 @@ mod tests {
         config.openai.enabled = false;
         config.zai.enabled = false;
         config.openrouter.enabled = false;
+        config.commandcode.enabled = false;
         config.anthropic.accounts = labels
             .iter()
             .map(|l| crate::config::AnthropicAccount {
@@ -1065,6 +1066,7 @@ mod tests {
         empty.openai.enabled = false;
         empty.zai.enabled = false;
         empty.openrouter.enabled = false;
+        empty.commandcode.enabled = false;
         empty.anthropic.show_default_account = false;
         assert_eq!(
             tabs_from_config(&empty),
@@ -1102,6 +1104,7 @@ mod tests {
         config.anthropic.enabled = false;
         config.openai.enabled = false;
         config.zai.enabled = false;
+        config.commandcode.enabled = false;
         config.openrouter.accounts = vec![
             crate::config::OpenRouterAccount {
                 label: "work".into(),
@@ -1130,6 +1133,7 @@ mod tests {
         config.anthropic.enabled = false;
         config.zai.enabled = false;
         config.openrouter.enabled = false;
+        config.commandcode.enabled = false;
         config.openai.accounts.push(crate::config::OpenAiAccount {
             label: "work".into(),
             codex_auth_path: "/tmp/codex-work/auth.json".into(),
@@ -1149,6 +1153,7 @@ mod tests {
         config.anthropic.enabled = false;
         config.openai.enabled = false;
         config.zai.enabled = false;
+        config.commandcode.enabled = false;
         config.openrouter.show_default_account = false;
         assert_eq!(
             tabs_from_config(&config),
@@ -1183,6 +1188,7 @@ mod tests {
         config.openai.enabled = false;
         config.zai.enabled = false;
         config.openrouter.enabled = false;
+        config.commandcode.enabled = false;
         config.anthropic.accounts_dir = Some(td.path().to_path_buf());
 
         let tabs = tabs_from_config(&config);

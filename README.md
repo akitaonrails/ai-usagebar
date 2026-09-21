@@ -310,7 +310,10 @@ subscription's billing period end.
 
 **There is no key to enter, and no key field in the settings panel.**
 Command Code appears in the provider selector but not in the key list, the same
-way Claude, Codex, Cursor and Kiro do — enable `[commandcode]` and it works.
+way Claude, Codex, Cursor and Kiro do. It is enabled by default like Codex; if
+no local credential exists, the TUI shows the tab as unavailable rather than
+silently omitting the provider. Set `enabled = false` under `[commandcode]` to
+hide it.
 
 Credentials are reused, never issued. The OAuth token comes from
 `~/.commandcode/auth.json` from the official CLI first, then
