@@ -84,11 +84,20 @@ pub fn usd(v: f64) -> String {
 /// A raw percentage as a whole number a meter can draw: rounded, held to
 /// 0–100, and NaN-safe.
 ///
-/// One rule for every gauge in the app, for the same reason [`money`] is one
-/// rule for every currency figure. A meter whose denominator came off the wire
-/// can be handed a NaN (`0.0 / 0.0`) or an out-of-range ratio, and each caller
-/// inventing its own guard is how two gauges end up disagreeing about what
-/// "100%" means.
+/// A meter whose denominator came off the wire can be handed a NaN
+/// (`0.0 / 0.0`) or an out-of-range ratio, and each caller inventing its own
+/// guard is how two gauges end up disagreeing about what "100%" means.
+///
+/// **Not yet every gauge.** This is the one home for the `u16` percentages a
+/// [`crate::tui::panels::Section::Metric`] carries; about a dozen vendor
+/// parsers still write `value.round().clamp(0.0, 100.0) as i32` inline
+/// (`src/zai/types.rs`, `src/copilot/types.rs`, `src/commandcode/types.rs`,
+/// `src/supergrok/types.rs`, `src/opencode_go/vendor.rs`, `src/nous/vendor.rs`
+/// and several in `src/tui/panels.rs`). Those agree with this by accident
+/// rather than by construction — a float-to-int `as` cast saturates and turns
+/// NaN into `0`, so they land on the same answers — and collapsing them is a
+/// separate change against a different signature. Add callers here; do not read
+/// this as a claim that none are left.
 ///
 /// # Examples
 ///
