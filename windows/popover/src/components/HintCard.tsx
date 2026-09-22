@@ -16,14 +16,14 @@ interface HintCardProps {
  */
 export function HintCard({ buttonTitle, icon, message, title, onAction, onDismiss }: HintCardProps) {
   return (
-    <div className="card-surface flex items-start gap-[10px] px-[14px] py-3">
+    <div className="card-surface flex items-start gap-[10px] px-[var(--card-pad)] py-2">
       <span className="grid size-5 shrink-0 place-items-center text-label-2 [&_svg]:size-4">{icon}</span>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="text-[length:var(--sz-label)] font-semibold">{title}</span>
         <span className="text-[length:var(--sz-support)] leading-[1.35] text-label-2">{message}</span>
         <button
           type="button"
-          className="mt-1 h-6 w-fit rounded-[6px] bg-[var(--control-fill)] px-2.5 text-[length:var(--sz-support)] hover:bg-[var(--control-fill-hover)]"
+          className="mt-1 h-6 w-fit rounded-[var(--radius-sm)] bg-[var(--control-fill)] px-2.5 text-[length:var(--sz-support)] hover:bg-[var(--control-fill-hover)]"
           onClick={onAction}
         >
           {buttonTitle}

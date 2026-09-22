@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
+import MdiInformationOutline from "~icons/mdi/information-outline";
 import MdiTune from "~icons/mdi/tune-variant";
 import { ScreenCrossLinkRow } from "@/components/Chrome";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Layout, Payload } from "@/lib/types";
 import { useBusyLabel } from "@/lib/useBusyLabel";
 import { sendCommand, updateModeLabel, updateStatusLabel } from "../model.js";
@@ -13,7 +15,6 @@ interface SettingsProps {
   nowMs: number;
   payload: Payload;
   onAlwaysShowPace: (on: boolean) => void;
-  onDensity: (density: string) => void;
   onOpenCustomize: () => void;
   onResetTimes: (resetTimes: string) => void;
   onShowAs: (showAs: string) => void;
@@ -27,7 +28,6 @@ export function Settings({
   nowMs,
   payload,
   onAlwaysShowPace,
-  onDensity,
   onOpenCustomize,
   onResetTimes,
   onShowAs,
@@ -56,7 +56,7 @@ export function Settings({
             onCheckedChange={() => sendCommand("toggle-startup")}
           />
         </SettingRow>
-        <SettingRow label="Refresh Every">
+        <SettingRow hint="How often the tray fetches a fresh reading from each provider." label="Refresh Every">
           <Picker
             options={[
               ["1", "1 minute"],
@@ -67,7 +67,7 @@ export function Settings({
             onChange={(minutes) => sendCommand("set-refresh", { minutes: Number(minutes) })}
           />
         </SettingRow>
-        <SettingRow label="Global Shortcut">
+        <SettingRow hint="Show or hide this popover from any app." label="Global Shortcut">
           <ShortcutRecorder
             error={payload.shortcutError}
             value={payload.shortcut}
@@ -92,17 +92,7 @@ export function Settings({
             onChange={onTheme}
           />
         </SettingRow>
-        <SettingRow label="Density">
-          <Picker
-            options={[
-              ["regular", "Default"],
-              ["compact", "Compact"],
-            ]}
-            value={layout.density}
-            onChange={onDensity}
-          />
-        </SettingRow>
-        <SettingRow label="Time Format">
+        <SettingRow hint="Auto follows the system clock. 12-hour and 24-hour pin exact reset times." label="Time Format">
           <Picker
             options={[
               ["auto", "Auto"],
@@ -115,7 +105,7 @@ export function Settings({
         </SettingRow>
       </Section>
       <Section title="Usage Display">
-        <SettingRow label="Show Usage As">
+        <SettingRow hint="Used fills the bar with what is spent. Left fills it with what remains." label="Show Usage As">
           <Picker
             options={[
               ["used", "Used"],
@@ -125,7 +115,7 @@ export function Settings({
             onChange={onShowAs}
           />
         </SettingRow>
-        <SettingRow label="Reset Times">
+        <SettingRow hint="Countdown reads “Resets in 6d”. Exact time reads the clock, like “today at 6:38 PM”." label="Reset Times">
           <Picker
             options={[
               ["countdown", "Countdown"],
@@ -135,7 +125,7 @@ export function Settings({
             onChange={onResetTimes}
           />
         </SettingRow>
-        <SettingRow label="Always Show Pacing">
+        <SettingRow hint="Show the pace note on every metric. Off, only rows near their limit show it." label="Always Show Pacing">
           <Switch
             checked={layout.alwaysShowPace}
             aria-label="Always Show Pacing"
@@ -143,8 +133,9 @@ export function Settings({
           />
         </SettingRow>
       </Section>
+      {payload.os === "macos" ? null : (
       <Section title="Updates">
-        <SettingRow label="Updates">
+        <SettingRow hint="Automatic installs a release when it is found. Notify shows a banner. Off stops the hourly check." label="Updates">
           <Picker
             options={[
               ["auto", updateModeLabel("auto")],
@@ -172,6 +163,7 @@ export function Settings({
           </button>
         </div>
       </Section>
+      )}
       <ScreenCrossLinkRow
         icon={<MdiTune />}
         subtitle="Choose what's visible and where"
@@ -198,16 +190,46 @@ function Section({ children, title }: SectionProps) {
 
 interface SettingRowProps {
   children: ReactNode;
+  hint?: string;
   label: string;
 }
 
-function SettingRow({ children, label }: SettingRowProps) {
+function SettingRow({ children, hint, label }: SettingRowProps) {
   return (
-    <div className="flex items-center gap-[10px] px-3 py-[var(--pad-control)]">
-      <span>{label}</span>
+    <div className="flex items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)]">
+      <span className="flex min-w-0 items-center gap-1">
+        <span className="truncate">{label}</span>
+        {hint ? <SettingHint label={label} text={hint} /> : null}
+      </span>
       <span className="min-w-2 flex-1" />
       {children}
     </div>
+  );
+}
+
+function SettingHint({ label, text }: { label: string; text: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={`About ${label}`}
+          className="grid size-3.5 shrink-0 place-items-center border-0 bg-transparent p-0 text-label-3"
+        >
+          <MdiInformationOutline className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent
+        align="start"
+        arrowClassName="bg-[var(--surface)] fill-[var(--surface)]"
+        className="setting-hint"
+        collisionPadding={12}
+        side="top"
+        sideOffset={6}
+      >
+        {text}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -230,11 +252,11 @@ function Picker<T extends string>({ options, value, onChange }: PickerProps<T>) 
     <Select value={value} onValueChange={onValueChange}>
       <SelectTrigger
         size="sm"
-        className="h-6 gap-1 rounded-[6px] border-0 bg-[var(--control-fill)] px-2 text-[12px] shadow-none hover:bg-[var(--control-fill-hover)] focus-visible:ring-0 [&_svg]:size-3"
+        className="h-[var(--control-h)] gap-1 rounded-[var(--radius-sm)] border-0 bg-[var(--control-fill)] px-2 py-0 text-[12px] shadow-none hover:bg-[var(--control-fill-hover)] focus-visible:ring-0 data-[size=sm]:h-[var(--control-h)] [&_svg]:size-3"
       >
         <SelectValue />
       </SelectTrigger>
-      <SelectContent className="rounded-[8px]" position="popper" align="end">
+      <SelectContent className="rounded-[var(--radius-sm)] border-0" position="popper" align="end">
         {options.map(([optionValue, label]) => (
           <SelectItem key={optionValue} className="py-1 text-[12px]" value={optionValue}>
             {label}

@@ -138,9 +138,8 @@ jobs:
       - name: Test
         run: cargo test --all-targets --locked
 
-      # The menu bar app is a single Swift file with no Xcode project. Build it
-      # to prove it still compiles, then run the pure-logic test harness
-      # (arc geometry, TOML enabled parsing, vendor balance dispatch).
+      # Legacy Swift menu (NSMenu). The product UI is `ai-usagebar-tray`
+      # (WKWebView popover), compiled by clippy --all-targets above.
       - name: Build the menu bar app
         run: swiftc -O -parse-as-library -o /tmp/ai-usagebar-menubar macos/ai-usagebar-menubar.swift
 

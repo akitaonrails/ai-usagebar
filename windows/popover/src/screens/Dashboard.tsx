@@ -22,11 +22,10 @@ interface DashboardProps {
   onRowAction: (providerId: string, rowKey: string, action: RowAction) => void;
   onRowMenuOpenChange: (open: boolean) => void;
   onToggleCollapse: (id: string) => void;
-  onToggleResetTimes: () => void;
   onToggleShowAs: () => void;
 }
 
-/** DashboardContentView: provider sections stacked with the density section gap. */
+/** DashboardContentView: provider sections stacked with the section gap. */
 export function Dashboard({
   cards,
   hint,
@@ -42,7 +41,6 @@ export function Dashboard({
   onRowAction,
   onRowMenuOpenChange,
   onToggleCollapse,
-  onToggleResetTimes,
   onToggleShowAs,
 }: DashboardProps) {
   if (payload.hostError) {
@@ -111,7 +109,6 @@ export function Dashboard({
                 onRowAction={(key, action) => onRowAction(card.id, key, action)}
                 onRowMenuOpenChange={onRowMenuOpenChange}
                 onToggleCollapse={() => onToggleCollapse(card.id)}
-                onToggleResetTimes={onToggleResetTimes}
                 onToggleShowAs={onToggleShowAs}
               />
             )}

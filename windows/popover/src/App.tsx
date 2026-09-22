@@ -3,6 +3,8 @@ import { Footer, TopBar } from "@/components/Chrome";
 import type { RowAction } from "@/components/RowMenu";
 import type { RowLists } from "@/components/dnd";
 import type { Layout, Screen } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { About } from "@/screens/About";
 import { Customize } from "@/screens/Customize";
 import { Dashboard } from "@/screens/Dashboard";
 import { ProviderDetail } from "@/screens/ProviderDetail";
@@ -10,7 +12,6 @@ import { Settings } from "@/screens/Settings";
 import {
   absorbPayload,
   applyCardLayout,
-  applyDensity,
   applyTheme,
   emptyLayout,
   hintPending,
@@ -24,15 +25,18 @@ import {
   projectCards,
   resolvedTheme,
   saveLayout,
+  seedStars,
   sendCommand,
   setRowEnabled,
+  stripCommand,
+  toggleStar,
 } from "./model.js";
 import { measurePanelHeight } from "./panel-size.js";
 
 type Direction = "back" | "forward";
 
 /** Screens ordered as the OpenUsage pager lays them out: dashboard ← customize/provider → settings. */
-const SCREEN_DEPTH: Record<Screen, number> = { dashboard: 0, customize: 1, provider: 2, settings: 3 };
+const SCREEN_DEPTH: Record<Screen, number> = { dashboard: 0, customize: 1, provider: 2, settings: 3, about: 4 };
 
 function resolveStorage() {
   try {
@@ -56,22 +60,24 @@ export default function App() {
   // Where the provider detail was opened from, so Back returns there: the
   // Customize list, or the dashboard header's Customize shortcut.
   const [providerFrom, setProviderFrom] = useState<Screen>("customize");
+  const [aboutFrom, setAboutFrom] = useState<Screen>("dashboard");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [locked, setLocked] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [rowMenuOpen, setRowMenuOpen] = useState(false);
   const [resetArmed, setResetArmed] = useState(false);
+  const [starError, setStarError] = useState("");
   const [popoverVisible, setPopoverVisible] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const cards = useMemo(() => (payload.hostError ? [] : projectCards(payload, nowMs)), [payload, nowMs]);
   const visible = useMemo(() => applyCardLayout(cards, layout), [cards, layout]);
   const currentCard = cards.find((card) => card.id === providerId);
-  const showFooter = screen === "dashboard" || screen === "settings";
 
   function commit(next: Layout) {
     setLayout(next);
     saveLayout(storageRef.current, next);
+    sendCommand("strip", stripCommand(next, cards));
   }
 
   function go(next: Screen) {
@@ -82,8 +88,19 @@ export default function App() {
   }
 
   function goBack() {
+    if (screen === "about") {
+      go(aboutFrom === "about" ? "dashboard" : aboutFrom);
+      return;
+    }
     if (screen === "provider") go(providerFrom === "dashboard" ? "dashboard" : "customize");
     else go("dashboard");
+  }
+
+  function openAbout(check: boolean) {
+    setOptionsOpen(false);
+    if (screen !== "about") setAboutFrom(screen);
+    if (check) sendCommand("check-update");
+    go("about");
   }
 
   useEffect(() => {
@@ -95,10 +112,6 @@ export default function App() {
   }, [layout.theme]);
 
   useEffect(() => {
-    applyDensity(layout.density);
-  }, [layout.density]);
-
-  useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
@@ -108,8 +121,10 @@ export default function App() {
       const next = parseHostPayload(raw);
       setPayload(next);
       setLayout((current) => {
-        const synced = absorbPayload(current, next.entries);
+        const cards = projectCards(next, Date.now());
+        const synced = seedStars(absorbPayload(current, next.entries), cards);
         if (synced !== current) saveLayout(storageRef.current, synced);
+        sendCommand("strip", stripCommand(synced, cards));
         return synced;
       });
     };
@@ -155,7 +170,10 @@ export default function App() {
     let last = -1;
     const report = () => {
       frame = 0;
-      const height = measurePanelHeight(shell);
+      const measured = measurePanelHeight(shell);
+      // Same floor as tray MIN_POPOVER_HEIGHT: keep room for the Options menu
+      // (side=top from the footer, nine rows) so Radix does not scroll the list.
+      const height = measured > 0 ? Math.max(measured, 360) : measured;
       if (height <= 0 || height === last) return;
       last = height;
       sendCommand("resize", { height, theme: resolvedTheme(layout.theme) });
@@ -205,10 +223,6 @@ export default function App() {
     commit({ ...layout, showAs: layout.showAs === "used" ? "left" : "used" });
   }
 
-  function toggleResetTimes() {
-    commit({ ...layout, resetTimes: layout.resetTimes === "exact" ? "countdown" : "exact" });
-  }
-
   // Two clicks within three seconds; a native confirm() would steal focus and the
   // popover hides itself on focus loss. Like OpenUsage's Reset All, it also re-runs
   // provider detection so the layout starts from the tools on this machine.
@@ -224,7 +238,6 @@ export default function App() {
         {
           ...emptyLayout(),
           alwaysShowPace: layout.alwaysShowPace,
-          density: layout.density,
           resetTimes: layout.resetTimes,
           showAs: layout.showAs,
           theme: layout.theme,
@@ -254,13 +267,10 @@ export default function App() {
   function reorderRows(lists: RowLists) {
     if (!currentCard) return;
     const prevOff = prefsForCard(currentCard, layout).off || {};
-    const off: Record<string, boolean> = {};
-    const demand: string[] = [];
-    for (const key of lists.demand) {
-      if (prevOff[key]) off[key] = true;
-      else demand.push(key);
-    }
-    commit({ ...layout, rows: { ...layout.rows, [providerId]: { always: lists.always, demand, off } } });
+    commit({
+      ...layout,
+      rows: { ...layout.rows, [providerId]: { always: lists.always, demand: lists.demand, off: prevOff } },
+    });
   }
 
   // Row context menu. Hide / Always show / Show on demand rewrite that provider's row prefs the
@@ -276,16 +286,32 @@ export default function App() {
       openProvider(id, "dashboard");
       return;
     }
+    if (action === "star") {
+      const result = toggleStar(layout.stars, id, key);
+      if (result.error) {
+        setStarError(result.error);
+        window.setTimeout(() => setStarError(""), 2200);
+        return;
+      }
+      commit({ ...layout, stars: result.stars });
+      return;
+    }
     const prefs = prefsForCard(card, layout);
     const next = action === "hide" ? setRowEnabled(prefs, key, false) : moveRowToList(prefs, key, action);
     commit({ ...layout, rows: { ...layout.rows, [id]: next } });
   }
 
   const title =
-    screen === "customize" ? "Customize" : screen === "settings" ? "Settings" : currentCard?.title || "Provider";
+    screen === "customize"
+      ? "Customize"
+      : screen === "settings"
+        ? "Settings"
+        : screen === "about"
+          ? "About"
+          : currentCard?.title || "Provider";
 
   return (
-    <div ref={shellRef} className="flex h-full flex-col bg-background text-foreground">
+    <div ref={shellRef} className="flex h-full flex-col overflow-hidden rounded-[13px] bg-background text-foreground">
       {screen !== "dashboard" ? (
         <TopBar
           resetArmed={resetArmed}
@@ -300,7 +326,10 @@ export default function App() {
           key={screen}
           data-direction={direction}
           data-scroll-content
-          className="screen-enter px-[var(--panel-pad)] pb-3 pt-[var(--content-top)]"
+          className={cn(
+            "screen-enter px-[var(--panel-pad)] pb-0",
+            screen === "dashboard" ? "pt-[var(--panel-pad)]" : "pt-0",
+          )}
         >
           {screen === "dashboard" ? (
             <Dashboard
@@ -323,7 +352,6 @@ export default function App() {
                 else collapsed[id] = true;
                 commit({ ...layout, collapsed });
               }}
-              onToggleResetTimes={toggleResetTimes}
               onToggleShowAs={toggleShowAs}
             />
           ) : null}
@@ -346,7 +374,18 @@ export default function App() {
             <ProviderDetail
               card={currentCard}
               layout={layout}
+              starError={starError}
               onReorderRows={reorderRows}
+              onToggleStar={(key) => {
+                if (!currentCard) return;
+                const result = toggleStar(layout.stars, currentCard.id, key);
+                if (result.error) {
+                  setStarError(result.error);
+                  window.setTimeout(() => setStarError(""), 2200);
+                  return;
+                }
+                commit({ ...layout, stars: result.stars });
+              }}
               onToggleRow={(key, on) => {
                 if (!currentCard) return;
                 commit({
@@ -356,13 +395,13 @@ export default function App() {
               }}
             />
           ) : null}
+          {screen === "about" ? <About nowMs={nowMs} payload={payload} /> : null}
           {screen === "settings" ? (
             <Settings
               layout={layout}
               nowMs={nowMs}
               payload={payload}
               onAlwaysShowPace={(alwaysShowPace) => commit({ ...layout, alwaysShowPace })}
-              onDensity={(density) => commit({ ...layout, density })}
               onOpenCustomize={() => go("customize")}
               onResetTimes={(resetTimes) => commit({ ...layout, resetTimes })}
               onShowAs={(showAs) => commit({ ...layout, showAs })}
@@ -372,24 +411,24 @@ export default function App() {
           ) : null}
         </div>
       </div>
-      {showFooter ? (
-        <Footer
-          locked={locked}
-          nowMs={nowMs}
-          optionsOpen={optionsOpen}
-          payload={payload}
-          updatePending={payload.update !== null}
-          onOpenCustomize={() => {
-            setOptionsOpen(false);
-            go("customize");
-          }}
-          onOpenSettings={() => {
-            setOptionsOpen(false);
-            go("settings");
-          }}
-          onOptionsOpenChange={setOptionsOpen}
-        />
-      ) : null}
+      <Footer
+        locked={locked}
+        nowMs={nowMs}
+        optionsOpen={optionsOpen}
+        payload={payload}
+        updatePending={payload.update !== null}
+        onCheckUpdates={() => openAbout(true)}
+        onOpenAbout={() => openAbout(false)}
+        onOpenCustomize={() => {
+          setOptionsOpen(false);
+          go("customize");
+        }}
+        onOpenSettings={() => {
+          setOptionsOpen(false);
+          go("settings");
+        }}
+        onOptionsOpenChange={setOptionsOpen}
+      />
     </div>
   );
 }

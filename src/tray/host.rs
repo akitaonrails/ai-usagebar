@@ -38,9 +38,9 @@ use crate::config::{Config, UpdateMode};
 use crate::update::{CHECK_INTERVAL, Release, UpdateState, sweep_old};
 
 // Emitted by `windows/popover` (`npm run build` / `build.rs` on Windows).
-const INDEX_HTML: &str = include_str!("../../windows/popover/dist/index.html");
-const POPOVER_CSS: &str = include_str!("../../windows/popover/dist/popover.css");
-const POPOVER_JS: &str = include_str!("../../windows/popover/dist/popover.js");
+const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/index.html"));
+const POPOVER_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.css"));
+const POPOVER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.js"));
 
 /// Compact fixed width in logical px. The previous 320 px became visually
 /// oversized on scaled Windows displays.
@@ -49,7 +49,9 @@ const WINDOW_WIDTH: f64 = 300.0;
 /// `resize` IPC command.
 const WINDOW_HEIGHT: f64 = 420.0;
 /// Smallest height a `resize` request can shrink the popover to.
-const MIN_POPOVER_HEIGHT: f64 = 120.0;
+/// Sized so the footer Options menu (nine rows, opens upward) fits without
+/// Radix scrolling the list on short screens like Customize / provider detail.
+const MIN_POPOVER_HEIGHT: f64 = 360.0;
 /// Breathing room kept between the popover and the monitor's edges.
 const WORK_AREA_MARGIN: f64 = 16.0;
 /// Used when no monitor can be resolved at all.
@@ -677,6 +679,8 @@ fn stamp_facts(state: &mut TrayState) {
         "update",
         "update_checked_at",
         "refresh_minutes",
+        "repository",
+        "version",
     ] {
         obj.insert(key.into(), stamped[key].clone());
     }
@@ -933,6 +937,12 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
         "set-refresh" => {
             if let Some(minutes) = value.get("minutes").and_then(Value::as_u64) {
                 set_refresh(state, minutes);
+            }
+        }
+        "strip" => {}
+        "open-url" => {
+            if let Some(url) = value.get("url").and_then(Value::as_str) {
+                super::browse::open(url);
             }
         }
         "check-update" => {

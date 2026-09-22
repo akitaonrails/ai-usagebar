@@ -113,8 +113,8 @@ pub fn read_from(path: &Path) -> Result<CredentialsFile> {
 /// item. An explicit path is a user decision and is honored strictly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CredsTarget {
-    /// `~/.claude/.credentials.json` (or the Windows equivalent) — falls back
-    /// to the macOS Keychain when the file is missing *or unusable* (#15).
+    /// `~/.claude/.credentials.json` (or the Windows equivalent). On macOS the
+    /// Keychain item is preferred when it is usable — Claude Code's live store.
     Default(PathBuf),
     /// `--creds-path` or config `credentials_path` with no `CLAUDE_CONFIG_DIR`
     /// of its own — never consults the Keychain.
@@ -208,42 +208,29 @@ pub fn resolve(target: &CredsTarget) -> Result<(CredentialsFile, CredsSource)> {
 /// selection is unit-testable on any platform (the hermeticity invariant —
 /// tests must never touch a real Keychain). Decision table:
 ///
-/// | file state          | keychain        | outcome                    |
-/// |---------------------|-----------------|----------------------------|
-/// | usable              | (not consulted*)| file                       |
-/// | missing             | usable          | keychain                   |
-/// | missing             | absent          | original I/O error         |
-/// | unusable (#15)      | usable          | keychain                   |
-/// | unusable (#15)      | absent          | file result, unchanged     |
-/// | unparsable JSON     | usable          | keychain                   |
-/// | unparsable JSON     | absent          | original parse error       |
-/// | any                 | **unreadable**  | the Keychain error         |
+/// | keychain item              | file             | outcome            |
+/// |----------------------------|------------------|--------------------|
+/// | usable                     | (not consulted)  | keychain           |
+/// | absent/unusable/unparsable | readable         | file               |
+/// | absent/unusable/unparsable | missing/broken   | the file's error   |
+/// | **unreadable** (locked/ACL)| any              | the Keychain error |
 ///
-/// The last row matters: a *locked* login Keychain or a denied ACL is not the
-/// same as "no credentials". Reporting it as absent surfaced a "run `claude`"
-/// message and sent users to re-authenticate while their credentials were
-/// sitting there intact, so that failure now wins over the file's own error.
-///
-/// *usable file short-circuits — no `security(1)` subprocess on the happy path.
+/// Same order as [`read_named_with`]. Recent Claude Code on macOS writes the
+/// live OAuth blob to the Keychain; `~/.claude/.credentials.json` is often a
+/// leftover snapshot whose refresh token has already rotated. File-first
+/// (the #15 table) then 400s "Refresh token expired" while `claude` itself
+/// still works. A locked Keychain is still not "no credentials".
 fn read_default_with(
     path: &Path,
     keychain_read: impl Fn() -> Result<Option<String>>,
 ) -> Result<(CredentialsFile, CredsSource)> {
-    let file_result = read_from(path);
-    match &file_result {
-        Ok(creds) if !is_unusable(&creds.claude_ai_oauth) => {
-            Ok((file_result?, CredsSource::File(path.to_path_buf())))
-        }
-        // Missing, unusable, or unparsable — see if the Keychain has better.
-        _ => match keychain_read()? {
-            Some(raw) => match parse(&raw, "macOS Keychain (Claude Code-credentials)") {
-                Ok(kc) if !is_unusable(&kc.claude_ai_oauth) => Ok((kc, CredsSource::Keychain)),
-                // Keychain no better than the file — surface the file outcome.
-                _ => Ok((file_result?, CredsSource::File(path.to_path_buf()))),
-            },
-            None => Ok((file_result?, CredsSource::File(path.to_path_buf()))),
-        },
+    if let Some(raw) = keychain_read()?
+        && let Ok(kc) = parse(&raw, "macOS Keychain (Claude Code-credentials)")
+        && !is_unusable(&kc.claude_ai_oauth)
+    {
+        return Ok((kc, CredsSource::Keychain));
     }
+    Ok((read_from(path)?, CredsSource::File(path.to_path_buf())))
 }
 
 /// Named-account read: the account's `CLAUDE_CONFIG_DIR`-scoped Keychain item
@@ -485,12 +472,36 @@ mod tests {
     }
 
     #[test]
-    fn default_read_usable_file_wins_without_consulting_keychain() {
+    fn default_read_prefers_keychain_over_a_live_looking_file() {
+        // Same production failure as named accounts: a leftover
+        // `~/.claude/.credentials.json` still *looks* usable but its refresh
+        // token has rotated; Claude Code keeps the live blob in the Keychain.
         let (_dir, path) = write_creds_closed(USABLE);
         let (creds, source) =
-            read_default_with(&path, || panic!("keychain must not be consulted")).unwrap();
+            read_default_with(&path, || Ok(Some(KEYCHAIN_USABLE.into()))).unwrap();
+        assert_eq!(creds.claude_ai_oauth.access_token, "kc-token");
+        assert_eq!(source, CredsSource::Keychain);
+    }
+
+    #[test]
+    fn default_read_usable_file_when_keychain_absent() {
+        let (_dir, path) = write_creds_closed(USABLE);
+        let (creds, source) = read_default_with(&path, || Ok(None)).unwrap();
         assert_eq!(creds.claude_ai_oauth.access_token, "live-token");
         assert_eq!(source, CredsSource::File(path));
+    }
+
+    #[test]
+    fn a_locked_keychain_wins_over_a_usable_file() {
+        let (_dir, path) = write_creds_closed(USABLE);
+        let err = read_default_with(&path, || {
+            Err(AppError::Credentials("the Keychain is locked".into()))
+        })
+        .unwrap_err();
+        assert!(
+            matches!(err, AppError::Credentials(ref m) if m.contains("locked")),
+            "expected the Keychain error to surface, got {err:?}"
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ use super::scope::ScopePaths;
 use super::{acp, direct, resets, scope, types};
 
 const LOCK_TIMEOUT: Duration = Duration::from_secs(15);
-const CACHE_SCHEMA: u8 = 3;
+const CACHE_SCHEMA: u8 = 4;
 
 /// This vendor's [`Outcome`](crate::outcome::Outcome) — the shared shape,
 /// specialised to its snapshot.
@@ -55,6 +55,11 @@ async fn fetch_billing_any(
         },
     }?;
     response.reset_credits = resets::fetch(&scope_paths.auth).await.unwrap_or_default();
+    if response.subscription_tier_display.is_none()
+        && let Ok(Some(display)) = direct::fetch_plan_display(&scope_paths.auth).await
+    {
+        response.subscription_tier_display = Some(display);
+    }
     Ok(response)
 }
 

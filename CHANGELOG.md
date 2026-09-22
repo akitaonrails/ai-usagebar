@@ -11,6 +11,10 @@ Each release is also published at
 
 ### Added
 
+- **macOS WebView tray** (`ai-usagebar-tray`). Same OpenUsage-style popover as
+  Windows (WKWebView instead of WebView2), plus a compact usage-chart glyph in
+  the menu bar from starred metrics (at most two per provider).
+  `cargo build --release --bin ai-usagebar-tray`.
 - **macOS Grok Bot.** `[grokbot]` reads
   `~/Library/Application Support/Grok Bot/sand-secrets.json` with the
   Chromium OSCrypt key from the login Keychain item `Grok Bot Safe Storage`
@@ -19,6 +23,10 @@ Each release is also published at
   Linux writes directly; both shapes parse. Windows still fails closed.
   Omarchy and the Windows tray draw Grok Bot's own head-and-eyes logomark
   (`grokbot.svg`) instead of sharing Grok's mark.
+- **About and Check for Updates** in the tray Options menu. macOS checks
+  GitHub and opens the release page; Windows still installs in place.
+  Settings rows that are not obvious (pacing, reset times, shortcut, and
+  the rest) show a short hint.
 
 ### Fixed
 
@@ -42,6 +50,11 @@ Each release is also published at
   refresh failed; run `claude` to re-auth" from a slot the user never logs
   into. The default slot is now used only when the account's own file really
   is gone, which is what a switch leaves behind.
+
+- On macOS, a leftover `~/.claude/.credentials.json` no longer shadows Claude
+  Code's live Keychain item. That file-first read 400'd "Refresh token expired"
+  and the tray showed **Sign-in expired** while `claude` itself was still
+  logged in.
 
 - **Grok Bot live `usagePercent` and on-demand `enabled`.**
   `GetSandUsageStatus` has been observed sending a fractional JSON number
