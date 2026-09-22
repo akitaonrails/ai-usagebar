@@ -4,6 +4,7 @@ import type { RowAction } from "@/components/RowMenu";
 import type { RowLists } from "@/components/dnd";
 import type { Layout, Screen } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { About } from "@/screens/About";
 import { Customize } from "@/screens/Customize";
 import { Dashboard } from "@/screens/Dashboard";
 import { ProviderDetail } from "@/screens/ProviderDetail";
@@ -35,7 +36,7 @@ import { measurePanelHeight } from "./panel-size.js";
 type Direction = "back" | "forward";
 
 /** Screens ordered as the OpenUsage pager lays them out: dashboard ← customize/provider → settings. */
-const SCREEN_DEPTH: Record<Screen, number> = { dashboard: 0, customize: 1, provider: 2, settings: 3 };
+const SCREEN_DEPTH: Record<Screen, number> = { dashboard: 0, customize: 1, provider: 2, settings: 3, about: 4 };
 
 function resolveStorage() {
   try {
@@ -59,6 +60,7 @@ export default function App() {
   // Where the provider detail was opened from, so Back returns there: the
   // Customize list, or the dashboard header's Customize shortcut.
   const [providerFrom, setProviderFrom] = useState<Screen>("customize");
+  const [aboutFrom, setAboutFrom] = useState<Screen>("dashboard");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [locked, setLocked] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -86,8 +88,19 @@ export default function App() {
   }
 
   function goBack() {
+    if (screen === "about") {
+      go(aboutFrom === "about" ? "dashboard" : aboutFrom);
+      return;
+    }
     if (screen === "provider") go(providerFrom === "dashboard" ? "dashboard" : "customize");
     else go("dashboard");
+  }
+
+  function openAbout(check: boolean) {
+    setOptionsOpen(false);
+    if (screen !== "about") setAboutFrom(screen);
+    if (check) sendCommand("check-update");
+    go("about");
   }
 
   useEffect(() => {
@@ -159,8 +172,8 @@ export default function App() {
       frame = 0;
       const measured = measurePanelHeight(shell);
       // Same floor as tray MIN_POPOVER_HEIGHT: keep room for the Options menu
-      // (side=top from the footer) so Radix does not scroll the list.
-      const height = measured > 0 ? Math.max(measured, 320) : measured;
+      // (side=top from the footer, nine rows) so Radix does not scroll the list.
+      const height = measured > 0 ? Math.max(measured, 360) : measured;
       if (height <= 0 || height === last) return;
       last = height;
       sendCommand("resize", { height, theme: resolvedTheme(layout.theme) });
@@ -289,7 +302,13 @@ export default function App() {
   }
 
   const title =
-    screen === "customize" ? "Customize" : screen === "settings" ? "Settings" : currentCard?.title || "Provider";
+    screen === "customize"
+      ? "Customize"
+      : screen === "settings"
+        ? "Settings"
+        : screen === "about"
+          ? "About"
+          : currentCard?.title || "Provider";
 
   return (
     <div ref={shellRef} className="flex h-full flex-col overflow-hidden rounded-[13px] bg-background text-foreground">
@@ -376,6 +395,7 @@ export default function App() {
               }}
             />
           ) : null}
+          {screen === "about" ? <About nowMs={nowMs} payload={payload} /> : null}
           {screen === "settings" ? (
             <Settings
               layout={layout}
@@ -397,6 +417,8 @@ export default function App() {
         optionsOpen={optionsOpen}
         payload={payload}
         updatePending={payload.update !== null}
+        onCheckUpdates={() => openAbout(true)}
+        onOpenAbout={() => openAbout(false)}
         onOpenCustomize={() => {
           setOptionsOpen(false);
           go("customize");

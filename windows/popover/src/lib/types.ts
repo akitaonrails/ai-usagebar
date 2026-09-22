@@ -190,7 +190,9 @@ export interface Payload {
   update: UpdateInfo | null;
   updateCheckedAt: number;
   updates: UpdateMode;
+  /** GitHub repository this build was compiled from, or "". */
+  repository: string;
   version: string;
 }
 
-export type Screen = "customize" | "dashboard" | "provider" | "settings";
+export type Screen = "about" | "customize" | "dashboard" | "provider" | "settings";

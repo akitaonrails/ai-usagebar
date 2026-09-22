@@ -23,6 +23,10 @@ Each release is also published at
   Linux writes directly; both shapes parse. Windows still fails closed.
   Omarchy and the Windows tray draw Grok Bot's own head-and-eyes logomark
   (`grokbot.svg`) instead of sharing Grok's mark.
+- **About and Check for Updates** in the tray Options menu. macOS checks
+  GitHub and opens the release page; Windows still installs in place.
+  Settings rows that are not obvious (pacing, reset times, shortcut, and
+  the rest) show a short hint.
 
 ### Fixed
 

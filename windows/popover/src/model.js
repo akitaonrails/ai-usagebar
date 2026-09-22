@@ -46,6 +46,7 @@ export function emptyPayload(hostError) {
     updates: "notify",
     update: null,
     updateCheckedAt: 0,
+    repository: "",
   };
 }
 
@@ -82,7 +83,13 @@ function normalizePayload(parsed) {
     updates: normalizeUpdateMode(parsed.updates),
     update: normalizeUpdate(parsed.update),
     updateCheckedAt: finiteNumber(parsed.update_checked_at),
+    repository: githubPage(parsed.repository),
   };
+}
+
+function githubPage(value) {
+  const url = clean(value, 300);
+  return url.startsWith("https://github.com/") ? url : "";
 }
 
 function finiteNumber(value) {

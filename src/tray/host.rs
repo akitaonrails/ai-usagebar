@@ -49,9 +49,9 @@ const WINDOW_WIDTH: f64 = 300.0;
 /// `resize` IPC command.
 const WINDOW_HEIGHT: f64 = 420.0;
 /// Smallest height a `resize` request can shrink the popover to.
-/// Sized so the footer Options menu (seven rows, opens upward) fits without
+/// Sized so the footer Options menu (nine rows, opens upward) fits without
 /// Radix scrolling the list on short screens like Customize / provider detail.
-const MIN_POPOVER_HEIGHT: f64 = 320.0;
+const MIN_POPOVER_HEIGHT: f64 = 360.0;
 /// Breathing room kept between the popover and the monitor's edges.
 const WORK_AREA_MARGIN: f64 = 16.0;
 /// Used when no monitor can be resolved at all.
@@ -679,6 +679,8 @@ fn stamp_facts(state: &mut TrayState) {
         "update",
         "update_checked_at",
         "refresh_minutes",
+        "repository",
+        "version",
     ] {
         obj.insert(key.into(), stamped[key].clone());
     }

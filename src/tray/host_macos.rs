@@ -39,7 +39,8 @@ use super::panel::{
     LIGHT_BACKGROUND, PopoverPlacement, WINDOW_HEIGHT, WINDOW_WIDTH, clamp_popover_height,
     cocoa_popover_frame, menu_bar_bottom_y,
 };
-use super::payload::{HostFacts, host_payload, wrap_report};
+use super::payload::{HostFacts, UpdateFact, fact_after_check, host_payload, wrap_report};
+use super::update_flow;
 use super::strip::{
     BARS_PIXEL_SIDE, BARS_POINT_SIDE, Stars, StripStyle, bar_fill, bars_layout, bars_rgba,
     content_from_payload, parse_strip_ipc,
@@ -59,12 +60,14 @@ enum UserEvent {
     Entry(Value),
     FocusPopover,
     Hotkey,
+    Facts,
 }
 
 enum WorkerCmd {
     Refresh,
     RefreshEntry(String),
     Detect,
+    CheckUpdate,
     Shutdown,
 }
 
@@ -237,6 +240,7 @@ fn run_loop() -> Result<(), String> {
             Event::UserEvent(UserEvent::Ipc(body)) => handle_ipc(&mut state, &body, control_flow),
             Event::UserEvent(UserEvent::Report(payload)) => apply_payload(&mut state, payload),
             Event::UserEvent(UserEvent::Entry(entry)) => apply_entry(&mut state, entry),
+            Event::UserEvent(UserEvent::Facts) => apply_facts(&mut state),
             Event::UserEvent(UserEvent::Hotkey) => toggle_popover_from_keyboard(&mut state),
             Event::UserEvent(UserEvent::FocusPopover) => {
                 if state.popover_open {
@@ -294,6 +298,9 @@ fn spawn_worker(
                         Ok(WorkerCmd::RefreshEntry(id)) => {
                             rt.block_on(push_entry(&proxy, &id));
                         }
+                        Ok(WorkerCmd::CheckUpdate) => {
+                            rt.block_on(check_release(&proxy, &facts));
+                        }
                         Ok(WorkerCmd::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                             return;
                         }
@@ -325,6 +332,31 @@ async fn push_report(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
         Err(error) => wrap_report("{}", &snapshot, now, Some(&error)),
     };
     let _ = proxy.send_event(UserEvent::Report(payload));
+}
+
+/// Manual GitHub release check. No install on macOS — the About screen opens
+/// the release page when a newer tag exists.
+async fn check_release(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
+    with_facts(facts, |f| {
+        f.update = Some(UpdateFact {
+            error: String::new(),
+            state: "checking".into(),
+            url: String::new(),
+            version: String::new(),
+        });
+    });
+    let _ = proxy.send_event(UserEvent::Facts);
+    let outcome = match update_flow::http_client() {
+        Ok(client) => update_flow::check(&client, env!("CARGO_PKG_VERSION")).await,
+        Err(error) => Err(error),
+    };
+    let checked_at = now_ms();
+    let fact = fact_after_check(outcome);
+    with_facts(facts, |f| {
+        f.update_checked_at = checked_at;
+        f.update = fact;
+    });
+    let _ = proxy.send_event(UserEvent::Facts);
 }
 
 async fn push_entry(proxy: &EventLoopProxy<UserEvent>, id: &str) {
@@ -359,7 +391,16 @@ fn stamp_facts(state: &mut TrayState) {
     let Some(obj) = state.payload.as_object_mut() else {
         return;
     };
-    for key in ["shortcut", "shortcut_error", "refresh_minutes"] {
+    for key in [
+        "shortcut",
+        "shortcut_error",
+        "refresh_minutes",
+        "updates",
+        "update",
+        "update_checked_at",
+        "repository",
+        "version",
+    ] {
         obj.insert(key.into(), stamped[key].clone());
     }
 }
@@ -611,6 +652,9 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             if let Some(url) = value.get("url").and_then(Value::as_str) {
                 browse::open(url);
             }
+        }
+        "check-update" => {
+            let _ = state.worker.send(WorkerCmd::CheckUpdate);
         }
         _ => {}
     }

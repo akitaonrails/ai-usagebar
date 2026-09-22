@@ -8,8 +8,10 @@ import MdiMagnifyScan from "~icons/mdi/magnify-scan";
 import MdiApple from "~icons/mdi/apple";
 import MdiLoginVariant from "~icons/mdi/login-variant";
 import MdiMicrosoftWindows from "~icons/mdi/microsoft-windows";
+import MdiInformationOutline from "~icons/mdi/information-outline";
 import MdiPower from "~icons/mdi/power";
 import MdiRefresh from "~icons/mdi/refresh";
+import MdiUpdate from "~icons/mdi/update";
 import MdiRestore from "~icons/mdi/restore";
 import MdiTune from "~icons/mdi/tune-variant";
 import {
@@ -62,6 +64,8 @@ interface FooterProps {
   optionsOpen: boolean;
   payload: Payload;
   updatePending: boolean;
+  onOpenAbout: () => void;
+  onCheckUpdates: () => void;
   onOpenCustomize: () => void;
   onOpenSettings: () => void;
   onOptionsOpenChange: (open: boolean) => void;
@@ -77,6 +81,8 @@ export function Footer({
   optionsOpen,
   payload,
   updatePending,
+  onOpenAbout,
+  onCheckUpdates,
   onOpenCustomize,
   onOpenSettings,
   onOptionsOpenChange,
@@ -127,6 +133,9 @@ export function Footer({
             label="Start at Login"
             onSelect={() => sendCommand("toggle-startup")}
           />
+          <DropdownMenuSeparator />
+          <MenuItem icon={<MdiUpdate />} label="Check for Updates…" onSelect={onCheckUpdates} />
+          <MenuItem icon={<MdiInformationOutline />} label="About" onSelect={onOpenAbout} />
           <MenuItem destructive icon={<MdiPower />} label="Quit" onSelect={() => sendCommand("quit")} />
         </DropdownMenuContent>
       </DropdownMenu>

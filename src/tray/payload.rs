@@ -73,6 +73,40 @@ impl Default for HostFacts {
     }
 }
 
+/// GitHub page this binary was built from (`Cargo.toml` `repository`), or
+/// empty when that field is not a GitHub URL. The About screen opens it.
+fn repository_page() -> String {
+    let raw = crate::update::SOURCE_REPOSITORY
+        .trim()
+        .trim_end_matches('/');
+    let raw = raw.strip_suffix(".git").unwrap_or(raw);
+    if raw.starts_with("https://github.com/") {
+        raw.to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Map a manual release check onto the fact the popover already renders.
+/// `Ok(None)` is "up to date" and clears any previous fact.
+pub fn fact_after_check(outcome: Result<Option<crate::update::Release>, String>) -> Option<UpdateFact> {
+    match outcome {
+        Ok(Some(release)) => Some(UpdateFact {
+            error: String::new(),
+            state: "available".into(),
+            url: release.html_url,
+            version: release.version,
+        }),
+        Ok(None) => None,
+        Err(error) => Some(UpdateFact {
+            error,
+            state: "failed".into(),
+            url: String::new(),
+            version: String::new(),
+        }),
+    }
+}
+
 fn host_os() -> &'static str {
     if cfg!(target_os = "macos") {
         "macos"
@@ -113,6 +147,7 @@ pub fn wrap_report(
         "updates": facts.updates,
         "update": update,
         "update_checked_at": facts.update_checked_at,
+        "repository": repository_page(),
         "host_error": host_error.map(sanitize_untrusted_field),
         "primary": Value::Null,
         "entries": [],
@@ -348,6 +383,12 @@ mod tests {
         assert_eq!(payload["updates"], "notify");
         assert!(payload["update"].is_null());
         assert_eq!(payload["update_checked_at"], 0);
+        assert!(
+            payload["repository"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("https://github.com/")
+        );
         assert!(payload["host_error"].is_null());
         assert_eq!(payload["primary"], "anthropic");
         assert_eq!(payload["entries"][0]["short_name"], "cld");
@@ -379,6 +420,24 @@ mod tests {
         assert_eq!(payload["update"]["version"], "1.11.0");
         assert_eq!(payload["update"]["state"], "available");
         assert_eq!(payload["update"]["error"], "");
+    }
+
+    #[test]
+    fn fact_after_check_maps_newer_current_and_failure() {
+        use crate::update::Release;
+
+        let newer = super::fact_after_check(Ok(Some(Release {
+            assets: Vec::new(),
+            html_url: "https://github.com/akitaonrails/ai-usagebar/releases/tag/v9.0.0".into(),
+            version: "9.0.0".into(),
+        })))
+        .expect("a newer release is a fact");
+        assert_eq!(newer.state, "available");
+        assert_eq!(newer.version, "9.0.0");
+        assert!(super::fact_after_check(Ok(None)).is_none());
+        let failed = super::fact_after_check(Err("offline".into())).expect("a failure is a fact");
+        assert_eq!(failed.state, "failed");
+        assert_eq!(failed.error, "offline");
     }
 
     #[test]

@@ -7,9 +7,9 @@ pub const WINDOW_WIDTH: f64 = 320.0;
 /// Initial height only: the web content drives it afterwards via `resize`.
 pub const WINDOW_HEIGHT: f64 = 420.0;
 /// Smallest height a `resize` request can shrink the popover to.
-/// Sized so the footer Options menu (seven rows, opens upward) fits without
+/// Sized so the footer Options menu (nine rows, opens upward) fits without
 /// Radix scrolling the list on short screens like Customize / provider detail.
-pub const MIN_POPOVER_HEIGHT: f64 = 320.0;
+pub const MIN_POPOVER_HEIGHT: f64 = 360.0;
 /// Breathing room kept between the popover and the monitor's edges.
 pub const WORK_AREA_MARGIN: f64 = 16.0;
 /// Gap between the bottom of the menu bar and the top of the popover.

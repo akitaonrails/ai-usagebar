@@ -370,6 +370,27 @@ body {
   text-align: inherit;
 }
 
+/* Settings (i) hint. Sits on top of a card, so it uses the window surface
+   plus a shadow — the card gray disappears into the row behind it. */
+[data-slot="tooltip-content"].setting-hint {
+  max-width: 200px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 6px 8px;
+  color: var(--label-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  font-size: var(--sz-badge);
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+}
+
+[data-slot="tooltip-content"].setting-hint svg {
+  background: var(--surface);
+  fill: var(--surface);
+}
+
 /* Nav row between Customize and Settings: same card as the grouped list above it.
    Do not use .plain-btn here — that reset zeroes padding and fights the row inset. */
 .cross-link {
