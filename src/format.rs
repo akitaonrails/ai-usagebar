@@ -88,16 +88,13 @@ pub fn usd(v: f64) -> String {
 /// (`0.0 / 0.0`) or an out-of-range ratio, and each caller inventing its own
 /// guard is how two gauges end up disagreeing about what "100%" means.
 ///
-/// **A shared helper, not a chokepoint.** Only [`crate::balance::consumed_pct`]
-/// and `custom::mapping` route through it today. Most percentages that reach a
-/// [`crate::tui::panels::Section::Metric`] are still rounded and clamped inline
-/// as `i32` by a vendor parser and cast at the call site, and several reach
-/// `Metric.pct` by a cast alone. They do agree with this function — the same
-/// round-then-clamp order, and a float-to-int `as` cast maps NaN to `0` — but
-/// they agree because each one happens to do the steps in that order, not
-/// because anything makes them. (Saturation is not what saves them: they clamp
-/// to `100.0` *before* casting, so it never runs.) Prefer this for new callers.
-/// Do not read it as a claim that no other copy of the rule is left.
+/// **A shared helper, not a chokepoint.** Every float percentage that is
+/// rounded and held to 0–100 routes through here, and an `i32` caller widens
+/// the result with `i32::from`. Nothing enforces that. Some percentages follow
+/// a different rule on purpose and do not come here: a whole-number percent
+/// that a parser already rounded is clamped as an integer before it is cast
+/// into `Metric.pct`, and a few vendors round without clamping, or reject an
+/// out-of-range value instead of holding it. Prefer this for new callers.
 ///
 /// # Examples
 ///

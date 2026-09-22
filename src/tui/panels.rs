@@ -20,7 +20,7 @@ use ratatui_bubbletea_theme::BubbleTheme;
 
 use crate::balance::{self, DisplayPrefs, MetricHeadline};
 use crate::countdown;
-use crate::format::{local_time_hms, money, reset_credit_lines, usd};
+use crate::format::{clamp_pct, local_time_hms, money, reset_credit_lines, usd};
 use crate::pacing::{self, PaceSeverity};
 use crate::pango::severity_for;
 use crate::theme::Theme;
@@ -346,7 +346,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         VendorSnapshot::NousResearch(s) => {
             let cell = s
                 .usage_percent()
-                .map(|value| pct("usage", value.round().clamp(0.0, 100.0) as i32))
+                .map(|value| pct("usage", i32::from(clamp_pct(value))))
                 .unwrap_or_else(|| ("—".into(), PaceSeverity::Low));
             (s.plan.clone().unwrap_or_default(), vec![cell])
         }
@@ -369,7 +369,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             ]
             .into_iter()
             .filter_map(|(label, window)| {
-                window.map(|window| pct(label, window.percent.round().clamp(0.0, 100.0) as i32))
+                window.map(|window| pct(label, i32::from(clamp_pct(window.percent))))
             })
             .collect();
             ("OpenCode Go".into(), cells)
@@ -446,9 +446,9 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         VendorSnapshot::Cursor(s) => (!s.unlimited).then_some(s.total_pct),
         VendorSnapshot::Minimax(s) => Some(s.session.utilization_pct.max(s.weekly.utilization_pct)),
         VendorSnapshot::Kiro(s) => Some(s.pct()),
-        VendorSnapshot::NousResearch(s) => s
-            .usage_percent()
-            .map(|value| value.round().clamp(0.0, 100.0) as i32),
+        VendorSnapshot::NousResearch(s) => {
+            s.usage_percent().map(|value| i32::from(clamp_pct(value)))
+        }
         VendorSnapshot::CommandCode(s) => {
             let worst = s.worst_pct();
             (s.five_hour.is_some() || s.weekly.is_some()).then_some(worst)
@@ -1082,12 +1082,12 @@ fn nous_sections(s: &crate::nous::types::AccountSnapshot, now: DateTime<Utc>) ->
         right: None,
     }]);
     if let Some(value) = s.usage_percent() {
-        let pct = value.round().clamp(0.0, 100.0) as i32;
+        let pct = clamp_pct(value);
         sections.push_metric(
             Section::Metric {
                 label: "Usage".into(),
-                pct: pct as u16,
-                severity: severity_for(pct),
+                pct,
+                severity: severity_for(i32::from(pct)),
                 value_label: format!("{pct}%"),
                 footnote: "current period".into(),
             },
@@ -1187,7 +1187,7 @@ fn opencode_go_sections(
             continue;
         };
         any = true;
-        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        let pct = i32::from(clamp_pct(window.percent));
         let projected = crate::usage::UsageWindow {
             utilization_pct: pct,
             resets_at: Some(window.resets_at),
@@ -1201,12 +1201,12 @@ fn opencode_go_sections(
     // is what withholds the window from machine-readable frontends.
     if let Some(window) = s.monthly.as_ref() {
         any = true;
-        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        let pct = clamp_pct(window.percent);
         sections.push_metric(
             Section::Metric {
                 label: "Monthly".into(),
-                pct: pct as u16,
-                severity: severity_for(pct),
+                pct,
+                severity: severity_for(i32::from(pct)),
                 value_label: format!("{pct}%"),
                 footnote: format!(
                     "Resets in {}",

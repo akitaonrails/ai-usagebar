@@ -268,7 +268,7 @@ impl Envelope {
 }
 
 fn to_window(l: &LimitEntry, dur: chrono::Duration) -> Option<UsageWindow> {
-    let utilization_pct = l.percentage?.round().clamp(0.0, 100.0) as i32;
+    let utilization_pct = i32::from(crate::format::clamp_pct(l.percentage?));
     let resets_at = l
         .next_reset_time
         .and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis);

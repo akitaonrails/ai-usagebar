@@ -19,7 +19,7 @@ pub fn build_placeholders(
 ) -> HashMap<&'static str, String> {
     let percentage = snapshot
         .usage_percent()
-        .map(|value| value.round().clamp(0.0, 100.0).to_string())
+        .map(|value| crate::format::clamp_pct(value).to_string())
         .unwrap_or_else(|| NEUTRAL_UNAVAILABLE.into());
     let renewal = crate::countdown::format(snapshot.current_period_end, now);
     let plan = snapshot
@@ -62,7 +62,7 @@ pub fn render_tooltip(snapshot: &AccountSnapshot, now: DateTime<Utc>) -> String 
         ));
     }
     if let Some(pct) = snapshot.usage_percent() {
-        lines.push(format!("Usage: {:.0}%", pct.round().clamp(0.0, 100.0)));
+        lines.push(format!("Usage: {}%", crate::format::clamp_pct(pct)));
     }
     if let Some(remaining) = snapshot.credits_remaining {
         lines.push(format!(
@@ -105,7 +105,7 @@ pub fn render(
     let severity = crate::pango::severity_for(
         snapshot
             .usage_percent()
-            .map(|value| value.round().clamp(0.0, 100.0) as i32)
+            .map(|value| i32::from(crate::format::clamp_pct(value)))
             .unwrap_or(0),
     );
     let mut values = build_placeholders(snapshot, now);

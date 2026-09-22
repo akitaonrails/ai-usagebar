@@ -859,9 +859,9 @@ impl OpenRouterSnapshot {
         if self.total_credits <= 0.0 {
             return 0;
         }
-        ((self.total_usage / self.total_credits) * 100.0)
-            .round()
-            .clamp(0.0, 100.0) as i32
+        i32::from(crate::format::clamp_pct(
+            (self.total_usage / self.total_credits) * 100.0,
+        ))
     }
 }
 
