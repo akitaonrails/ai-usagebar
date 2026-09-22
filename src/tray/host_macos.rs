@@ -40,11 +40,11 @@ use super::panel::{
     cocoa_popover_frame, menu_bar_bottom_y,
 };
 use super::payload::{HostFacts, UpdateFact, fact_after_check, host_payload, wrap_report};
-use super::update_flow;
 use super::strip::{
     BARS_PIXEL_SIDE, BARS_POINT_SIDE, Stars, StripStyle, bar_fill, bars_layout, bars_rgba,
     content_from_payload, parse_strip_ipc,
 };
+use super::update_flow;
 use super::{startup, tui_launch};
 use crate::config::Config;
 

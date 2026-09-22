@@ -89,7 +89,13 @@ fn repository_page() -> String {
 
 /// Map a manual release check onto the fact the popover already renders.
 /// `Ok(None)` is "up to date" and clears any previous fact.
-pub fn fact_after_check(outcome: Result<Option<crate::update::Release>, String>) -> Option<UpdateFact> {
+///
+/// macOS-only: the macOS host's manual check maps through here, while the
+/// Windows host builds its facts inline around its pending/snooze state.
+#[cfg(target_os = "macos")]
+pub fn fact_after_check(
+    outcome: Result<Option<crate::update::Release>, String>,
+) -> Option<UpdateFact> {
     match outcome {
         Ok(Some(release)) => Some(UpdateFact {
             error: String::new(),
@@ -422,6 +428,7 @@ mod tests {
         assert_eq!(payload["update"]["error"], "");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn fact_after_check_maps_newer_current_and_failure() {
         use crate::update::Release;
