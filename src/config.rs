@@ -837,12 +837,23 @@ pub struct OpenCodeGoConfig {
 
 /// Command Code reads the OAuth credential from the official CLI or pi, so it
 /// has no API key of its own. `auth_paths` overrides that search list for a
-/// non-standard install.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+/// non-standard install. It is enabled by default, like OpenAI/Codex; when no
+/// local credential exists the TUI reports that tab as unavailable instead of
+/// silently hiding the provider.
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CommandCodeConfig {
     pub enabled: bool,
     pub auth_paths: Option<Vec<PathBuf>>,
+}
+
+impl Default for CommandCodeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auth_paths: None,
+        }
+    }
 }
 
 /// Ollama Cloud (`ollama.com/api/usage`). Disabled by default: the local
@@ -2286,12 +2297,13 @@ mod tests {
     }
 
     #[test]
-    fn defaults_enable_only_the_four_core_vendors() {
+    fn defaults_enable_only_the_five_core_vendors() {
         let c = Config::default();
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
         assert!(c.is_enabled(VendorId::Zai));
         assert!(c.is_enabled(VendorId::Openrouter));
+        assert!(c.is_enabled(VendorId::CommandCode));
         for opt_in in [
             VendorId::AnthropicApi,
             VendorId::Copilot,
@@ -2309,7 +2321,7 @@ mod tests {
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
-        assert_eq!(c.enabled_vendors().len(), 4);
+        assert_eq!(c.enabled_vendors().len(), 5);
     }
 
     #[test]
@@ -3110,6 +3122,7 @@ enabled = false
                 VendorId::Openai,
                 VendorId::Zai,
                 VendorId::Openrouter,
+                VendorId::CommandCode,
             ]
         );
     }
@@ -3276,6 +3289,7 @@ enabled = false
                 VendorId::Openrouter,
                 VendorId::Deepseek,
                 VendorId::Kimi,
+                VendorId::CommandCode,
             ]
         );
     }

@@ -8,7 +8,8 @@ use crate::format::{placeholders, substitute, updated_at_hm, usd};
 use crate::pacing::PaceSeverity;
 use crate::pango::{color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
-use crate::tooltip::{Line as TooltipLine, render_bordered};
+use crate::tooltip::{Line as TooltipLine, WindowRow, push_window_with_detail, render_bordered};
+use crate::usage::UsageWindow;
 use crate::vendor::{RenderOpts, VendorId, VendorOutcome};
 use crate::waybar::{Class, WaybarOutput};
 
@@ -191,30 +192,41 @@ fn render_tooltip(
     let mut lines = vec![TooltipLine::Center(format!(
         "<span font_weight='bold' foreground='{}'>{}</span>",
         theme.blue,
-        escape(&sanitize(plan))
+        escape(&format!("Command Code {}", sanitize(plan)))
     ))];
     lines.push(TooltipLine::Sep);
     lines.push(TooltipLine::Body(String::new()));
 
     let mut present = false;
     for (label, window) in [
-        ("Session (5h)", snap.five_hour.as_ref()),
-        ("Weekly", snap.weekly.as_ref()),
-        ("Monthly", snap.monthly_window().as_ref()),
+        ("  󰔟  Session (5h)", snap.five_hour.as_ref()),
+        ("  󰃰  Weekly", snap.weekly.as_ref()),
+        ("  󰃰  Monthly", snap.monthly_window().as_ref()),
     ] {
         let Some(window) = window else {
             continue;
         };
+        if present {
+            lines.push(TooltipLine::Body(String::new()));
+        }
         present = true;
-        let values = window_values(Some(window), now);
-        lines.push(TooltipLine::Body(format!(
-            "  {}  {}% · {} of {} · {}",
+        let usage = UsageWindow {
+            utilization_pct: window.pct(),
+            resets_at: window.resets_at,
+            // The shared renderer does not pace this row, but a concrete
+            // value keeps the conversion honest for future callers.
+            window_duration: chrono::Duration::zero(),
+        };
+        let detail = format!("{} of {}", usd(window.used), usd(window.cap));
+        push_window_with_detail(
+            &mut lines,
             label,
-            escape(&values.percent),
-            escape(&values.used),
-            escape(&values.cap),
-            escape(&values.reset)
-        )));
+            &usage,
+            theme,
+            now,
+            WindowRow::default(),
+            Some(&detail),
+        );
     }
     if !present {
         lines.push(TooltipLine::Body(format!(
@@ -225,17 +237,44 @@ fn render_tooltip(
 
     if let Some(credits) = snap.credits.as_ref() {
         lines.push(TooltipLine::Body(String::new()));
-        // The Monthly row above already carries the spend-of-pool detail, so
-        // the ledger line only adds the raw remaining balance and the refill.
-        let reset = match snap.period_end {
-            Some(at) => format!(" · resets in {}", countdown::format(Some(at), now)),
-            None => String::new(),
-        };
+        lines.push(TooltipLine::Sep);
         lines.push(TooltipLine::Body(format!(
-            "  Credits  {}{}",
-            escape(&usd(credits.remaining())),
-            escape(&reset)
+            " <span foreground='{}'>  󰄑  Credits</span>",
+            theme.fg
         )));
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{}'>     balance: {}</span>",
+            theme.dim,
+            escape(&usd(credits.remaining()))
+        )));
+        if credits.monthly != 0.0 {
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{}'>     monthly: {}</span>",
+                theme.dim,
+                escape(&usd(credits.monthly))
+            )));
+        }
+        if credits.purchased != 0.0 {
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{}'>     purchased: {}</span>",
+                theme.dim,
+                escape(&usd(credits.purchased))
+            )));
+        }
+        if credits.free != 0.0 {
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{}'>     free: {}</span>",
+                theme.dim,
+                escape(&usd(credits.free))
+            )));
+        }
+        if let Some(at) = snap.period_end {
+            lines.push(TooltipLine::Body(format!(
+                " <span foreground='{}'>     resets in {}</span>",
+                theme.dim,
+                escape(&countdown::format(Some(at), now))
+            )));
+        }
     }
 
     if stale {
@@ -416,9 +455,10 @@ mod tests {
             at("2026-08-27T02:30:00Z"),
         );
 
-        assert!(tooltip.contains("GOAT"), "{tooltip}");
+        assert!(tooltip.contains("Command Code GOAT"), "{tooltip}");
         assert!(tooltip.contains("Session (5h)"), "{tooltip}");
         assert!(tooltip.contains("$1.23 of $14.00"), "{tooltip}");
+        assert!(tooltip.contains("Resets in 2h 10m"), "{tooltip}");
         assert!(tooltip.contains("Weekly"), "{tooltip}");
         // The monthly allowance renders as a third window row.
         assert!(tooltip.contains("Monthly"), "{tooltip}");
