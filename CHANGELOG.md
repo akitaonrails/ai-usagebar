@@ -22,6 +22,16 @@ Each release is also published at
 
 ### Fixed
 
+- **`usage --json`'s `primary` is now an entry id, not a bare vendor slug.**
+  With named accounts the entry ids carry account labels
+  (`anthropic@claude-me`), so a `primary` serialized straight from
+  `config.ui.primary` named an id no entry carried and every consumer
+  resolved the mismatch differently or not at all. The report resolves the
+  configured primary to the first entry of that vendor (the bare slug, or
+  the first `{slug}@…` account) before serializing; a primary naming a
+  vendor with no entries keeps the slug, and an unset primary stays absent.
+  Consumers can now treat `primary` as an entry id present in `entries`.
+
 - **A named Anthropic account keeps reading its own credential file** while
   that file is there. `resolve_active_label` matches `~/.claude.json`'s
   account marker, and two `CLAUDE_CONFIG_DIR` directories can hold the *same*
