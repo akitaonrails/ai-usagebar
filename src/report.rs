@@ -71,8 +71,8 @@ enum ReportSection {
         /// `"percent"` or `"value"`. A consumer that honours it draws the named
         /// one and leaves the other in the detail line, rather than inferring a
         /// balance row from its label. Always present, so no consumer has to
-        /// guess; not every consumer reads it — the Windows popover ignores the
-        /// field and always draws the percentage.
+        /// guess; not every consumer reads it — Waybar and GNOME take their bar
+        /// text from per-vendor formats instead.
         headline: String,
         severity: String,
         reset_at: Option<DateTime<Utc>>,

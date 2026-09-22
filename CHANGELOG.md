@@ -31,8 +31,11 @@ Each release is also published at
 - **The Omarchy panel and KDE plasmoid read a metric's `headline` instead of
   testing its label for "balance".** The label check put OpenRouter's dollar
   figure on the bar and hid its real consumed percent; OpenRouter now shows the
-  percent by default. The Windows popover consumes the same report but ignores
-  the field, so it still draws the percentage.
+  percent by default.
+- **The tray popover honours `headline` too** (Windows and macOS). A balance
+  metered against `display_limit` with `headline = "amount"` shows the money
+  figure under its meter, with the percentage and the detail line in the hover
+  text; `"percent"` keeps the popover's used/left toggle.
 
 ## [1.21.0] — 2026-09-22
 

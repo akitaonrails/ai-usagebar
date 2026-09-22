@@ -249,8 +249,12 @@ denominator of its own, defaults to `"percent"`. Setting `display_limit` does
 not switch the headline by itself, and choosing `"percent"` with no limit from
 either source leaves the amount on the bar rather than inventing a percentage.
 
-Every frontend reads the metric's own `headline` field out of `usage --json`
-rather than guessing from the row's label.
+The Omarchy panel, the KDE plasmoid and the tray popover (Windows and macOS)
+read the metric's own `headline` field out of `usage --json` rather than
+guessing from the row's label. In the popover, `"amount"` puts the money figure
+under the meter and moves the percentage and the detail line to its hover text;
+`"percent"` keeps the popover's used/left toggle. Waybar and GNOME build their
+bar text from the per-vendor formats, so `headline` does not reach them.
 
 ### GitHub Copilot
 

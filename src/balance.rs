@@ -14,13 +14,13 @@
 //! Who acts on it, as of this commit:
 //! - The Omarchy panel and the KDE plasmoid read the declaration and draw the
 //!   number it names, instead of guessing from the row's label.
-//! - The Windows tray popover also consumes `usage --json`, but its
-//!   `normalizeSection` drops the field, so it always draws the percentage. A
-//!   `display_limit` still reaches it — the row it receives turns from a text
-//!   balance into a meter — but `headline = "amount"` does not.
-//! - Waybar, GNOME and the macOS menu bar are fed by the per-vendor
-//!   `{placeholder}` formats rather than by report sections, so neither setting
-//!   reaches them at all.
+//! - The tray popover (Windows WebView2, macOS WKWebView) reads it too: a
+//!   `"value"` metric puts the money figure under its meter and moves the
+//!   percentage and the detail to the hover text. A `"percent"` metric keeps
+//!   the popover's own used/left toggle, whose "used" reading is the consumed
+//!   percentage.
+//! - Waybar and GNOME are fed by the per-vendor `{placeholder}` formats rather
+//!   than by report sections, so neither setting reaches them at all.
 
 use serde::{Deserialize, Serialize};
 
