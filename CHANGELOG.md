@@ -9,6 +9,17 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Windows tray again embeds the real dashboard** instead of the
+  placeholder page. v1.21.0 shipped a stub popover: `build.rs`'s npm
+  availability probe called `npm` directly, which cannot spawn the Windows
+  `.cmd` shim, so the Vite build was silently skipped and the no-Node
+  placeholder was baked into the release binary. The probe now goes through
+  the same `cmd /C` wrapper the build itself uses, and CI plus the release
+  workflow fail loudly if any tray artifact ever embeds the placeholder
+  text again. (#229)
+
 ## [1.21.0] — 2026-09-22
 
 ### Added

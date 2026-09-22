@@ -204,6 +204,21 @@ jobs:
         shell: pwsh
         run: cargo build --release --target ${{ matrix.target }} --locked
 
+      # #229: v1.21.0 shipped a tray whose popover was the no-npm stub because
+      # build.rs's npm probe could not spawn the .cmd shim. The probe is fixed,
+      # and this guard makes the failure loud forever: an artifact carrying the
+      # placeholder text must never publish.
+      - name: "Guard: tray must embed the dashboard, not the stub (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = 'target/${{ matrix.target }}/release/ai-usagebar-tray.exe'
+          if (Select-String -Path $exe -Pattern 'popover dist missing' -Quiet) {
+            Write-Host "::error::$exe embeds the placeholder popover — build.rs took the no-npm stub path (#229)"
+            exit 1
+          }
+          Write-Host "$exe embeds the real dashboard"
+
       # One zip for humans, plus the three bare exes with `.sha256` sidecars
       # for the tray's self-updater. Sidecars use the `sha256sum` layout
       # ("<hex>  <name>", two spaces) so the Linux and Windows checksums read
