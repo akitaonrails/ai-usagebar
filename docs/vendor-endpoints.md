@@ -29,6 +29,7 @@ defensive and includes opt-in live tests for catching response changes.
 | **OpenCode Go** | `opencode.ai/zen/go/v1/usage` | Rolling, weekly, and monthly `percent` windows with absolute reset timestamps | Yes |
 | **Command Code** | `api.commandcode.ai` `/alpha/billing/credits` + `/alpha/billing/subscriptions` (undocumented; the same calls the official `commandcode` CLI's `/usage` makes) | 5-hour and weekly rolling spend windows ($ used of $ cap), plan, and remaining monthly credits | No — widget/TUI only |
 | **Ollama Cloud** | `ollama.com/api/usage` (undocumented; the same route the official ollama.com/settings page calls) | 5-hour session % and weekly %, **or** a single monthly % (accounts report one shape or the other, never both), per-model request counts, last-4-weeks activity cost, config-supplied plan label | No — widget/TUI only |
+| **OrcaRouter** | `api.orcarouter.ai/v1/dashboard/billing/{usage,subscription}` (one-api compatible; the structs are named verbatim in OrcaRouter's docs) | Credit card — cumulative spend (US cents on the wire), total credit limit, remaining, key expiry; unlimited keys report the `100000000` sentinel and render spend-only | No — widget/TUI only |
 
 When Antigravity uses the Cloud Code fallback, the TUI labels the source
 `Google API`. The saved session may come from the OS keyring or

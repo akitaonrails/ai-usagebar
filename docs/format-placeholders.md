@@ -37,8 +37,8 @@ Antigravity provides elapsed values plus `{session_model}`, `{weekly_model}`,
 `{scoped_model}`, and `{extra_model}` for whichever of its four windows the
 running product reports — a product that exposes only weekly buckets leaves the
 5-hour placeholders empty rather than reporting a figure it never received.
-Provider-specific families such as `{oai_*}`, `{zai_*}`, and `{or_*}` are empty
-for providers that do not define them.
+Provider-specific families such as `{oai_*}`, `{zai_*}`, `{or_*}`, and
+`{orc_*}` are empty for providers that do not define them.
 
 ## Shared and Claude placeholders
 
@@ -149,6 +149,18 @@ reports only `percent` and `resetsAt`, never a duration.
 `{or_used_today}`, `{or_used_week}`, `{or_used_month}`,
 `{or_consumed_pct}`, `{or_free_tier}`, `{or_limit}`,
 `{or_limit_remaining}`, `{or_balance_bar}`
+
+## OrcaRouter
+
+`{orc_spend}`, `{orc_limit}`, `{orc_remaining}`, `{orc_consumed_pct}`,
+`{orc_expires}`, `{orc_bar}`
+
+These report the one-api compatible dashboard billing card. `{orc_spend}` is
+cumulative usage (the API reports it in US cents; `275` renders as `$2.75`).
+`{orc_limit}` and `{orc_remaining}` render `unlimited` for unlimited-quota
+keys — the API's `100000000` sentinel is collapsed to "no limit" rather than a
+$100M wallet, and `{orc_consumed_pct}` renders `—`. `{orc_expires}` counts
+down to the key's `access_until`, or `—` when it has no expiry.
 
 ## DeepSeek
 

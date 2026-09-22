@@ -46,6 +46,7 @@ pub mod ollama;
 pub mod openai;
 pub mod opencode_go;
 pub mod openrouter;
+pub mod orcarouter;
 pub mod outcome;
 pub mod pacing;
 pub mod pango;

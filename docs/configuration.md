@@ -24,6 +24,7 @@ ai-usagebar-tui --config ./config.test.toml
 #                         # | zai | openrouter | deepseek | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
+#                         # | orcarouter
 
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui
@@ -102,6 +103,11 @@ api_key_env = "KILO_API_KEY"
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "NOVITA_API_KEY"
 # api_key = "..."          # used if NOVITA_API_KEY is unset; chmod 600 the file!
+
+[orcarouter]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "ORCAROUTER_API_KEY"
+# api_key = "sk-orca-..."  # used if ORCAROUTER_API_KEY is unset; chmod 600 the file!
 
 [ollama]
 # Disabled by default; enable after minting a key at

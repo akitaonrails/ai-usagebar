@@ -212,6 +212,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             (s.plan.clone(), cells)
         }
         VendorSnapshot::Openrouter(s) => (String::new(), vec![usd_cell(s.balance())]),
+        VendorSnapshot::OrcaRouter(s) => (
+            String::new(),
+            vec![match s.remaining_usd() {
+                Some(remaining) => usd_cell(remaining),
+                None => usd_cell(s.spent_usd()),
+            }],
+        ),
         VendorSnapshot::Deepseek(s) => (String::new(), vec![money_cell(s.balance, &s.currency)]),
         VendorSnapshot::Kimi(s) => {
             let mut cells = vec![pct("5h", s.window_pct())];
@@ -395,6 +402,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .max(),
         VendorSnapshot::Custom(s) => s.metrics.first().map(|metric| i32::from(metric.pct)),
         VendorSnapshot::Openrouter(_)
+        | VendorSnapshot::OrcaRouter(_)
         | VendorSnapshot::Deepseek(_)
         | VendorSnapshot::Kilo(_)
         | VendorSnapshot::Novita(_)
@@ -458,6 +466,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Copilot(s) => copilot_sections(s, now),
                 VendorSnapshot::Zai(s) => zai_sections(s, now, pace_tolerance),
                 VendorSnapshot::Openrouter(s) => openrouter_sections(s),
+                VendorSnapshot::OrcaRouter(s) => orcarouter_sections(s, now),
                 VendorSnapshot::Deepseek(s) => deepseek_sections(s),
                 VendorSnapshot::Kimi(s) => kimi_sections(s, now, pace_tolerance),
                 VendorSnapshot::Kilo(s) => kilo_sections(s),
@@ -853,6 +862,64 @@ fn openrouter_sections(s: &crate::usage::OpenRouterSnapshot) -> SectionBuilder {
             "paid tier".into()
         }],
     });
+    v
+}
+
+/// OrcaRouter is a balance card: spend of a total credit limit, remaining,
+/// and an optional key expiry. An unlimited key (the `100000000` sentinel)
+/// has no denominator, so its panel is spend-only — the same treatment a
+/// missing monthly limit gets, never a $100M wallet.
+fn orcarouter_sections(s: &crate::usage::OrcaRouterSnapshot, now: DateTime<Utc>) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![
+        Section::Title {
+            left: "OrcaRouter".into(),
+            right: None,
+        },
+        Section::Spacer,
+    ]);
+    match (s.limit_usd().filter(|l| *l > 0.0), s.consumed_pct()) {
+        (Some(_), Some(pct)) => {
+            let p = pct.clamp(0, 100) as u16;
+            v.push_metric(
+                Section::Metric {
+                    label: "Credit".into(),
+                    pct: p,
+                    severity: crate::orcarouter::vendor::severity(s),
+                    value_label: usd(s.remaining_usd().unwrap_or_default()),
+                    footnote: format!(
+                        "{} of {} used ({pct}%)",
+                        usd(s.spent_usd()),
+                        usd(s.limit_usd().unwrap_or_default())
+                    ),
+                },
+                // The key's own expiry is the one absolute timestamp this
+                // vendor reports; it travels with the row for frontends.
+                s.access_until,
+            );
+        }
+        _ => {
+            v.push(Section::Text {
+                label: "Spent".into(),
+                value: usd(s.spent_usd()),
+            });
+            v.push(Section::Spacer);
+            v.push(Section::Text {
+                label: "".into(),
+                value: "no credit limit on this key".into(),
+            });
+        }
+    }
+    if let Some(access_until) = s.access_until {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: "Key expires".into(),
+            value: format!(
+                "{} ({})",
+                countdown::format(Some(access_until), now),
+                crate::format::local_date_hm(access_until)
+            ),
+        });
+    }
     v
 }
 

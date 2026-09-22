@@ -28,6 +28,7 @@ use crate::novita;
 use crate::ollama;
 use crate::openai;
 use crate::openrouter;
+use crate::orcarouter;
 use crate::pango::escape;
 use crate::supergrok;
 use crate::theme::Theme;
@@ -167,6 +168,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::OpenCodeGo => opencode_go_output(cli, &config).await,
         Vendor::CommandCode => commandcode_output(cli, &config).await,
         Vendor::Ollama => ollama_output(cli, &config).await,
+        Vendor::OrcaRouter => orcarouter_output(cli, &config).await,
     }
 }
 
@@ -319,6 +321,43 @@ async fn ollama_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let snapshot = outcome.snapshot.clone();
     let vendor_outcome: VendorOutcome = outcome.into();
     Ok(ollama::vendor::render(
+        &vendor_outcome,
+        &snapshot,
+        &theme_from_cli(cli),
+        &RenderOpts::from_cli(cli),
+        Utc::now(),
+    ))
+}
+
+/// OrcaRouter: Bearer key against the one-api compatible dashboard billing
+/// endpoints — spend in US cents, total credit limit, key expiry.
+async fn orcarouter_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let api_key = crate::config::resolve_api_key(
+        "OrcaRouter",
+        &config.orcarouter.api_key_env,
+        config.orcarouter.api_key.as_deref(),
+    )?;
+    let client = http_client()?;
+    let cache = vendor_cache(cli, "orcarouter")?;
+    let endpoints = orcarouter::fetch::Endpoints::default();
+    let outcome = match orcarouter::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
+    let snapshot = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    Ok(orcarouter::vendor::render(
         &vendor_outcome,
         &snapshot,
         &theme_from_cli(cli),

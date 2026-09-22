@@ -9,6 +9,17 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **OrcaRouter** as an opt-in API-key vendor (`[orcarouter]`,
+  `ORCAROUTER_API_KEY`). Reports the credit card from the one-api compatible
+  dashboard billing endpoints — cumulative spend (US cents on the wire,
+  rendered as exact dollars), total credit limit, remaining, and the key's
+  expiry when it has one. Unlimited-quota keys report the `100000000` sentinel
+  in the limit fields and render spend-only, never as a $100M wallet. Errors
+  that arrive as HTTP 200 with an OpenAI error envelope surface as failures,
+  not zeros. (#193)
+
 ## [1.21.1] — 2026-09-22
 
 ### Fixed

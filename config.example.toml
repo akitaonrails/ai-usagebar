@@ -261,6 +261,18 @@ enabled = false
 api_key_env = "NOVITA_API_KEY"     # checked first; if set + non-empty, used
 # api_key = "..."                  # fallback; chmod 600 the file if you use it
 
+[orcarouter]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
+# Credit card from the one-api compatible dashboard billing endpoints
+# (api.orcarouter.ai/v1/dashboard/billing/{usage,subscription}): spend in
+# exact cents, total credit limit, and the key's expiry when it has one.
+# Unlimited-quota keys report the 100000000 sentinel and render spend-only.
+enabled = false
+api_key_env = "ORCAROUTER_API_KEY"  # checked first; if set + non-empty, used
+# api_key = "sk-orca-..."           # fallback; chmod 600 the file if you use it
+
 [moonshot]
 # Disabled by default — enable once you've set a key (env var or inline).
 # Saving a key in the Settings overlay writes the inline fallback AND flips

@@ -65,6 +65,7 @@ pub struct Config {
     pub opencode_go: OpenCodeGoConfig,
     pub commandcode: CommandCodeConfig,
     pub ollama: OllamaConfig,
+    pub orcarouter: OrcaRouterConfig,
     /// User-defined providers, one `[[custom]]` table each.
     pub custom: Vec<CustomProviderConfig>,
 }
@@ -878,6 +879,26 @@ impl Default for OllamaConfig {
             api_key_env: "OLLAMA_API_KEY".to_string(),
             api_key: None,
             plan: "pro".to_string(),
+        }
+    }
+}
+
+/// OrcaRouter (`api.orcarouter.ai/v1/dashboard/billing/*`, one-api
+/// compatible). Opt-in like DeepSeek/Kilo: needs an explicit API key.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct OrcaRouterConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+
+impl Default for OrcaRouterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "ORCAROUTER_API_KEY".to_string(),
+            api_key: None,
         }
     }
 }
@@ -1769,6 +1790,7 @@ impl Config {
             self.grok.api_key.as_deref(),
             self.anthropic_api.api_key.as_deref(),
             self.opencode_go.api_key.as_deref(),
+            self.orcarouter.api_key.as_deref(),
             self.antigravity.oauth_client_secret.as_deref(),
         ]
         .into_iter()
@@ -1847,6 +1869,7 @@ impl Config {
             VendorId::OpenCodeGo => self.opencode_go.enabled,
             VendorId::CommandCode => self.commandcode.enabled,
             VendorId::Ollama => self.ollama.enabled,
+            VendorId::OrcaRouter => self.orcarouter.enabled,
         }
     }
 
@@ -1870,6 +1893,7 @@ impl Config {
             VendorId::Minimax => &self.minimax.api_key_env,
             VendorId::OpenCodeGo => &self.opencode_go.api_key_env,
             VendorId::Ollama => &self.ollama.api_key_env,
+            VendorId::OrcaRouter => &self.orcarouter.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
             // not user-renameable, and the providers with no key at all.
             VendorId::Anthropic
@@ -1902,6 +1926,7 @@ impl Config {
             VendorId::Minimax => self.minimax.api_key.as_deref(),
             VendorId::OpenCodeGo => self.opencode_go.api_key.as_deref(),
             VendorId::Ollama => self.ollama.api_key.as_deref(),
+            VendorId::OrcaRouter => self.orcarouter.api_key.as_deref(),
             VendorId::Anthropic
             | VendorId::Openai
             | VendorId::Copilot
@@ -2318,6 +2343,7 @@ mod tests {
             VendorId::Cursor,
             VendorId::Minimax,
             VendorId::Kiro,
+            VendorId::OrcaRouter,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }

@@ -173,7 +173,8 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         | VendorId::Grok
         | VendorId::Minimax
         | VendorId::OpenCodeGo
-        | VendorId::Ollama => false,
+        | VendorId::Ollama
+        | VendorId::OrcaRouter => false,
     }
 }
 
