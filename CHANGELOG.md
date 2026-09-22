@@ -27,6 +27,12 @@ Each release is also published at
   (`19.150778`) and `onDemandSettings.enabled: null`. The parser rounds the
   percent and treats null as off, so a real macOS session no longer dies as
   schema drift.
+- **Stop probing sibling ports of a `missing CSRF` `agy`.** When the local
+  language server status RPC responds with missing CSRF, the remaining
+  listeners of that same process (such as the companion TLS port) are skipped
+  instead of probed. This eliminates the spurious `http: TLS handshake error:
+  remote error: tls: unrecognized name` diagnostics while still trying other
+  Antigravity products that are running.
 
 ## [1.20.2] — 2026-09-19
 
