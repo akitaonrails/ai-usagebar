@@ -362,22 +362,47 @@ impl AnthropicConfig {
 
     /// The pure half of [`account_target`](AnthropicConfig::account_target),
     /// with "which account the `claude` CLI is signed into" injected — the same
-    /// shape as `Cli::resolve_vendor_with`.
+    /// shape as `Cli::resolve_vendor_with`. Probes the account's own credential
+    /// file with [`Path::exists`]; [`account_target_probing`] takes that probe
+    /// as an argument.
     ///
-    /// When `label` *is* the live CLI login, its credential has been moved into
-    /// the default slot and removed from its named slot. Reading the default
-    /// one keeps exactly one live lineage, so a refresh here cannot invalidate
-    /// the credential `claude` is using (or the other way round). The cache directory
-    /// is unchanged either way, so the tab keeps its identity and its cached
-    /// usage across a switch.
+    /// [`account_target_probing`]: AnthropicConfig::account_target_probing
     pub fn account_target_with(
         &self,
         label: &str,
         cli_active: Option<&str>,
     ) -> Result<(CredsTarget, Cache)> {
+        self.account_target_probing(label, cli_active, |path| path.exists())
+    }
+
+    /// The pure core: `exists` answers whether the account's own credential
+    /// file is there.
+    ///
+    /// When `label` *is* the live CLI login, `account switch` has moved its
+    /// credential into the default slot **and removed it from the named
+    /// one** — so reading the default keeps exactly one live lineage, and a
+    /// refresh here cannot invalidate the credential `claude` is using (or the
+    /// other way round). That only holds while the named slot really is empty,
+    /// which is why it is probed rather than assumed: a `CLAUDE_CONFIG_DIR`
+    /// layout keeps a live credential in every directory, and two of those
+    /// directories can hold the *same* account, which is what
+    /// `resolve_active_label` matches on. Believing the marker there sent every
+    /// fetch for that label to `~/.claude/.credentials.json` — a slot the user
+    /// never logs into, whose refresh token had expired, so a working account
+    /// reported "run `claude` to re-auth" while its own file sat live and
+    /// unread next to it.
+    ///
+    /// The cache directory is unchanged either way, so the tab keeps its
+    /// identity and its cached usage across a switch.
+    pub fn account_target_probing(
+        &self,
+        label: &str,
+        cli_active: Option<&str>,
+        exists: impl Fn(&Path) -> bool,
+    ) -> Result<(CredsTarget, Cache)> {
         let account = self.account(label)?;
         let cache = Cache::for_vendor_account("anthropic", label)?;
-        if cli_active == Some(label) {
+        if cli_active == Some(label) && !exists(&account.credentials_path) {
             return Ok((
                 CredsTarget::Default(crate::anthropic::creds::default_path()?),
                 cache,
@@ -3480,6 +3505,58 @@ enabled = false
         // The cache must not move, or a switch would silently orphan the tab's
         // usage history and show "Loading…" until the next fetch.
         assert_eq!(idle_cache.dir(), live_cache.dir());
+    }
+
+    #[test]
+    fn the_live_cli_account_keeps_its_own_slot_while_that_file_is_there() {
+        // Two CLAUDE_CONFIG_DIRs can hold the same account, and each keeps its
+        // own live credential — `resolve_active_label` matches the account, not
+        // the lineage. Reading the default slot then hands back a credential
+        // the user never logs into.
+        let cfg = AnthropicConfig {
+            accounts: vec![AnthropicAccount {
+                label: "personal".into(),
+                credentials_path: "/tmp/accounts/personal/.credentials.json".into(),
+            }],
+            ..Default::default()
+        };
+
+        let (present, _) = cfg
+            .account_target_probing("personal", Some("personal"), |_| true)
+            .unwrap();
+        assert!(
+            matches!(&present, CredsTarget::Named { path, .. }
+                if path == Path::new("/tmp/accounts/personal/.credentials.json")),
+            "{present:?}"
+        );
+
+        // Emptied by `account switch`: the credential really did move.
+        let (moved, _) = cfg
+            .account_target_probing("personal", Some("personal"), |_| false)
+            .unwrap();
+        assert!(matches!(moved, CredsTarget::Default(_)), "{moved:?}");
+    }
+
+    #[test]
+    fn the_live_cli_accounts_own_file_is_probed_on_disk() {
+        // `account_target_probing` proves the decision; only the entry point
+        // proves that the shipping caller probes at all. Fails on main, where
+        // the live label is routed to the default slot unconditionally.
+        let creds = NamedTempFile::new().unwrap();
+        let cfg = AnthropicConfig {
+            accounts: vec![AnthropicAccount {
+                label: "personal".into(),
+                credentials_path: creds.path().to_path_buf(),
+            }],
+            ..Default::default()
+        };
+        let (target, _) = cfg
+            .account_target_with("personal", Some("personal"))
+            .unwrap();
+        assert!(
+            matches!(&target, CredsTarget::Named { path, .. } if path == creds.path()),
+            "read {target:?} instead of the account's own file"
+        );
     }
 
     #[test]
