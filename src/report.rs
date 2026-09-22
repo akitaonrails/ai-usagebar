@@ -371,10 +371,32 @@ fn format_tab_name(tab: &TabId, vendor_name: &str) -> String {
     crate::display::sanitize_untrusted_field(&name)
 }
 
+/// Resolve the `primary` the report should name to an id `entries` actually
+/// carries.
+///
+/// `config.ui.primary` is a vendor slug, but with named accounts the entry
+/// ids are `vendor@account`, so the raw slug names an id no entry has —
+/// `primary: "anthropic"` next to `anthropic@claude-me`. The first entry of
+/// that vendor (the bare slug, or the first `{slug}@…` account) wins; a slug
+/// with no matching entry is kept as-is, because the config naming a
+/// disabled or absent vendor is information worth reporting, not something
+/// to paper over with a guess. `None` (unset) stays `None`.
+fn resolve_primary(primary: Option<&str>, entries: &[Entry]) -> Option<String> {
+    primary.map(|slug| {
+        // The `@` suffix keeps a slug that is a prefix of another vendor's
+        // ("openai" vs "openrouter") from matching that vendor's accounts.
+        entries
+            .iter()
+            .find(|entry| entry.id == slug || entry.id.starts_with(&format!("{slug}@")))
+            .map(|entry| entry.id.clone())
+            .unwrap_or_else(|| slug.to_string())
+    })
+}
+
 fn render_json_for_primary(entries: &[Entry], primary: Option<&str>) -> String {
     json!({
         "schema_version": USAGE_SCHEMA_VERSION,
-        "primary": primary,
+        "primary": resolve_primary(primary, entries),
         "entries": json_rows(entries),
     })
     .to_string()
@@ -730,6 +752,89 @@ mod tests {
         assert_eq!(value["primary"], "openai");
         assert_eq!(value["entries"][0]["id"], "anthropic");
         assert_eq!(value["entries"][1]["id"], "openai");
+    }
+
+    /// #228: `config.ui.primary` is a vendor slug, but entry ids carry
+    /// account labels for named accounts, so the reported `primary` is
+    /// resolved to an id one of the entries actually has.
+    #[test]
+    fn primary_resolves_to_an_entry_id_the_report_actually_carries() {
+        // Bare entries: the slug already is an entry id, so it stays.
+        let bare = vec![entry("anthropic", Vec::new()), entry("openai", Vec::new())];
+        assert_eq!(
+            resolve_primary(Some("anthropic"), &bare),
+            Some("anthropic".into())
+        );
+
+        // Named accounts only: the first account's entry id is reported, so
+        // `primary` names an id `entries` carries.
+        let accounts = vec![
+            entry("anthropic@claude-me", Vec::new()),
+            entry("anthropic@claude-b3", Vec::new()),
+        ];
+        assert_eq!(
+            resolve_primary(Some("anthropic"), &accounts),
+            Some("anthropic@claude-me".into())
+        );
+
+        // A bare entry wins over accounts of the same vendor: it is the
+        // first entry the slug matches.
+        let mixed = vec![
+            entry("anthropic", Vec::new()),
+            entry("anthropic@claude-me", Vec::new()),
+        ];
+        assert_eq!(
+            resolve_primary(Some("anthropic"), &mixed),
+            Some("anthropic".into())
+        );
+
+        // A slug that prefixes another vendor's name must not match that
+        // vendor's entries: the `@` delimiter is what keeps this exact.
+        let openrouter = vec![entry("openrouter@work", Vec::new())];
+        assert_eq!(
+            resolve_primary(Some("openai"), &openrouter),
+            Some("openai".into())
+        );
+
+        // No matching entry: the config names a disabled or absent vendor,
+        // which is worth reporting as-is rather than papering over.
+        assert_eq!(
+            resolve_primary(Some("cursor"), &accounts),
+            Some("cursor".into())
+        );
+
+        // Unset stays unset.
+        assert_eq!(resolve_primary(None, &accounts), None);
+    }
+
+    /// The same resolution as seen through the rendered JSON: consumers may
+    /// now treat `primary` as an entry id present in `entries`.
+    #[test]
+    fn json_primary_resolves_to_the_first_named_account_entry() {
+        let rendered = render_json_for_primary(
+            &[
+                entry("anthropic@claude-me", Vec::new()),
+                entry("anthropic@claude-b3", Vec::new()),
+            ],
+            Some("anthropic"),
+        );
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value["primary"], "anthropic@claude-me");
+        let ids: Vec<&str> = value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&value["primary"].as_str().unwrap()));
+
+        // The honest fallback: a primary naming a vendor with no entries
+        // keeps the slug instead of picking some other entry.
+        let unmatched =
+            render_json_for_primary(&[entry("anthropic@claude-me", Vec::new())], Some("cursor"));
+        let value: serde_json::Value = serde_json::from_str(&unmatched).unwrap();
+        assert_eq!(value["primary"], "cursor");
+        assert_eq!(value["entries"][0]["id"], "anthropic@claude-me");
     }
 
     #[test]

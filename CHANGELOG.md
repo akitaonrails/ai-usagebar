@@ -30,15 +30,43 @@ Each release is also published at
 
 ### Fixed
 
+- **`usage --json`'s `primary` is now an entry id, not a bare vendor slug.**
+  With named accounts the entry ids carry account labels
+  (`anthropic@claude-me`), so a `primary` serialized straight from
+  `config.ui.primary` named an id no entry carried and every consumer
+  resolved the mismatch differently or not at all. The report resolves the
+  configured primary to the first entry of that vendor (the bare slug, or
+  the first `{slug}@…` account) before serializing; a primary naming a
+  vendor with no entries keeps the slug, and an unset primary stays absent.
+  Consumers can now treat `primary` as an entry id present in `entries`.
+
+- **A named Anthropic account keeps reading its own credential file** while
+  that file is there. `resolve_active_label` matches `~/.claude.json`'s
+  account marker, and two `CLAUDE_CONFIG_DIR` directories can hold the *same*
+  account — each with its own live login. Every fetch for such a label was
+  routed to `~/.claude/.credentials.json` on the assumption that
+  `account switch` had moved the credential into that default slot, so an
+  account whose own file was live and unread next to it reported "token
+  refresh failed; run `claude` to re-auth" from a slot the user never logs
+  into. The default slot is now used only when the account's own file really
+  is gone, which is what a switch leaves behind.
+
 - On macOS, a leftover `~/.claude/.credentials.json` no longer shadows Claude
   Code's live Keychain item. That file-first read 400'd "Refresh token expired"
   and the tray showed **Sign-in expired** while `claude` itself was still
   logged in.
+
 - **Grok Bot live `usagePercent` and on-demand `enabled`.**
   `GetSandUsageStatus` has been observed sending a fractional JSON number
   (`19.150778`) and `onDemandSettings.enabled: null`. The parser rounds the
   percent and treats null as off, so a real macOS session no longer dies as
   schema drift.
+- **Stop probing sibling ports of a `missing CSRF` `agy`.** When the local
+  language server status RPC responds with missing CSRF, the remaining
+  listeners of that same process (such as the companion TLS port) are skipped
+  instead of probed. This eliminates the spurious `http: TLS handshake error:
+  remote error: tls: unrecognized name` diagnostics while still trying other
+  Antigravity products that are running.
 
 ## [1.20.2] — 2026-09-19
 

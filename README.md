@@ -310,7 +310,10 @@ subscription's billing period end.
 
 **There is no key to enter, and no key field in the settings panel.**
 Command Code appears in the provider selector but not in the key list, the same
-way Claude, Codex, Cursor and Kiro do — enable `[commandcode]` and it works.
+way Claude, Codex, Cursor and Kiro do. It is enabled by default like Codex; if
+no local credential exists, the TUI shows the tab as unavailable rather than
+silently omitting the provider. Set `enabled = false` under `[commandcode]` to
+hide it.
 
 Credentials are reused, never issued. The OAuth token comes from
 `~/.commandcode/auth.json` from the official CLI first, then
@@ -607,7 +610,11 @@ that fixes it. It contacts nothing. A frontend drawing a per-provider health
 list reads both and needs no provider table of its own — `needs_credential` is
 `false` only for Antigravity, which has no credential to be missing.
 
-The report also includes the configured `primary` id. Each entry has
+The report also includes the configured `primary`, resolved to an entry id
+from `entries` — with named accounts, the first entry of the configured
+vendor (so `anthropic` reports `anthropic@claude-me` when that is the entry
+present); a primary naming a vendor with no entries keeps the vendor slug.
+Each entry has
 `display_name`, `short_name`, `status`, `stale`, and `fetched_at`; metric rows
 may add `severity`, an absolute `reset_at`, and `window_secs`, the exact length
 of the reset window in seconds. `window_secs` is present only when the vendor
