@@ -33,6 +33,15 @@ enabled = false           # opt in, then press c in ai-usagebar-tui
 # [context.model_context_window_tokens]
 # "claude-opus-4-6" = 1000000    # exact model id overrides the fallback
 
+# Quota-threshold desktop notifications. On by default at 97%: a window that
+# crosses the threshold raises one notification per crossing (Linux uses
+# notify-send; macOS and Windows delivery follow). A window re-arms only when
+# usage drops 7 points below the threshold or its reset moves later, and
+# banked reset credits (Codex, SuperGrok) notify 48h before they expire.
+# [notifications]
+# enabled = true    # false turns every quota/expiry notification off
+# threshold = 97    # 1..=100; at 100 only an exhausted window notifies
+
 [anthropic]
 enabled = true
 # credentials_path = "/home/you/.claude/.credentials.json"
@@ -210,6 +219,28 @@ enabled = false            # disabled by default; enable after `bl auth login --
 For more than one OpenRouter key, see the
 [OpenRouter account guide](openrouter-accounts.md). The existing singular
 `[openrouter]` key remains the default account and needs no migration.
+
+### Notifications
+
+`[notifications]` controls the quota-threshold desktop alerts. They are on by
+default at 97%: after a **fresh** fetch (never a cached or failed one), any
+window at or above the threshold raises one notification — normal urgency
+between the threshold and 99%, critical at 100% (exhausted). Linux delivers
+via `notify-send` (`-a ai-usagebar -c quota`); macOS and Windows delivery
+land in a later release.
+
+One crossing is one notification. A key re-arms only when usage drops 7
+percentage points below the threshold (97 → below 90) or when the window's
+reset moves to a later instant, and the dedupe state lives in
+`~/.cache/ai-usagebar/notifications.json` behind the same file locking as the
+vendor caches. Banked reset credits (Codex, SuperGrok) also notify once, 48
+hours before each credit expires. Bodies carry only vendor-reported absolute
+resets — never a burn-rate estimate.
+
+Delivery is best-effort: a missing or failing notifier, an unwritable state
+file, or lock contention is a silent skip that never affects the bar, the
+report, or any exit code. Both fields are also editable in the TUI Settings
+overlay (`s`).
 
 ### Balance tanks
 

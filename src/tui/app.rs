@@ -483,10 +483,11 @@ pub async fn refresh_one(client: &Client, config: &Config, tab: &TabId) -> TabSt
             // `Utc::now() - cache_age` on every draw and the displayed time would
             // tick upward in real time instead of holding at the last refresh.
             let now = Utc::now();
+            let off_the_wire = outcome.off_the_wire();
             let fetched_at = outcome
                 .cache_age
                 .map(|age| now - chrono::Duration::from_std(age).unwrap_or_default());
-            TabState::Ready(Box::new(ReadyTab {
+            let state = TabState::Ready(Box::new(ReadyTab {
                 snapshot: outcome.snapshot,
                 stale: outcome.stale,
                 last_error: outcome.last_error.map(|(code, message)| {
@@ -499,7 +500,19 @@ pub async fn refresh_one(client: &Client, config: &Config, tab: &TabId) -> TabSt
                     // no balance to meter and no headline to choose.
                     TabSource::Custom { .. } => crate::balance::DisplayPrefs::default(),
                 },
-            }))
+            }));
+            // The single notification hook every frontend shares: TUI, `usage`
+            // report, tray, and the GNOME/KDE/Omarchy frontends all land here.
+            // Wire-fresh outcomes only — never cached, stale, or failed ones —
+            // and best-effort by construction: `run` returns nothing and cannot
+            // change this function's result or the caller's exit code.
+            if off_the_wire
+                && config.notifications.enabled
+                && let Some(input) = crate::notify::RefreshInput::from_tab(tab, &state, now)
+            {
+                let _ = crate::notify::run(input, config.notifications.threshold).await;
+            }
+            state
         }
         Err(e) => TabState::error_with_plan(
             crate::display::sanitize_untrusted_field(&e.user_message()),

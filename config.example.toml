@@ -72,6 +72,15 @@
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"
 
+# Quota-threshold desktop notifications, fired after a fresh fetch when a
+# window crosses the threshold (Linux notify-send today; macOS and Windows
+# delivery follow). One notification per crossing: a window re-arms only when
+# usage drops 7 points below the threshold or the window's reset moves later.
+# Banked reset credits (Codex, SuperGrok) also notify 48h before they expire.
+# [notifications]
+# enabled = true    # false turns every quota/expiry notification off
+# threshold = 97    # 1..=100; at 100 only an exhausted window notifies
+
 # Optional, TUI-only monitor for local Claude Code session context. When
 # enabled, press `c` in ai-usagebar-tui. The scanner reads only bounded tails
 # below ~/.claude/projects, skips subagent transcripts and never follows

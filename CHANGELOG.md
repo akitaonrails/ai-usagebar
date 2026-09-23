@@ -9,6 +9,24 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Quota-threshold desktop notifications.** After a fresh fetch, any vendor
+  window that crosses `[notifications] threshold` (default 97%) raises a
+  `notify-send` notification on Linux (`-a ai-usagebar -c quota`); an
+  exhausted window (100%) is marked critical. Banked reset credits (Codex,
+  SuperGrok) notify 48 hours before they expire. One crossing is one
+  notification: a key re-arms only when usage drops 7 points below the
+  threshold or the window's reset moves to a later instant, and the dedupe
+  state lives in `~/.cache/ai-usagebar/notifications.json` behind the same
+  flock discipline as the vendor caches. Delivery is best-effort by design —
+  a missing or failing notifier, an unwritable state file, or lock contention
+  is a silent skip that never touches the bar, the report, or an exit code.
+  macOS and Windows delivery follow in a later release; the sink seam is in
+  place. Config: `[notifications]` with `enabled` (default `true`) and
+  `threshold` (1..=100, default `97`), also editable in the TUI Settings
+  overlay.
+
 ## [1.22.0] — 2026-09-23
 
 ### Added

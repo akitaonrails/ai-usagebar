@@ -310,8 +310,9 @@ fn report_exit_code(entries: &[Entry]) -> i32 {
 
 /// Stable machine id shared by aggregate views and the macOS menu bar:
 /// `<vendor>@<label>` for named accounts, `custom:<id>` for a `[[custom]]`
-/// provider (which never has accounts).
-fn tab_id(tab: &TabId) -> String {
+/// provider (which never has accounts). Also the entry half of the
+/// notification dedupe key.
+pub(crate) fn tab_id(tab: &TabId) -> String {
     match &tab.source {
         TabSource::Custom { id, .. } => format!("custom:{id}"),
         TabSource::Builtin(vendor) => match &tab.account {

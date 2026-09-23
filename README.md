@@ -28,6 +28,12 @@ codebase.
   initial provider in both the widget and TUI.
 - Atomic caches and file locking prevent duplicate requests from multi-monitor
   Waybar setups.
+- Quota-threshold desktop notifications are on by default: a window crossing
+  97% (configurable in `[notifications]`) raises one `notify-send` alert per
+  crossing on Linux, 100% counts as critical, and banked Codex/SuperGrok
+  reset credits warn 48h before expiring. Set `enabled = false` under
+  `[notifications]` to turn them off — see the
+  [configuration reference](docs/configuration.md#notifications).
 - Network failures keep the previous data visible; HTTP errors appear in the
   tooltip.
 - A vendor that answers HTTP 429 is left alone for five minutes: the last good
@@ -559,6 +565,15 @@ primary = "openai"
 [kimi]
 enabled = true
 # api_key = "..."  # or set KIMI_API_KEY
+```
+
+Desktop notifications for quota thresholds are on by default (97%); to turn
+them off or retune the threshold:
+
+```toml
+[notifications]
+enabled = false
+# threshold = 90   # 1..=100
 ```
 
 See the [configuration reference](docs/configuration.md) for every provider,

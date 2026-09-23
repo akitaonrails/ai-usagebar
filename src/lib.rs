@@ -42,6 +42,7 @@ pub mod kiro;
 pub mod minimax;
 pub mod modelstudio;
 pub mod moonshot;
+pub mod notify;
 pub mod nous;
 pub mod novita;
 pub mod ollama;

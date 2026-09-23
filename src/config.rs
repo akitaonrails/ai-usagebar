@@ -69,6 +69,8 @@ pub struct Config {
     pub ollama: OllamaConfig,
     pub orcarouter: OrcaRouterConfig,
     pub modelstudio: ModelStudioConfig,
+    /// Quota-threshold desktop notifications (`[notifications]`).
+    pub notifications: NotificationsConfig,
     /// User-defined providers, one `[[custom]]` table each.
     pub custom: Vec<CustomProviderConfig>,
 }
@@ -116,6 +118,27 @@ pub struct TrayConfig {
 /// 60 s regardless; this only decides how often the tray asks.
 pub const TRAY_REFRESH_MINUTES: [u64; 3] = [1, 5, 10];
 const DEFAULT_TRAY_REFRESH_MINUTES: u64 = 5;
+
+/// Quota-threshold desktop notifications. On by default at 97%: the bar's
+/// whole job is to make an exhausted window visible before a request fails,
+/// and a notification is that signal for a window you are not looking at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct NotificationsConfig {
+    pub enabled: bool,
+    /// Percentage of a quota window at which a notification fires (1..=100;
+    /// 100 means only an exhausted window notifies).
+    pub threshold: u8,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold: 97,
+        }
+    }
+}
 
 impl TrayConfig {
     pub fn refresh_minutes(&self) -> u64 {
@@ -2054,6 +2077,12 @@ impl Config {
         {
             return Err(AppError::Other(format!(
                 "[tray] refresh_minutes must be one of 1, 5 or 10, got {minutes}"
+            )));
+        }
+        if !(1..=100).contains(&self.notifications.threshold) {
+            return Err(AppError::Other(format!(
+                "[notifications] threshold must be between 1 and 100, got {}",
+                self.notifications.threshold
             )));
         }
         if self.context.context_window_tokens == Some(0) {
@@ -4705,6 +4734,36 @@ enabled = true
             let error = Config::load_from(file.path()).unwrap_err().to_string();
             assert!(error.contains("[tray] refresh_minutes"), "{error}");
             assert!(error.contains("1, 5 or 10"), "{error}");
+        }
+    }
+
+    #[test]
+    fn notifications_default_on_at_97_and_parse_overrides() {
+        let empty = Config::load_from(write_toml("[ui]\n").path()).unwrap();
+        assert!(empty.notifications.enabled);
+        assert_eq!(empty.notifications.threshold, 97);
+
+        let file = write_toml("[notifications]\nenabled = false\nthreshold = 100\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert!(!config.notifications.enabled);
+        assert_eq!(config.notifications.threshold, 100);
+    }
+
+    #[test]
+    fn notifications_threshold_rejects_values_outside_1_to_100() {
+        for threshold in ["0", "101", "255"] {
+            let file = write_toml(&format!("[notifications]\nthreshold = {threshold}\n"));
+            let error = Config::load_from(file.path()).unwrap_err().to_string();
+            assert!(
+                error.contains("[notifications] threshold must be between 1 and 100"),
+                "threshold {threshold}: {error}"
+            );
+        }
+        // The boundaries themselves are valid.
+        for threshold in ["1", "50", "100"] {
+            let file = write_toml(&format!("[notifications]\nthreshold = {threshold}\n"));
+            let config = Config::load_from(file.path()).unwrap();
+            assert_eq!(config.notifications.threshold.to_string(), threshold);
         }
     }
 
