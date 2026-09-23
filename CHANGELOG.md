@@ -31,6 +31,16 @@ Each release is also published at
   that arrive as HTTP 200 with an OpenAI error envelope surface as failures,
   not zeros. (#193)
 
+### Fixed
+
+- **Omarchy Quattro panel: the first provider tab keeps its left border at
+  fractional display scales.** The panel's scroll content sat flush against
+  the `Flickable`'s clip edge, so at a 125% monitor scale Qt snapped the
+  first tab's 1px border to a device pixel outside the clip and only that
+  strip was dropped — the tab rendered with three borders while every other
+  tab kept all four. The content now keeps a hairline of slack on both sides,
+  so no bordered control sits exactly on the clip boundary. (#231)
+
 ## [1.21.1] — 2026-09-22
 
 ### Fixed
