@@ -162,8 +162,6 @@ pub enum Focus {
 pub enum SettingsRow {
     /// A focusable control (primary picker, a key field, or the save row).
     Focus(Focus),
-    /// The collapsed "More providers" header — clicking it expands the section.
-    MoreHeader,
 }
 
 impl Focus {
@@ -291,13 +289,6 @@ pub struct SettingsState {
     pub keys: Vec<KeyInput>,
     /// One-line status displayed in the footer ("saved …", "save failed …").
     pub status: String,
-    /// Per [`KEY_VENDORS`] index: does a key resolve today (env var or inline
-    /// config value)? Unconfigured rows are grouped under a collapsed
-    /// "More providers" section and only revealed by navigating into them.
-    pub configured: Vec<bool>,
-    /// When `true`, the "More providers" section is expanded and its rows are
-    /// rendered and focusable.
-    pub show_more: bool,
 }
 
 impl SettingsState {
@@ -319,14 +310,6 @@ impl SettingsState {
         let keys = KEY_VENDORS
             .iter()
             .map(|kv| KeyInput::from_config(cfg.inline_api_key(kv.id)))
-            .collect();
-        let configured = KEY_VENDORS
-            .iter()
-            .map(|kv| {
-                let env = cfg.api_key_env_for(kv.id);
-                (is_valid_env_var_name(env) && env_set(env))
-                    || cfg.inline_api_key(kv.id).is_some_and(|key| !key.is_empty())
-            })
             .collect();
         let mut primary_choices = cfg.enabled_vendors();
         // Copilot credentials belong to GitHub CLI, so a login cannot write a
@@ -370,8 +353,6 @@ impl SettingsState {
             primary,
             keys,
             status: String::new(),
-            configured,
-            show_more: false,
         }
     }
 
@@ -383,22 +364,16 @@ impl SettingsState {
         }
     }
 
-    /// KEY_VENDORS indices currently visible in the focus ring: configured rows
-    /// always; the "More providers" rows only while expanded.
+    /// KEY_VENDORS indices currently visible in the focus ring.
     fn visible_keys(&self) -> Vec<usize> {
         KEY_VENDORS
             .iter()
             .enumerate()
-            .filter(|(index, _)| {
-                self.show_more || self.configured.get(*index).copied().unwrap_or(false)
-            })
             .map(|(index, _)| index)
             .collect()
     }
 
-    /// Move focus forward through the visible ring. Navigating down past the
-    /// last configured row expands the "More providers" section and lands on
-    /// its first row; navigating up out of it collapses the section again.
+    /// Move focus forward through the visible ring.
     fn next_focus(&self) -> Focus {
         match self.focus {
             Focus::Primary => match self.visible_keys().first() {
@@ -437,44 +412,6 @@ impl SettingsState {
                 None => Focus::Primary,
             },
         }
-    }
-
-    /// Expand or collapse the "More providers" section. Expanding moves focus
-    /// to the first unconfigured row; collapsing moves focus back to the last
-    /// configured row (or Primary when there are none).
-    pub fn toggle_more(&mut self) {
-        self.show_more = !self.show_more;
-        if self.show_more {
-            if let Some(i) = self.first_unconfigured() {
-                self.focus = Focus::Key(i);
-            }
-        } else if let Focus::Key(i) = self.focus
-            && !self.configured.get(i).copied().unwrap_or(false)
-        {
-            self.focus = self
-                .last_configured()
-                .map(Focus::Key)
-                .unwrap_or(Focus::Primary);
-        }
-    }
-
-    /// Index of the first KEY_VENDORS row with no resolvable credential.
-    fn first_unconfigured(&self) -> Option<usize> {
-        KEY_VENDORS
-            .iter()
-            .enumerate()
-            .find(|(index, _)| !self.configured.get(*index).copied().unwrap_or(false))
-            .map(|(index, _)| index)
-    }
-
-    /// Index of the last KEY_VENDORS row with a resolvable credential.
-    fn last_configured(&self) -> Option<usize> {
-        KEY_VENDORS
-            .iter()
-            .enumerate()
-            .rev()
-            .find(|(index, _)| self.configured.get(*index).copied().unwrap_or(false))
-            .map(|(index, _)| index)
     }
 }
 
@@ -527,31 +464,10 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
     }
     match code {
         KeyCode::Tab | KeyCode::Down => {
-            // Moving down past the last configured row reveals the collapsed
-            // "More providers" section; moving back up past its first row
-            // collapses it again, keeping the ring compact by default.
-            if matches!(state.focus, Focus::Key(i) if Some(i) == state.last_configured())
-                && !state.show_more
-                && state.first_unconfigured().is_some()
-            {
-                state.show_more = true;
-                state.focus = Focus::Key(state.first_unconfigured().unwrap());
-                return Action::Continue;
-            }
             state.focus = state.next_focus();
             return Action::Continue;
         }
         KeyCode::BackTab | KeyCode::Up => {
-            if matches!(state.focus, Focus::Key(i) if Some(i) == state.first_unconfigured())
-                && state.show_more
-            {
-                state.show_more = false;
-                state.focus = state
-                    .last_configured()
-                    .map(Focus::Key)
-                    .unwrap_or(Focus::Primary);
-                return Action::Continue;
-            }
             state.focus = state.prev_focus();
             return Action::Continue;
         }
@@ -1014,56 +930,14 @@ pub fn render(
         section_header("Primary vendor", "shown first on the bar / TUI", &bubble),
         primary_line(state, &bubble),
         Line::from(""),
-        section_header(
-            "API keys",
-            "configured rows first; more providers below",
-            &bubble,
-        ),
+        section_header("API keys", "all key providers", &bubble),
     ];
     hits.push((SettingsRow::Focus(Focus::Primary), row_at(1)));
 
     for (i, kv) in KEY_VENDORS.iter().enumerate() {
-        // Unconfigured rows are grouped under the collapsed "More providers"
-        // section and only revealed while it is expanded.
-        if !state.configured.get(i).copied().unwrap_or(false) {
-            continue;
-        }
         let focused = state.focus == Focus::Key(i);
         hits.push((SettingsRow::Focus(Focus::Key(i)), row_at(lines.len())));
         lines.push(key_row(kv, &state.keys[i], focused, &bubble));
-    }
-
-    let unconfigured: Vec<usize> = KEY_VENDORS
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !state.configured.get(*i).copied().unwrap_or(false))
-        .map(|(i, _)| i)
-        .collect();
-    if !unconfigured.is_empty() {
-        if state.show_more {
-            lines.push(section_header(
-                "More providers",
-                &format!("{} without a key", unconfigured.len()),
-                &bubble,
-            ));
-            for &i in &unconfigured {
-                let focused = state.focus == Focus::Key(i);
-                hits.push((SettingsRow::Focus(Focus::Key(i)), row_at(lines.len())));
-                lines.push(key_row(&KEY_VENDORS[i], &state.keys[i], focused, &bubble));
-            }
-        } else {
-            // Collapsed header — click (or navigating past the configured
-            // rows) expands it.
-            hits.push((SettingsRow::MoreHeader, row_at(lines.len())));
-            lines.push(Line::from(vec![
-                bubble.span(" "),
-                Span::styled("More providers", bubble.title.add_modifier(Modifier::BOLD)),
-                bubble.muted(format!(
-                    "   — {} without a key · ↓/click to expand",
-                    unconfigured.len()
-                )),
-            ]));
-        }
     }
 
     lines.push(Line::from(""));
@@ -1284,10 +1158,6 @@ mod tests {
             primary,
             keys: KEY_VENDORS.iter().map(|_| KeyInput::default()).collect(),
             status: String::new(),
-            // All-configured keeps the classic full ring for tests that do not
-            // exercise the "More providers" grouping; grouping tests override.
-            configured: vec![true; KEY_VENDORS.len()],
-            show_more: false,
         }
     }
 
@@ -1378,73 +1248,6 @@ mod tests {
             "a key vendor whose env var is exported must be selectable: {:?}",
             with.primary_choices
         );
-    }
-
-    #[test]
-    fn from_config_marks_inline_keys_as_configured() {
-        let mut cfg = Config::default();
-        cfg.opencode_go.api_key = Some("test-key".into());
-        let s = SettingsState::from_config(&cfg);
-        assert!(s.configured[key_index(VendorId::OpenCodeGo)]);
-        // An unconfigured API-key vendor is only grouped when no env var or
-        // inline key resolves it.
-        if std::env::var("KIMI_API_KEY")
-            .map(|v| v.is_empty())
-            .unwrap_or(true)
-        {
-            assert!(!s.configured[key_index(VendorId::Kimi)]);
-        }
-        assert!(!s.show_more);
-    }
-
-    #[test]
-    fn grouped_ring_expands_at_the_boundary_and_collapses_back() {
-        let mut s = blank_state(VendorId::Anthropic);
-        // Only the first two key rows are configured; the rest are grouped.
-        s.configured = KEY_VENDORS.iter().enumerate().map(|(i, _)| i < 2).collect();
-        assert!(!s.show_more);
-
-        // Down at the last configured row expands the section and focuses its
-        // first (unconfigured) row.
-        s.focus = Focus::Key(1);
-        handle_key(&mut s, KeyCode::Down, KeyModifiers::NONE);
-        assert!(s.show_more);
-        assert_eq!(s.focus, Focus::Key(2));
-
-        // Up at the first unconfigured row collapses the section again.
-        handle_key(&mut s, KeyCode::Up, KeyModifiers::NONE);
-        assert!(!s.show_more);
-        assert_eq!(s.focus, Focus::Key(1));
-
-        // While expanded, Down/Up walk the unconfigured rows normally.
-        handle_key(&mut s, KeyCode::Down, KeyModifiers::NONE);
-        assert_eq!(s.focus, Focus::Key(2));
-        handle_key(&mut s, KeyCode::Down, KeyModifiers::NONE);
-        assert_eq!(s.focus, Focus::Key(3));
-
-        // Reaching Save from the last unconfigured row keeps the section
-        // expanded (the user is inside it); Save is one more step.
-        s.focus = Focus::Key(KEY_VENDORS.len() - 1);
-        handle_key(&mut s, KeyCode::Down, KeyModifiers::NONE);
-        assert_eq!(s.focus, Focus::Save);
-        assert!(s.show_more);
-    }
-
-    #[test]
-    fn toggle_more_moves_focus_to_first_unconfigured_and_back() {
-        let mut s = blank_state(VendorId::Anthropic);
-        s.configured = KEY_VENDORS
-            .iter()
-            .enumerate()
-            .map(|(i, _)| i == 0)
-            .collect();
-        s.focus = Focus::Save;
-        s.toggle_more();
-        assert!(s.show_more);
-        assert_eq!(s.focus, Focus::Key(1));
-        s.toggle_more();
-        assert!(!s.show_more);
-        assert_eq!(s.focus, Focus::Key(0));
     }
 
     #[test]

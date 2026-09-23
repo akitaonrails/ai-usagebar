@@ -898,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_draw_groups_unconfigured_rows_and_records_hits() {
+    fn settings_draw_renders_all_key_rows_and_records_hits() {
         use crate::tui::settings::{Focus as SFocus, KeyInput, SettingsRow, SettingsState};
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
@@ -908,46 +908,29 @@ mod tests {
             .iter()
             .map(|_| KeyInput::default())
             .collect();
-        // Only the first key vendor is configured; the rest are grouped.
-        let configured = crate::tui::settings::KEY_VENDORS
-            .iter()
-            .enumerate()
-            .map(|(i, _)| i == 0)
-            .collect();
         app.settings = Some(SettingsState {
             focus: SFocus::Primary,
             primary_choices: vec![VendorId::Anthropic],
             primary: VendorId::Anthropic,
             keys,
             status: String::new(),
-            configured,
-            show_more: false,
         });
         let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
         terminal.draw(|frame| draw(frame, &app)).unwrap();
 
-        // The collapsed header is present and clickable; hidden rows have no
-        // hit rect and are not focusable.
         let hit = app.hit.borrow();
-        assert!(
-            hit.settings_rows
-                .iter()
-                .any(|(row, _)| matches!(row, SettingsRow::MoreHeader))
-        );
-        assert!(
-            hit.settings_rows
-                .iter()
-                .any(|(row, _)| matches!(row, SettingsRow::Focus(SFocus::Key(0))))
-        );
         assert!(
             hit.settings_rows
                 .iter()
                 .any(|(row, _)| matches!(row, SettingsRow::Focus(SFocus::Save)))
         );
-        assert!(
-            !hit.settings_rows
-                .iter()
-                .any(|(row, _)| matches!(row, SettingsRow::Focus(SFocus::Key(1))))
-        );
+        for index in 0..crate::tui::settings::KEY_VENDORS.len() {
+            assert!(
+                hit.settings_rows.iter().any(
+                    |(row, _)| matches!(row, SettingsRow::Focus(SFocus::Key(i)) if *i == index)
+                ),
+                "missing hit target for key provider {index}"
+            );
+        }
     }
 }

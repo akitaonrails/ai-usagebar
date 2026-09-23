@@ -921,8 +921,7 @@ make clippy                                        # cargo clippy -D warnings
 
 The vendor menu and Overview show only **configured** providers — a provider
 enabled in config without a key is hidden until you configure it in Settings,
-where unconfigured vendors are grouped under a collapsed "More providers"
-section.
+where every API-key provider is listed so it can be configured directly.
 
 The TUI refreshes every 60 seconds. During a refresh it keeps the current values
 visible with a `↻` marker. If the request fails, the last snapshot remains on

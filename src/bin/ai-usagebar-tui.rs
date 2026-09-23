@@ -610,10 +610,6 @@ fn handle_mouse(app: &mut App, m: &event::MouseEvent) -> Option<MouseAction> {
         let row = *row;
         drop(hit);
         match row {
-            SettingsRow::MoreHeader => {
-                s.toggle_more();
-                None
-            }
             SettingsRow::Focus(SFocus::Save) => {
                 // A click on Save is a save: move focus there and fire Enter
                 // through the normal key handler so save logic stays in one

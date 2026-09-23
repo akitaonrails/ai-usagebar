@@ -18,9 +18,8 @@ Each release is also published at
   Settings field to focus it, or click **Save** to save.
 - The TUI vendor menu and Overview list only **configured** providers: a
   provider enabled in config without a key no longer appears as a tab. In the
-  Settings overlay, unconfigured key vendors are grouped under a collapsed
-  "More providers" section (navigate past the last configured row or click the
-  header to expand).
+  Settings overlay, every key-based provider is listed so it can be configured
+  directly even when no key is present yet.
 - **macOS Grok Bot.** `[grokbot]` reads
   `~/Library/Application Support/Grok Bot/sand-secrets.json` with the
   Chromium OSCrypt key from the login Keychain item `Grok Bot Safe Storage`

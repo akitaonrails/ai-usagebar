@@ -269,8 +269,8 @@ pub struct HitTargets {
     pub nav_entries: Vec<(NavTarget, Rect)>,
     /// Footer actions with a mouse-accessible keyboard equivalent.
     pub footer_actions: Vec<(FooterAction, Rect)>,
-    /// Settings overlay interactive rows: key fields and the save row, plus
-    /// the collapsed "More providers" header.
+    /// Settings overlay interactive rows: the primary selector, key fields,
+    /// and save row.
     pub settings_rows: Vec<(SettingsRow, Rect)>,
 }
 
