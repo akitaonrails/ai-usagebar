@@ -24,6 +24,7 @@ ai-usagebar-tui --config ./config.test.toml
 #                         # | zai | openrouter | deepseek | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
+#                         # | orcarouter | modelstudio
 
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui
@@ -110,6 +111,11 @@ api_key_env = "NOVITA_API_KEY"
 # display_limit = 200      # tank size in USD; see "Balance tanks" below
 # headline = "amount"      # "amount" | "percent"
 
+[orcarouter]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "ORCAROUTER_API_KEY"
+# api_key = "sk-orca-..."  # used if ORCAROUTER_API_KEY is unset; chmod 600 the file!
+
 [ollama]
 # Disabled by default; enable after minting a key at
 # https://ollama.com/settings/keys (Bearer for https://ollama.com/api/usage).
@@ -191,6 +197,14 @@ enabled = true             # disabled by default; enable once you've run `kiro-c
 # No API key: reads the AWS SSO OIDC session kiro-cli already wrote to its own
 # data.sqlite3 after you logged in there.
 # db_path = "/home/you/.local/share/kiro-cli/data.sqlite3"
+
+[modelstudio]
+enabled = false            # disabled by default; enable after `bl auth login --console`
+# Alibaba Cloud Model Studio (Bailian) Token Plan. No API key: the credential
+# is the official `bl` CLI's own console login in ~/.bailian/config.json,
+# read-only. The region×site pair recorded there picks the console gateway
+# (cn-beijing/ap-southeast-1 × domestic/international).
+# config_dir = "/home/you/.bailian"   # or set BAILIAN_CONFIG_DIR at runtime
 ```
 
 For more than one OpenRouter key, see the

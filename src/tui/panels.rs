@@ -296,6 +296,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             (s.plan.clone(), cells)
         }
         VendorSnapshot::Openrouter(s) => (String::new(), vec![usd_cell(s.balance())]),
+        VendorSnapshot::OrcaRouter(s) => (
+            String::new(),
+            vec![match s.remaining_usd() {
+                Some(remaining) => usd_cell(remaining),
+                None => usd_cell(s.spent_usd()),
+            }],
+        ),
         VendorSnapshot::Deepseek(s) => (String::new(), vec![money_cell(s.balance, &s.currency)]),
         VendorSnapshot::Kimi(s) => {
             let mut cells = vec![pct("5h", s.window_pct())];
@@ -320,6 +327,19 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
                 vec![("—".into(), PaceSeverity::Low)]
             };
             (s.plan.clone(), cells)
+        }
+        VendorSnapshot::ModelStudio(s) => {
+            // Absent windows drop their cell — no-data is not 0%.
+            let cells = [("5h", s.session.as_ref()), ("wk", s.weekly.as_ref())]
+                .into_iter()
+                .filter_map(|(label, window)| window.map(|w| pct(label, w.utilization_pct)))
+                .collect::<Vec<_>>();
+            (
+                crate::vendor::VendorId::ModelStudio
+                    .display_name()
+                    .to_string(),
+                cells,
+            )
         }
         VendorSnapshot::Antigravity(s) => (
             s.plan.clone(),
@@ -469,6 +489,11 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .max(),
         VendorSnapshot::SuperGrok(s) => Some(s.weekly_pct),
         VendorSnapshot::Grokbot(s) => s.has_included_allowance.then_some(s.weekly_pct),
+        VendorSnapshot::ModelStudio(s) => [s.session.as_ref(), s.weekly.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|w| w.utilization_pct)
+            .max(),
         VendorSnapshot::Ollama(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
@@ -479,6 +504,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .max(),
         VendorSnapshot::Custom(s) => s.metrics.first().map(|metric| i32::from(metric.pct)),
         VendorSnapshot::Openrouter(_)
+        | VendorSnapshot::OrcaRouter(_)
         | VendorSnapshot::Deepseek(_)
         | VendorSnapshot::Kilo(_)
         | VendorSnapshot::Novita(_)
@@ -543,6 +569,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Copilot(s) => copilot_sections(s, now),
                 VendorSnapshot::Zai(s) => zai_sections(s, now, pace_tolerance),
                 VendorSnapshot::Openrouter(s) => openrouter_sections(s, prefs),
+                VendorSnapshot::OrcaRouter(s) => orcarouter_sections(s, now),
                 VendorSnapshot::Deepseek(s) => deepseek_sections(s, prefs),
                 VendorSnapshot::Kimi(s) => kimi_sections(s, now, pace_tolerance),
                 VendorSnapshot::Kilo(s) => kilo_sections(s, prefs),
@@ -551,6 +578,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Grok(s) => grok_sections(s, prefs),
                 VendorSnapshot::SuperGrok(s) => supergrok_sections(s, now),
                 VendorSnapshot::Grokbot(s) => grokbot_sections(s, now),
+                VendorSnapshot::ModelStudio(s) => modelstudio_sections(s, now, pace_tolerance),
                 VendorSnapshot::Antigravity(s) => antigravity_sections(s, now),
                 VendorSnapshot::Cursor(s) => cursor_sections(s, now),
                 VendorSnapshot::Minimax(s) => minimax_sections(s, now, pace_tolerance),
@@ -950,6 +978,64 @@ fn openrouter_sections(
             "paid tier".into()
         }],
     });
+    v
+}
+
+/// OrcaRouter is a balance card: spend of a total credit limit, remaining,
+/// and an optional key expiry. An unlimited key (the `100000000` sentinel)
+/// has no denominator, so its panel is spend-only — the same treatment a
+/// missing monthly limit gets, never a $100M wallet.
+fn orcarouter_sections(s: &crate::usage::OrcaRouterSnapshot, now: DateTime<Utc>) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![
+        Section::Title {
+            left: "OrcaRouter".into(),
+            right: None,
+        },
+        Section::Spacer,
+    ]);
+    match (s.limit_usd().filter(|l| *l > 0.0), s.consumed_pct()) {
+        (Some(_), Some(pct)) => {
+            let p = pct.clamp(0, 100) as u16;
+            v.push_metric(
+                Section::Metric {
+                    label: "Credit".into(),
+                    pct: p,
+                    severity: crate::orcarouter::vendor::severity(s),
+                    value_label: usd(s.remaining_usd().unwrap_or_default()),
+                    footnote: format!(
+                        "{} of {} used ({pct}%)",
+                        usd(s.spent_usd()),
+                        usd(s.limit_usd().unwrap_or_default())
+                    ),
+                },
+                // The key's own expiry is the one absolute timestamp this
+                // vendor reports; it travels with the row for frontends.
+                s.access_until,
+            );
+        }
+        _ => {
+            v.push(Section::Text {
+                label: "Spent".into(),
+                value: usd(s.spent_usd()),
+            });
+            v.push(Section::Spacer);
+            v.push(Section::Text {
+                label: "".into(),
+                value: "no credit limit on this key".into(),
+            });
+        }
+    }
+    if let Some(access_until) = s.access_until {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: "Key expires".into(),
+            value: format!(
+                "{} ({})",
+                countdown::format(Some(access_until), now),
+                crate::format::local_date_hm(access_until)
+            ),
+        });
+    }
     v
 }
 
@@ -1687,6 +1773,35 @@ fn grokbot_sections(s: &crate::usage::GrokbotSnapshot, now: DateTime<Utc>) -> Se
         v.push(Section::Text {
             label: "On-demand".into(),
             value: note.into(),
+        });
+    }
+    v
+}
+
+/// Model Studio Token Plan: a 5h and a weekly window, each of which the
+/// console account may not report. Present windows ride the shared
+/// `push_window`; an absent one is no-data (possibly unlimited), drawn as a
+/// text row — never a 0% meter.
+fn modelstudio_sections(
+    s: &crate::usage::ModelStudioSnapshot,
+    now: DateTime<Utc>,
+    tol: u32,
+) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![Section::Title {
+        left: crate::modelstudio::vendor::PLAN_LABEL.into(),
+        right: None,
+    }]);
+    v.push(Section::Spacer);
+    if let Some(session) = s.session.as_ref() {
+        push_window(&mut v, "Token Plan 5h", session, now, tol, true);
+    }
+    if let Some(weekly) = s.weekly.as_ref() {
+        push_window(&mut v, "Token Plan 7d", weekly, now, tol, true);
+    }
+    if s.session.is_none() && s.weekly.is_none() {
+        v.push(Section::Text {
+            label: "Usage".into(),
+            value: "no usage windows reported".into(),
         });
     }
     v
@@ -3103,6 +3218,104 @@ mod tests {
         snap.window = None;
         let sections = sections_with_metadata_for(&ready(VendorSnapshot::Grokbot(snap)), now(), 5);
         assert_eq!(only_metric(&sections).window, None);
+    }
+
+    fn modelstudio_snap() -> crate::usage::ModelStudioSnapshot {
+        crate::usage::ModelStudioSnapshot {
+            session: Some(crate::usage::UsageWindow {
+                utilization_pct: 42,
+                resets_at: Some(now() + chrono::Duration::hours(2)),
+                window_duration: chrono::Duration::hours(5),
+            }),
+            weekly: Some(crate::usage::UsageWindow {
+                utilization_pct: 74,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            }),
+        }
+    }
+
+    /// Present windows ride the shared window metric, so the absolute reset
+    /// travels with each row and a frontend can pace against the real length.
+    #[test]
+    fn modelstudio_sections_show_both_windows_with_resets() {
+        let sections = sections_with_metadata_for(
+            &ready(VendorSnapshot::ModelStudio(modelstudio_snap())),
+            now(),
+            5,
+        );
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter_map(|projected| match &projected.section {
+                Section::Metric {
+                    label, value_label, ..
+                } => Some((label.clone(), value_label.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            metrics,
+            vec![
+                ("Token Plan 5h".to_string(), "42%".to_string()),
+                ("Token Plan 7d".to_string(), "74%".to_string()),
+            ]
+        );
+        let with_meta: Vec<_> = sections
+            .iter()
+            .filter(|p| matches!(p.section, Section::Metric { .. }))
+            .map(|p| (p.window, p.reset_at))
+            .collect();
+        assert_eq!(
+            with_meta[0],
+            (
+                Some(chrono::Duration::hours(5)),
+                modelstudio_snap().session.unwrap().resets_at
+            )
+        );
+        assert_eq!(
+            with_meta[1],
+            (
+                Some(chrono::Duration::days(7)),
+                modelstudio_snap().weekly.unwrap().resets_at
+            )
+        );
+    }
+
+    /// An absent percentage is no-data (possibly unlimited): the window drops
+    /// its meter and its compact cell — never a 0% anything.
+    #[test]
+    fn modelstudio_absent_windows_are_text_rows_never_zero_meters() {
+        let snap = crate::usage::ModelStudioSnapshot {
+            session: None,
+            weekly: None,
+        };
+        let sections = sections_for(&ready(VendorSnapshot::ModelStudio(snap.clone())), now(), 5);
+        assert!(
+            sections
+                .iter()
+                .all(|s| !matches!(s, Section::Metric { .. })),
+            "no meter without a reported window"
+        );
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { value, .. } if value.contains("no usage windows reported")
+        )));
+        assert_eq!(
+            headline_pct(&VendorSnapshot::ModelStudio(snap.clone())),
+            None
+        );
+        let (_, cells) = compact_cells(&VendorSnapshot::ModelStudio(snap));
+        assert!(cells.is_empty(), "{cells:?}");
+
+        // One window present: one meter, one cell, worst-of headline.
+        let snap = crate::usage::ModelStudioSnapshot {
+            session: None,
+            weekly: modelstudio_snap().weekly,
+        };
+        let (_, cells) = compact_cells(&VendorSnapshot::ModelStudio(snap.clone()));
+        assert_eq!(cells.len(), 1);
+        assert!(cells[0].0.contains("74%"), "{cells:?}");
+        assert_eq!(headline_pct(&VendorSnapshot::ModelStudio(snap)), Some(74));
     }
 
     #[test]

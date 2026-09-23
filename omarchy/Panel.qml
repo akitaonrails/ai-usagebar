@@ -366,7 +366,15 @@ Panel {
 
         Column {
           id: column
-          width: panelFlick.width
+          // The provider tabs are bordered buttons, and the first one in each
+          // row sits flush against this Flickable's clip edge. At fractional
+          // device scales (a 1.25 monitor scale, the shell font at its 12px
+          // base) Qt snaps the 1px border to a device pixel that the clip
+          // discards, so that tab renders with three borders. Keep a hairline
+          // of slack on both sides so no control sits exactly on the clip
+          // boundary. (#231)
+          x: Style.spacing.hairline
+          width: panelFlick.width - Style.spacing.hairline * 2
           spacing: Style.space(12)
 
           PanelHero {

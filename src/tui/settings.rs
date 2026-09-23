@@ -148,6 +148,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         secret_label: "API key",
         note: "ollama.com/settings/keys",
     },
+    KeyVendor {
+        id: VendorId::OrcaRouter,
+        label: "OrcaRouter",
+        section: VendorId::OrcaRouter.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "credit balance",
+    },
 ];
 
 /// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`].

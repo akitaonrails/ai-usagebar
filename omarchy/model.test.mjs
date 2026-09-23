@@ -85,6 +85,13 @@ assert.match(panelSource, /height:\s*visible\s*\?\s*childrenRect\.height\s*:\s*0
 assert.match(panelSource, /width:\s*implicitWidth/);
 assert.doesNotMatch(panelSource, /orientation:\s*ListView\.Horizontal/);
 assert.match(panelSource, /providerList\.forceLayout\(\)/);
+// The scroll content keeps a hairline of slack on both sides of the
+// Flickable's clip edge. The first provider tab is a bordered button, and at
+// fractional device scales (a 1.25 monitor scale) Qt drops the 1px left
+// border of a control that sits exactly on the clip boundary, so that tab
+// rendered with three borders. (#231)
+assert.match(panelSource, /Column\s*\{[\s\S]*?id:\s*column[\s\S]*?x:\s*Style\.spacing\.hairline/);
+assert.match(panelSource, /width:\s*panelFlick\.width\s*-\s*Style\.spacing\.hairline\s*\*\s*2/);
 assert.match(panelSource, /foreground:\s*root\.entryAlarming\s*\?\s*root\.urgent/);
 assert.doesNotMatch(panelSource, /BrandMark[\s\S]*foreground:\s*root\.alarming\s*\?/m);
 const brandMarkSource = fs.readFileSync(new URL('./BrandMark.qml', import.meta.url), 'utf8');

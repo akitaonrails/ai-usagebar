@@ -11,6 +11,7 @@
 # Valid: anthropic | anthropic_api | openai | copilot | zai | openrouter | deepseek
 #        | kimi | kilo | novita | moonshot | grok | supergrok | grokbot | antigravity
 #        | cursor | minimax | kiro | nous | opencode-go | commandcode | ollama
+#        | orcarouter | modelstudio
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
 # open directly on a vendor's tab instead.
 # primary = "anthropic"
@@ -306,6 +307,18 @@ api_key_env = "NOVITA_API_KEY"     # checked first; if set + non-empty, used
 # display_limit = 200              # tank size in USD; see the group note above
 # headline = "amount"              # "amount" | "percent"
 
+[orcarouter]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
+# Credit card from the one-api compatible dashboard billing endpoints
+# (api.orcarouter.ai/v1/dashboard/billing/{usage,subscription}): spend in
+# exact cents, total credit limit, and the key's expiry when it has one.
+# Unlimited-quota keys report the 100000000 sentinel and render spend-only.
+enabled = false
+api_key_env = "ORCAROUTER_API_KEY"  # checked first; if set + non-empty, used
+# api_key = "sk-orca-..."           # fallback; chmod 600 the file if you use it
+
 [moonshot]
 # Disabled by default — enable once you've set a key (env var or inline).
 # Saving a key in the Settings overlay writes the inline fallback AND flips
@@ -479,3 +492,18 @@ enabled = true
 #   ~/.pi/agent/auth.json
 # COMMANDCODE_API_KEY in the environment outranks both.
 # auth_paths = ["~/.commandcode/auth.json"]
+
+# Alibaba Cloud Model Studio (Bailian) Token Plan. No API key: the credential
+# is the official `bl` CLI's own console login, written by
+# `bl auth login --console` to ~/.bailian/config.json and only ever read.
+# Reports the plan's 5-hour and weekly percentage windows with their resets,
+# through the same console gateway the CLI uses; the gateway host follows the
+# file's console_region × console_site pair (cn-beijing/ap-southeast-1 ×
+# domestic/international).
+[modelstudio]
+# Disabled by default — enable after installing the official `bl` CLI and
+# running `bl auth login --console` at least once.
+enabled = false
+# Override the bl CLI's config directory (default ~/.bailian; the
+# BAILIAN_CONFIG_DIR env var does the same at runtime, and this wins).
+# config_dir = "/home/you/.bailian"

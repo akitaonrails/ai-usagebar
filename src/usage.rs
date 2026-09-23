@@ -404,6 +404,8 @@ pub enum VendorSnapshot {
     OpenCodeGo(crate::opencode_go::types::Usage),
     CommandCode(crate::commandcode::types::Snapshot),
     Ollama(OllamaSnapshot),
+    OrcaRouter(OrcaRouterSnapshot),
+    ModelStudio(ModelStudioSnapshot),
     /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
     /// that fetched it holds the `CustomProviderConfig`, and the cache
     /// directory is keyed by its `id`.
@@ -863,6 +865,65 @@ impl OpenRouterSnapshot {
             (self.total_usage / self.total_credits) * 100.0,
         ))
     }
+}
+
+/// OrcaRouter — prepaid credit card from the one-api compatible dashboard
+/// billing endpoints (`/v1/dashboard/billing/usage` + `/subscription`), over an
+/// API key. Usage arrives in **US cents** (`total_usage: 275` = $2.75); the
+/// subscription's limit fields are USD and mean the *total* credit limit
+/// (remaining + used), with `100000000` as the unlimited sentinel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrcaRouterSnapshot {
+    /// Cumulative spend, exact US cents (`total_usage`).
+    pub spent_cents: i64,
+    /// Total credit limit in exact US cents. `None` for unlimited keys (the
+    /// `100000000` sentinel) or when the subscription response carried no
+    /// limit field at all — either way the card is spend-only.
+    pub limit_cents: Option<i64>,
+    /// Key expiry (`access_until`, Unix seconds); `None` = no expiry (a wire
+    /// `0` means the same thing).
+    pub access_until: Option<DateTime<Utc>>,
+}
+
+impl OrcaRouterSnapshot {
+    pub fn spent_usd(&self) -> f64 {
+        self.spent_cents as f64 / 100.0
+    }
+
+    pub fn limit_usd(&self) -> Option<f64> {
+        self.limit_cents.map(|c| c as f64 / 100.0)
+    }
+
+    /// Remaining credit in exact cents. Can be negative (spend past the
+    /// limit) — the sign belongs outside the symbol, like OpenRouter debt.
+    pub fn remaining_cents(&self) -> Option<i64> {
+        self.limit_cents.map(|limit| limit - self.spent_cents)
+    }
+
+    pub fn remaining_usd(&self) -> Option<f64> {
+        self.remaining_cents().map(|c| c as f64 / 100.0)
+    }
+
+    /// Integer-percentage of the limit consumed, computed in cents so no
+    /// float division is involved. `None` when there is no limit — an
+    /// unlimited key has no percentage to be exact *about*.
+    pub fn consumed_pct(&self) -> Option<i32> {
+        self.limit_cents.filter(|l| *l > 0).map(|limit| {
+            let pct = (self.spent_cents.saturating_mul(100)) / limit;
+            pct.clamp(0, 100) as i32
+        })
+    }
+}
+
+/// Alibaba Cloud Model Studio Token Plan — a 5-hour and a weekly ratio
+/// window, either of which the console account may not report. An absent
+/// window is no-data (possibly unlimited), never 0%.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelStudioSnapshot {
+    /// 5-hour window. `None` when `per5HourPercentage` was absent.
+    pub session: Option<UsageWindow>,
+    /// Weekly window. `None` when `per1WeekPercentage` was absent.
+    pub weekly: Option<UsageWindow>,
 }
 
 /// Worst-of severity class for the Waybar bar text color. Mirrors

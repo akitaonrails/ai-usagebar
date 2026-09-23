@@ -168,8 +168,16 @@ jobs:
       - name: Test
         run: cargo test --all-targets --locked
 
-      - name: Test GNOME marker logic
-        run: node gnome-extension/marker-logic.test.mjs
+      # Same guard as the release workflow: a debug tray embedding the
+      # no-npm stub here means the npm probe or the Vite build broke (#229).
+      - name: "Guard: tray must embed the dashboard, not the stub"
+        shell: pwsh
+        run: |
+          $exe = 'target/debug/ai-usagebar-tray.exe'
+          if (Select-String -Path $exe -Pattern 'popover dist missing' -Quiet) {
+            Write-Host "::error::$exe embeds the placeholder popover — build.rs took the no-npm stub path (#229)"
+            exit 1
+          }
 
       - name: Test KDE plasmoid logic
         run: node kde-plasmoid/plasmoid-logic.test.mjs

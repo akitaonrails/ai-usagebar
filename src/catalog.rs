@@ -159,6 +159,10 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         VendorId::Supergrok => (probes.exists)(&cfg.supergrok.grok_binary),
         // The Grok Bot desktop app's own credential file is the login.
         VendorId::Grokbot => any_exists(probes, [crate::grokbot::secrets_path(&cfg.grokbot)]),
+        // The `bl` CLI's own console-login file is the login.
+        VendorId::ModelStudio => {
+            any_exists(probes, [crate::modelstudio::config_path(&cfg.modelstudio)])
+        }
         // Nothing to check: handled by `needs_credential`, never reached.
         VendorId::Antigravity => true,
         // Key-only providers: the environment and inline checks above are the
@@ -173,7 +177,8 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         | VendorId::Grok
         | VendorId::Minimax
         | VendorId::OpenCodeGo
-        | VendorId::Ollama => false,
+        | VendorId::Ollama
+        | VendorId::OrcaRouter => false,
     }
 }
 

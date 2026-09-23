@@ -69,7 +69,7 @@ fn main() {
 const DIST_FILES: [&str; 3] = ["index.html", "popover.js", "popover.css"];
 
 fn npm_available() -> bool {
-    Command::new("npm")
+    npm_command()
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -125,14 +125,24 @@ fn assert_dist(dir: &Path) {
     }
 }
 
-fn npm(dir: &Path, args: &[&str]) {
-    let mut command = if cfg!(windows) {
+fn npm_command() -> std::process::Command {
+    // npm is a .cmd shim on Windows; `Command::new("npm")` cannot spawn it
+    // (CreateProcess does not execute .cmd files), so go through cmd /C —
+    // exactly like `npm()`. One helper for every caller so the availability
+    // probe and the invocation can never disagree again (#229: the probe
+    // called npm directly, always failed on Windows, and the release shipped
+    // the stub popover).
+    if cfg!(windows) {
         let mut cmd = Command::new("cmd");
         cmd.args(["/C", "npm"]);
         cmd
     } else {
         Command::new("npm")
-    };
+    }
+}
+
+fn npm(dir: &Path, args: &[&str]) {
+    let mut command = npm_command();
     let status = command
         .args(args)
         .current_dir(dir)

@@ -39,6 +39,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "GROK_API_KEY",
     "OPENCODE_GO_API_KEY",
     "COMMANDCODE_API_KEY",
+    "ORCAROUTER_API_KEY",
     "GITHUB_COPILOT_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
@@ -178,6 +179,8 @@ pub enum VendorId {
     #[serde(rename = "commandcode")]
     CommandCode,
     Ollama,
+    OrcaRouter,
+    ModelStudio,
 }
 
 /// How a provider authenticates. Drives what a frontend offers a provider that
@@ -230,6 +233,8 @@ impl VendorId {
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
             VendorId::Ollama => "ollama",
+            VendorId::OrcaRouter => "orcarouter",
+            VendorId::ModelStudio => "modelstudio",
         }
     }
 
@@ -260,6 +265,8 @@ impl VendorId {
             VendorId::OpenCodeGo => "OpenCode Go",
             VendorId::CommandCode => "Command Code",
             VendorId::Ollama => "Ollama Cloud",
+            VendorId::OrcaRouter => "OrcaRouter",
+            VendorId::ModelStudio => "Model Studio",
         }
     }
 
@@ -291,6 +298,10 @@ impl VendorId {
             // No distinct Nerd Font mark for Ollama Cloud; the `oll` short
             // name is unique by construction and cannot render as tofu.
             VendorId::Ollama => VendorId::Ollama.short_name(),
+            // Same story for OrcaRouter: the `orc` short name is unique.
+            VendorId::OrcaRouter => VendorId::OrcaRouter.short_name(),
+            // Same story for Model Studio: the `mst` short name is unique.
+            VendorId::ModelStudio => VendorId::ModelStudio.short_name(),
         }
     }
 
@@ -322,6 +333,8 @@ impl VendorId {
             VendorId::OpenCodeGo => "ocg",
             VendorId::CommandCode => "cmc",
             VendorId::Ollama => "oll",
+            VendorId::OrcaRouter => "orc",
+            VendorId::ModelStudio => "mst",
         }
     }
 
@@ -356,6 +369,8 @@ impl VendorId {
             VendorId::OpenCodeGo => "opencode-go",
             VendorId::CommandCode => "commandcode",
             VendorId::Ollama => "ollama",
+            VendorId::OrcaRouter => "orcarouter",
+            VendorId::ModelStudio => "modelstudio",
         }
     }
 
@@ -382,18 +397,21 @@ impl VendorId {
             | VendorId::Grok
             | VendorId::Minimax
             | VendorId::OpenCodeGo
-            | VendorId::Ollama => AuthKind::ApiKey,
+            | VendorId::Ollama
+            | VendorId::OrcaRouter => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
             // the login. Antigravity has no credential file at all (the binary
             // probes whichever local server answers), Cursor and Kiro read the
             // IDE's and kiro-cli's own state, SuperGrok uses the Grok Build
-            // CLI's login, and Grok Bot reads the desktop app's own
-            // OSCrypt-protected session file.
+            // CLI's login, Grok Bot reads the desktop app's own
+            // OSCrypt-protected session file, and Model Studio reads the `bl`
+            // CLI's own console-login file.
             VendorId::Supergrok
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Kiro
-            | VendorId::Grokbot => AuthKind::Local,
+            | VendorId::Grokbot
+            | VendorId::ModelStudio => AuthKind::Local,
         }
     }
 
@@ -415,6 +433,7 @@ impl VendorId {
             VendorId::Minimax => "MINIMAX_API_KEY",
             VendorId::OpenCodeGo => "OPENCODE_GO_API_KEY",
             VendorId::Ollama => "OLLAMA_API_KEY",
+            VendorId::OrcaRouter => "ORCAROUTER_API_KEY",
             // OAuth-first, with an environment override for CI and headless
             // use. Neither name is configurable, so neither has an
             // `api_key_env` field in its config section.
@@ -427,7 +446,8 @@ impl VendorId {
             | VendorId::Antigravity
             | VendorId::Cursor
             | VendorId::Kiro
-            | VendorId::NousResearch => "",
+            | VendorId::NousResearch
+            | VendorId::ModelStudio => "",
         }
     }
 
@@ -458,6 +478,10 @@ impl VendorId {
             VendorId::Antigravity => "Open Antigravity or run `agy`, then Refresh.",
             VendorId::Grok | VendorId::Supergrok => "Sign in with `grok`, then Refresh.",
             VendorId::Grokbot => "Install and sign in to the Grok Bot desktop app, then Refresh.",
+            // Local login through the official CLI's own console session.
+            VendorId::ModelStudio => {
+                "Install the official `bl` CLI and run `bl auth login --console`, then Refresh."
+            }
             // Key-only providers: there is nothing to log into, only a key to
             // put in the config. Ollama Cloud's key is minted at
             // ollama.com/settings/keys; the local `ollama` CLI's Ed25519 key
@@ -471,7 +495,8 @@ impl VendorId {
             | VendorId::Moonshot
             | VendorId::Minimax
             | VendorId::OpenCodeGo
-            | VendorId::Ollama => "Add an API key in Settings, then Refresh.",
+            | VendorId::Ollama
+            | VendorId::OrcaRouter => "Add an API key in Settings, then Refresh.",
         }
     }
 
@@ -483,6 +508,8 @@ impl VendorId {
             VendorId::CommandCode => "commandcode",
             VendorId::NousResearch => "ai-usagebar auth nous login",
             VendorId::Kiro => "kiro-cli login",
+            // The `bl` CLI's console login is the whole credential.
+            VendorId::ModelStudio => "bl auth login --console",
             // Kimi takes a key *or* the Kimi Code CLI's own OAuth login, which
             // is what a subscriber already has locally.
             VendorId::Kimi => "kimi",
@@ -500,7 +527,8 @@ impl VendorId {
             | VendorId::Cursor
             | VendorId::Minimax
             | VendorId::OpenCodeGo
-            | VendorId::Ollama => "",
+            | VendorId::Ollama
+            | VendorId::OrcaRouter => "",
         }
     }
 
@@ -528,6 +556,8 @@ impl VendorId {
             VendorId::OpenCodeGo,
             VendorId::CommandCode,
             VendorId::Ollama,
+            VendorId::OrcaRouter,
+            VendorId::ModelStudio,
         ]
     }
 }
@@ -660,6 +690,7 @@ mod tests {
             "XAI_MANAGEMENT_KEY",
             "ANTHROPIC_ADMIN_KEY",
             "GITHUB_COPILOT_TOKEN",
+            "ORCAROUTER_API_KEY",
         ];
         for name in configured_defaults {
             assert!(VENDOR_SECRET_ENV_VARS.contains(&name), "missing {name}");

@@ -776,6 +776,23 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
             .await?;
             Ok(outcome.into())
         }
+        VendorId::ModelStudio => {
+            // The bl CLI's own console session is the login; its region/site
+            // pair picks the gateway, and only a token fingerprint persists.
+            let creds = crate::modelstudio::resolve_credentials(&config.modelstudio)?;
+            let cache = crate::cache::Cache::for_vendor("modelstudio")?;
+            let endpoints =
+                crate::modelstudio::fetch::Endpoints::for_gateway(creds.region, creds.site);
+            let outcome = crate::modelstudio::fetch_snapshot_with(
+                client,
+                &creds,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
         VendorId::Minimax => {
             let api_key = crate::config::resolve_api_key(
                 "MiniMax",
@@ -887,6 +904,24 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                 client,
                 &api_key,
                 &config.ollama.plan,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
+        VendorId::OrcaRouter => {
+            let api_key = crate::config::resolve_api_key(
+                "OrcaRouter",
+                &config.orcarouter.api_key_env,
+                config.orcarouter.api_key.as_deref(),
+            )?;
+            let cache = crate::cache::Cache::for_vendor("orcarouter")?;
+            let endpoints = crate::orcarouter::fetch::Endpoints::default();
+            let outcome = crate::orcarouter::fetch_snapshot(
+                client,
+                &api_key,
                 &cache,
                 &endpoints,
                 DEFAULT_TTL,

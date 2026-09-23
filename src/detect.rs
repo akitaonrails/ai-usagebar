@@ -93,6 +93,12 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
             crate::commandcode::creds::resolve(config.commandcode.auth_paths.as_deref()).is_ok()
         }
         VendorId::Ollama => key_present(config, vendor),
+        VendorId::OrcaRouter => key_present(config, vendor),
+        // File-exists only, like Grok Bot: parsing the JSON here would be
+        // wasted work — the fetch reads the same file and reports honestly.
+        VendorId::ModelStudio => crate::modelstudio::config_path(&config.modelstudio)
+            .map(|path| crate::modelstudio::creds::config_present_at(&path))
+            .unwrap_or(false),
     }
 }
 
