@@ -425,6 +425,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at,
+            display: Default::default(),
         }))
     }
 

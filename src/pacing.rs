@@ -141,7 +141,11 @@ pub fn calc(
 ///
 /// `delta <= -10` → low (green); `-10..=0` → mid (yellow);
 /// `1..=9` → high (orange); `>= 10` → critical (red).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The variants are declared least to most severe, and the derived `Ord`
+/// follows that order — so `a.max(b)` is "whichever of the two is worse", which
+/// is how a row with two independent severity sources (a money tier and a
+/// percentage tier) picks the one to paint with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PaceSeverity {
     Low,
     Mid,

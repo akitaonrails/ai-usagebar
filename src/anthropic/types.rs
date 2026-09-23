@@ -225,7 +225,7 @@ impl UsageResponse {
                 // Round to nearest, matching claudebar's `| round` jq filter,
                 // then absorb the overshoot `de_percent` deliberately lets
                 // through (100.4 → 100) so the bar never renders past full.
-                utilization_pct: (w.utilization.round() as i32).clamp(0, 100),
+                utilization_pct: i32::from(crate::format::clamp_pct(w.utilization)),
                 resets_at: w
                     .resets_at
                     .as_deref()

@@ -147,7 +147,7 @@ fn percent(value: &Value) -> Option<i32> {
         .or_else(|| value.as_str()?.trim().parse::<f64>().ok())?;
     value
         .is_finite()
-        .then(|| value.round().clamp(0.0, 100.0) as i32)
+        .then(|| i32::from(crate::format::clamp_pct(value)))
 }
 
 /// GitHub has returned both RFC3339 `quota_reset_date_utc` and date-only

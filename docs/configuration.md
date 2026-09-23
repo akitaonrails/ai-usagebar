@@ -61,6 +61,7 @@ api_key_env = "ZAI_API_KEY"
 enabled = true
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
+# headline = "percent"          # "percent" | "amount"; see "Balance tanks" below
 # show_default_account = false  # hide default when named accounts exist
 
 # [[openrouter.accounts]]
@@ -72,6 +73,8 @@ api_key_env = "OPENROUTER_API_KEY"
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "DEEPSEEK_API_KEY"
 # api_key = "sk-..."       # used if DEEPSEEK_API_KEY is unset; chmod 600 the file!
+# display_limit = 200      # tank size in USD; see "Balance tanks" below
+# headline = "amount"      # "amount" | "percent"
 
 [kimi]
 enabled = true             # disabled by default; a Kimi Code CLI login is enough
@@ -98,11 +101,15 @@ enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "KILO_API_KEY"
 # api_key = "..."          # used if KILO_API_KEY is unset; chmod 600 the file!
 # organization_id = "org_..."   # team balance; omit for the personal balance
+# display_limit = 200           # tank size in USD; see "Balance tanks" below
+# headline = "amount"           # "amount" | "percent"
 
 [novita]
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "NOVITA_API_KEY"
 # api_key = "..."          # used if NOVITA_API_KEY is unset; chmod 600 the file!
+# display_limit = 200      # tank size in USD; see "Balance tanks" below
+# headline = "amount"      # "amount" | "percent"
 
 [orcarouter]
 enabled = true             # disabled by default; enable once you add an API key
@@ -121,6 +128,8 @@ enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "MOONSHOT_API_KEY"
 # api_key = "sk-..."       # used if MOONSHOT_API_KEY is unset; chmod 600 the file!
 # region = "global"        # global → api.moonshot.ai (USD) | cn → api.moonshot.cn (CNY)
+# display_limit = 200      # tank size in the region's currency; see "Balance tanks"
+# headline = "amount"      # "amount" | "percent"
 
 [grok]
 enabled = true             # disabled by default; enable once you add an API key
@@ -129,6 +138,8 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 # api_key = "..."          # used if XAI_MANAGEMENT_KEY is unset; chmod 600 the file!
 # Required for organization-scoped keys; auto-resolved for team-scoped ones.
 # team_id = "..."
+# display_limit = 200      # tank size in USD; see "Balance tanks" below
+# headline = "amount"      # "amount" | "percent"
 
 [supergrok]
 enabled = true             # disabled by default; enable once you've run `grok login`
@@ -199,6 +210,65 @@ enabled = false            # disabled by default; enable after `bl auth login --
 For more than one OpenRouter key, see the
 [OpenRouter account guide](openrouter-accounts.md). The existing singular
 `[openrouter]` key remains the default account and needs no migration.
+
+### Balance tanks
+
+DeepSeek, Kilo, Novita, Moonshot and prepaid Grok report how much money is
+**left** and nothing else. There is no denominator in those responses, so
+there is nothing to draw a meter against and the row is a plain balance.
+
+`display_limit` supplies that denominator yourself — the size of the tank, in
+the currency that vendor already reports:
+
+```toml
+[deepseek]
+display_limit = 200        # you topped up $200 and want to watch it burn down
+```
+
+It must be finite and greater than zero; anything else fails at load with the
+offending section named. There is no default and no built-in figure: leave it
+out and nothing changes.
+
+It is a fallback, never an override: a vendor that states a limit of its own
+keeps it. That is why **`[openrouter]` has no `display_limit` at all**. It
+reports credits purchased against credits used (and a per-key limit when the key
+has one), so there is nothing to fall back to — and in the one case where a tank
+would not simply be ignored, a free-tier account that purchased nothing,
+honouring it would be actively wrong: that row's percentage comes from the API,
+not from the tank, so the bar would read `0%` for an account with money in it.
+A free-tier OpenRouter account therefore keeps its dollar figure on the bar even
+at the `"percent"` default. `[openrouter]` does take `headline`.
+
+The Anthropic Admin API's `monthly_limit` is a separate, older setting and is
+unaffected.
+
+The percentage is **consumed**, matching every other meter in the app:
+
+```
+(display_limit - balance) / display_limit, clamped to 0–100
+```
+
+A balance above the cap reads as 0% used; the money figure is what says how far
+above it sits.
+
+`headline` is a separate choice: which of the two numbers goes on the bar.
+
+| value       | bar        | detail line |
+| ----------- | ---------- | ----------- |
+| `"amount"`  | `$50.00`   | `75% of $200.00 used ($50.00 left)` |
+| `"percent"` | `75%`      | `$50.00 of $200.00 left (75% used)` |
+
+Balance vendors default to `"amount"`; `[openrouter]`, which always has a
+denominator of its own, defaults to `"percent"`. Setting `display_limit` does
+not switch the headline by itself, and choosing `"percent"` with no limit from
+either source leaves the amount on the bar rather than inventing a percentage.
+
+The Omarchy panel, the KDE plasmoid and the tray popover (Windows and macOS)
+read the metric's own `headline` field out of `usage --json` rather than
+guessing from the row's label. In the popover, `"amount"` puts the money figure
+under the meter and moves the percentage and the detail line to its hover text;
+`"percent"` keeps the popover's used/left toggle. Waybar and GNOME build their
+bar text from the per-vendor formats, so `headline` does not reach them.
 
 ### GitHub Copilot
 

@@ -463,7 +463,7 @@ fn to_window(w: &Window, default_dur: chrono::Duration) -> UsageWindow {
             .and_then(|d| chrono::Utc::now().checked_add_signed(d)),
     };
     UsageWindow {
-        utilization_pct: (w.used_percent.round() as i32).clamp(0, 100),
+        utilization_pct: i32::from(crate::format::clamp_pct(w.used_percent)),
         resets_at,
         window_duration: dur,
     }

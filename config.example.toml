@@ -187,6 +187,11 @@ api_key_env = "ZAI_API_KEY"      # checked first; if set + non-empty, used
 enabled = true
 api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."
+# Which number goes on the bar. OpenRouter reports credits purchased against
+# credits used, so it has a denominator of its own and defaults to "percent";
+# "amount" puts the dollar balance there instead. There is deliberately no
+# display_limit here — see the "Account-balance vendors" note below.
+# headline = "percent"           # "percent" | "amount"
 # Named keys appear as separate TUI/report entries and use isolated caches.
 # The default key above stays visible unless this is false. It is always kept
 # when no named accounts exist.
@@ -203,6 +208,10 @@ api_key_env = "OPENROUTER_API_KEY"
 enabled = false
 api_key_env = "DEEPSEEK_API_KEY"  # checked first; if set + non-empty, used
 # api_key = "sk-..."              # fallback; chmod 600 the file if you use it
+# Turn the balance into a meter by stating the tank size — see the
+# "Account-balance vendors" note below for both settings.
+# display_limit = 200             # e.g. a $200 top-up you want to burn down
+# headline = "amount"              # "amount" | "percent"
 
 [ollama]
 # Disabled by default. Ollama Cloud quota comes from the same route the
@@ -237,6 +246,38 @@ api_key_env = "KIMI_API_KEY"      # checked first; if set + non-empty, used
 # --- Account-balance vendors -------------------------------------------------
 # These report your REMAINING credit as money, rather than plan usage as a %.
 # All are opt-in and never fetch until enabled with a key present.
+#
+# Two optional display settings apply to every vendor in this group.
+# [openrouter] takes `headline` too, but NOT `display_limit`:
+#
+#   display_limit = 200   Your tank size, in the currency that vendor already
+#                         reports. These APIs state only what is LEFT, never
+#                         what the tank holds, so there is no denominator to
+#                         draw a meter against until you supply one. There is
+#                         no default: leave it out and the row stays a plain
+#                         balance. It is a fallback, never an override — a
+#                         vendor that states a limit of its own keeps it. That
+#                         is why [openrouter] has no display_limit at all: it
+#                         reports credits purchased, and in the one case where
+#                         a tank would not simply be ignored — a free-tier
+#                         account that purchased nothing — honouring it would
+#                         put "0%" on the bar for an account with money in it,
+#                         because that row's percentage comes from the API and
+#                         not from the tank.
+#
+#   headline = "amount"   Which of the two numbers goes on the bar: "amount"
+#                         (the money) or "percent" (how much of the tank is
+#                         used). Balance vendors default to "amount";
+#                         OpenRouter, which always has a denominator, defaults
+#                         to "percent". Whichever you pick, the other number
+#                         stays in the detail line. Setting display_limit does
+#                         not switch this by itself, and picking "percent"
+#                         with no limit from either source leaves the amount
+#                         on the bar.
+#
+# The percentage is CONSUMED, matching every other meter here:
+# (display_limit - balance) / display_limit, clamped to 0-100. A balance above
+# the cap reads as 0% used.
 
 [kilo]
 # Disabled by default — enable once you've set a key (env var or inline).
@@ -251,6 +292,8 @@ api_key_env = "KILO_API_KEY"       # checked first; if set + non-empty, used
 # Omit for the personal balance. Switching this refetches rather than reusing
 # the previous account's cached figure.
 # organization_id = "org_..."
+# display_limit = 200              # tank size in USD; see the group note above
+# headline = "amount"              # "amount" | "percent"
 
 [novita]
 # Disabled by default — enable once you've set a key (env var or inline).
@@ -261,6 +304,8 @@ api_key_env = "KILO_API_KEY"       # checked first; if set + non-empty, used
 enabled = false
 api_key_env = "NOVITA_API_KEY"     # checked first; if set + non-empty, used
 # api_key = "..."                  # fallback; chmod 600 the file if you use it
+# display_limit = 200              # tank size in USD; see the group note above
+# headline = "amount"              # "amount" | "percent"
 
 [orcarouter]
 # Disabled by default — enable once you've set a key (env var or inline).
@@ -286,6 +331,8 @@ api_key_env = "MOONSHOT_API_KEY"   # checked first; if set + non-empty, used
 # rather than showing the other region's figure:
 #   global -> api.moonshot.ai (USD)   |   cn -> api.moonshot.cn (CNY)
 # region = "global"
+# display_limit = 200              # tank size in the region's currency
+# headline = "amount"              # "amount" | "percent"
 
 [grok]
 # Disabled by default — enable once you've set a key (env var or inline).
@@ -304,6 +351,8 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # not a team), so set the team explicitly here. Without it, an org-scoped key
 # reports an error saying so instead of querying the wrong team.
 # team_id = "..."
+# display_limit = 200              # tank size in USD; see the group note above
+# headline = "amount"              # "amount" | "percent"
 
 # SuperGrok subscription usage — distinct from [grok] above. No API key of
 # its own: the official Grok Build CLI owns login, OIDC/provider refresh,

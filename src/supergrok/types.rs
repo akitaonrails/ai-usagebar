@@ -226,7 +226,7 @@ fn checked_percent(value: f64) -> Result<i32> {
             "Grok Build billing percentage is outside the supported range".into(),
         ));
     }
-    Ok(value.round().clamp(0.0, 100.0) as i32)
+    Ok(i32::from(crate::format::clamp_pct(value)))
 }
 
 fn resolve_period(cfg: &BillingConfig) -> SuperGrokPeriod {

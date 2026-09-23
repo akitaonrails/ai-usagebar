@@ -418,11 +418,35 @@ const balance = model.parseReport(JSON.stringify({entries: [{
   sections: [{type: 'text', label: 'Balance', value: '$8.42'}]
 }]})).entries[0];
 assert.equal(model.headline(balance).text, '$8.42');
-const meteredBalance = model.parseReport(JSON.stringify({entries: [{
+// The metric names its own headline; the label plays no part. A metric that
+// says nothing is a percentage, which is what OpenRouter's "Credit balance" row
+// is — the old label check put its dollar figure on the bar and hid the percent.
+const metered = (headline) => model.parseReport(JSON.stringify({entries: [{
   id: 'openrouter', error: null,
-  sections: [{type: 'metric', label: 'Credit balance', percent: 25, value: '$75.00', detail: ''}]
+  sections: [Object.assign(
+    {type: 'metric', label: 'Credit balance', percent: 25, value: '$75.00', detail: ''},
+    headline === undefined ? {} : {headline: headline})]
 }]})).entries[0];
-assert.equal(model.headline(meteredBalance).text, '$75.00');
+assert.equal(model.headline(metered(undefined)).text, '25%');
+assert.equal(model.headline(metered('percent')).text, '25%');
+assert.equal(model.headline(metered('value')).text, '$75.00');
+// An unrecognized word is not a licence to invent a third rendering.
+assert.equal(model.headline(metered('dollars')).text, '25%');
+// A "value" headline with nothing to show falls back rather than blanking.
+const emptyValue = model.parseReport(JSON.stringify({entries: [{
+  id: 'deepseek', error: null,
+  sections: [{type: 'metric', label: 'Balance', percent: 60, value: '',
+              detail: '', headline: 'value'}]
+}]})).entries[0];
+assert.equal(model.headline(emptyValue).text, '60%');
+// A percent headline on a row whose label says "balance" is drawn as a percent.
+const meteredTank = model.parseReport(JSON.stringify({entries: [{
+  id: 'deepseek', error: null,
+  sections: [{type: 'metric', label: 'Balance', percent: 75, value: '$50.00',
+              detail: '$50.00 of $200.00 left (75% used)', headline: 'percent'}]
+}]})).entries[0];
+assert.equal(model.headline(meteredTank).text, '75%');
+assert.equal(model.headline(meteredTank).percent, 75);
 
 assert.equal(model.parseReport('{').ok, false);
 assert.equal(model.parseReport('{}').ok, false);

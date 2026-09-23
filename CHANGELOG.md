@@ -11,6 +11,20 @@ Each release is also published at
 
 ### Added
 
+- **A tank for a prepaid balance.** DeepSeek, Kilo, Novita, Moonshot and
+  prepaid Grok report money remaining and no denominator, so their row was a
+  plain balance. `[vendor] display_limit` states the tank size, in the currency
+  that vendor already reports, and turns it into a consumed meter —
+  `(display_limit - balance) / display_limit`, clamped 0–100, so a balance over
+  the cap reads 0% used. It must be finite and greater than zero, there is no
+  default, and it is a fallback rather than an override: a vendor that states
+  its own limit keeps it, which is why `[openrouter]` has none.
+- **`[vendor] headline`.** Picks which number goes on the bar, `"amount"` or
+  `"percent"`; whichever is not the headline stays in the detail line. Balance
+  vendors default to `"amount"`, OpenRouter to `"percent"`. Setting
+  `display_limit` does not switch it, and `"percent"` with no limit from either
+  source leaves the amount on the bar. Report metrics carry the resolved choice
+  as a new `headline` field (`"percent"` or `"value"`).
 - **Alibaba Cloud Model Studio Token Plan** as an opt-in local-login vendor
   (`[modelstudio]`). Reads the console session the official `bl` CLI stores
   at `~/.bailian/config.json` after `bl auth login --console` (read-only;
@@ -30,6 +44,17 @@ Each release is also published at
   in the limit fields and render spend-only, never as a $100M wallet. Errors
   that arrive as HTTP 200 with an OpenAI error envelope surface as failures,
   not zeros. (#193)
+
+### Changed
+
+- **The Omarchy panel and KDE plasmoid read a metric's `headline` instead of
+  testing its label for "balance".** The label check put OpenRouter's dollar
+  figure on the bar and hid its real consumed percent; OpenRouter now shows the
+  percent by default.
+- **The tray popover honours `headline` too** (Windows and macOS). A balance
+  metered against `display_limit` with `headline = "amount"` shows the money
+  figure under its meter, with the percentage and the detail line in the hover
+  text; `"percent"` keeps the popover's used/left toggle.
 
 ### Fixed
 
