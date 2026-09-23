@@ -78,7 +78,6 @@ Each release is also published at
   the same `cmd /C` wrapper the build itself uses, and CI plus the release
   workflow fail loudly if any tray artifact ever embeds the placeholder
   text again. (#229)
->>>>>>> origin/main
 
 ## [1.21.0] — 2026-09-22
 
