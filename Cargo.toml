@@ -85,7 +85,6 @@ unicode-width = "0.2"
 rustix = { version = "1", features = ["process"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
 # Same tray popover host as Windows: NSStatusItem + WKWebView.
 tao = "0.37"
 wry = "0.57"
@@ -116,6 +115,12 @@ objc2-app-kit = { version = "0.3.2", features = [
 ] }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"] }
 png = "0.17"
+
+# Only the opt-in Keychain tests use it (item counting). Production writes go
+# through `security(1)`, so a native Keychain write cannot creep back in
+# without first re-adding this as a real dependency.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+security-framework = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [

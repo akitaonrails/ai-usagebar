@@ -20,6 +20,24 @@ Each release is also published at
   that arrive as HTTP 200 with an OpenAI error envelope surface as failures,
   not zeros. (#193)
 
+### Fixed
+
+- **macOS Claude Code Keychain prompts, the oversized case (#148).** Releases
+  1.16.0 through 1.21.1 still wrote a refreshed credential through the native
+  Security.framework API whenever the composed `security -i` line exceeded
+  the 4000-byte operational cap. That case is now the normal one: Claude Code
+  keeps `mcpOAuth` discovery state for every MCP plugin in the same item, so a
+  real blob (3640 bytes, 302 quotes, ~4020 bytes composed, measured
+  2026-09-23) took the native path at every token refresh, re-stamped the
+  item with ai-usagebar's `cdhash:` partition, and brought the dialog back
+  daily — "Always Allow" with the Keychain password does restore `apple-tool:`,
+  but only until the next refresh. Oversized blobs are now handed to
+  `security add-generic-password` as an argument instead, the same fallback
+  Claude Code uses (the JSON is visible to `ps` for the milliseconds `security`
+  runs); the native write is gone and `security-framework` is a dev-dependency
+  used only by the opt-in Keychain tests, which now also cover an oversized
+  blob through the production dispatch.
+
 ## [1.21.1] — 2026-09-22
 
 ### Fixed

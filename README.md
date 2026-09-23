@@ -477,7 +477,11 @@ macOS's `security` tool to read and refresh the `Claude Code-credentials` item.
 
 ### macOS: repeated Keychain prompts for Claude Code (#148)
 
-**Affects every release up to and including 1.10.0, on macOS only.**
+**Affects every release up to and including 1.21.1, on macOS only.** Up to
+1.15.0 every token write-back was native; 1.16.0 through 1.21.1 still fell
+back to the native write when the credential did not fit the `security -i`
+line cap, which is the normal case once Claude Code stores `mcpOAuth` plugin
+state in the same item.
 
 When ai-usagebar refreshes the Claude OAuth token it writes the result back to
 the login Keychain through the native Security.framework API. That marks the
@@ -487,8 +491,9 @@ partition is `apple-tool:`, so from the next launch onward every read raises a
 Keychain permission dialog — once per `claude` process, which means bursts of
 them across subagents, `claude -p` jobs and IDE integrations.
 
-`securityd` logs it as `ACL partition mismatch`. **"Always Allow" does not
-help**: it edits the trusted-application list, not the partition list.
+`securityd` logs it as `ACL partition mismatch`. **"Always Allow" is only
+temporary**: with the Keychain password it does put `apple-tool:` back on the
+partition list, but ai-usagebar's next native write-back removes it again.
 
 To clear it, sign in to Claude Code again:
 
@@ -507,9 +512,12 @@ automatic refresh cycle, so nothing writes to the Keychain. An explicit
 `ai-usagebar --vendor anthropic` still fetches — `--vendor` overrides the
 enabled flag by design — so avoid that too while the workaround is in place.
 
-A fix — writing through `security(1)` so the writer and reader share a
-partition — is being worked on in [#148]. Linux is unaffected: there the
-credential is a file, not a Keychain item.
+The fix for [#148] makes every write go through `security(1)` — normal-sized
+blobs over `security -i` on stdin, larger ones (real once Claude Code stores
+`mcpOAuth` plugin state in the same item) as a `security add-generic-password`
+argument, the same fallback Claude Code uses — so writer and reader always
+share the `apple-tool:` partition. Linux is unaffected: there the credential
+is a file, not a Keychain item.
 
 [#148]: https://github.com/akitaonrails/ai-usagebar/issues/148
 
