@@ -78,6 +78,20 @@ Panel {
       selectedEntryId = ""
       return
     }
+    // The persisted choice is the source of truth. A refresh gap (fetch
+    // error, sleep/wake stale list) briefly drops entries; the fallback
+    // below then re-resolves to the primary and that transient selection
+    // used to stick — the chosen entry came back and was ignored until a
+    // shell restart. Once the remembered entry is back in the list, it wins
+    // over any selection that only exists because of that gap.
+    var remembered = rememberedEntryId
+    if (remembered !== "") {
+      for (var r = 0; r < visibleEntries.length; r++)
+        if (visibleEntries[r].id === remembered) {
+          selectedEntryId = remembered
+          return
+        }
+    }
     for (var i = 0; i < visibleEntries.length; i++)
       if (visibleEntries[i].id === selectedEntryId) return
     selectedEntryId = Model.preferredEntryId(visibleEntries, primaryProvider, rememberedEntryId)

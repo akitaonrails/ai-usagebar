@@ -9,6 +9,16 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Omarchy panel keeps the provider you chose.** A refresh gap (fetch
+  error, sleep/wake stale list) briefly dropped entries, and the panel's
+  fallback re-resolved to the configured primary; when the chosen entry
+  returned, that transient selection stuck and the panel showed the primary
+  until a shell restart. The persisted choice is now the source of truth:
+  once the chosen entry is back in the list, it wins over any selection that
+  only exists because of the gap.
+
 ### Added
 
 - **Quota-threshold desktop notifications.** After a fresh fetch, any vendor

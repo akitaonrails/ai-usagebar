@@ -92,6 +92,19 @@ assert.match(panelSource, /providerList\.forceLayout\(\)/);
 // rendered with three borders. (#231)
 assert.match(panelSource, /Column\s*\{[\s\S]*?id:\s*column[\s\S]*?x:\s*Style\.spacing\.hairline/);
 assert.match(panelSource, /width:\s*panelFlick\.width\s*-\s*Style\.spacing\.hairline\s*\*\s*2/);
+// The persisted choice is the source of truth on every entries change: when
+// a refresh gap briefly dropped the chosen entry, syncSelection's fallback
+// re-resolved to the primary and that transient selection stuck after the
+// entry returned. The remembered-entry loop must run BEFORE the
+// current-selection early return so the chosen entry wins once it is back.
+const syncSource = panelSource.slice(
+  panelSource.indexOf('function syncSelection()'),
+  panelSource.indexOf('function restoreRememberedSelection'));
+assert.match(syncSource, /for \(var r = 0; r < visibleEntries\.length; r\+\+\)/, 'remembered-entry loop exists');
+assert.ok(
+  syncSource.indexOf('for (var r = 0') < syncSource.indexOf('for (var i = 0'),
+  'remembered-entry check precedes the current-selection early return'
+);
 assert.match(panelSource, /foreground:\s*root\.entryAlarming\s*\?\s*root\.urgent/);
 assert.doesNotMatch(panelSource, /BrandMark[\s\S]*foreground:\s*root\.alarming\s*\?/m);
 const brandMarkSource = fs.readFileSync(new URL('./BrandMark.qml', import.meta.url), 'utf8');
