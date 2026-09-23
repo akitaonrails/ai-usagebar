@@ -11,6 +11,17 @@ Each release is also published at
 
 ### Added
 
+- **Alibaba Cloud Model Studio Token Plan** as an opt-in local-login vendor
+  (`[modelstudio]`). Reads the console session the official `bl` CLI stores
+  at `~/.bailian/config.json` after `bl auth login --console` (read-only;
+  `config_dir`/`BAILIAN_CONFIG_DIR` override the location), and reports the
+  plan's 5-hour and weekly windows through the same region×site console
+  gateway the CLI uses. Wire percentages are ratios in [0,1] and resets are
+  epoch milliseconds; an absent window is no-data (possibly unlimited), never
+  0%, and an out-of-range value is schema drift rather than a figure. The
+  vendor cache is scoped by a fingerprint of the access token — the token
+  itself never persists. (#147)
+
 - **OrcaRouter** as an opt-in API-key vendor (`[orcarouter]`,
   `ORCAROUTER_API_KEY`). Reports the credit card from the one-api compatible
   dashboard billing endpoints — cumulative spend (US cents on the wire,

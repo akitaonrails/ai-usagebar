@@ -122,6 +122,7 @@ fn parse_slug(s: &str) -> Option<VendorId> {
         "commandcode" => Some(VendorId::CommandCode),
         "ollama" => Some(VendorId::Ollama),
         "orcarouter" => Some(VendorId::OrcaRouter),
+        "modelstudio" => Some(VendorId::ModelStudio),
         _ => None,
     }
 }

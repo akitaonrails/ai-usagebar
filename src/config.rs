@@ -10,6 +10,7 @@
 //! [deepseek]   enabled = false
 //! [kimi]       enabled = false
 //! [grokbot]    enabled = false  # Grok Bot desktop app's own session
+//! [modelstudio] enabled = false # `bl` CLI's own console login (Token Plan)
 //! [[custom]]   id = "mytool"   # user-defined HTTP provider, static token
 //! ```
 //!
@@ -66,6 +67,7 @@ pub struct Config {
     pub commandcode: CommandCodeConfig,
     pub ollama: OllamaConfig,
     pub orcarouter: OrcaRouterConfig,
+    pub modelstudio: ModelStudioConfig,
     /// User-defined providers, one `[[custom]]` table each.
     pub custom: Vec<CustomProviderConfig>,
 }
@@ -901,6 +903,23 @@ impl Default for OrcaRouterConfig {
             api_key: None,
         }
     }
+}
+
+/// Alibaba Cloud Model Studio (Token Plan) — a local-login vendor, like
+/// Grok Bot: the credential is the official `bl` CLI's own console-login file
+/// (`~/.bailian/config.json`, read-only; AK/SK refresh is out of scope).
+/// No API key exists, so there is no `api_key_env`. The `BAILIAN_CONFIG_DIR`
+/// environment variable overrides the directory at runtime; `config_dir`
+/// here overrides it in config, and wins.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ModelStudioConfig {
+    /// Opt-in (defaults to `false`), like every vendor riding a local CLI's
+    /// session.
+    pub enabled: bool,
+    /// Override for the `bl` CLI's config directory (default `~/.bailian`),
+    /// mirroring `[grokbot] secrets_path`.
+    pub config_dir: Option<PathBuf>,
 }
 
 impl Default for OpenCodeGoConfig {
@@ -1762,6 +1781,7 @@ impl Config {
         expand_tilde_opt(&mut self.kiro.db_path);
         expand_tilde_opt(&mut self.kimi.credentials_path);
         expand_tilde_opt(&mut self.grokbot.secrets_path);
+        expand_tilde_opt(&mut self.modelstudio.config_dir);
         self.supergrok.grok_binary = expand_tilde(&self.supergrok.grok_binary);
         expand_tilde_opt(&mut self.supergrok.auth_path);
         expand_tilde_opt(&mut self.supergrok.config_path);
@@ -1870,6 +1890,7 @@ impl Config {
             VendorId::CommandCode => self.commandcode.enabled,
             VendorId::Ollama => self.ollama.enabled,
             VendorId::OrcaRouter => self.orcarouter.enabled,
+            VendorId::ModelStudio => self.modelstudio.enabled,
         }
     }
 
@@ -1905,7 +1926,8 @@ impl Config {
             | VendorId::Cursor
             | VendorId::Kiro
             | VendorId::NousResearch
-            | VendorId::CommandCode => id.api_key_env(),
+            | VendorId::CommandCode
+            | VendorId::ModelStudio => id.api_key_env(),
         }
     }
 
@@ -1936,7 +1958,8 @@ impl Config {
             | VendorId::Cursor
             | VendorId::Kiro
             | VendorId::NousResearch
-            | VendorId::CommandCode => None,
+            | VendorId::CommandCode
+            | VendorId::ModelStudio => None,
         };
         raw.filter(|key| !key.is_empty())
     }
@@ -2344,6 +2367,7 @@ mod tests {
             VendorId::Minimax,
             VendorId::Kiro,
             VendorId::OrcaRouter,
+            VendorId::ModelStudio,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
@@ -2618,6 +2642,34 @@ enabled = false
             .unwrap();
         assert!(!path.starts_with("~"), "{}", path.display());
         assert!(path.ends_with("gb/secrets.json"), "{}", path.display());
+    }
+
+    #[test]
+    fn modelstudio_is_opt_in_and_takes_no_api_key() {
+        let defaults = ModelStudioConfig::default();
+        assert!(!defaults.enabled);
+        assert_eq!(defaults.config_dir, None);
+        // No key surface of any kind: the bl CLI's console session is the login.
+        let config = Config::default();
+        assert_eq!(config.api_key_env_for(VendorId::ModelStudio), "");
+        assert_eq!(config.inline_api_key(VendorId::ModelStudio), None);
+
+        let file = write_toml("[modelstudio]\nenabled = true\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert!(config.is_enabled(VendorId::ModelStudio));
+        assert!(config.enabled_vendors().contains(&VendorId::ModelStudio));
+    }
+
+    #[test]
+    fn modelstudio_config_dir_expands_a_tilde() {
+        let file = write_toml("[modelstudio]\nconfig_dir = \"~/bl\"\n");
+        let path = Config::load_from(file.path())
+            .unwrap()
+            .modelstudio
+            .config_dir
+            .unwrap();
+        assert!(!path.starts_with("~"), "{}", path.display());
+        assert!(path.ends_with("bl"), "{}", path.display());
     }
 
     #[test]

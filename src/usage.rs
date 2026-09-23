@@ -405,6 +405,7 @@ pub enum VendorSnapshot {
     CommandCode(crate::commandcode::types::Snapshot),
     Ollama(OllamaSnapshot),
     OrcaRouter(OrcaRouterSnapshot),
+    ModelStudio(ModelStudioSnapshot),
     /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
     /// that fetched it holds the `CustomProviderConfig`, and the cache
     /// directory is keyed by its `id`.
@@ -912,6 +913,17 @@ impl OrcaRouterSnapshot {
             pct.clamp(0, 100) as i32
         })
     }
+}
+
+/// Alibaba Cloud Model Studio Token Plan — a 5-hour and a weekly ratio
+/// window, either of which the console account may not report. An absent
+/// window is no-data (possibly unlimited), never 0%.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelStudioSnapshot {
+    /// 5-hour window. `None` when `per5HourPercentage` was absent.
+    pub session: Option<UsageWindow>,
+    /// Weekly window. `None` when `per1WeekPercentage` was absent.
+    pub weekly: Option<UsageWindow>,
 }
 
 /// Worst-of severity class for the Waybar bar text color. Mirrors
