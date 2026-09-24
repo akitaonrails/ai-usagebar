@@ -24,6 +24,7 @@ import type {
   Row,
   TextRow as TextRowData,
 } from "@/lib/types";
+import { translateUsage, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import {
   cardHasExtras,
@@ -88,6 +89,7 @@ export function ProviderSection({
   onToggleCollapse,
   onToggleShowAs,
 }: ProviderSectionProps) {
+  const { t } = useI18n();
   const prefs = prefsForCard(card, layout);
   const expanded = layout.collapsed?.[card.id] !== true;
   const opts = { hideExtras: layout.hideExtras, prefs };
@@ -145,7 +147,7 @@ export function ProviderSection({
           <button
             type="button"
             aria-expanded={expanded}
-            aria-label={expanded ? "Show less" : "Show more"}
+            aria-label={t(expanded ? "Show less" : "Show more")}
             className="plain-btn flex w-full justify-center py-[5px] text-label-2"
             onClick={onToggleCollapse}
           >
@@ -169,8 +171,9 @@ interface ResetCreditsRowProps {
 }
 
 function ResetCreditsRow({ condensedTop, demand, layout, nowMs, row }: ResetCreditsRowProps) {
-  const details = resetCreditDetails(row, nowMs, { timeFormat: layout.timeFormat });
-  const noun = row.available === 1 ? "available reset" : "available resets";
+  const { language, metricLabel, t } = useI18n();
+  const details = resetCreditDetails(row, nowMs, { timeFormat: layout.timeFormat, locale: language });
+  const noun = row.available === 1 ? t("available reset") : t("available resets");
   return (
     <div
       className={cn(
@@ -178,14 +181,14 @@ function ResetCreditsRow({ condensedTop, demand, layout, nowMs, row }: ResetCred
         condensedTop ? "pt-[var(--pad-text-row-condensed)]" : "pt-[var(--pad-text-row)]",
       )}
     >
-      <span className={cn("shrink-0 font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{row.label}</span>
+      <span className={cn("shrink-0 font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
       <span className="min-w-3 flex-1" />
       <Tooltip>
         <TooltipTrigger asChild>
           <Badge asChild variant="secondary">
-            <button type="button" aria-label={`${row.available} ${noun}; show expiry dates`}>
+            <button type="button" aria-label={`${row.available} ${noun}; ${t("show expiry dates")}`}>
               <span aria-hidden="true" className="size-2 rounded-full bg-meter-yellow" />
-              <span className="tabular-nums">{row.available} available</span>
+              <span className="tabular-nums">{row.available} {row.available === 1 ? t("available singular") : t("available")}</span>
             </button>
           </Badge>
         </TooltipTrigger>
@@ -206,7 +209,7 @@ function ResetCreditsRow({ condensedTop, demand, layout, nowMs, row }: ResetCred
             </div>
           ))}
           {details.hidden > 0 ? (
-            <div className="text-right text-label-2">+{details.hidden} more</div>
+            <div className="text-right text-label-2">+{details.hidden} {t("more")}</div>
           ) : null}
         </TooltipContent>
       </Tooltip>
@@ -228,6 +231,7 @@ interface ProviderSectionHeaderProps {
  * drag handle, so the buttons stop the pointer-down from starting a drag.
  */
 export function ProviderSectionHeader({ card, handle, onCustomize, onReset }: ProviderSectionHeaderProps) {
+  const { t } = useI18n();
   const plan = displayPlan(card.title, card.plan);
   return (
     <header
@@ -239,7 +243,7 @@ export function ProviderSectionHeader({ card, handle, onCustomize, onReset }: Pr
       <div className="flex min-w-0 items-baseline gap-[5px]">
         <span className="min-w-0 truncate text-[length:var(--sz-header)] font-semibold">{card.title}</span>
         {plan ? <span className="shrink-0 text-[length:var(--sz-badge)] text-label-2">{plan}</span> : null}
-        {card.stale ? <span className="text-[length:var(--sz-badge)] text-label-3">stale</span> : null}
+        {card.stale ? <span className="text-[length:var(--sz-badge)] text-label-3">{t("stale")}</span> : null}
       </div>
       {card.errorTitle ? (
         <MdiAlert className="size-2.5 shrink-0 text-meter-red" aria-label={card.errorTitle}>
@@ -252,10 +256,10 @@ export function ProviderSectionHeader({ card, handle, onCustomize, onReset }: Pr
       ) : null}
       <span className="min-w-2 flex-1" />
       {onCustomize ? (
-        <HeaderAction icon={<MdiTune />} label={`Customize ${card.title}`} onClick={onCustomize} />
+        <HeaderAction icon={<MdiTune />} label={`${t("Customize")} ${card.title}`} onClick={onCustomize} />
       ) : null}
       {onReset ? (
-        <HeaderAction icon={<MdiRestore />} label={`Reset ${card.title}`} onClick={onReset} />
+        <HeaderAction icon={<MdiRestore />} label={`${t("Reset")} ${card.title}`} onClick={onReset} />
       ) : null}
     </header>
   );
@@ -298,32 +302,33 @@ interface MetricRowProps {
  * tick show only off-pace unless Settings asks for them always (paceVisible).
  */
 function MetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProps) {
+  const { language, metricLabel, t } = useI18n();
   // The fill follows the headline's reading (WidgetData.fraction): remaining in Left mode,
   // consumed in Used mode. The color is a verdict and never flips with the toggle.
   const fill = layout.showAs === "used" ? row.usedPercent : row.leftPercent;
   const spent = row.leftPercent === 0;
-  const headline = headlineLabel(row, layout.showAs);
-  const headlineAlt = headlineAlternate(row, layout.showAs);
-  const resetOpts = { timeFormat: layout.timeFormat };
+  const headline = translateUsage(language, headlineLabel(row, layout.showAs));
+  const headlineAlt = translateUsage(language, headlineAlternate(row, layout.showAs));
+  const resetOpts = { timeFormat: layout.timeFormat, locale: language };
   const reset = resetText(row, layout.resetTimes, nowMs, resetOpts);
   const rowPace = pace(row, nowMs);
   const showPace = rowPace !== null && paceVisible(rowPace, layout);
-  const paceNote = showPace && rowPace ? paceText(rowPace, nowMs, { resetTimes: layout.resetTimes, timeFormat: layout.timeFormat }) : "";
+  const paceNote = showPace && rowPace ? paceText(rowPace, nowMs, { resetTimes: layout.resetTimes, timeFormat: layout.timeFormat, locale: language }) : "";
   const behind = rowPace?.state === "behind";
   const tick = paceTickPercent(rowPace, layout.showAs);
   return (
     <div className="flex flex-col gap-[var(--row-inner)] px-[var(--card-pad)] py-[var(--pad-bar-row)]">
       <div className="flex items-center gap-[6px]">
-        <span className={cn("truncate font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{row.label}</span>
+        <span className={cn("truncate font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
         {spent ? (
           <span className="ml-auto flex shrink-0 items-center gap-[3px] text-[length:var(--sz-support)] text-label-2">
             <MdiFire className="size-[11px] text-meter-red" />
-            Limit reached
+            {t("Limit reached")}
           </span>
         ) : showPace && rowPace && (paceNote !== "" || behind) ? (
           <span
             className="ml-auto flex shrink-0 items-center gap-[3px] text-[length:var(--sz-support)] text-label-2"
-            title={`On this pace, ${Math.round(rowPace.projectedPercent)}% of the quota is used by the reset`}
+            title={language === "pt-BR" ? `Neste ritmo, ${Math.round(rowPace.projectedPercent)}% da cota serão usados até a redefinição` : `On this pace, ${Math.round(rowPace.projectedPercent)}% of the quota is used by the reset`}
           >
             {behind ? <MdiFire className="size-[11px] text-meter-red" /> : null}
             {paceNote}
@@ -381,6 +386,7 @@ interface TextRowProps {
 
 /** Unbounded row: no bar. Label on the left, the value (or block lines) right-aligned. */
 function TextRow({ condensedTop, demand, row }: TextRowProps) {
+  const { metricLabel } = useI18n();
   const lines = row.kind === "block" ? row.body : [row.value];
   return (
     <div
@@ -389,7 +395,7 @@ function TextRow({ condensedTop, demand, row }: TextRowProps) {
         condensedTop ? "pt-[var(--pad-text-row-condensed)]" : "pt-[var(--pad-text-row)]",
       )}
     >
-      <span className={cn("shrink-0 font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{row.label}</span>
+      <span className={cn("shrink-0 font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
       <span className="min-w-3 flex-1" />
       <span className="flex min-w-0 max-w-full flex-col items-end gap-[2px] text-right text-[length:var(--sz-support)] tabular-nums">
         {lines.map((line, index) => (
@@ -411,11 +417,12 @@ interface ErrorRowProps {
  * command — a small action button. Terminal-side fixes (sign-in) and waits (429) get no button.
  */
 export function ErrorRow({ explained }: ErrorRowProps) {
+  const { t } = useI18n();
   return (
     <div className="flex flex-col gap-[3px] px-[var(--card-pad)] py-[var(--pad-text-row)]">
-      <span className="text-[length:var(--sz-support)] font-semibold">{explained.title || "Couldn't update"}</span>
+      <span className="text-[length:var(--sz-support)] font-semibold">{t(explained.title || "Couldn't update")}</span>
       {explained.hint ? (
-        <span className="text-[length:var(--sz-badge)] leading-[1.35] text-label-2">{explained.hint}</span>
+        <span className="text-[length:var(--sz-badge)] leading-[1.35] text-label-2">{t(explained.hint)}</span>
       ) : null}
       {explained.action ? (
         <button
@@ -423,7 +430,7 @@ export function ErrorRow({ explained }: ErrorRowProps) {
           className="mt-1 h-6 w-fit rounded-[var(--radius-sm)] bg-[var(--control-fill)] px-2.5 text-[length:var(--sz-support)] hover:bg-[var(--control-fill-hover)]"
           onClick={() => sendCommand(explained.action?.cmd)}
         >
-          {explained.action.label}
+          {t(explained.action.label)}
         </button>
       ) : null}
     </div>
@@ -431,11 +438,12 @@ export function ErrorRow({ explained }: ErrorRowProps) {
 }
 
 function ProviderLinks({ links }: { links: Array<{ label: string; url: string }> }) {
+  const { t } = useI18n();
   return (
     <div className="flex gap-2 px-[var(--card-pad)] py-[var(--pad-text-row)]">
       {links.map((link) => (
         <Chip key={link.url} variant="link" onClick={() => sendCommand("open-url", { url: link.url })}>
-          <span className="truncate">{link.label}</span>
+          <span className="truncate">{t(link.label)}</span>
           <MdiArrowTopRight className="size-2.5 shrink-0 text-label-2" />
         </Chip>
       ))}
@@ -457,6 +465,7 @@ interface WarningStripProps {
  * of the card. The numbers above are the last good snapshot; the raw diagnosis lives in the hover.
  */
 function WarningStrip({ warning }: WarningStripProps) {
+  const { t } = useI18n();
   return (
     <div
       className="mt-[2px] flex items-start gap-[6px] border-t border-border px-[var(--card-pad)] pt-[7px] pb-[3px] text-[length:var(--sz-badge)] leading-[1.35] text-label-2"
@@ -464,8 +473,8 @@ function WarningStrip({ warning }: WarningStripProps) {
     >
       <MdiAlert className="mt-[1px] size-3 shrink-0 text-notice" />
       <span>
-        {warning.title}
-        {warning.hint ? ` · ${warning.hint}` : ""}
+        {t(warning.title)}
+        {warning.hint ? ` · ${t(warning.hint)}` : ""}
       </span>
     </div>
   );

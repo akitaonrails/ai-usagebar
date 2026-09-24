@@ -34,15 +34,16 @@ cargo build --release --bin ai-usagebar-tray
 ```
 
 It appears in the menu bar next to the clock (no Dock icon). Left-click opens
-the dashboard; right-click is Refresh / Detect Providers / Open TUI / Start at
-Login / Quit.
+the dashboard; right-click opens the same panel. Refresh and Settings are in
+the panel header; Detect Providers, Open TUI, Start at Login, and Quit are in
+Options or Settings.
 
 Quit the old Swift `ai-usagebar-menubar` first if it is still running, or you
 will see two status items.
 
 ### 4. Start automatically at login
 
-Popover **Settings → Launch at Login**, or right-click the status item. That
+Popover **Settings → Launch at Login**. That
 writes `~/Library/LaunchAgents/com.akitaonrails.ai-usagebar-tray.plist`.
 
 ### 5. Verify it's running
@@ -58,7 +59,7 @@ pgrep -lf ai-usagebar-tray
 ```bash
 git pull
 cargo build --release --bin ai-usagebar-tray
-# quit the running tray (right-click → Quit) and start the new binary
+# quit the running tray (popover Options → Quit) and start the new binary
 ./target/release/ai-usagebar-tray
 ```
 

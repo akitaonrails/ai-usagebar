@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from "react";
 import MdiCloseCircle from "~icons/mdi/close-circle";
+import { useI18n } from "@/lib/i18n";
 import { shortcutFromKeyEvent } from "../model.js";
 
 interface ShortcutRecorderProps {
@@ -15,6 +16,7 @@ interface ShortcutRecorderProps {
  * to keep Escape / Enter from navigating.
  */
 export function ShortcutRecorder({ error, value, onChange }: ShortcutRecorderProps) {
+  const { t } = useI18n();
   const [recording, setRecording] = useState(false);
 
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -36,23 +38,23 @@ export function ShortcutRecorder({ error, value, onChange }: ShortcutRecorderPro
       <button
         type="button"
         aria-invalid={error ? true : undefined}
-        aria-label={recording ? "Press keys" : value ? `Global shortcut ${value}` : "Set global shortcut"}
+        aria-label={recording ? t("Press keys") : value ? `${t("Global Shortcut")} ${value}` : t("Set global shortcut")}
         className="recorder"
         data-empty={value ? undefined : "true"}
         data-recording={recording ? "true" : undefined}
-        title={recording ? "Press the new shortcut, Escape to cancel" : "Click to record a shortcut"}
+        title={recording ? t("Press the new shortcut, Escape to cancel") : t("Click to record a shortcut")}
         onBlur={() => setRecording(false)}
         onClick={() => setRecording(true)}
         onKeyDown={onKeyDown}
       >
-        {recording ? "Press keys…" : value || "None"}
+        {recording ? t("Press keys…") : value || t("None")}
       </button>
       {value && !recording ? (
         <button
           type="button"
-          aria-label="Clear shortcut"
+          aria-label={t("Clear shortcut")}
           className="plain-btn grid place-items-center text-label-3"
-          title="Clear shortcut"
+          title={t("Clear shortcut")}
           onClick={() => onChange("")}
         >
           <MdiCloseCircle className="size-[14px]" />

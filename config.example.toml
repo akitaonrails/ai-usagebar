@@ -60,20 +60,20 @@
 # value = "/account/tier"        # string, number or boolean
 
 # Windows/macOS tray. The macOS menu bar also writes its options here from the
-# status item's right-click menu.
+# popover Settings → Menu Bar.
 # [tray]
 # Global shortcut that opens and closes the popover from any window.
 # Ctrl / Alt / Win plus a key; Shift may be added. Omit for none.
 # shortcut = "Ctrl+Shift+U"
-# How often the tray re-reads every provider: 1, 5 or 10 minutes; the footer's
-# Refresh is always immediate.
+# How often the tray re-reads every provider: 1, 5 or 10 minutes; the panel's
+# Refresh button is always immediate.
 # refresh_minutes = 5
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"
 # macOS menu bar: provider names + quota headlines by default.
 # menu_bar_style = "provider"  # "bars" restores the chart-only icon
-# menu_bar_provider = "openai" # last selected provider; optional
+# menu_bar_provider = "highest" # highest consumption, or a provider id such as "openai"
 # menu_bar_show_all = true     # show every ready provider at once (default)
 # menu_bar_hide_value = false  # show only provider names
 # menu_bar_window = "auto"     # auto | session | weekly | monthly

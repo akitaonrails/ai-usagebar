@@ -13,12 +13,15 @@ use objc2::Message;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, Bool};
 use objc2_app_kit::{
-    NSApplication, NSBezierPath, NSButton, NSColor, NSEvent, NSImage, NSImageScaling, NSScreen,
-    NSView, NSWindow,
+    NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
+    NSApplication, NSAutoresizingMaskOptions, NSBezierPath, NSButton, NSColor, NSEvent,
+    NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSImageScaling, NSScreen, NSView,
+    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+    NSWindow, NSWindowOrderingMode,
 };
 use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
 use objc2_quartz_core::kCACornerCurveContinuous;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
@@ -26,7 +29,6 @@ use tao::platform::macos::{
     ActivationPolicy, EventLoopExtMacOS, WindowBuilderExtMacOS, WindowExtMacOS,
 };
 use tao::window::{Window, WindowBuilder};
-use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use wry::http::{Request, Response, StatusCode, header::CONTENT_TYPE};
 use wry::{WebView, WebViewBuilder, WebViewBuilderExtDarwin};
@@ -36,9 +38,8 @@ use super::hotkey::{self, HotkeyBinding};
 use super::icon::{Severity, tray_icon_rgba};
 use super::menu_bar::{self, UsageWindow};
 use super::panel::{
-    CLICK_LOCK_MS, CORNER_RADIUS, CocoaRect, DARK_BACKGROUND, FALLBACK_WORK_AREA_HEIGHT,
-    LIGHT_BACKGROUND, PopoverPlacement, WINDOW_HEIGHT, WINDOW_WIDTH, clamp_popover_height,
-    cocoa_popover_frame, menu_bar_bottom_y,
+    CLICK_LOCK_MS, CORNER_RADIUS, CocoaRect, FALLBACK_WORK_AREA_HEIGHT, PopoverPlacement,
+    WINDOW_HEIGHT, WINDOW_WIDTH, clamp_popover_height, cocoa_popover_frame, menu_bar_bottom_y,
 };
 use super::payload::{HostFacts, UpdateFact, fact_after_check, host_payload, wrap_report};
 use super::strip::{
@@ -55,7 +56,6 @@ const POPOVER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover
 
 enum UserEvent {
     Tray(TrayIconEvent),
-    Menu(MenuEvent),
     Ipc(String),
     Report(Value),
     Entry(Value),
@@ -98,36 +98,12 @@ impl Theme {
             _ => None,
         }
     }
-
-    fn background(self) -> (u8, u8, u8, u8) {
-        match self {
-            Self::Light => LIGHT_BACKGROUND,
-            Self::Dark => DARK_BACKGROUND,
-        }
-    }
-}
-
-struct MenuItems {
-    next_provider: MenuItem,
-    show_all: CheckMenuItem,
-    hide_value: CheckMenuItem,
-    usage_auto: CheckMenuItem,
-    usage_session: CheckMenuItem,
-    usage_weekly: CheckMenuItem,
-    usage_monthly: CheckMenuItem,
-    usage_chart: CheckMenuItem,
-    refresh: MenuItem,
-    detect: MenuItem,
-    open_tui: MenuItem,
-    startup: CheckMenuItem,
-    quit: MenuItem,
 }
 
 struct TrayState {
     window: Window,
     webview: Option<WebView>,
     tray: TrayIcon,
-    menu: MenuItems,
     worker: mpsc::Sender<WorkerCmd>,
     proxy: EventLoopProxy<UserEvent>,
     payload: Value,
@@ -146,6 +122,7 @@ struct TrayState {
     strip_style: StripStyle,
     stars: Stars,
     strip_order: Vec<String>,
+    strip_order_known: bool,
     menu_bar_provider: String,
     menu_bar_show_all: bool,
     menu_bar_hide_value: bool,
@@ -175,13 +152,6 @@ fn run_loop() -> Result<(), String> {
             let _ = proxy.send_event(UserEvent::Tray(event));
         }));
     }
-    {
-        let proxy = proxy.clone();
-        MenuEvent::set_event_handler(Some(move |event| {
-            let _ = proxy.send_event(UserEvent::Menu(event));
-        }));
-    }
-
     let window = WindowBuilder::new()
         .with_title("AI Usage")
         .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -218,25 +188,17 @@ fn run_loop() -> Result<(), String> {
         UsageWindow::parse(config.tray.menu_bar_window.as_deref().unwrap_or("auto"));
     let menu_bar_chart = config.tray.menu_bar_style.as_deref() == Some("bars");
     let menu_bar_show_all = config.tray.menu_bar_show_all();
-    let menu = build_menu(
-        startup::is_enabled(),
-        menu_bar_show_all,
-        config.tray.menu_bar_hide_value,
-        menu_bar_window,
-        menu_bar_chart,
-    );
-    let context_menu = make_menu(&menu);
-    let tray = build_tray(context_menu)?;
+    let tray = build_tray()?;
 
     let theme = Theme::Light;
-    let webview = build_webview(&window, proxy.clone(), theme).ok();
+    let webview = build_webview(&window, proxy.clone()).ok();
     round_corners(&window);
+    install_glass_background(&window);
 
     let mut state = TrayState {
         window,
         webview,
         tray,
-        menu,
         worker: cmd_tx,
         proxy: proxy.clone(),
         payload: empty,
@@ -251,7 +213,12 @@ fn run_loop() -> Result<(), String> {
         strip_style: StripStyle::Bars,
         stars: Stars::new(),
         strip_order: Vec::new(),
-        menu_bar_provider: config.tray.menu_bar_provider.unwrap_or_default(),
+        strip_order_known: false,
+        menu_bar_provider: config
+            .tray
+            .menu_bar_provider
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| menu_bar::HIGHEST_PROVIDER.into()),
         menu_bar_show_all,
         menu_bar_hide_value: config.tray.menu_bar_hide_value,
         menu_bar_window,
@@ -263,9 +230,6 @@ fn run_loop() -> Result<(), String> {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::UserEvent(UserEvent::Tray(tray_event)) => handle_tray(&mut state, tray_event),
-            Event::UserEvent(UserEvent::Menu(menu_event)) => {
-                handle_menu(&mut state, &menu_event, control_flow);
-            }
             Event::UserEvent(UserEvent::Ipc(body)) => handle_ipc(&mut state, &body, control_flow),
             Event::UserEvent(UserEvent::Report(payload)) => apply_payload(&mut state, payload),
             Event::UserEvent(UserEvent::Entry(entry)) => apply_entry(&mut state, entry),
@@ -467,11 +431,15 @@ fn apply_entry(state: &mut TrayState, entry: Value) {
 
 fn apply_strip_icon(state: &mut TrayState) {
     let content = content_from_payload(&state.payload, &state.stars, &state.strip_order);
+    let visible = state
+        .strip_order_known
+        .then_some(state.strip_order.as_slice());
     let tooltip = menu_bar::tooltip(
         &state.payload,
         &state.menu_bar_provider,
         state.menu_bar_show_all,
         state.menu_bar_window,
+        visible,
     );
     let _ = state.tray.set_tooltip(Some(tooltip.as_str()));
     match state.strip_style {
@@ -495,6 +463,7 @@ fn apply_strip_icon(state: &mut TrayState) {
                     state.menu_bar_show_all,
                     !state.menu_bar_hide_value,
                     state.menu_bar_window,
+                    visible,
                 );
                 state.tray.set_title(Some(title.as_str()));
             }
@@ -620,9 +589,19 @@ fn push_to_webview(state: &TrayState) {
     let Some(webview) = state.webview.as_ref() else {
         return;
     };
-    let json = host_payload(&state.payload);
+    let json = popover_payload(state);
     let script = format!("window.__AIUB_APPLY__ && window.__AIUB_APPLY__({json})");
     let _ = webview.evaluate_script(&script);
+}
+
+fn popover_payload(state: &TrayState) -> String {
+    let mut payload = state.payload.clone();
+    payload["menu_bar_show_all"] = json!(state.menu_bar_show_all);
+    payload["menu_bar_hide_value"] = json!(state.menu_bar_hide_value);
+    payload["menu_bar_window"] = json!(state.menu_bar_window.as_str());
+    payload["menu_bar_provider"] = json!(state.menu_bar_provider);
+    payload["menu_bar_chart"] = json!(state.menu_bar_chart);
+    host_payload(&payload)
 }
 
 fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
@@ -633,7 +612,7 @@ fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
     } = event
     {
         match button {
-            MouseButton::Left => {
+            MouseButton::Left | MouseButton::Right => {
                 if state.popover_open {
                     hide_popover(state);
                 } else {
@@ -642,7 +621,6 @@ fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
                 }
             }
             MouseButton::Middle => next_menu_bar_provider(state),
-            _ => {}
         }
     }
 }
@@ -654,13 +632,20 @@ fn persist_menu_bar_value(key: &str, value: toml_edit::Value) {
 }
 
 fn next_menu_bar_provider(state: &mut TrayState) {
-    if let Some(id) = menu_bar::next_id(&state.payload, &state.menu_bar_provider) {
+    let visible = state
+        .strip_order_known
+        .then_some(state.strip_order.as_slice());
+    if let Some(id) = menu_bar::next_id(
+        &state.payload,
+        &state.menu_bar_provider,
+        state.menu_bar_window,
+        visible,
+    ) {
         state.menu_bar_provider = id.clone();
         persist_menu_bar_value("menu_bar_provider", id.into());
         // A cycle must visibly change the strip even when Show All was on.
         if state.menu_bar_show_all {
             state.menu_bar_show_all = false;
-            state.menu.show_all.set_checked(false);
             persist_menu_bar_value("menu_bar_show_all", false.into());
         }
         apply_strip_icon(state);
@@ -670,70 +655,7 @@ fn next_menu_bar_provider(state: &mut TrayState) {
 fn set_menu_bar_window(state: &mut TrayState, window: UsageWindow) {
     state.menu_bar_window = window;
     persist_menu_bar_value("menu_bar_window", window.as_str().into());
-    state
-        .menu
-        .usage_auto
-        .set_checked(window == UsageWindow::Auto);
-    state
-        .menu
-        .usage_session
-        .set_checked(window == UsageWindow::Session);
-    state
-        .menu
-        .usage_weekly
-        .set_checked(window == UsageWindow::Weekly);
-    state
-        .menu
-        .usage_monthly
-        .set_checked(window == UsageWindow::Monthly);
     apply_strip_icon(state);
-}
-
-fn handle_menu(state: &mut TrayState, event: &MenuEvent, control_flow: &mut ControlFlow) {
-    if event.id == state.menu.next_provider.id() {
-        next_menu_bar_provider(state);
-    } else if event.id == state.menu.show_all.id() {
-        state.menu_bar_show_all = !state.menu_bar_show_all;
-        state.menu.show_all.set_checked(state.menu_bar_show_all);
-        persist_menu_bar_value("menu_bar_show_all", state.menu_bar_show_all.into());
-        apply_strip_icon(state);
-    } else if event.id == state.menu.hide_value.id() {
-        state.menu_bar_hide_value = !state.menu_bar_hide_value;
-        state.menu.hide_value.set_checked(state.menu_bar_hide_value);
-        persist_menu_bar_value("menu_bar_hide_value", state.menu_bar_hide_value.into());
-        apply_strip_icon(state);
-    } else if event.id == state.menu.usage_auto.id() {
-        set_menu_bar_window(state, UsageWindow::Auto);
-    } else if event.id == state.menu.usage_session.id() {
-        set_menu_bar_window(state, UsageWindow::Session);
-    } else if event.id == state.menu.usage_weekly.id() {
-        set_menu_bar_window(state, UsageWindow::Weekly);
-    } else if event.id == state.menu.usage_monthly.id() {
-        set_menu_bar_window(state, UsageWindow::Monthly);
-    } else if event.id == state.menu.usage_chart.id() {
-        state.menu_bar_chart = !state.menu_bar_chart;
-        state.menu.usage_chart.set_checked(state.menu_bar_chart);
-        persist_menu_bar_value(
-            "menu_bar_style",
-            (if state.menu_bar_chart {
-                "bars"
-            } else {
-                "provider"
-            })
-            .into(),
-        );
-        apply_strip_icon(state);
-    } else if event.id == state.menu.refresh.id() {
-        let _ = state.worker.send(WorkerCmd::Refresh);
-    } else if event.id == state.menu.detect.id() {
-        let _ = state.worker.send(WorkerCmd::Detect);
-    } else if event.id == state.menu.open_tui.id() {
-        tui_launch::open();
-    } else if event.id == state.menu.startup.id() {
-        toggle_startup(state);
-    } else if event.id == state.menu.quit.id() {
-        *control_flow = ControlFlow::Exit;
-    }
 }
 
 fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow) {
@@ -771,11 +693,75 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
                 set_refresh(state, minutes);
             }
         }
+        "next-menu-bar-provider" => {
+            next_menu_bar_provider(state);
+            push_to_webview(state);
+        }
+        "set-menu-bar-provider" => {
+            if let Some(id) = value.get("value").and_then(Value::as_str) {
+                let eligible = id == menu_bar::HIGHEST_PROVIDER
+                    || state
+                        .payload
+                        .get("entries")
+                        .and_then(Value::as_array)
+                        .is_some_and(|entries| {
+                            entries
+                                .iter()
+                                .any(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
+                        })
+                        && (!state.strip_order_known
+                            || state.strip_order.iter().any(|shown| shown == id));
+                if eligible {
+                    state.menu_bar_provider = id.to_owned();
+                    persist_menu_bar_value("menu_bar_provider", id.into());
+                    if state.menu_bar_show_all {
+                        state.menu_bar_show_all = false;
+                        persist_menu_bar_value("menu_bar_show_all", false.into());
+                    }
+                    apply_strip_icon(state);
+                    push_to_webview(state);
+                }
+            }
+        }
+        "set-menu-bar-show-all" => {
+            if let Some(enabled) = value.get("value").and_then(Value::as_bool) {
+                state.menu_bar_show_all = enabled;
+                persist_menu_bar_value("menu_bar_show_all", enabled.into());
+                apply_strip_icon(state);
+                push_to_webview(state);
+            }
+        }
+        "set-menu-bar-hide-value" => {
+            if let Some(enabled) = value.get("value").and_then(Value::as_bool) {
+                state.menu_bar_hide_value = enabled;
+                persist_menu_bar_value("menu_bar_hide_value", enabled.into());
+                apply_strip_icon(state);
+                push_to_webview(state);
+            }
+        }
+        "set-menu-bar-window" => {
+            if let Some(window) = value.get("value").and_then(Value::as_str) {
+                set_menu_bar_window(state, UsageWindow::parse(window));
+                push_to_webview(state);
+            }
+        }
+        "set-menu-bar-chart" => {
+            if let Some(enabled) = value.get("value").and_then(Value::as_bool) {
+                state.menu_bar_chart = enabled;
+                persist_menu_bar_value(
+                    "menu_bar_style",
+                    (if enabled { "bars" } else { "provider" }).into(),
+                );
+                apply_strip_icon(state);
+                push_to_webview(state);
+            }
+        }
         "strip" => {
             let (style, stars, order) = parse_strip_ipc(&value);
             state.strip_style = style;
             state.stars = stars;
             state.strip_order = order;
+            state.strip_order_known = true;
             apply_strip_icon(state);
         }
         "open-url" => {
@@ -816,12 +802,20 @@ fn handle_resize(state: &mut TrayState, value: &Value) {
 }
 
 fn apply_theme(state: &mut TrayState, theme: Theme) {
-    if state.theme == theme {
-        return;
-    }
     state.theme = theme;
-    if let Some(webview) = state.webview.as_ref() {
-        let _ = webview.set_background_color(theme.background());
+    let ptr = state.window.ns_window() as *mut NSWindow;
+    if let Some(window) = unsafe { ptr.as_ref() } {
+        // SAFETY: AppKit exports these immutable appearance names for the
+        // lifetime of the process.
+        let name = unsafe {
+            match theme {
+                Theme::Light => NSAppearanceNameAqua,
+                Theme::Dark => NSAppearanceNameDarkAqua,
+            }
+        };
+        if let Some(appearance) = NSAppearance::appearanceNamed(name) {
+            window.setAppearance(Some(&appearance));
+        }
     }
 }
 
@@ -835,15 +829,12 @@ fn anchor_visible_height(anchor: Option<(f64, f64)>) -> f64 {
 fn toggle_startup(state: &mut TrayState) {
     let next = !startup::is_enabled();
     if startup::set_enabled(next).is_ok() {
-        state.menu.startup.set_checked(next);
         if let Some(obj) = state.payload.as_object_mut() {
             obj.insert("startup_enabled".into(), Value::Bool(next));
         }
         if state.js_ready {
             push_to_webview(state);
         }
-    } else {
-        state.menu.startup.set_checked(startup::is_enabled());
     }
 }
 
@@ -928,102 +919,21 @@ fn position_popover(state: &TrayState) {
     apply_cocoa_frame(&state.window, frame);
 }
 
-fn build_menu(
-    startup_enabled: bool,
-    show_all: bool,
-    hide_value: bool,
-    window: UsageWindow,
-    chart: bool,
-) -> MenuItems {
-    MenuItems {
-        next_provider: MenuItem::with_id("next-provider", "Next Provider", true, None),
-        show_all: CheckMenuItem::with_id("show-all", "Show All Providers", true, show_all, None),
-        hide_value: CheckMenuItem::with_id(
-            "hide-value",
-            "Hide Usage Value",
-            true,
-            hide_value,
-            None,
-        ),
-        usage_auto: CheckMenuItem::with_id(
-            "usage-auto",
-            "Usage: Highest",
-            true,
-            window == UsageWindow::Auto,
-            None,
-        ),
-        usage_session: CheckMenuItem::with_id(
-            "usage-session",
-            "Usage: 5-hour",
-            true,
-            window == UsageWindow::Session,
-            None,
-        ),
-        usage_weekly: CheckMenuItem::with_id(
-            "usage-weekly",
-            "Usage: Weekly",
-            true,
-            window == UsageWindow::Weekly,
-            None,
-        ),
-        usage_monthly: CheckMenuItem::with_id(
-            "usage-monthly",
-            "Usage: Monthly",
-            true,
-            window == UsageWindow::Monthly,
-            None,
-        ),
-        usage_chart: CheckMenuItem::with_id("usage-chart", "Chart Icon Only", true, chart, None),
-        refresh: MenuItem::with_id("refresh", "Refresh", true, None),
-        detect: MenuItem::with_id("detect", "Detect Providers", true, None),
-        open_tui: MenuItem::with_id("open-tui", "Open TUI", true, None),
-        startup: CheckMenuItem::with_id("startup", "Start at Login", true, startup_enabled, None),
-        quit: MenuItem::with_id("quit", "Quit", true, None),
-    }
-}
-
-fn make_menu(items: &MenuItems) -> Menu {
-    let menu = Menu::new();
-    let display_sep = PredefinedMenuItem::separator();
-    let actions_sep = PredefinedMenuItem::separator();
-    let startup_sep = PredefinedMenuItem::separator();
-    let _ = menu.append_items(&[
-        &items.next_provider,
-        &items.show_all,
-        &items.hide_value,
-        &items.usage_auto,
-        &items.usage_session,
-        &items.usage_weekly,
-        &items.usage_monthly,
-        &items.usage_chart,
-        &display_sep,
-        &items.refresh,
-        &items.detect,
-        &items.open_tui,
-        &actions_sep,
-        &items.startup,
-        &startup_sep,
-        &items.quit,
-    ]);
-    menu
-}
-
-fn build_tray(menu: Menu) -> Result<TrayIcon, String> {
+fn build_tray() -> Result<TrayIcon, String> {
     let icon = static_icon().map_err(|error| error.to_string())?;
+    // NSStatusItem.setMenu intercepts clicks even when the tray-icon menu-on-
+    // click flags are false. Keep the status item menu-free so both mouse
+    // buttons reach handle_tray and open the WKWebView panel.
     TrayIconBuilder::new()
         .with_icon(icon)
         .with_icon_as_template(true)
-        .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
+        .with_menu_on_right_click(false)
         .build()
         .map_err(|error| error.to_string())
 }
 
-fn build_webview(
-    window: &Window,
-    proxy: EventLoopProxy<UserEvent>,
-    theme: Theme,
-) -> Result<WebView, String> {
+fn build_webview(window: &Window, proxy: EventLoopProxy<UserEvent>) -> Result<WebView, String> {
     // Stable WKWebsiteDataStore so Customize layout / stars survive restarts
     // (wry has no data_directory on macOS; this is the Darwin stand-in).
     const STORE: [u8; 16] = [
@@ -1042,7 +952,7 @@ fn build_webview(
             let _ = proxy.send_event(UserEvent::Ipc(body));
         })
         .with_transparent(true)
-        .with_background_color(theme.background())
+        .with_background_color((0, 0, 0, 0))
         .with_accept_first_mouse(true)
         .with_data_store_identifier(STORE)
         .build(window)
@@ -1151,6 +1061,41 @@ fn round_corners(window: &Window) {
     let ns_view = window.ns_view() as *mut NSView;
     if !ns_view.is_null() {
         round_view(unsafe { &*ns_view });
+    }
+}
+
+/// Put AppKit's material behind WKWebView. On systems with Liquid Glass, use
+/// NSGlassEffectView; older macOS versions use the semantic popover material.
+fn install_glass_background(window: &Window) {
+    let ptr = window.ns_window() as *mut NSWindow;
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(ns_window) = (unsafe { ptr.as_ref() }) else {
+        return;
+    };
+    let Some(content) = ns_window.contentView() else {
+        return;
+    };
+    let sizing =
+        NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable;
+
+    if AnyClass::get(c"NSGlassEffectView").is_some() {
+        let glass = NSGlassEffectView::new(mtm);
+        glass.setStyle(NSGlassEffectViewStyle::Regular);
+        glass.setFrame(content.bounds());
+        glass.setAutoresizingMask(sizing);
+        round_view(&glass);
+        content.addSubview_positioned_relativeTo(&glass, NSWindowOrderingMode::Below, None);
+    } else {
+        let material = NSVisualEffectView::new(mtm);
+        material.setMaterial(NSVisualEffectMaterial::Popover);
+        material.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+        material.setState(NSVisualEffectState::Active);
+        material.setFrame(content.bounds());
+        material.setAutoresizingMask(sizing);
+        round_view(&material);
+        content.addSubview_positioned_relativeTo(&material, NSWindowOrderingMode::Below, None);
     }
 }
 

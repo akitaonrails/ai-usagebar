@@ -86,6 +86,10 @@ const report = {
   next_refresh_at: 61_000,
   startup_enabled: true,
   host_error: null,
+  menu_bar_show_all: false,
+  menu_bar_hide_value: true,
+  menu_bar_window: 'weekly',
+  menu_bar_chart: true,
   primary: 'anthropic',
   entries: [
     {
@@ -120,6 +124,12 @@ const report = {
 const payload = parseHostPayload(report);
 assert.equal(payload.version, '1.10.0');
 assert.equal(payload.startupEnabled, true);
+assert.equal(payload.menuBarShowAll, false);
+assert.equal(payload.menuBarHideValue, true);
+assert.equal(payload.menuBarWindow, 'weekly');
+assert.equal(payload.menuBarChart, true);
+assert.equal(payload.menuBarProvider, 'highest');
+assert.equal(parseHostPayload({ menu_bar_provider: 'openai@work' }).menuBarProvider, 'openai@work');
 assert.equal(payload.entries.length, 1);
 assert.equal(payload.entries[0].displayName, 'Claude');
 assert.equal(payload.entries[0].sections.length, 2); // spacer dropped
@@ -390,6 +400,17 @@ const synced = syncLayout(loaded, ['anthropic', 'openai', 'cursor']);
 assert.deepEqual(synced.cardOrder, ['cursor', 'openai', 'anthropic']);
 assert.ok(store.getItem(LAYOUT_KEY).includes('cursor'));
 assert.deepEqual(emptyLayout().cardOrder, []);
+
+// Language must survive storage normalization and every host payload refresh.
+const languageStore = memoryStorage();
+saveLayout(languageStore, { ...emptyLayout(), language: 'pt-BR' });
+assert.equal(loadLayout(languageStore).language, 'pt-BR');
+assert.equal(syncLayout(loadLayout(languageStore), ['anthropic']).language, 'pt-BR');
+assert.equal(normalizeLayout({ language: 'invalid' }).language, 'en');
+assert.equal(nextUpdateLabel({ nextRefreshAt: 120_000 }, 60_000, 'pt-BR'), 'Próxima atualização em 1m');
+assert.equal(resetText({ resetAt: '2026-09-24T12:00:00Z' }, 'countdown', Date.parse('2026-09-24T11:00:00Z'), { locale: 'pt-BR' }), 'Redefine em 1h 0m');
+assert.match(formatResetExact(Date.parse('2026-09-24T12:00:00Z'), Date.parse('2026-09-24T11:00:00Z'), { locale: 'pt-BR', timeZone: 'UTC', timeFormat: '24' }), /^hoje às 12:00$/);
+assert.equal(updateStatusLabel({ update: null, updateCheckedAt: 0 }, 0, 'pt-BR'), 'Ainda não verificado');
 
 // --- resetTimes layout field ------------------------------------
 

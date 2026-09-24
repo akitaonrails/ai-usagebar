@@ -5,6 +5,7 @@ import type { RowAction } from "@/components/RowMenu";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { SortableItem, VerticalDnd } from "@/components/dnd";
 import type { Card, Layout, Payload } from "@/lib/types";
+import { useI18n } from "@/lib/i18n";
 import { explainError, updateBannerPending } from "../model.js";
 
 interface DashboardProps {
@@ -43,6 +44,7 @@ export function Dashboard({
   onToggleCollapse,
   onToggleShowAs,
 }: DashboardProps) {
+  const { t } = useI18n();
   if (payload.hostError) {
     return (
       <div className="card-surface py-[var(--card-gutter)]" title={payload.hostError}>
@@ -53,10 +55,10 @@ export function Dashboard({
   const welcome = hint ? (
     <div className="mb-[var(--section-gap)]">
       <HintCard
-        buttonTitle="Open Customize"
+        buttonTitle={t("Open Customize")}
         icon={<MdiTune />}
-        message="We turned on the providers that have credentials on this PC. Add or hide providers any time."
-        title="Welcome to AI Usage"
+        message={t("We turned on the providers that have credentials on this PC. Add or hide providers any time.")}
+        title={t("Welcome to AI Usage")}
         onAction={onOpenCustomize}
         onDismiss={onDismissHint}
       />
@@ -75,8 +77,8 @@ export function Dashboard({
         {banner}
         <p className="m-0 px-4 py-6 text-center text-[11px] text-label-2">
           {cards.length
-            ? "Turn on Customize to choose what to show."
-            : "No providers enabled. Open the TUI and turn one on in Settings."}
+            ? t("Turn on Customize to choose what to show.")
+            : t("No providers enabled. Open the TUI and turn one on in Settings.")}
         </p>
       </>
     );

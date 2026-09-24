@@ -13,6 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useI18n } from "@/lib/i18n";
 
 export type RowAction = "always" | "customize" | "demand" | "hide" | "refresh" | "star";
 
@@ -36,6 +37,7 @@ const ITEM_CLASS =
  * laid over the row, and `contextmenu` opens the menu programmatically.
  */
 export function RowMenu({ children, inAlways, providerTitle, starred, onAction, onOpenChange }: RowMenuProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -67,31 +69,31 @@ export function RowMenu({ children, inAlways, providerTitle, starred, onAction, 
       <DropdownMenuContent align="end" sideOffset={2} className="min-w-[184px] rounded-[10px] p-[5px] shadow-lg">
         <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("hide")}>
           <MdiEyeOff />
-          <span className="flex-1">Hide row</span>
+          <span className="flex-1">{t("Hide row")}</span>
         </DropdownMenuItem>
         <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("star")}>
           {starred ? <MdiStar /> : <MdiStarOutline />}
-          <span className="flex-1">{starred ? "Unstar from menu bar" : "Star for menu bar"}</span>
+          <span className="flex-1">{t(starred ? "Unstar from menu bar" : "Star for menu bar")}</span>
         </DropdownMenuItem>
         {inAlways ? (
           <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("demand")}>
             <MdiPinOff />
-            <span className="flex-1">Show on demand</span>
+            <span className="flex-1">{t("Show on demand")}</span>
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("always")}>
             <MdiPin />
-            <span className="flex-1">Always show</span>
+            <span className="flex-1">{t("Always show")}</span>
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("refresh")}>
           <MdiRefresh />
-          <span className="flex-1">Refresh {providerTitle}</span>
+          <span className="flex-1">{t("Refresh")} {providerTitle}</span>
         </DropdownMenuItem>
         <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("customize")}>
           <MdiTune />
-          <span className="flex-1">Customize {providerTitle}</span>
+          <span className="flex-1">{t("Customize")} {providerTitle}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

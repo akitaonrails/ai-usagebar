@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import MdiClose from "~icons/mdi/close";
+import { useI18n } from "@/lib/i18n";
 
 interface HintCardProps {
   buttonTitle: string;
@@ -15,6 +16,7 @@ interface HintCardProps {
  * follow the metric rows (label / supporting) so the card reads like the rest of the dashboard.
  */
 export function HintCard({ buttonTitle, icon, message, title, onAction, onDismiss }: HintCardProps) {
+  const { t } = useI18n();
   return (
     <div className="card-surface flex items-start gap-[10px] px-[var(--card-pad)] py-2">
       <span className="grid size-5 shrink-0 place-items-center text-label-2 [&_svg]:size-4">{icon}</span>
@@ -31,7 +33,7 @@ export function HintCard({ buttonTitle, icon, message, title, onAction, onDismis
       </div>
       <button
         type="button"
-        aria-label="Dismiss"
+        aria-label={t("Dismiss")}
         className="plain-btn grid size-4 shrink-0 place-items-center text-label-2"
         onClick={onDismiss}
       >

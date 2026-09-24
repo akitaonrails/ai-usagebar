@@ -1,6 +1,7 @@
 import MdiArrowDownCircle from "~icons/mdi/arrow-down-circle-outline";
 import MdiClose from "~icons/mdi/close";
 import type { UpdateInfo } from "@/lib/types";
+import { useI18n } from "@/lib/i18n";
 import { useBusyLabel } from "@/lib/useBusyLabel";
 import { sendCommand } from "../model.js";
 
@@ -21,13 +22,14 @@ const ACTION_LABEL: Record<UpdateInfo["state"], string> = {
  * ✕ snoozes the update; it is hidden while a download or install is under way.
  */
 export function UpdateBanner({ update }: UpdateBannerProps) {
+  const { language, t } = useI18n();
   const [clicked, startClicked] = useBusyLabel();
 
   const busy = clicked !== null || update.state === "downloading" || update.state === "installing";
   const version = update.version.replace(/^v/i, "");
   const message =
-    clicked ?? (update.state === "failed" ? `Couldn't update: ${update.error}` : `AI Usage v${version} is ready to install.`);
-  const actionLabel = clicked ?? ACTION_LABEL[update.state];
+    clicked ?? (update.state === "failed" ? `${t("Couldn't update")}: ${update.error}` : language === "pt-BR" ? `AI Usage v${version} está pronto para instalar.` : `AI Usage v${version} is ready to install.`);
+  const actionLabel = t(clicked ?? ACTION_LABEL[update.state]);
 
   function onInstall() {
     startClicked("Updating…");
@@ -39,7 +41,7 @@ export function UpdateBanner({ update }: UpdateBannerProps) {
         <MdiArrowDownCircle />
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="text-[length:var(--sz-label)] font-semibold">Update available</span>
+        <span className="text-[length:var(--sz-label)] font-semibold">{t("Update available")}</span>
         <span className="text-[length:var(--sz-support)] leading-[1.35] text-label-2" title={update.url || undefined}>
           {message}
         </span>
@@ -55,9 +57,9 @@ export function UpdateBanner({ update }: UpdateBannerProps) {
       {busy ? null : (
         <button
           type="button"
-          aria-label="Dismiss"
+          aria-label={t("Dismiss")}
           className="plain-btn grid size-4 shrink-0 place-items-center text-label-2"
-          title="Remind me later"
+          title={t("Remind me later")}
           onClick={() => sendCommand("snooze-update")}
         >
           <MdiClose className="size-3" />

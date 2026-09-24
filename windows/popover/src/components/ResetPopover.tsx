@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Popover, PopoverArrow, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/lib/i18n";
 import type { TimeFormat } from "@/lib/types";
 import { expirySeverity, formatDuration, formatResetExact } from "../model.js";
 
@@ -43,10 +44,11 @@ interface ResetTimelineProps {
 }
 
 export function ResetTimeline({ events, nowMs, timeFormat }: ResetTimelineProps) {
+  const { language, t } = useI18n();
   if (events.length === 0) {
     return (
       <div className="py-2 text-center text-[length:var(--sz-support)] text-label-2">
-        You have no rate limit resets
+        {t("You have no rate limit resets")}
       </div>
     );
   }
@@ -72,11 +74,11 @@ export function ResetTimeline({ events, nowMs, timeFormat }: ResetTimelineProps)
             </span>
             <span className={cn("flex min-w-0 flex-1 items-baseline gap-2", last ? "pb-0" : "pb-2.5")}>
               <span className="min-w-0 truncate text-[length:var(--sz-support)]">
-                {formatResetExact(event.atMs, nowMs, { timeFormat })}
+                {formatResetExact(event.atMs, nowMs, { timeFormat, locale: language })}
               </span>
               <span className="min-w-2 flex-1" />
               <span className="shrink-0 text-[length:var(--sz-support)] tabular-nums text-label-2">
-                {formatDuration(event.atMs - nowMs)}
+                {formatDuration(event.atMs - nowMs, language)}
               </span>
             </span>
           </li>

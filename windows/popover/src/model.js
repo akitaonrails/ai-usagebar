@@ -37,6 +37,11 @@ export function emptyPayload(hostError) {
     nextRefreshAt: 0,
     startupEnabled: false,
     hostError: hostError || "",
+    menuBarShowAll: true,
+    menuBarHideValue: false,
+    menuBarProvider: "highest",
+    menuBarWindow: "auto",
+    menuBarChart: false,
     os: "",
     primary: "",
     entries: [],
@@ -74,6 +79,11 @@ function normalizePayload(parsed) {
     nextRefreshAt: Number(parsed.next_refresh_at) || 0,
     startupEnabled: parsed.startup_enabled === true,
     hostError: clean(parsed.host_error, 1200),
+    menuBarShowAll: parsed.menu_bar_show_all !== false,
+    menuBarHideValue: parsed.menu_bar_hide_value === true,
+    menuBarProvider: clean(parsed.menu_bar_provider || "highest", 180),
+    menuBarWindow: ["session", "weekly", "monthly"].includes(parsed.menu_bar_window) ? parsed.menu_bar_window : "auto",
+    menuBarChart: parsed.menu_bar_chart === true,
     os: normalizeOs(parsed.os),
     primary: clean(parsed.primary, 180),
     entries,
@@ -229,8 +239,8 @@ function normalizeSection(raw) {
   return null;
 }
 
-export function formatDuration(milliseconds) {
-  if (!(milliseconds > 0)) return "now";
+export function formatDuration(milliseconds, locale) {
+  if (!(milliseconds > 0)) return locale === "pt-BR" ? "agora" : "now";
   const minutes = Math.floor(milliseconds / 60000);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
@@ -358,12 +368,12 @@ export function formatResetExact(atMs, nowMs, opts) {
   // fold it to a plain space so the string is stable across runtimes.
   const time = new Intl.DateTimeFormat(locale, timeOptions).format(at).replace(/ /g, " ");
   const atDay = dayKey(atMs, locale, timeZone);
-  if (atDay === dayKey(nowMs, locale, timeZone)) return "today at " + time;
-  if (atDay === dayKey(nowMs + 86_400_000, locale, timeZone)) return "tomorrow at " + time;
+  if (atDay === dayKey(nowMs, locale, timeZone)) return (locale === "pt-BR" ? "hoje às " : "today at ") + time;
+  if (atDay === dayKey(nowMs + 86_400_000, locale, timeZone)) return (locale === "pt-BR" ? "amanhã às " : "tomorrow at ") + time;
   const dayOptions = { month: "short", day: "numeric" };
   if (timeZone) dayOptions.timeZone = timeZone;
   const day = new Intl.DateTimeFormat(locale, dayOptions).format(at).replace(/ /g, " ");
-  return day + " at " + time;
+  return day + (locale === "pt-BR" ? " às " : " at ") + time;
 }
 
 // Banked reset credits always show a calendar date, even when they expire
@@ -371,7 +381,7 @@ export function formatResetExact(atMs, nowMs, opts) {
 // item and the stable date makes neighboring expiries easy to compare.
 export function formatResetCreditDate(value, opts) {
   const atMs = typeof value === "number" ? value : Date.parse(String(value || ""));
-  if (!Number.isFinite(atMs)) return "Date unavailable";
+  if (!Number.isFinite(atMs)) return opts && opts.locale === "pt-BR" ? "Data indisponível" : "Date unavailable";
   // `undefined` asks Intl for the WebView/Windows locale. Tests can still
   // inject a locale explicitly to keep their expected strings deterministic.
   const locale = opts && opts.locale ? opts.locale : undefined;
@@ -388,7 +398,7 @@ export function formatResetCreditDate(value, opts) {
   else if (timeFormat === "24") timeOptions.hourCycle = "h23";
   const day = new Intl.DateTimeFormat(locale, dayOptions).format(at).replace(/ /g, " ");
   const time = new Intl.DateTimeFormat(locale, timeOptions).format(at).replace(/ /g, " ");
-  return day + " at " + time;
+  return day + (locale === "pt-BR" ? " às " : " at ") + time;
 }
 
 export function resetCreditDetails(row, nowMs, opts) {
@@ -407,7 +417,7 @@ export function resetCreditDetails(row, nowMs, opts) {
     const atMs = Date.parse(String(credit.expiresAt || ""));
     items.push({
       date: formatResetCreditDate(credit.expiresAt, opts),
-      remaining: Number.isNaN(atMs) ? "—" : atMs <= nowMs ? "expired" : formatDuration(atMs - nowMs),
+      remaining: Number.isNaN(atMs) ? "—" : atMs <= nowMs ? opts && opts.locale === "pt-BR" ? "expirado" : "expired" : formatDuration(atMs - nowMs, opts && opts.locale),
       title: String(credit.title || ""),
     });
   }
@@ -423,9 +433,12 @@ function parseResetAt(row) {
 // `reset` text when there is no parseable absolute timestamp.
 export function resetText(row, mode, nowMs, opts) {
   const at = parseResetAt(row);
-  if (Number.isNaN(at)) return (row && row.reset) || "";
-  if (mode === "exact") return "Resets " + formatResetExact(at, Number(nowMs) || 0, opts);
-  return "Resets in " + formatDuration(at - (Number(nowMs) || 0));
+  if (Number.isNaN(at)) {
+    const fallback = (row && row.reset) || "";
+    return opts && opts.locale === "pt-BR" ? fallback.replace(/^Resets in /, "Redefine em ") : fallback;
+  }
+  if (mode === "exact") return (opts && opts.locale === "pt-BR" ? "Redefine " : "Resets ") + formatResetExact(at, Number(nowMs) || 0, opts);
+  return (opts && opts.locale === "pt-BR" ? "Redefine em " : "Resets in ") + formatDuration(at - (Number(nowMs) || 0), opts && opts.locale);
 }
 
 // Same row in the other mode, for hover tooltips; "" without a timestamp.
@@ -495,11 +508,12 @@ export function paceTickPercent(pace, showAs) {
 export function paceText(pace, nowMs, opts) {
   if (!pace) return "";
   const now = Number(nowMs) || 0;
-  if (pace.state === "ahead") return "~" + Math.round(pace.sparePercent) + "% left at reset";
-  if (pace.state === "onTrack") return "~" + Math.max(Math.round(pace.sparePercent), 0) + "% spare";
+  const pt = opts && opts.locale === "pt-BR";
+  if (pace.state === "ahead") return "~" + Math.round(pace.sparePercent) + (pt ? "% restantes na redefinição" : "% left at reset");
+  if (pace.state === "onTrack") return "~" + Math.max(Math.round(pace.sparePercent), 0) + (pt ? "% de folga" : "% spare");
   if (pace.runsOutMs === null || pace.runsOutMs === undefined) return "";
-  if (opts && opts.resetTimes === "exact") return "Limit " + formatResetExact(pace.runsOutMs, now, opts);
-  return "Limit in " + formatDuration(pace.runsOutMs - now);
+  if (opts && opts.resetTimes === "exact") return (pt ? "Limite " : "Limit ") + formatResetExact(pace.runsOutMs, now, opts);
+  return (pt ? "Limite em " : "Limit in ") + formatDuration(pace.runsOutMs - now, opts && opts.locale);
 }
 
 // Ahead-of-pace rows stay quiet unless the layout asks for pacing everywhere.
@@ -672,6 +686,7 @@ export function emptyLayout() {
     collapsed: {},
     hideExtras: false,
     hintDismissed: false,
+    language: "en",
     resetTimes: "countdown",
     rows: {},
     seeded: false,
@@ -814,6 +829,7 @@ export function normalizeLayout(raw) {
   layout.timeFormat = normalizeTimeFormat(raw.timeFormat);
   layout.hideExtras = raw.hideExtras === true;
   layout.hintDismissed = raw.hintDismissed === true;
+  layout.language = raw.language === "pt-BR" ? "pt-BR" : "en";
   layout.seeded = raw.seeded === true;
   layout.resetTimes = normalizeResetTimes(raw.resetTimes);
   layout.showAs = normalizeShowAs(raw.showAs);
@@ -899,6 +915,7 @@ export function syncLayout(layout, cardIds) {
     collapsed,
     hideExtras: layout.hideExtras === true,
     hintDismissed: layout.hintDismissed === true,
+    language: layout.language === "pt-BR" ? "pt-BR" : "en",
     resetTimes: normalizeResetTimes(layout.resetTimes),
     seeded: layout.seeded === true,
     rows,
@@ -1372,43 +1389,43 @@ export function friendlyError(text, entry) {
   return joinError(explainError(text, entry));
 }
 
-export function nextUpdateLabel(payload, nowMs) {
+export function nextUpdateLabel(payload, nowMs, locale) {
   const remaining = (Number(payload.nextRefreshAt) || 0) - (Number(nowMs) || 0);
-  if (!(remaining > 0)) return "Updating…";
-  return "Next update in " + formatDuration(remaining);
+  if (!(remaining > 0)) return locale === "pt-BR" ? "Atualizando…" : "Updating…";
+  return (locale === "pt-BR" ? "Próxima atualização em " : "Next update in ") + formatDuration(remaining, locale);
 }
 
 // "just now", "5m ago", "2h ago", "3d ago".
-export function formatAgo(milliseconds) {
+export function formatAgo(milliseconds, locale) {
   const ms = Number(milliseconds) || 0;
-  if (ms < 60_000) return "just now";
+  if (ms < 60_000) return locale === "pt-BR" ? "agora mesmo" : "just now";
   const minutes = Math.floor(ms / 60_000);
-  if (minutes < 60) return minutes + "m ago";
+  if (minutes < 60) return locale === "pt-BR" ? "há " + minutes + " min" : minutes + "m ago";
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return hours + "h ago";
-  return Math.floor(hours / 24) + "d ago";
+  if (hours < 24) return locale === "pt-BR" ? "há " + hours + " h" : hours + "h ago";
+  return locale === "pt-BR" ? "há " + Math.floor(hours / 24) + " d" : Math.floor(hours / 24) + "d ago";
 }
 
 // The Settings row under the update-mode picker.
-export function updateStatusLabel(payload, nowMs) {
+export function updateStatusLabel(payload, nowMs, locale) {
   const update = payload && payload.update;
   if (!update) {
     const checkedAt = finiteNumber(payload && payload.updateCheckedAt);
-    if (checkedAt === 0) return "Not checked yet";
-    return "Up to date · checked " + formatAgo((Number(nowMs) || 0) - checkedAt);
+    if (checkedAt === 0) return locale === "pt-BR" ? "Ainda não verificado" : "Not checked yet";
+    return locale === "pt-BR" ? "Atualizado · verificado " + formatAgo((Number(nowMs) || 0) - checkedAt, locale) : "Up to date · checked " + formatAgo((Number(nowMs) || 0) - checkedAt);
   }
   const version = update.version ? "v" + String(update.version).replace(/^v/i, "") : "";
   switch (update.state) {
     case "checking":
-      return "Checking…";
+      return locale === "pt-BR" ? "Verificando…" : "Checking…";
     case "downloading":
-      return "Downloading " + (version || "update") + "…";
+      return (locale === "pt-BR" ? "Baixando " : "Downloading ") + (version || (locale === "pt-BR" ? "atualização" : "update")) + "…";
     case "installing":
-      return "Installing…";
+      return locale === "pt-BR" ? "Instalando…" : "Installing…";
     case "failed":
-      return update.error ? "Couldn't update: " + update.error : "Couldn't update";
+      return update.error ? (locale === "pt-BR" ? "Não foi possível atualizar: " : "Couldn't update: ") + update.error : locale === "pt-BR" ? "Não foi possível atualizar" : "Couldn't update";
     default:
-      return (version || "An update") + " available";
+      return locale === "pt-BR" ? (version || "Uma atualização") + " disponível" : (version || "An update") + " available";
   }
 }
 

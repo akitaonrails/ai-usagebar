@@ -7,6 +7,7 @@ export interface RowPrefs {
 }
 
 export type TimeFormat = "12" | "24" | "auto";
+export type Language = "en" | "pt-BR";
 
 export interface Layout {
   alwaysShowPace: boolean;
@@ -15,6 +16,7 @@ export interface Layout {
   hidden: Record<string, boolean>;
   hideExtras: boolean;
   hintDismissed: boolean;
+  language: Language;
   resetTimes: string;
   rows: Record<string, RowPrefs>;
   seeded: boolean;
@@ -185,6 +187,11 @@ export interface Payload {
   entries: Entry[];
   generatedAt: number;
   hostError: string;
+  menuBarShowAll: boolean;
+  menuBarHideValue: boolean;
+  menuBarProvider: string;
+  menuBarWindow: "auto" | "session" | "weekly" | "monthly";
+  menuBarChart: boolean;
   /** Host OS: macos, windows, or linux. */
   os: string;
   nextRefreshAt: number;

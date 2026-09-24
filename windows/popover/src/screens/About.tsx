@@ -1,5 +1,6 @@
 import MdiOpenInNew from "~icons/mdi/open-in-new";
 import type { Payload } from "@/lib/types";
+import { useI18n } from "@/lib/i18n";
 import { sendCommand, updateStatusLabel } from "../model.js";
 
 interface AboutProps {
@@ -9,9 +10,10 @@ interface AboutProps {
 
 /** Version, release check, and the GitHub page this build was compiled from. */
 export function About({ nowMs, payload }: AboutProps) {
-  const status = updateStatusLabel(payload, nowMs);
+  const { language, t } = useI18n();
+  const status = updateStatusLabel(payload, nowMs, language);
   const action = updateAction(payload);
-  const version = payload.version ? `Version ${payload.version}` : "Development build";
+  const version = payload.version ? `${t("Version")} ${payload.version}` : t("Development build");
 
   return (
     <div className="flex flex-col gap-[var(--section-gap)]">
@@ -22,7 +24,7 @@ export function About({ nowMs, payload }: AboutProps) {
           <span className="text-[length:var(--sz-badge)] leading-[1.35] text-label-2">{status}</span>
         </div>
         <div className="flex items-center px-[var(--card-pad)] py-[var(--pad-control)]">
-          <span className="text-[length:var(--sz-label)] font-semibold">Check for Updates</span>
+          <span className="text-[length:var(--sz-label)] font-semibold">{t("Check for Updates")}</span>
           <span className="min-w-2 flex-1" />
           <button
             type="button"
@@ -30,13 +32,13 @@ export function About({ nowMs, payload }: AboutProps) {
             disabled={action.disabled}
             onClick={action.run}
           >
-            {action.label}
+            {t(action.label)}
           </button>
         </div>
         {payload.repository ? (
           <div className="flex items-center px-[var(--card-pad)] py-[var(--pad-control)]">
             <span className="min-w-0 truncate text-[length:var(--sz-label)] font-semibold leading-none">
-              Source on GitHub
+              {t("Source on GitHub")}
             </span>
             <span className="min-w-2 flex-1" />
             <button
@@ -44,7 +46,7 @@ export function About({ nowMs, payload }: AboutProps) {
               className="inline-flex h-[var(--control-h)] shrink-0 items-center gap-1 border-0 bg-transparent p-0 text-[length:var(--sz-support)] leading-none text-label-2"
               onClick={() => sendCommand("open-url", { url: payload.repository })}
             >
-              Open
+              {t("Open")}
               <MdiOpenInNew aria-hidden="true" className="size-[13px] shrink-0" />
             </button>
           </div>

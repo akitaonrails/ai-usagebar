@@ -141,6 +141,337 @@ body {
   user-select: none;
 }
 
+/* macOS uses a native AppKit material behind the transparent WKWebView. Keep
+   this surface translucent so the desktop and the system tint remain visible. */
+body:has(.mac-panel) {
+  background: transparent;
+}
+
+.mac-panel {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  background: rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62);
+}
+
+.dark .mac-panel {
+  background: rgba(18, 22, 29, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.mac-panel .bar-glass {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.dark .mac-panel .bar-glass {
+  background: rgba(22, 24, 31, 0.2);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.mac-panel .card-surface {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.dark .mac-panel .card-surface {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mac-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 12px 6px;
+}
+
+.mac-dashboard-header,
+.mac-provider-heading,
+.mac-metric-heading,
+.mac-metric-note,
+.mac-detail-row,
+.mac-dashboard-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mac-dashboard-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.mac-dashboard-header p {
+  margin: 3px 0 0;
+  color: var(--label-2);
+  font-size: 11px;
+}
+
+.mac-dashboard-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.mac-icon-button,
+.mac-provider-refresh {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 9px;
+  background: var(--control-fill);
+  color: var(--label-1);
+  cursor: pointer;
+}
+
+.mac-icon-button svg,
+.mac-provider-refresh svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mac-icon-button:hover,
+.mac-provider-refresh:hover,
+.mac-provider-tab:hover {
+  background: var(--control-fill-hover);
+}
+
+.mac-icon-button:focus-visible,
+.mac-provider-refresh:focus-visible,
+.mac-provider-tab:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.mac-provider-tabs {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 1px 1px 5px;
+  scrollbar-width: none;
+}
+
+.mac-provider-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.mac-provider-tab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid rgba(90, 90, 100, 0.15);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--label-1);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dark .mac-provider-tab {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.13);
+}
+
+.mac-provider-tab[data-active="true"] {
+  border-color: rgba(0, 122, 255, 0.25);
+  background: rgba(0, 122, 255, 0.15);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.mac-tab-name {
+  font-weight: 600;
+}
+
+.mac-tab-value {
+  color: var(--label-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mac-provider-card {
+  overflow: hidden;
+  border: 1px solid rgba(90, 90, 100, 0.13);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.045), inset 0 1px rgba(255, 255, 255, 0.42);
+}
+
+.dark .mac-provider-card {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.1), inset 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.mac-provider-heading {
+  gap: 10px;
+  padding: 14px;
+}
+
+.mac-provider-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--control-fill);
+}
+
+.mac-provider-title {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mac-provider-title strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mac-provider-title small {
+  overflow: hidden;
+  color: var(--label-2);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mac-provider-refresh {
+  width: 25px;
+  height: 25px;
+  border: 0;
+  background: transparent;
+}
+
+.mac-usage-section {
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--separator);
+}
+
+.mac-section-label {
+  margin-bottom: 17px;
+  color: var(--label-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.mac-metric + .mac-metric,
+.mac-metric + .mac-detail-row,
+.mac-detail-row + .mac-metric,
+.mac-detail-row + .mac-detail-row {
+  margin-top: 17px;
+}
+
+.mac-metric-heading,
+.mac-detail-row {
+  gap: 10px;
+  font-size: 12px;
+}
+
+.mac-metric-heading strong,
+.mac-detail-row strong {
+  flex: none;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.mac-meter {
+  height: 5px;
+  overflow: hidden;
+  margin-top: 8px;
+  border-radius: 5px;
+  background: var(--fill-tertiary);
+}
+
+.mac-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.mac-meter-fill[data-severity="mid"],
+.mac-meter-fill[data-severity="high"] { background: var(--orange); }
+.mac-meter-fill[data-severity="critical"] { background: var(--red); }
+
+.mac-metric-note {
+  gap: 8px;
+  min-height: 14px;
+  margin-top: 5px;
+  color: var(--label-2);
+  font-size: 10px;
+}
+
+.mac-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  color: var(--label-2);
+  font-size: 11px;
+}
+
+.mac-detail-block strong {
+  color: var(--label-1);
+  font-size: 12px;
+}
+
+.mac-cached-note {
+  margin: 0;
+  padding: 0 14px 13px;
+  color: var(--label-2);
+  font-size: 10px;
+}
+
+.mac-empty-state {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 14px;
+  color: var(--label-2);
+  font-size: 12px;
+}
+
+.mac-empty-state strong {
+  color: var(--label-1);
+}
+
+.mac-empty-state p {
+  margin: 0;
+}
+
+.mac-retry-button {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--blue);
+  color: white;
+  cursor: pointer;
+}
+
+.mac-dashboard-status {
+  gap: 6px;
+  padding: 0 2px;
+  color: var(--label-2);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 ::-webkit-scrollbar {
   width: 0;
   height: 0;

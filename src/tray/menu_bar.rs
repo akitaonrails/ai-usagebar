@@ -6,6 +6,8 @@
 
 use serde_json::Value;
 
+pub const HIGHEST_PROVIDER: &str = "highest";
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum UsageWindow {
     #[default]
@@ -35,8 +37,13 @@ impl UsageWindow {
     }
 }
 
-pub fn selected_id<'a>(payload: &'a Value, remembered: &'a str) -> Option<&'a str> {
-    let entries = payload.get("entries")?.as_array()?;
+pub fn selected_id<'a>(
+    payload: &'a Value,
+    remembered: &str,
+    window: UsageWindow,
+    visible: Option<&[String]>,
+) -> Option<&'a str> {
+    let entries = eligible_entries(payload, visible);
     if entries.is_empty() {
         return None;
     }
@@ -45,8 +52,23 @@ pub fn selected_id<'a>(payload: &'a Value, remembered: &'a str) -> Option<&'a st
             .iter()
             .any(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
     };
-    if !remembered.is_empty() && has_id(remembered) {
-        return Some(remembered);
+    if !remembered.is_empty() && remembered != HIGHEST_PROVIDER && has_id(remembered) {
+        return entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(Value::as_str) == Some(remembered))
+            .and_then(|entry| entry.get("id").and_then(Value::as_str));
+    }
+    let mut best: Option<(&Value, f64)> = None;
+    for entry in &entries {
+        let Some(percent) = highest_percent(entry, window) else {
+            continue;
+        };
+        if best.is_none_or(|(_, previous)| percent > previous) {
+            best = Some((entry, percent));
+        }
+    }
+    if let Some((entry, _)) = best {
+        return entry.get("id").and_then(Value::as_str);
     }
     if let Some(primary) = payload.get("primary").and_then(Value::as_str) {
         if has_id(primary) {
@@ -61,20 +83,28 @@ pub fn selected_id<'a>(payload: &'a Value, remembered: &'a str) -> Option<&'a st
             return entry.get("id").and_then(Value::as_str);
         }
     }
-    entries.first()?.get("id").and_then(Value::as_str)
+    entries
+        .iter()
+        .find(|entry| is_ready(entry))
+        .or_else(|| entries.first())?
+        .get("id")
+        .and_then(Value::as_str)
 }
 
-pub fn next_id(payload: &Value, remembered: &str) -> Option<String> {
-    let ids: Vec<&str> = payload
-        .get("entries")?
-        .as_array()?
-        .iter()
+pub fn next_id(
+    payload: &Value,
+    remembered: &str,
+    window: UsageWindow,
+    visible: Option<&[String]>,
+) -> Option<String> {
+    let ids: Vec<&str> = eligible_entries(payload, visible)
+        .into_iter()
         .filter_map(|entry| entry.get("id").and_then(Value::as_str))
         .collect();
     if ids.is_empty() {
         return None;
     }
-    let current = selected_id(payload, remembered).unwrap_or(ids[0]);
+    let current = selected_id(payload, remembered, window, visible).unwrap_or(ids[0]);
     let index = ids.iter().position(|id| *id == current).unwrap_or(0);
     Some(ids[(index + 1) % ids.len()].to_owned())
 }
@@ -85,8 +115,9 @@ pub fn title(
     show_all: bool,
     show_value: bool,
     window: UsageWindow,
+    visible: Option<&[String]>,
 ) -> String {
-    let chips: Vec<String> = displayed_entries(payload, remembered, show_all)
+    let chips: Vec<String> = displayed_entries(payload, remembered, show_all, window, visible)
         .into_iter()
         .map(|entry| chip(entry, show_value, window))
         .filter(|chip| !chip.is_empty())
@@ -94,8 +125,14 @@ pub fn title(
     chips.join("   ")
 }
 
-pub fn tooltip(payload: &Value, remembered: &str, show_all: bool, window: UsageWindow) -> String {
-    let lines: Vec<String> = displayed_entries(payload, remembered, show_all)
+pub fn tooltip(
+    payload: &Value,
+    remembered: &str,
+    show_all: bool,
+    window: UsageWindow,
+    visible: Option<&[String]>,
+) -> String {
+    let lines: Vec<String> = displayed_entries(payload, remembered, show_all, window, visible)
         .into_iter()
         .map(|entry| {
             let name = entry
@@ -126,24 +163,82 @@ fn displayed_entries<'a>(
     payload: &'a Value,
     remembered: &'a str,
     show_all: bool,
+    window: UsageWindow,
+    visible: Option<&[String]>,
 ) -> Vec<&'a Value> {
-    let Some(entries) = payload.get("entries").and_then(Value::as_array) else {
-        return Vec::new();
-    };
+    let entries = eligible_entries(payload, visible);
     if show_all {
         let ready: Vec<&Value> = entries
             .iter()
+            .copied()
             .filter(|entry| entry.get("status").and_then(Value::as_str) != Some("error"))
             .collect();
         if !ready.is_empty() {
             return ready;
         }
     }
-    let selected = selected_id(payload, remembered);
+    let selected = selected_id(payload, remembered, window, visible);
     entries
-        .iter()
+        .into_iter()
         .filter(|entry| entry.get("id").and_then(Value::as_str) == selected)
         .collect()
+}
+
+fn eligible_entries<'a>(payload: &'a Value, visible: Option<&[String]>) -> Vec<&'a Value> {
+    let Some(entries) = payload.get("entries").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter(|entry| {
+            let Some(id) = entry.get("id").and_then(Value::as_str) else {
+                return false;
+            };
+            visible.is_none_or(|ids| ids.iter().any(|allowed| allowed == id))
+        })
+        .collect()
+}
+
+fn is_ready(entry: &Value) -> bool {
+    entry.get("status").and_then(Value::as_str) != Some("error")
+        && !entry
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| !error.is_empty())
+}
+
+fn highest_percent(entry: &Value, window: UsageWindow) -> Option<f64> {
+    if !is_ready(entry) {
+        return None;
+    }
+    best_metric(entry, window, false)?.get("percent")?.as_f64()
+}
+
+fn best_metric(entry: &Value, window: UsageWindow, fallback: bool) -> Option<&Value> {
+    let metrics: Vec<&Value> = entry
+        .get("sections")?
+        .as_array()?
+        .iter()
+        .filter(|section| section.get("type").and_then(Value::as_str) == Some("metric"))
+        .collect();
+    let candidates: Vec<&Value> = metrics
+        .iter()
+        .copied()
+        .filter(|metric| matches_window(metric, window))
+        .collect();
+    let pool = if candidates.is_empty() {
+        if !fallback {
+            return None;
+        }
+        &metrics
+    } else {
+        &candidates
+    };
+    pool.iter().copied().max_by(|a, b| {
+        let a = a.get("percent").and_then(Value::as_f64).unwrap_or(0.0);
+        let b = b.get("percent").and_then(Value::as_f64).unwrap_or(0.0);
+        a.total_cmp(&b)
+    })
 }
 
 fn chip(entry: &Value, show_value: bool, window: UsageWindow) -> String {
@@ -172,27 +267,7 @@ fn headline(entry: &Value, window: UsageWindow) -> String {
     {
         return "!".into();
     }
-    let sections = entry.get("sections").and_then(Value::as_array);
-    let metrics: Vec<&Value> = sections
-        .into_iter()
-        .flatten()
-        .filter(|section| section.get("type").and_then(Value::as_str) == Some("metric"))
-        .collect();
-    let candidates: Vec<&Value> = metrics
-        .iter()
-        .copied()
-        .filter(|metric| matches_window(metric, window))
-        .collect();
-    let pool = if candidates.is_empty() {
-        &metrics
-    } else {
-        &candidates
-    };
-    if let Some(metric) = pool.iter().copied().max_by(|a, b| {
-        let a = a.get("percent").and_then(Value::as_f64).unwrap_or(0.0);
-        let b = b.get("percent").and_then(Value::as_f64).unwrap_or(0.0);
-        a.total_cmp(&b)
-    }) {
+    if let Some(metric) = best_metric(entry, window, true) {
         if metric.get("headline").and_then(Value::as_str) == Some("value")
             && let Some(value) = metric.get("value").and_then(Value::as_str)
             && !value.is_empty()
@@ -203,7 +278,7 @@ fn headline(entry: &Value, window: UsageWindow) -> String {
             return format!("{percent}%");
         }
     }
-    if let Some(sections) = sections {
+    if let Some(sections) = entry.get("sections").and_then(Value::as_array) {
         for section in sections {
             if section.get("type").and_then(Value::as_str) != Some("text") {
                 continue;
@@ -279,10 +354,22 @@ mod tests {
             {"id":"openai@work", "short_name":"cdx"},
             {"id":"cursor", "short_name":"cur"}
         ]});
-        assert_eq!(selected_id(&report, "openai@work"), Some("openai@work"));
-        assert_eq!(next_id(&report, "openai@work"), Some("cursor".into()));
-        assert_eq!(next_id(&report, "cursor"), Some("claude".into()));
-        assert_eq!(selected_id(&report, "missing"), Some("claude"));
+        assert_eq!(
+            selected_id(&report, "openai@work", UsageWindow::Auto, None),
+            Some("openai@work")
+        );
+        assert_eq!(
+            next_id(&report, "openai@work", UsageWindow::Auto, None),
+            Some("cursor".into())
+        );
+        assert_eq!(
+            next_id(&report, "cursor", UsageWindow::Auto, None),
+            Some("claude".into())
+        );
+        assert_eq!(
+            selected_id(&report, "missing", UsageWindow::Auto, None),
+            Some("claude")
+        );
     }
 
     #[test]
@@ -297,19 +384,26 @@ mod tests {
             ]}
         ]});
         assert_eq!(
-            title(&report, "", false, true, UsageWindow::Auto),
+            title(&report, "", false, true, UsageWindow::Auto, None),
             "cdx 80%"
         );
         assert_eq!(
-            title(&report, "", false, true, UsageWindow::Session),
+            title(&report, "", false, true, UsageWindow::Session, None),
             "cdx 20%"
         );
         assert_eq!(
-            title(&report, "openrouter", false, true, UsageWindow::Weekly),
+            title(
+                &report,
+                "openrouter",
+                false,
+                true,
+                UsageWindow::Weekly,
+                None
+            ),
             "opr $12.50"
         );
         assert_eq!(
-            title(&report, "", true, true, UsageWindow::Auto),
+            title(&report, "", true, true, UsageWindow::Auto, None),
             "cdx 80%   opr $12.50"
         );
     }
@@ -327,16 +421,84 @@ mod tests {
             {"id":"zai", "display_name":"Z.AI", "status":"error", "sections":[]}
         ]});
         assert_eq!(
-            title(&report, "", true, true, UsageWindow::Auto),
+            title(&report, "", true, true, UsageWindow::Auto, None),
             "Claude 21%   Codex 15%"
         );
         assert_eq!(
-            title(&report, "", true, true, UsageWindow::Session),
+            title(&report, "", true, true, UsageWindow::Session, None),
             "Claude 17%   Codex 15%"
         );
         assert_eq!(
-            title(&report, "zai", false, true, UsageWindow::Auto),
+            title(&report, "zai", false, true, UsageWindow::Auto, None),
             "Z.AI !"
+        );
+    }
+
+    #[test]
+    fn highest_consumption_tracks_window_and_enabled_providers() {
+        let mut report = json!({"primary":"anthropic", "entries":[
+            {"id":"anthropic", "display_name":"Claude", "status":"ready", "sections":[
+                {"type":"metric", "label":"Session", "percent":70, "window_secs":18000},
+                {"type":"metric", "label":"Weekly", "percent":20, "window_secs":604800}
+            ]},
+            {"id":"openai", "display_name":"Codex", "status":"ready", "sections":[
+                {"type":"metric", "label":"Session", "percent":30, "window_secs":18000},
+                {"type":"metric", "label":"Weekly", "percent":80, "window_secs":604800}
+            ]},
+            {"id":"zai", "display_name":"Z.AI", "status":"error", "sections":[
+                {"type":"metric", "label":"Session", "percent":99, "window_secs":18000}
+            ]}
+        ]});
+        assert_eq!(
+            title(
+                &report,
+                HIGHEST_PROVIDER,
+                false,
+                true,
+                UsageWindow::Session,
+                None
+            ),
+            "Claude 70%"
+        );
+        assert_eq!(
+            title(
+                &report,
+                HIGHEST_PROVIDER,
+                false,
+                true,
+                UsageWindow::Weekly,
+                None
+            ),
+            "Codex 80%"
+        );
+        assert_eq!(
+            title(&report, "anthropic", false, true, UsageWindow::Weekly, None),
+            "Claude 20%"
+        );
+
+        let visible = vec!["anthropic".into()];
+        assert_eq!(
+            title(
+                &report,
+                HIGHEST_PROVIDER,
+                false,
+                true,
+                UsageWindow::Weekly,
+                Some(&visible)
+            ),
+            "Claude 20%"
+        );
+        report["entries"][0]["sections"][1]["percent"] = json!(90);
+        assert_eq!(
+            title(
+                &report,
+                HIGHEST_PROVIDER,
+                false,
+                true,
+                UsageWindow::Weekly,
+                None
+            ),
+            "Claude 90%"
         );
     }
 }
