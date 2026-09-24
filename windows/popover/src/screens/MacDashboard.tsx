@@ -164,7 +164,7 @@ export function MacDashboard({ cards, layout, nowMs, payload, onOpenCustomize, o
           </div>
 
           {selected ? (
-            <section className="mac-provider-card" aria-label={selected.title}>
+            <section className="mac-provider-content" aria-label={selected.title}>
               <div className="mac-provider-heading">
                 <span className="mac-provider-mark"><ProviderIcon slug={selected.id} title={selected.title} size={25} /></span>
                 <span className="mac-provider-title">
