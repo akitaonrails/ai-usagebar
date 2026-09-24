@@ -21,6 +21,32 @@ Each release is also published at
 
 ### Added
 
+- **Switch the active Claude or Codex account from the macOS tray.** Each
+  named account's card gets a control beside Customize and Reset: a green check
+  on the login in use, a switch button on the others. A Claude switch moves the
+  `claude` CLI login (which the VS Code extension shares) and, when the account
+  has a Desktop profile, Claude Desktop; a Codex switch moves
+  `~/.codex/auth.json`, which the Codex CLI, desktop app and IDE extension all
+  read. The button spins while the switch runs and turns red with the reason
+  when it fails.
+- **`ai-usagebar account switch <label> --codex`.** The Codex counterpart of the
+  Claude CLI switch, with the same guarantee: the outgoing login is saved back
+  into its own account before the target's `auth.json` is moved into
+  `~/.codex/auth.json`, so a rotating refresh token is never live in two
+  places, and any failure restores every file it touched. A
+  `.ai-usagebar-account.json` marker (account id only, no token) keeps a
+  moved-away account identifiable, and reads for the active account follow it
+  into the default file.
+- **`ai-usagebar account add <label> --codex`** registers an
+  `[[openai.accounts]]` entry at `~/.codex-<label>/auth.json` and runs
+  `codex login` under that `CODEX_HOME`.
+- **`--adopt-current`** on `account add` registers the login already in use
+  (plain `claude`, or `~/.codex` with `--codex`) under a label without signing
+  in again, so the first switch away can save it.
+- **`[openai] show_default_account`**, like the Anthropic and OpenRouter
+  settings: `false` hides the unnamed Codex tab once every login is named.
+- `account status` lists the Codex accounts and which one `~/.codex` holds.
+
 - **Quota-threshold desktop notifications.** After a fresh fetch, any vendor
   window that crosses `[notifications] threshold` (default 97%) raises a
   `notify-send` notification on Linux (`-a ai-usagebar -c quota`); an

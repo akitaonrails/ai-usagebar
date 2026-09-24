@@ -22,6 +22,10 @@ Detect / Open TUI / Start at Login / Quit. No Dock icon.
 Star up to two metrics per provider from a row's right-click menu or from
 Customize; those fills are what the status item paints.
 
+With named Claude or Codex accounts, each account's card also shows which login
+is active (a green check) and a button to switch to the others; see "Switch from
+the macOS menu bar" in [docs/claude-accounts.md](../docs/claude-accounts.md).
+
 ![Right-click menu on the Cursor "Other Models" row — Hide row, Star for menu bar, Show on demand, Refresh Cursor and Customize Cursor](../screenshots/macos-tray-row-menu.png)
 
 ![Customize Claude — Always Visible rows Weekly (starred) and Fable, On Demand row Session, each with a star and an on/off switch, Back and Reset in the top bar](../screenshots/macos-tray-provider-stars.png)

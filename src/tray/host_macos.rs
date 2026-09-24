@@ -39,7 +39,9 @@ use super::panel::{
     LIGHT_BACKGROUND, PopoverPlacement, WINDOW_HEIGHT, WINDOW_WIDTH, clamp_popover_height,
     cocoa_popover_frame, menu_bar_bottom_y,
 };
-use super::payload::{HostFacts, UpdateFact, fact_after_check, host_payload, wrap_report};
+use super::payload::{
+    AccountSwitchFact, HostFacts, UpdateFact, fact_after_check, host_payload, wrap_report,
+};
 use super::strip::{
     BARS_PIXEL_SIDE, BARS_POINT_SIDE, Stars, StripStyle, bar_fill, bars_layout, bars_rgba,
     content_from_payload, parse_strip_ipc,
@@ -68,6 +70,7 @@ enum WorkerCmd {
     RefreshEntry(String),
     Detect,
     CheckUpdate,
+    SwitchAccount { vendor: String, label: String },
     Shutdown,
 }
 
@@ -301,6 +304,10 @@ fn spawn_worker(
                         Ok(WorkerCmd::CheckUpdate) => {
                             rt.block_on(check_release(&proxy, &facts));
                         }
+                        Ok(WorkerCmd::SwitchAccount { vendor, label }) => {
+                            run_account_switch(&facts, &vendor, &label);
+                            break;
+                        }
                         Ok(WorkerCmd::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                             return;
                         }
@@ -320,10 +327,115 @@ fn run_detection(force: bool) {
 fn host_facts(config: &Config) -> HostFacts {
     let mut facts = HostFacts::new(env!("CARGO_PKG_VERSION"), startup::is_enabled());
     facts.refresh_secs = config.tray.refresh_minutes() * 60;
+    facts.accounts = account_facts(config);
     facts
 }
 
+/// Which Claude CLI and Codex logins are active, for the switch control on
+/// each account's card. Read fresh on every report, so a switch made from the
+/// terminal shows up too.
+fn account_facts(config: &Config) -> Vec<AccountSwitchFact> {
+    let mut out = Vec::new();
+    let claude = config.anthropic.all_accounts();
+    if config.anthropic.enabled && !claude.is_empty() {
+        let active = crate::anthropic::cli_account::home_claude_json()
+            .ok()
+            .and_then(|home| crate::anthropic::cli_account::resolve_active_label(&home, &claude));
+        out.push(AccountSwitchFact {
+            vendor: "anthropic".into(),
+            active,
+            labels: claude.iter().map(|account| account.label.clone()).collect(),
+            ..AccountSwitchFact::default()
+        });
+    }
+    let codex = &config.openai.accounts;
+    if config.openai.enabled && !codex.is_empty() {
+        let active = config
+            .openai
+            .resolve_auth_path(None)
+            .ok()
+            .and_then(|default| crate::openai::account::resolve_active_label(&default, codex));
+        out.push(AccountSwitchFact {
+            vendor: "openai".into(),
+            active,
+            labels: codex.iter().map(|account| account.label.clone()).collect(),
+            ..AccountSwitchFact::default()
+        });
+    }
+    out
+}
+
+/// Replace the account facts with a fresh read, keeping any running switch
+/// and the last error attached to their vendor.
+fn refresh_account_facts(facts: &SharedFacts) {
+    let fresh = account_facts(&Config::load().unwrap_or_default());
+    with_facts(facts, |f| {
+        f.accounts = fresh
+            .into_iter()
+            .map(|mut fact| {
+                if let Some(old) = f.accounts.iter().find(|old| old.vendor == fact.vendor) {
+                    fact.target.clone_from(&old.target);
+                    fact.switching = old.switching;
+                    fact.error.clone_from(&old.error);
+                }
+                fact
+            })
+            .collect();
+    });
+}
+
+/// Run `ai-usagebar account switch` out of process, exactly as a terminal
+/// would: the Claude half may quit and reopen the Desktop app, and its errors
+/// arrive on stderr, which becomes the card's message.
+fn run_account_switch(facts: &SharedFacts, vendor: &str, label: &str) {
+    let mut command = std::process::Command::new(resolve_cli());
+    command.args(["account", "switch", "--yes"]);
+    if vendor == "openai" {
+        command.arg("--codex");
+    }
+    command.arg("--").arg(label);
+    let error = match command.stdin(std::process::Stdio::null()).output() {
+        Ok(output) if output.status.success() => String::new(),
+        Ok(output) => String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .map(str::trim)
+            .rfind(|line| !line.is_empty())
+            .map(|line| {
+                line.trim_start_matches("ai-usagebar account switch: ")
+                    .to_string()
+            })
+            .unwrap_or_else(|| format!("account switch exited with {}", output.status)),
+        Err(error) => format!("could not run ai-usagebar: {error}"),
+    };
+    with_facts(facts, |f| {
+        for fact in f.accounts.iter_mut().filter(|fact| fact.vendor == vendor) {
+            fact.switching = false;
+            fact.error.clone_from(&error);
+        }
+    });
+}
+
+/// The `ai-usagebar` CLI next to this tray binary, then `~/.cargo/bin`.
+fn resolve_cli() -> std::path::PathBuf {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let sibling = dir.join("ai-usagebar");
+        if sibling.is_file() {
+            return sibling;
+        }
+    }
+    if let Ok(home) = crate::cache::home_dir() {
+        let cargo = home.join(".cargo").join("bin").join("ai-usagebar");
+        if cargo.is_file() {
+            return cargo;
+        }
+    }
+    "ai-usagebar".into()
+}
+
 async fn push_report(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
+    refresh_account_facts(facts);
     let mut snapshot = facts_snapshot(facts);
     snapshot.startup_enabled = startup::is_enabled();
     let now = now_ms();
@@ -400,6 +512,7 @@ fn stamp_facts(state: &mut TrayState) {
         "update_checked_at",
         "repository",
         "version",
+        "accounts",
     ] {
         obj.insert(key.into(), stamped[key].clone());
     }
@@ -606,6 +719,34 @@ fn handle_menu(state: &mut TrayState, event: &MenuEvent, control_flow: &mut Cont
     }
 }
 
+/// Start a switch the popover asked for. Only a vendor and label the host
+/// itself reported are accepted, and never while one is already running.
+fn request_account_switch(state: &mut TrayState, value: &Value) {
+    let vendor = value.get("vendor").and_then(Value::as_str).unwrap_or("");
+    let label = value.get("label").and_then(Value::as_str).unwrap_or("");
+    let allowed = facts_snapshot(&state.facts).accounts.iter().any(|fact| {
+        fact.vendor == vendor
+            && !fact.switching
+            && fact.active.as_deref() != Some(label)
+            && fact.labels.iter().any(|known| known == label)
+    });
+    if !allowed {
+        return;
+    }
+    with_facts(&state.facts, |f| {
+        for fact in f.accounts.iter_mut().filter(|fact| fact.vendor == vendor) {
+            fact.target = label.to_string();
+            fact.switching = true;
+            fact.error.clear();
+        }
+    });
+    apply_facts(state);
+    let _ = state.worker.send(WorkerCmd::SwitchAccount {
+        vendor: vendor.to_string(),
+        label: label.to_string(),
+    });
+}
+
 fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow) {
     let Ok(value) = serde_json::from_str::<Value>(body) else {
         return;
@@ -626,6 +767,7 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
         "close" => hide_popover(state),
         "quit" => *control_flow = ControlFlow::Exit,
         "toggle-startup" => toggle_startup(state),
+        "switch-account" => request_account_switch(state, &value),
         "resize" => handle_resize(state, &value),
         "refresh-entry" => {
             if let Some(id) = value.get("id").and_then(Value::as_str) {

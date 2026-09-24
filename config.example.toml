@@ -169,6 +169,10 @@ enabled = true
 # [[openai.accounts]]
 # label = "work"
 # codex_auth_path = "~/.config/ai-usagebar/accounts/work-codex/auth.json"
+# `ai-usagebar account switch <label> --codex` moves a named login into
+# ~/.codex/auth.json (docs/claude-accounts.md, "Switch Codex"). Once every login
+# is named, hide the unnamed default tab so the active account is not listed twice:
+# show_default_account = false
 
 [copilot]
 # Disabled by default. GitHub Copilot quota comes from the private endpoint

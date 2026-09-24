@@ -251,6 +251,18 @@ pub enum AccountAction {
         /// Skip the confirmation before signing the Desktop app out.
         #[arg(short = 'y', long, requires = "desktop")]
         yes: bool,
+
+        /// Register a Codex (ChatGPT) login instead of a Claude one: an
+        /// `[[openai.accounts]]` entry at `~/.codex-<LABEL>/auth.json`, signed
+        /// in with `codex login` under that `CODEX_HOME`.
+        #[arg(long, conflicts_with = "desktop")]
+        codex: bool,
+
+        /// Register the login that is active right now (plain `claude`, or
+        /// `~/.codex` with `--codex`) under this label instead of signing in
+        /// again, so `account switch` can save it before switching away.
+        #[arg(long, conflicts_with_all = ["desktop", "no_login"])]
+        adopt_current: bool,
     },
 
     /// Show which Claude account the Desktop app and the `claude` CLI use.
@@ -260,11 +272,21 @@ pub enum AccountAction {
         json: bool,
     },
 
-    /// Make <LABEL> the active Claude account (macOS).
+    /// Make <LABEL> the active Claude account (macOS), or the active Codex
+    /// account with `--codex`.
     Switch {
         /// Account to switch to. Desktop profiles come from claude-acc's store;
-        /// CLI accounts from `[[anthropic.accounts]]` / `accounts_dir`.
+        /// CLI accounts from `[[anthropic.accounts]]` / `accounts_dir`; Codex
+        /// accounts from `[[openai.accounts]]`.
         label: String,
+
+        /// Switch the Codex login (`~/.codex/auth.json`, shared by the Codex
+        /// CLI, desktop app and IDE extension) instead of Claude.
+        #[arg(
+            long,
+            conflicts_with_all = ["desktop", "cli", "keep_bridge", "backup_sessions", "delete_conflict"]
+        )]
+        codex: bool,
 
         /// Only switch the Claude Desktop app. Neither flag switches both.
         #[arg(long)]

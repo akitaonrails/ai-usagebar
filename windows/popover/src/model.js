@@ -47,6 +47,7 @@ export function emptyPayload(hostError) {
     update: null,
     updateCheckedAt: 0,
     repository: "",
+    accounts: {},
   };
 }
 
@@ -84,6 +85,54 @@ function normalizePayload(parsed) {
     update: normalizeUpdate(parsed.update),
     updateCheckedAt: finiteNumber(parsed.update_checked_at),
     repository: githubPage(parsed.repository),
+    accounts: normalizeAccounts(parsed.accounts),
+  };
+}
+
+const SWITCHABLE_VENDORS = ["anthropic", "openai"];
+
+// Switchable logins per vendor. Only the macOS host sends any; anything absent
+// or malformed means no switch control at all rather than a guessed one.
+function normalizeAccounts(value) {
+  const out = {};
+  if (!isPlainObject(value)) return out;
+  for (const vendor of SWITCHABLE_VENDORS) {
+    const raw = value[vendor];
+    if (!isPlainObject(raw) || !Array.isArray(raw.labels)) continue;
+    const labels = raw.labels.slice(0, 32).map((label) => clean(label, 64)).filter(Boolean);
+    if (labels.length === 0) continue;
+    out[vendor] = {
+      active: clean(raw.active, 64),
+      labels,
+      target: clean(raw.target, 64),
+      switching: raw.switching === true,
+      error: clean(raw.error, 300),
+    };
+  }
+  return out;
+}
+
+/**
+ * The switch control for one card: an `vendor@label` entry whose label the host
+ * listed as switchable. Null for every other card, including the unnamed default.
+ * @returns {import("./lib/types").CardAccount | null}
+ */
+export function accountSwitchFor(cardId, accounts) {
+  const id = String(cardId || "");
+  const at = id.indexOf("@");
+  if (at <= 0) return null;
+  const vendor = id.slice(0, at);
+  const label = id.slice(at + 1);
+  const info = accounts && Object.prototype.hasOwnProperty.call(accounts, vendor) ? accounts[vendor] : null;
+  if (!info || !info.labels.includes(label)) return null;
+  const mine = info.target === label;
+  return {
+    vendor,
+    label,
+    active: info.active === label,
+    switching: info.switching && mine,
+    busy: info.switching && !mine,
+    error: mine && !info.switching && info.active !== label ? info.error : "",
   };
 }
 

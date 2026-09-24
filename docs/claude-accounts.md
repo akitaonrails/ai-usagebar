@@ -221,6 +221,52 @@ If the current CLI login is not managed by ai-usagebar, the switch stops before
 discarding it. `--force` overrides that safeguard and removes the unmanaged
 login.
 
+### Adopt the login you already use
+
+The account you signed into first usually lives only in the default slot. Rather
+than signing it in again (which mints a second, independent grant for the same
+account), register it as it is:
+
+```bash
+ai-usagebar account add main --adopt-current
+```
+
+This writes only the identity marker in the new account's directory. The
+credential stays in the default slot, and the first switch away from `main`
+saves it into `main`'s own slot like any other outgoing login. With every
+account named, `[anthropic] show_default_account = false` drops the extra
+unnamed tab.
+
+### Switch Codex
+
+Codex works the same way. The Codex CLI, the Codex desktop app and the IDE
+extension all read `~/.codex/auth.json`, so one switch moves all three:
+
+```bash
+ai-usagebar account add main --codex --adopt-current  # the login ~/.codex already has
+ai-usagebar account add work --codex                  # CODEX_HOME=~/.codex-work codex login
+ai-usagebar account switch work --codex
+```
+
+The switch saves the outgoing login back into its account's `auth.json`, moves
+the target's file into `~/.codex/auth.json`, and records each account's ChatGPT
+account id in a small `.ai-usagebar-account.json` marker next to its file (no
+token), so an account whose file was moved away is still recognized. Reads for
+the active account follow it into `~/.codex/auth.json`. A Codex session that was
+already open keeps working until its token expires: before refreshing, Codex
+reloads `auth.json` and skips the refresh when the account changed, so it cannot
+overwrite the new login. Restart it to use the new account.
+
+### Switch from the macOS menu bar
+
+With named accounts configured, each account's card in the `ai-usagebar-tray`
+popover shows a switch control beside Customize and Reset. The active login has
+a green check; any other account has a switch button that runs the same
+`ai-usagebar account switch` (with `--codex` for a Codex card). A Claude switch
+quits and reopens Claude Desktop when that account also has a Desktop profile.
+The button spins while the switch runs, and a failed switch turns it red with
+the reason in its tooltip.
+
 ### Storage and history conflicts
 
 CLI accounts use `[[anthropic.accounts]]` or `accounts_dir`. Desktop profiles

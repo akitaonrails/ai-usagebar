@@ -2,6 +2,7 @@
 //! `chatgpt.com/backend-api/wham/usage` endpoint. Reference:
 //! `~/Projects/codexbar/codexbar` by the same author as claudebar.
 
+pub mod account;
 pub mod creds;
 pub mod fetch;
 pub mod oauth;

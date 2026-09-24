@@ -346,6 +346,7 @@ export default function App() {
               onReorder={(ids) => commit({ ...layout, cardOrder: mergeVisibleOrder(layout.cardOrder, ids) })}
               onRowAction={onRowAction}
               onRowMenuOpenChange={setRowMenuOpen}
+              onSwitchAccount={(vendor, label) => sendCommand("switch-account", { vendor, label })}
               onToggleCollapse={(id) => {
                 const collapsed = { ...layout.collapsed };
                 if (collapsed[id]) delete collapsed[id];
