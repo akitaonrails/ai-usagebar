@@ -20,6 +20,9 @@ Each release is also published at
   successful `account switch --codex` now drops the default account's usage
   cache, which otherwise kept showing the previous account's quota until it
   expired. Named accounts keep their own caches.
+- **The unnamed Claude tab shows the new login right after a switch.** The
+  Claude CLI switch had the same stale default cache as the Codex one, and now
+  drops it the same way after a successful `account switch`.
 - **Account labels, paths and errors printed by `account` are sanitized.**
   The Codex status line, the switch output and the `add` / `--adopt-current`
   messages for both vendors now pass through the untrusted-text sanitizers,

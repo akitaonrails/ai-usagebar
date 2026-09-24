@@ -925,6 +925,11 @@ fn switch_cli(config: &Config, args: &SwitchArgs, tolerant: bool) -> Result<bool
             println!("  (dry run — nothing was changed)");
         }
         CliSwitchOutcome::Switched { outgoing } => {
+            // Same reason as the Codex switch: the unnamed account's cache is
+            // keyed by the default login slot, which now holds someone else.
+            if let Ok(cache) = crate::cache::Cache::for_vendor("anthropic") {
+                cache.forget();
+            }
             print_cli_capture(outgoing.as_deref());
             println!(
                 "  switched — plain `claude` now signs in as {:?}.",
