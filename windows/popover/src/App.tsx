@@ -349,6 +349,7 @@ export default function App() {
             payload.os === "macos" ? (
               <MacDashboard
                 cards={visible}
+                layout={layout}
                 nowMs={nowMs}
                 payload={payload}
                 onOpenCustomize={() => go("customize")}

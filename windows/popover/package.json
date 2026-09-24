@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node popover.test.mjs"
+    "test": "node popover.test.mjs && node mac-dashboard.test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

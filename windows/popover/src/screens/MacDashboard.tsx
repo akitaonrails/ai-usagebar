@@ -3,11 +3,12 @@ import MdiCogOutline from "~icons/mdi/cog-outline";
 import MdiRefresh from "~icons/mdi/refresh";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { useI18n } from "@/lib/i18n";
-import type { Card, MetricRow, Payload, Row } from "@/lib/types";
+import type { Card, Layout, MetricRow, Payload, Row } from "@/lib/types";
 import { nextUpdateLabel, resetText, sendCommand } from "../model.js";
 
 interface MacDashboardProps {
   cards: Card[];
+  layout: Layout;
   nowMs: number;
   payload: Payload;
   onOpenCustomize: () => void;
@@ -27,10 +28,10 @@ function providerPreview(card: Card): string {
   return balance?.kind === "text" ? balance.value : "—";
 }
 
-function Metric({ row, nowMs }: { row: MetricRow; nowMs: number }) {
+function Metric({ row, layout, nowMs }: { row: MetricRow; layout: Layout; nowMs: number }) {
   const { language, metricLabel, t } = useI18n();
   const percent = Math.min(100, Math.max(0, Number(row.usedPercent) || 0));
-  const reset = resetText(row, "countdown", nowMs, { locale: language });
+  const reset = resetText(row, layout.resetTimes, nowMs, { locale: language, timeFormat: layout.timeFormat });
   const balance = row.headline === "value";
   const label = row.label === "Session" ? `${t("Session")} (5h)` : metricLabel(row.label);
   return (
@@ -59,9 +60,9 @@ function Metric({ row, nowMs }: { row: MetricRow; nowMs: number }) {
   );
 }
 
-function DetailRow({ row, nowMs }: { row: Row; nowMs: number }) {
+function DetailRow({ row, layout, nowMs }: { row: Row; layout: Layout; nowMs: number }) {
   const { metricLabel, t } = useI18n();
-  if (row.kind === "metric") return <Metric row={row} nowMs={nowMs} />;
+  if (row.kind === "metric") return <Metric row={row} layout={layout} nowMs={nowMs} />;
   if (row.kind === "text") {
     return (
       <div className="mac-detail-row">
@@ -87,7 +88,7 @@ function DetailRow({ row, nowMs }: { row: Row; nowMs: number }) {
 }
 
 /** A compact provider switcher for the macOS menu bar popover. */
-export function MacDashboard({ cards, nowMs, payload, onOpenCustomize, onOpenSettings }: MacDashboardProps) {
+export function MacDashboard({ cards, layout, nowMs, payload, onOpenCustomize, onOpenSettings }: MacDashboardProps) {
   const { language, t } = useI18n();
   const [selectedId, setSelectedId] = useState("");
   const selected = cards.find((card) => card.id === selectedId)
@@ -155,7 +156,7 @@ export function MacDashboard({ cards, nowMs, payload, onOpenCustomize, onOpenSet
               {selected.rows.length ? (
                 <div className="mac-usage-section">
                   <div className="mac-section-label">{t("USAGE & BALANCE")}</div>
-                  {selected.rows.map((row, index) => <DetailRow key={row.key || `${row.kind}:${index}`} row={row} nowMs={nowMs} />)}
+                  {selected.rows.map((row, index) => <DetailRow key={row.key || `${row.kind}:${index}`} row={row} layout={layout} nowMs={nowMs} />)}
                 </div>
               ) : selected.error ? (
                 <div className="mac-empty-state">
