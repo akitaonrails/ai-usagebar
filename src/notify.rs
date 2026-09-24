@@ -49,6 +49,7 @@ const CREDIT_WARNING_SECS: i64 = 48 * 3600;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A notifier that hangs must not hang the bar with it.
+#[cfg(target_os = "linux")]
 const SPAWN_KILL_AFTER: Duration = Duration::from_secs(5);
 
 /// Urgency band for one notification. `notify-send`'s `-u` maps directly.
@@ -60,6 +61,7 @@ pub enum Urgency {
     Critical,
 }
 
+#[cfg(target_os = "linux")]
 impl Urgency {
     fn as_arg(self) -> &'static str {
         match self {

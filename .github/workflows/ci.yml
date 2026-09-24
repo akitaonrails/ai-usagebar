@@ -69,18 +69,18 @@ jobs:
         uses: bnjbvr/cargo-machete@ac30a525c0a8d163a92d727b3ff079ee3f6ecb08 # v0.9.2
 
   msrv:
-    name: test (rust 1.88)
+    name: test (rust 1.90)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.88.0
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.90.0
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
 
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          key: msrv-1.88.0
+          key: msrv-1.90.0
 
       - name: Check declared minimum Rust version
         run: cargo check --all-targets --locked
