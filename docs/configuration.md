@@ -328,6 +328,13 @@ Create the second login with `CODEX_HOME=~/.codex-work codex login` and point
 account caches separately under `~/.cache/ai-usagebar/openai/<label>`. The
 singular `codex_auth_path` remains the default account and needs no migration.
 
+`ai-usagebar account add <label> --codex` writes that entry and runs the login
+for you; `ai-usagebar account switch <label> --codex` makes a named login the
+one the Codex CLI, desktop app and IDE extension use. See "Switch Codex" in
+[claude-accounts.md](claude-accounts.md). Once every login is named, set
+`[openai] show_default_account = false` so the active account is not listed a
+second time as the unnamed default.
+
 ### Explicitly enable a provider
 
 Run `ai-usagebar settings enable anthropic` to set `[anthropic].enabled = true`,

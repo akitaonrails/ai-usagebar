@@ -719,7 +719,7 @@ async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput
 /// two ChatGPT subscriptions never serve each other's usage from a warm cache.
 fn openai_target(cli: &Cli, config: &Config) -> Result<(std::path::PathBuf, Cache)> {
     let label = cli.account.as_deref();
-    let creds_path = config.openai.resolve_auth_path(label)?;
+    let creds_path = config.openai.fetch_auth_path(label)?;
     let cache = match (cli.cache_dir.as_deref(), label) {
         (Some(root), Some(label)) => Cache::at(root.join("openai").join(label)),
         (Some(root), None) => Cache::at(root.join("openai")),

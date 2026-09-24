@@ -216,7 +216,9 @@ fn build_tabs(config: &Config, desktop_labels: &[String]) -> Vec<TabId> {
                 tabs.push(TabId::account_for(vendor, account.label.clone()));
             }
         } else if vendor == VendorId::Openai {
-            tabs.push(TabId::vendor(vendor));
+            if config.openai.show_default_account || config.openai.accounts.is_empty() {
+                tabs.push(TabId::vendor(vendor));
+            }
             for account in &config.openai.accounts {
                 tabs.push(TabId::account_for(vendor, account.label.clone()));
             }
@@ -632,7 +634,7 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                 Some(label) => crate::cache::Cache::for_vendor_account("openai", label)?,
                 None => crate::cache::Cache::for_vendor("openai")?,
             };
-            let creds_path = config.openai.resolve_auth_path(label)?;
+            let creds_path = config.openai.fetch_auth_path(label)?;
             let endpoints = crate::openai::fetch::Endpoints::default();
             let outcome =
                 crate::openai::fetch_snapshot(client, &creds_path, &cache, &endpoints, DEFAULT_TTL)
@@ -1231,6 +1233,29 @@ mod tests {
         assert_eq!(
             tabs_from_config(&config),
             vec![TabId::account_for(VendorId::Openrouter, "work")]
+        );
+    }
+
+    #[test]
+    fn codex_can_hide_default_only_when_named_accounts_exist() {
+        let mut config = Config::default();
+        config.anthropic.enabled = false;
+        config.zai.enabled = false;
+        config.openrouter.enabled = false;
+        config.commandcode.enabled = false;
+        config.openai.show_default_account = false;
+        assert_eq!(
+            tabs_from_config(&config),
+            vec![TabId::vendor(VendorId::Openai)]
+        );
+
+        config.openai.accounts.push(crate::config::OpenAiAccount {
+            label: "work".into(),
+            codex_auth_path: "/tmp/codex-work/auth.json".into(),
+        });
+        assert_eq!(
+            tabs_from_config(&config),
+            vec![TabId::account_for(VendorId::Openai, "work")]
         );
     }
 

@@ -221,6 +221,54 @@ If the current CLI login is not managed by ai-usagebar, the switch stops before
 discarding it. `--force` overrides that safeguard and removes the unmanaged
 login.
 
+### Adopt the login you already use
+
+The account you signed into first usually lives only in the default slot. Rather
+than signing it in again (which mints a second, independent grant for the same
+account), register it as it is:
+
+```bash
+ai-usagebar account add main --adopt-current
+```
+
+This writes only the identity marker in the new account's directory. The
+credential stays in the default slot, and the first switch away from `main`
+saves it into `main`'s own slot like any other outgoing login. With every
+account named, `[anthropic] show_default_account = false` drops the extra
+unnamed tab.
+
+### Switch Codex
+
+Codex works the same way. The Codex CLI, the Codex desktop app and the IDE
+extension all read `~/.codex/auth.json`, so one switch moves all three:
+
+```bash
+ai-usagebar account add main --codex --adopt-current  # the login ~/.codex already has
+ai-usagebar account add work --codex                  # CODEX_HOME=~/.codex-work codex login
+ai-usagebar account switch work --codex
+```
+
+The switch saves the outgoing login back into its account's `auth.json`, moves
+the target's file into `~/.codex/auth.json`, and records each account's ChatGPT
+account id in a marker next to its file (`.auth.json.ai-usagebar-account.json`,
+no token), so an account whose file was moved away is still recognized. Reads
+for the active account follow it into `~/.codex/auth.json`.
+
+Before writing anything it checks the layout, and refuses when two accounts
+share a credential file, an account points at `~/.codex/auth.json` itself, a
+credential path is a symlink, two accounts are the same ChatGPT account, the
+active account also kept its own copy, or `[openai] codex_auth_path` points
+somewhere the Codex CLI does not read. The directories involved stay locked for
+the whole move, and ai-usagebar's own token refresh takes the same lock, so the
+two never interleave. If a step fails, every file it can put back is restored,
+and any it could not is named in the error.
+
+Codex itself is outside that lock. An open session keeps its account in memory
+until it restarts; before refreshing it reloads `auth.json` and skips the
+refresh when the account changed, but a refresh already in flight at the moment
+of the switch could still write the old account's tokens back. Restart open
+Codex sessions after switching.
+
 ### Storage and history conflicts
 
 CLI accounts use `[[anthropic.accounts]]` or `accounts_dir`. Desktop profiles

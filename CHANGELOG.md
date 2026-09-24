@@ -21,6 +21,26 @@ Each release is also published at
 
 ### Added
 
+- **`ai-usagebar account switch <label> --codex`.** The Codex counterpart of the
+  Claude CLI switch: the outgoing login is saved back into its own account
+  before the target's `auth.json` is moved into `~/.codex/auth.json`, so the
+  switch itself never leaves one refresh token in two files. It refuses
+  ambiguous layouts (shared or symlinked credential files, one ChatGPT account
+  under two labels, an active account with its own copy), locks every
+  directory it touches, and on failure restores what it can and names what it
+  could not. A per-file marker (account id only, no token) keeps a moved-away
+  account identifiable, and reads for the active account follow it into the
+  default file. ai-usagebar's Codex token refresh now takes the same lock.
+- **`ai-usagebar account add <label> --codex`** registers an
+  `[[openai.accounts]]` entry at `~/.codex-<label>/auth.json` and runs
+  `codex login` under that `CODEX_HOME`.
+- **`--adopt-current`** on `account add` registers the login already in use
+  (plain `claude`, or `~/.codex` with `--codex`) under a label without signing
+  in again, so the first switch away can save it.
+- **`[openai] show_default_account`**, like the Anthropic and OpenRouter
+  settings: `false` hides the unnamed Codex tab once every login is named.
+- `account status` lists the Codex accounts and which one `~/.codex` holds.
+
 - **Quota-threshold desktop notifications.** After a fresh fetch, any vendor
   window that crosses `[notifications] threshold` (default 97%) raises a
   `notify-send` notification on Linux (`-a ai-usagebar -c quota`); an

@@ -571,6 +571,56 @@ pub fn add_anthropic_account_to_doc(
     Ok(())
 }
 
+/// Where a newly-registered Codex account's `auth.json` lives by default:
+/// `~/.codex-<label>/auth.json`, the `CODEX_HOME` the docs have always
+/// suggested for a second login.
+pub fn default_codex_auth_path(home: &Path, label: &str) -> PathBuf {
+    home.join(format!(".codex-{label}")).join("auth.json")
+}
+
+/// Append a `[[openai.accounts]]` entry to a parsed config document, in place.
+/// The Codex counterpart of [`add_anthropic_account_to_doc`], with the same
+/// guarantees: only the new entry is added, and an invalid or duplicate label
+/// is an error.
+pub fn add_openai_account_to_doc(
+    doc: &mut toml_edit::DocumentMut,
+    label: &str,
+    codex_auth_path: &str,
+) -> Result<()> {
+    use toml_edit::{Item, Table, value};
+
+    validate_account_label_for("openai", label)?;
+
+    let openai = doc
+        .entry("openai")
+        .or_insert_with(|| Item::Table(Table::new()));
+    let openai = openai
+        .as_table_mut()
+        .ok_or_else(|| AppError::Other("[openai] in config.toml is not a table".into()))?;
+
+    let accounts = openai
+        .entry("accounts")
+        .or_insert_with(|| Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
+    let accounts = accounts.as_array_of_tables_mut().ok_or_else(|| {
+        AppError::Other("[[openai.accounts]] in config.toml is not an array of tables".into())
+    })?;
+
+    if accounts
+        .iter()
+        .any(|t| t.get("label").and_then(Item::as_str) == Some(label))
+    {
+        return Err(AppError::Credentials(format!(
+            "openai account {label:?} already exists in config.toml"
+        )));
+    }
+
+    let mut table = Table::new();
+    table["label"] = value(label);
+    table["codex_auth_path"] = value(codex_auth_path);
+    accounts.push(table);
+    Ok(())
+}
+
 /// Set or update a boolean field in a TOML section, preserving comments and
 /// formatting of unaffected nodes. Shared by the Settings overlay and
 /// [`enable_vendors_in`] so both writers shape `enabled = true` identically.
@@ -744,6 +794,12 @@ pub struct OpenAiConfig {
     /// refreshes into whichever one it read.
     #[serde(default)]
     pub accounts: Vec<OpenAiAccount>,
+    /// Whether the default (unnamed) Codex login gets its own tab. Defaults to
+    /// `true`. Set `false` once every login is a named account — typically
+    /// after `account add <label> --codex --adopt-current` — so the default
+    /// `~/.codex/auth.json` does not also appear as a second copy of whichever
+    /// account is active. Ignored when there are no named accounts.
+    pub show_default_account: bool,
     /// Reserved, and inert: names the env var an API-key-only path *would*
     /// read (admin key → `/v1/organization/costs`). Nothing consumes it —
     /// OpenAI usage comes solely from Codex OAuth. Kept because that path is
@@ -796,6 +852,36 @@ impl OpenAiConfig {
                 ))
             })
     }
+
+    /// The auth file a fetch for `label` reads. Unlike
+    /// [`resolve_auth_path`](OpenAiConfig::resolve_auth_path), this follows
+    /// `account switch --codex`: the active account's login has been moved
+    /// into the default slot, so it is read there.
+    pub fn fetch_auth_path(&self, label: Option<&str>) -> Result<PathBuf> {
+        let Some(label) = label else {
+            return self.resolve_auth_path(None);
+        };
+        let default = self.resolve_auth_path(None)?;
+        let active = crate::openai::account::resolve_active_label(&default, &self.accounts);
+        self.fetch_auth_path_probing(label, active.as_deref(), Path::exists)
+    }
+
+    /// The pure core of [`fetch_auth_path`](OpenAiConfig::fetch_auth_path),
+    /// with the active label and the file probe injected. The own file is
+    /// probed rather than assumed gone: an account signed in again under its
+    /// own `CODEX_HOME` keeps reading that file.
+    pub fn fetch_auth_path_probing(
+        &self,
+        label: &str,
+        active: Option<&str>,
+        exists: impl Fn(&Path) -> bool,
+    ) -> Result<PathBuf> {
+        let own = self.resolve_auth_path(Some(label))?;
+        if active == Some(label) && !exists(&own) {
+            return self.resolve_auth_path(None);
+        }
+        Ok(own)
+    }
 }
 
 impl Default for OpenAiConfig {
@@ -804,6 +890,7 @@ impl Default for OpenAiConfig {
             enabled: true,
             codex_auth_path: None,
             accounts: Vec::new(),
+            show_default_account: true,
             admin_key_env: "OPENAI_ADMIN_KEY".to_string(),
         }
     }
@@ -2463,6 +2550,66 @@ mod tests {
             .to_string();
         assert!(err.contains("nope"), "{err}");
         assert!(err.contains("[[openai.accounts]]"), "{err}");
+    }
+
+    fn two_codex_accounts() -> OpenAiConfig {
+        OpenAiConfig {
+            codex_auth_path: Some(PathBuf::from("/tmp/codex/auth.json")),
+            accounts: vec![
+                OpenAiAccount {
+                    label: "main".into(),
+                    codex_auth_path: PathBuf::from("/tmp/codex-main/auth.json"),
+                },
+                OpenAiAccount {
+                    label: "work".into(),
+                    codex_auth_path: PathBuf::from("/tmp/codex-work/auth.json"),
+                },
+            ],
+            ..OpenAiConfig::default()
+        }
+    }
+
+    #[test]
+    fn the_active_codex_account_is_read_from_the_default_slot() {
+        let config = two_codex_accounts();
+        assert_eq!(
+            config
+                .fetch_auth_path_probing("work", Some("work"), |_| false)
+                .unwrap(),
+            PathBuf::from("/tmp/codex/auth.json")
+        );
+        assert_eq!(
+            config
+                .fetch_auth_path_probing("main", Some("work"), |_| false)
+                .unwrap(),
+            PathBuf::from("/tmp/codex-main/auth.json")
+        );
+    }
+
+    #[test]
+    fn an_active_codex_account_with_its_own_file_keeps_reading_it() {
+        let config = two_codex_accounts();
+        assert_eq!(
+            config
+                .fetch_auth_path_probing("work", Some("work"), |_| true)
+                .unwrap(),
+            PathBuf::from("/tmp/codex-work/auth.json")
+        );
+    }
+
+    #[test]
+    fn adding_an_openai_account_keeps_the_rest_of_the_file() {
+        let mut doc: toml_edit::DocumentMut = "# mine\n[zai]\nenabled = true\n".parse().unwrap();
+        add_openai_account_to_doc(&mut doc, "work", "~/.codex-work/auth.json").unwrap();
+        let text = doc.to_string();
+        assert!(
+            text.starts_with("# mine\n[zai]\nenabled = true\n"),
+            "{text}"
+        );
+        let parsed: Config = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.openai.accounts[0].label, "work");
+        assert!(add_openai_account_to_doc(&mut doc, "work", "x").is_err());
+        assert!(add_openai_account_to_doc(&mut doc, "../x", "x").is_err());
     }
 
     #[test]
