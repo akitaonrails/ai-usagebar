@@ -8,7 +8,10 @@ const server = await createServer({ server: { middlewareMode: true, hmr: false, 
 
 try {
   const { MacDashboard } = await server.ssrLoadModule('/src/screens/MacDashboard.tsx');
+  const { Settings } = await server.ssrLoadModule('/src/screens/Settings.tsx');
+  const { TooltipProvider } = await server.ssrLoadModule('/src/components/ui/tooltip.tsx');
   const { LanguageProvider } = await server.ssrLoadModule('/src/lib/i18n.tsx');
+  const { emptyLayout, emptyPayload } = await server.ssrLoadModule('/src/model.js');
   const nowMs = Date.parse('2026-09-24T11:00:00Z');
   const card = {
     id: 'anthropic', title: 'Claude', plan: '', stale: false, error: '', rows: [{
@@ -36,6 +39,39 @@ try {
 
   assert.equal(note('exact'), 'Redefine hoje às 12:00');
   assert.equal(note('countdown'), 'Redefine em 1h 0m');
+  const settingsPayload = { ...emptyPayload(''), os: 'macos' };
+  const settingsProps = {
+    cards: [card], layout: emptyLayout(), nowMs, payload: settingsPayload,
+    resetArmed: false,
+    onAlwaysShowPace() {}, onLanguage() {}, onOpenCustomize() {},
+    onOpenProvider() {}, onReorderProviders() {}, onToggleProvider() {},
+    onResetCustomization() {}, onResetTimes() {}, onShowAs() {},
+    onTheme() {}, onTimeFormat() {}, onTabChange() {},
+  };
+  function settingsTab(tab) {
+    return renderToStaticMarkup(React.createElement(TooltipProvider, {},
+      React.createElement(LanguageProvider, { language: 'pt-BR' },
+        React.createElement(Settings, { ...settingsProps, tab }))));
+  }
+  const general = settingsTab('general');
+  assert.match(general, /role="tablist"/);
+  assert.match(general, /Iniciar ao entrar/);
+  assert.doesNotMatch(general, /Alertas de limite/);
+  assert.doesNotMatch(general, /Redefinir toda a personalização/);
+  const providers = settingsTab('providers');
+  assert.match(providers, /Redefinir toda a personalização/);
+  assert.match(providers, /Claude/);
+  assert.doesNotMatch(providers, /Iniciar ao entrar/);
+  const alerts = settingsTab('alerts');
+  assert.match(alerts, /Alertas de limite/);
+  assert.doesNotMatch(alerts, /Iniciar ao entrar/);
+  const menu = settingsTab('menu');
+  assert.match(menu, /Barra de menus/);
+  assert.doesNotMatch(menu, /Exibição do uso/);
+  const preferences = settingsTab('preferences');
+  assert.match(preferences, /Aparência/);
+  assert.match(preferences, /Exibição do uso/);
+  assert.doesNotMatch(preferences, /Barra de menus/);
   console.log('macOS dashboard reset display: ok');
 } finally {
   await server.close();

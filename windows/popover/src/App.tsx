@@ -10,7 +10,7 @@ import { Customize } from "@/screens/Customize";
 import { Dashboard } from "@/screens/Dashboard";
 import { MacDashboard } from "@/screens/MacDashboard";
 import { ProviderDetail } from "@/screens/ProviderDetail";
-import { Settings } from "@/screens/Settings";
+import { Settings, type SettingsTab } from "@/screens/Settings";
 import {
   absorbPayload,
   applyCardLayout,
@@ -57,6 +57,7 @@ export default function App() {
   const [payload, setPayload] = useState(() => emptyPayload(""));
   const [layout, setLayout] = useState<Layout>(() => loadLayout(storageRef.current));
   const [screen, setScreen] = useState<Screen>("dashboard");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [direction, setDirection] = useState<Direction>("forward");
   const [providerId, setProviderId] = useState("");
   // Where the provider detail was opened from, so Back returns there: the
@@ -83,10 +84,18 @@ export default function App() {
   }
 
   function go(next: Screen) {
-    if (next === "customize" && payload.os === "macos") next = "settings";
+    if (next === "customize" && payload.os === "macos") {
+      setSettingsTab("providers");
+      next = "settings";
+    }
     setDirection(SCREEN_DEPTH[next] < SCREEN_DEPTH[screen] ? "back" : "forward");
     setScreen(next);
     setResetArmed(false);
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }
+
+  function changeSettingsTab(next: SettingsTab) {
+    setSettingsTab(next);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }
 
@@ -424,6 +433,8 @@ export default function App() {
           {screen === "about" ? <About nowMs={nowMs} payload={payload} /> : null}
           {screen === "settings" ? (
             <Settings
+              tab={settingsTab}
+              onTabChange={changeSettingsTab}
               cards={cards}
               layout={layout}
               nowMs={nowMs}

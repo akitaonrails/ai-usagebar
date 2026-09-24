@@ -12,6 +12,16 @@ import { useBusyLabel } from "@/lib/useBusyLabel";
 import { sendCommand, updateModeLabel, updateStatusLabel } from "../model.js";
 import { Customize } from "./Customize";
 
+export type SettingsTab = "general" | "providers" | "menu" | "preferences" | "alerts";
+
+const SETTINGS_TABS: Array<[SettingsTab, string]> = [
+  ["general", "General"],
+  ["providers", "Providers"],
+  ["menu", "Menu"],
+  ["preferences", "Preferences"],
+  ["alerts", "Alerts"],
+];
+
 interface SettingsProps {
   layout: Layout;
   nowMs: number;
@@ -25,13 +35,15 @@ interface SettingsProps {
   onToggleProvider: (id: string, on: boolean) => void;
   onResetCustomization: () => void;
   resetArmed: boolean;
+  tab: SettingsTab;
+  onTabChange: (tab: SettingsTab) => void;
   onResetTimes: (resetTimes: string) => void;
   onShowAs: (showAs: string) => void;
   onTheme: (theme: string) => void;
   onTimeFormat: (timeFormat: Layout["timeFormat"]) => void;
 }
 
-/** SettingsScreen: General / Appearance / Usage Display / Updates sections, then the Customize cross-link. */
+/** Settings screen with compact macOS tabs; Windows retains its section layout. */
 export function Settings({
   layout,
   nowMs,
@@ -45,6 +57,8 @@ export function Settings({
   onToggleProvider,
   onResetCustomization,
   resetArmed,
+  tab,
+  onTabChange,
   onResetTimes,
   onShowAs,
   onTheme,
@@ -83,19 +97,64 @@ export function Settings({
     sendCommand(hostButton.cmd);
   }
 
+  function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, current: SettingsTab) {
+    const index = SETTINGS_TABS.findIndex(([name]) => name === current);
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % SETTINGS_TABS.length;
+    else if (event.key === "ArrowLeft") next = (index + SETTINGS_TABS.length - 1) % SETTINGS_TABS.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = SETTINGS_TABS.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = SETTINGS_TABS[next][0];
+    onTabChange(nextTab);
+    document.getElementById(`settings-tab-${nextTab}`)?.focus();
+  }
+
   return (
-    <div className="flex flex-col gap-[var(--section-gap)]">
-      {payload.os === "macos" && cards.length > 0 ? (
-        <div className="flex flex-col gap-[var(--header-card-gap)]">
-          <div className="flex items-center justify-between gap-2">
-            <div className="section-title">{t("Providers")}</div>
-            <button type="button" className="text-[length:var(--sz-badge)] text-label-2 hover:text-foreground" onClick={onResetCustomization}>
-              {t(resetArmed ? "Click again to confirm" : "Reset All Customization")}
+    <div className="flex flex-col gap-[var(--section-gap)] mac-settings">
+      {payload.os === "macos" ? (
+        <div className="settings-tabs" role="tablist" aria-label={t("Settings")}>
+          {SETTINGS_TABS.map(([name, label]) => (
+            <button
+              key={name}
+              type="button"
+              id={`settings-tab-${name}`}
+              className="settings-tab"
+              role="tab"
+              aria-controls={`settings-panel-${name}`}
+              aria-selected={tab === name}
+              tabIndex={tab === name ? 0 : -1}
+              onClick={() => onTabChange(name)}
+              onKeyDown={(event) => onTabKeyDown(event, name)}
+            >
+              {t(label)}
             </button>
-          </div>
-          <Customize embedded cards={cards} layout={layout} onOpen={onOpenProvider} onOpenSettings={onOpenCustomize} onReorder={onReorderProviders} onToggle={onToggleProvider} />
+          ))}
         </div>
       ) : null}
+      {payload.os === "macos" && tab === "providers" ? (
+        <div id="settings-panel-providers" role="tabpanel" aria-labelledby="settings-tab-providers" className="flex flex-col gap-[var(--header-card-gap)]">
+          <div className="flex items-center justify-between gap-2">
+            <div className="section-title">{t("Providers")}</div>
+            {cards.length > 0 ? (
+              <button type="button" className="text-[length:var(--sz-badge)] text-label-2 hover:text-foreground" onClick={onResetCustomization}>
+                {t(resetArmed ? "Click again to confirm" : "Reset All Customization")}
+              </button>
+            ) : null}
+          </div>
+          {cards.length > 0 ? (
+            <Customize embedded cards={cards} layout={layout} onOpen={onOpenProvider} onOpenSettings={onOpenCustomize} onReorder={onReorderProviders} onToggle={onToggleProvider} />
+          ) : (
+            <div className="card-surface flex items-center justify-between gap-2 p-3">
+              <span className="text-label-2">{t("No providers detected")}</span>
+              <button type="button" className="text-[var(--accent)]" onClick={() => sendCommand("detect")}>{t("Detect Providers")}</button>
+            </div>
+          )}
+        </div>
+      ) : null}
+      {payload.os !== "macos" || tab === "general" ? (
+      <div id={payload.os === "macos" ? "settings-panel-general" : undefined} role={payload.os === "macos" ? "tabpanel" : undefined} aria-labelledby={payload.os === "macos" ? "settings-tab-general" : undefined}>
       <Section title={t("General")}>
         <SettingRow label={t("Launch at Login")}>
           <Switch
@@ -128,7 +187,10 @@ export function Settings({
           </div>
         ) : null}
       </Section>
-      {payload.os === "macos" ? (
+      </div>
+      ) : null}
+      {payload.os === "macos" && tab === "alerts" ? (
+        <div id="settings-panel-alerts" role="tabpanel" aria-labelledby="settings-tab-alerts">
         <Section title={t("Notifications")}>
           <SettingRow hint={t("System notifications for quota limits and expiring reset credits.")} label={t("Quota alerts")}>
             <Switch
@@ -156,8 +218,10 @@ export function Settings({
             </div>
           </SettingRow>
         </Section>
+        </div>
       ) : null}
-      {payload.os === "macos" ? (
+      {payload.os === "macos" && tab === "menu" ? (
+        <div id="settings-panel-menu" role="tabpanel" aria-labelledby="settings-tab-menu">
         <Section title={t("Menu Bar")}>
           <SettingRow label={t("Show All Providers")}>
             <Switch
@@ -200,7 +264,10 @@ export function Settings({
             />
           </SettingRow>
         </Section>
+        </div>
       ) : null}
+      {payload.os !== "macos" || tab === "preferences" ? (
+      <div id={payload.os === "macos" ? "settings-panel-preferences" : undefined} role={payload.os === "macos" ? "tabpanel" : undefined} aria-labelledby={payload.os === "macos" ? "settings-tab-preferences" : undefined} className="flex flex-col gap-[var(--section-gap)]">
       <Section title={t("Appearance")}>
         <SettingRow label={t("Language")}>
           <Picker
@@ -261,6 +328,8 @@ export function Settings({
           />
         </SettingRow>
       </Section>
+      </div>
+      ) : null}
       {payload.os === "macos" ? null : (
       <Section title={t("Updates")}>
         <SettingRow hint={t("Automatic installs a release when it is found. Notify shows a banner. Off stops the hourly check.")} label={t("Updates")}>

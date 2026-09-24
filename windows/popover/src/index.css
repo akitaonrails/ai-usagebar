@@ -176,6 +176,51 @@ body:has(.mac-panel) {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.mac-panel .settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--control-fill);
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+}
+
+.mac-panel .settings-tab {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 2px;
+  background: transparent;
+  color: var(--label-2);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mac-panel .settings-tab:hover {
+  background: var(--control-fill-hover);
+}
+
+.mac-panel .settings-tab[aria-selected="true"] {
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--label-1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.dark .mac-panel .settings-tab[aria-selected="true"] {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.mac-panel .settings-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .mac-dashboard {
   display: flex;
   flex-direction: column;
