@@ -9,6 +9,17 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **GNOME click menu lists every enabled provider.** The menu reads
+  `ai-usagebar usage --json` and stacks one block per entry (name, plan,
+  each reported window, and reset countdown). It follows whichever providers
+  are enabled in `config.toml`, including Cursor, with no separate vendor
+  table. The top bar still shows only the provider chosen in preferences.
+  On GNOME 45–46 the vertical rows use `St.BoxLayout`'s `vertical` property,
+  because `orientation` does not exist there and previously stopped the
+  extension from loading.
+
 ## [1.23.0] — 2026-09-24
 
 ### Fixed

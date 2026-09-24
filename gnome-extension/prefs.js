@@ -281,8 +281,8 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
 
         const vendorList = ['anthropic', 'openai', 'zai', 'openrouter', 'deepseek', 'antigravity'];
         const vendor = new Adw.ComboRow({
-            title: _('Vendor'),
-            subtitle: _('anthropic and antigravity expose the 5h + weekly windows'),
+            title: _('Top bar vendor'),
+            subtitle: _('Which provider the top bar shows. The menu lists every enabled provider.'),
             model: Gtk.StringList.new(vendorList),
         });
         bindCombo(settings, 'vendor', vendor, vendorList);

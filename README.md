@@ -735,12 +735,12 @@ privileges, and does not overwrite user configuration.
 | Integration | Supported providers | Notes |
 |---|---|---|
 | [macOS menu bar](macos/README.md) | Whatever `usage --json` reports | `ai-usagebar-tray`: WKWebView popover + each ready provider's name and usage with a chart glyph. |
-| [GNOME Shell](gnome-extension/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Google Antigravity | Antigravity's two quota pools appear as grouped rows. |
+| [GNOME Shell](gnome-extension/README.md) | Top bar: Claude, Codex, Z.AI, OpenRouter, DeepSeek, Antigravity. Menu: whatever `usage --json` reports | The click menu stacks every enabled provider. The top bar shows the Vendor preference. |
 | [KDE Plasma 6](kde-plasmoid/README.md) | Whatever `usage --json` reports | Provider tabs in the popup; vendor is per applet instance. |
 | [Windows tray](windows/README.md) | Whatever `usage --json` reports | NotifyIcon + WebView2 popover; left-click the tray icon. |
 
-Cursor is not available in the GNOME extension yet. On GNOME, use
-`ai-usagebar --vendor cursor` or open the TUI.
+The GNOME top bar shows one provider at a time. Its click menu follows
+`usage --json`, so Cursor appears there once `[cursor] enabled = true`.
 
 ## Community integrations
 

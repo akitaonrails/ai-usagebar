@@ -304,7 +304,8 @@ vendor's response shape drifts:
 - `src/tooltip.rs` — shared Pango bordered-box renderer (used by
   every vendor's tooltip)
 - `gnome-extension/marker-logic.js` — pure GNOME formatting helpers and their
-  own Node contract tests.
+  own Node contract tests. `gnome-extension/report-model.js` projects
+  `usage --json` for the click menu; the top bar still uses the format string.
 - `kde-plasmoid/` — KDE Plasma 6 plasmoid (KPackage). Vendor selection is
   per applet instance via KConfigXT. Its single `usage --json` request omits
   `--vendor`; selection happens client-side, so it never reads

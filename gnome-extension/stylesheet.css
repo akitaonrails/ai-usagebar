@@ -6,9 +6,17 @@
 }
 
 /* Dropdown rows — native St layout, font-independent alignment. */
-.aiub-header {
+.aiub-provider-title {
     font-weight: bold;
-    padding: 4px 12px 2px 12px;
+    padding: 8px 12px 0 12px;
+}
+
+.aiub-provider-plan {
+    padding: 0 12px 2px 12px;
+}
+
+.aiub-scroll {
+    min-width: 280px;
 }
 
 .aiub-row {

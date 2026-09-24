@@ -20,8 +20,19 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {barMarkup, colorForPct, disambiguateTags, field, FIELD, FORMAT, hasUsageWindows, integer,
     isGrouped, markerElapsed, plainTextFromPango, selectPools,
     splitFormatOutput} from './marker-logic.js';
+import {parseReport} from './report-model.js';
 
 const ROLE = 'ai-usagebar';
+
+// GNOME 45–46 St.BoxLayout has `vertical`. Later shells replaced it with
+// `orientation` and reject the old property. Try the current one first.
+function verticalBox(props) {
+    try {
+        return new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL, ...props});
+    } catch (e) {
+        return new St.BoxLayout({vertical: true, ...props});
+    }
+}
 
 // Fixed accent colors (tags / dim text). Bar colors are user-configurable.
 const DIM = '#5c6370';
@@ -59,15 +70,21 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         this._settings = settings;
         this._openPrefs = openPrefs;
         this._data = null;          // parsed snapshot for redraws
+        this._report = null;
         this._busy = false;
+        this._reportBusy = false;
         // A refresh asked for while one was in flight, to run once it settles.
         this._refreshPending = false;
+        this._reportPending = false;
         this._timer = 0;
         this._refreshTimeoutId = 0;
+        this._reportTimeoutId = 0;
         this._refreshCancellable = null;
+        this._reportCancellable = null;
         this._refreshProc = null;
+        this._reportProc = null;
         this._refreshToken = 0;
-        this._rows = {};
+        this._reportToken = 0;
 
         // Panel: one markup label holds tags + percentages + bars.
         this._label = new St.Label({
@@ -93,51 +110,50 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             () => this._restartTimer());
         this._sourceIds = [
             this._settings.connect('changed::vendor', () => this._refresh()),
-            this._settings.connect('changed::binary-path', () => this._refresh()),
+            this._settings.connect('changed::binary-path', () => {
+                this._refresh();
+                this._refreshReport();
+            }),
         ];
 
         this.menu.connect('open-state-changed', (_m, open) => {
-            if (open)
+            if (open) {
                 this._refresh();
+                this._refreshReport();
+            }
         });
 
         this._refresh();
+        this._refreshReport();
         this._restartTimer();
     }
 
-    _buildMenu(grouped = false) {
+    _buildMenu() {
         this.menu.removeAll();
-        this._rows = {};
-        this._grouped = grouped;
 
-        // Header (plan name).
-        const header = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        this._planLabel = new St.Label({text: 'AI Usage', x_expand: true, style_class: 'aiub-header'});
-        header.add_child(this._planLabel);
-        this.menu.addMenuItem(header);
-
-        if (grouped) {
-            // Two independent quota pools per window type. Row order changes,
-            // but the data mapping does not: session/weekly still hold the
-            // primary pool, so the panel bar and the show-session/show-weekly
-            // toggles keep working exactly as they do for every other vendor.
-            this._addHeading('Session');
-            this._addRow('session', 'Session');
-            this._addRow('sonnet', 'Sonnet only');
-            this._addHeading('Weekly');
-            this._addRow('weekly', 'Weekly');
-            this._addRow('extra', 'Extra usage');
-        } else {
-            this._addRow('session', 'Session');
-            this._addRow('weekly', 'Weekly');
-            this._addRow('sonnet', 'Sonnet only');
-            this._addRow('extra', 'Extra usage');
-        }
+        const monitor = Main.layoutManager.primaryMonitor;
+        const maxH = Math.max(240, Math.floor(((monitor && monitor.height) || 800) * 0.7));
+        const holder = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        this._scroll = new St.ScrollView({
+            style_class: 'aiub-scroll',
+            overlay_scrollbars: true,
+            x_expand: true,
+            hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC,
+        });
+        this._scroll.style = `max-height: ${maxH}px;`;
+        this._providers = verticalBox({x_expand: true, style_class: 'aiub-providers'});
+        this._scroll.add_child(this._providers);
+        holder.add_child(this._scroll);
+        this.menu.addMenuItem(holder);
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         const refreshItem = new PopupMenu.PopupMenuItem('Refresh now');
-        refreshItem.connect('activate', () => this._refresh());
+        refreshItem.connect('activate', () => {
+            this._refresh();
+            this._refreshReport();
+        });
         this.menu.addMenuItem(refreshItem);
 
         const tuiItem = new PopupMenu.PopupMenuItem('Open TUI');
@@ -147,40 +163,120 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         const prefsItem = new PopupMenu.PopupMenuItem('Settings');
         prefsItem.connect('activate', () => this._openPrefs());
         this.menu.addMenuItem(prefsItem);
+
+        this._paintReport(this._report);
     }
 
-    // Group subtitle sitting above the rows that belong to it.
-    _addHeading(text) {
-        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        item.add_child(new St.Label({text, x_expand: true, style_class: 'aiub-header'}));
-        this.menu.addMenuItem(item);
+    _clearProviders() {
+        const children = this._providers.get_children();
+        for (const child of children)
+            child.destroy();
     }
 
-    // A native, font-independent row: [name ........ value] / bar / reset.
-    _addRow(key, name) {
-        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        const vbox = new St.BoxLayout({
-            orientation: Clutter.Orientation.VERTICAL,
-            x_expand: true,
-            style_class: 'aiub-row',
-        });
-
+    _metricRow(row, colors) {
+        const item = verticalBox({x_expand: true, style_class: 'aiub-row'});
         const head = new St.BoxLayout({x_expand: true});
-        const nameL = new St.Label({text: name, x_expand: true, style_class: 'aiub-row-name'});
-        const valL = new St.Label({style_class: 'aiub-row-val'});
-        head.add_child(nameL);
-        head.add_child(valL);
+        head.add_child(new St.Label({
+            text: row.label,
+            x_expand: true,
+            style_class: 'aiub-row-name',
+        }));
+        const value = new St.Label({text: row.valueText, style_class: 'aiub-row-val'});
+        value.clutter_text.set_markup(
+            `<span foreground="${colorForPct(row.percent, colors)}">${esc(row.valueText)}</span>`);
+        head.add_child(value);
+        const bar = new St.Label({style_class: 'aiub-row-bar'});
+        bar.clutter_text.set_markup(barMarkup(row.percent, 18, colors, null));
+        item.add_child(head);
+        item.add_child(bar);
+        if (row.reset) {
+            item.add_child(new St.Label({
+                text: `↺ resets in ${row.reset}`,
+                style_class: 'aiub-row-reset',
+            }));
+        }
+        return item;
+    }
 
-        const barL = new St.Label({style_class: 'aiub-row-bar'});
-        const resetL = new St.Label({style_class: 'aiub-row-reset'});
-
-        vbox.add_child(head);
-        vbox.add_child(barL);
-        vbox.add_child(resetL);
-        item.add_child(vbox);
-        this.menu.addMenuItem(item);
-
-        this._rows[key] = {item, nameL, valL, barL, resetL};
+    _paintReport(report) {
+        this._clearProviders();
+        const colors = this._colors();
+        if (!report || !report.ok) {
+            const message = report && report.error ? report.error : 'Loading…';
+            this._providers.add_child(new St.Label({
+                text: message,
+                x_expand: true,
+                style_class: 'aiub-header',
+            }));
+            return;
+        }
+        if (report.entries.length === 0) {
+            this._providers.add_child(new St.Label({
+                text: 'No providers enabled',
+                x_expand: true,
+                style_class: 'aiub-header',
+            }));
+            return;
+        }
+        for (const entry of report.entries) {
+            const block = verticalBox({x_expand: true, style_class: 'aiub-provider'});
+            const title = entry.stale ? `${entry.title} · cached` : entry.title;
+            block.add_child(new St.Label({
+                text: title,
+                x_expand: true,
+                style_class: 'aiub-provider-title',
+            }));
+            if (entry.plan) {
+                block.add_child(new St.Label({
+                    text: entry.plan,
+                    x_expand: true,
+                    style_class: 'aiub-provider-plan',
+                }));
+            }
+            if (entry.error) {
+                block.add_child(new St.Label({
+                    text: entry.error,
+                    x_expand: true,
+                    style_class: 'aiub-row-reset',
+                }));
+            }
+            for (const row of entry.rows) {
+                if (row.type === 'group') {
+                    block.add_child(new St.Label({
+                        text: row.label,
+                        x_expand: true,
+                        style_class: 'aiub-header',
+                    }));
+                } else if (row.type === 'metric') {
+                    block.add_child(this._metricRow(row, colors));
+                } else if (row.type === 'text') {
+                    const line = new St.BoxLayout({x_expand: true, style_class: 'aiub-row'});
+                    line.add_child(new St.Label({
+                        text: row.label,
+                        x_expand: true,
+                        style_class: 'aiub-row-name',
+                    }));
+                    line.add_child(new St.Label({text: row.value, style_class: 'aiub-row-val'}));
+                    block.add_child(line);
+                } else if (row.type === 'block') {
+                    if (row.label) {
+                        block.add_child(new St.Label({
+                            text: row.label,
+                            x_expand: true,
+                            style_class: 'aiub-header',
+                        }));
+                    }
+                    for (const line of row.body) {
+                        block.add_child(new St.Label({
+                            text: line,
+                            x_expand: true,
+                            style_class: 'aiub-row-reset',
+                        }));
+                    }
+                }
+            }
+            this._providers.add_child(block);
+        }
     }
 
     _colors() {
@@ -202,6 +298,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         const secs = Math.max(5, this._settings.get_int('refresh-interval'));
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, secs, () => {
             this._refresh();
+            this._refreshReport();
             return GLib.SOURCE_CONTINUE;
         });
     }
@@ -370,12 +467,10 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
     // Redraw both the panel and the dropdown from cached data + settings.
     _render() {
-        const d = this._data;
-        if (!d)
-            return;
-        const colors = this._colors();
-        this._renderPanel(d, colors);
-        this._renderDropdown(d, colors);
+        if (this._data)
+            this._renderPanel(this._data, this._colors());
+        if (this._report)
+            this._paintReport(this._report);
     }
 
     _renderPanel(d, colors) {
@@ -448,56 +543,11 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             .map(name => pools[name]);
     }
 
-    _renderDropdown(d, colors) {
-        // Switching vendors can flip the layout; rebuild once when it does.
-        if (!!d.grouped !== !!this._grouped)
-            this._buildMenu(d.grouped);
-
-        this._planLabel.text = d.plan || 'AI Usage';
-
-        const upd = (key, pct, valueText, reset, visible, elapsed) => {
-            const r = this._rows[key];
-            r.item.visible = visible;
-            if (!visible)
-                return;
-            r.valL.text = valueText;
-            r.barL.clutter_text.set_markup(barMarkup(pct ?? 0, 18, colors, elapsed));
-            if (reset) {
-                r.resetL.text = `↺ resets in ${reset}`;
-                r.resetL.visible = true;
-            } else {
-                r.resetL.visible = false;
-            }
-        };
-
-        // Under a group heading the row is named by its pool, not by the window.
-        this._rows.session.nameL.text = d.session.model || 'Session';
-        this._rows.weekly.nameL.text = d.weekly.model || 'Weekly';
-        upd('session', d.session.pct, `${d.session.pct ?? 0}%`, d.session.reset,
-            d.hasUsageWindows && d.session.pct != null, d.session.elapsed);
-        upd('weekly', d.weekly.pct, `${d.weekly.pct ?? 0}%`, d.weekly.reset,
-            d.hasUsageWindows && d.weekly.pct != null, d.weekly.elapsed);
-        this._rows.sonnet.nameL.text = d.sonnet.label || 'Sonnet only';
-        upd('sonnet', d.sonnet.pct, `${d.sonnet.pct ?? 0}%`, d.sonnet.reset, d.sonnet.pct != null, d.sonnet.elapsed);
-        if (d.extra.model) {
-            // Named quota window (e.g. Antigravity's "Claude & GPT OSS (weekly)").
-            this._rows.extra.nameL.text = d.extra.model;
-            upd('extra', d.extra.pct, `${d.extra.pct}%`, d.extra.reset || '—',
-                d.extra.pct != null, d.extra.elapsed);
-        } else {
-            this._rows.extra.nameL.text = 'Extra Usage';
-            upd('extra', d.extra.pct, `${d.extra.spent} / ${d.extra.limit}`, null,
-                d.extra.pct != null && !!d.extra.spent && !!d.extra.limit, null); // $ budget → no meta
-        }
-    }
-
     _setError(short, detail) {
         this._data = null;
-        this._label.clutter_text.set_markup(`<span foreground="${RED}">⚠ ai</span>`);
-        const msg = detail ? `${short}\n${esc(detail).slice(0, 300)}` : short;
-        this._planLabel.clutter_text.set_markup(`<span foreground="${FG}">${esc(msg)}</span>`);
-        for (const r of Object.values(this._rows))
-            r.item.visible = false;
+        const msg = detail ? `${short}: ${detail}` : short;
+        this._label.clutter_text.set_markup(
+            `<span foreground="${RED}">⚠ ${esc(msg).slice(0, 80)}</span>`);
     }
 
     _openTui() {
@@ -521,6 +571,98 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         Main.notify('AI Usage Bar', 'No terminal found (kgx / gnome-terminal / xterm).');
     }
 
+    _refreshReport() {
+        if (this._reportBusy) {
+            this._reportPending = true;
+            return;
+        }
+        this._reportBusy = true;
+        const token = ++this._reportToken;
+        const bin = resolveBinary(this._settings);
+        const cancellable = new Gio.Cancellable();
+        this._reportCancellable = cancellable;
+
+        let proc;
+        try {
+            proc = new Gio.Subprocess({
+                argv: [bin, 'usage', '--json'],
+                flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+            });
+            proc.init(cancellable);
+        } catch (e) {
+            this._reportBusy = false;
+            this._reportCancellable = null;
+            this._reportPending = false;
+            this._report = {ok: false, error: `could not run "${bin}"`, entries: []};
+            this._paintReport(this._report);
+            return;
+        }
+        this._reportProc = proc;
+
+        let timedOut = false;
+        const timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REFRESH_TIMEOUT_SECS, () => {
+            timedOut = true;
+            if (this._reportTimeoutId === timeoutId)
+                this._reportTimeoutId = 0;
+            try {
+                proc.force_exit();
+            } catch (e) {}
+            cancellable.cancel();
+            if (this._reportToken === token) {
+                this._reportBusy = false;
+                this._report = {ok: false, error: 'ai-usagebar took too long', entries: []};
+                this._paintReport(this._report);
+                if (this._reportPending) {
+                    this._reportPending = false;
+                    this._refreshReport();
+                }
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+        this._reportTimeoutId = timeoutId;
+
+        const cleanup = () => {
+            if (this._reportTimeoutId === timeoutId) {
+                GLib.source_remove(timeoutId);
+                this._reportTimeoutId = 0;
+            }
+            if (this._reportCancellable === cancellable)
+                this._reportCancellable = null;
+            if (this._reportProc === proc)
+                this._reportProc = null;
+        };
+
+        proc.communicate_utf8_async(null, cancellable, (p, res) => {
+            const current = this._reportToken === token;
+            if (current)
+                this._reportBusy = false;
+            try {
+                const [, out, err] = p.communicate_utf8_finish(res);
+                cleanup();
+                if (timedOut || !current)
+                    return;
+                if ((!out || !out.trim()) && !p.get_successful()) {
+                    this._report = {ok: false, error: err || 'ai-usagebar failed', entries: []};
+                } else {
+                    this._report = parseReport(out || '');
+                }
+                this._paintReport(this._report);
+            } catch (e) {
+                cleanup();
+                if (current && !(e instanceof GLib.Error &&
+                      e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED)) && !timedOut) {
+                    this._report = {ok: false, error: 'could not read the output', entries: []};
+                    this._paintReport(this._report);
+                }
+            } finally {
+                if (current && this._reportPending) {
+                    this._reportPending = false;
+                    this._refreshReport();
+                }
+            }
+        });
+    }
+
     destroy() {
         if (this._timer) {
             GLib.source_remove(this._timer);
@@ -537,6 +679,18 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                 this._refreshProc.force_exit();
             } catch (e) {}
             this._refreshProc = null;
+        }
+        if (this._reportTimeoutId) {
+            GLib.source_remove(this._reportTimeoutId);
+            this._reportTimeoutId = 0;
+        }
+        if (this._reportCancellable)
+            this._reportCancellable.cancel();
+        if (this._reportProc) {
+            try {
+                this._reportProc.force_exit();
+            } catch (e) {}
+            this._reportProc = null;
         }
         for (const id of this._viewIds ?? [])
             this._settings.disconnect(id);

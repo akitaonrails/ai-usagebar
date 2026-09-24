@@ -11,7 +11,7 @@
 
     <key name="vendor" type="s">
       <default>'anthropic'</default>
-      <summary>Vendor to display (anthropic shows the 5h + weekly windows)</summary>
+      <summary>Provider shown in the top bar. The click menu lists every enabled provider.</summary>
     </key>
 
     <key name="binary-path" type="s">

@@ -3,7 +3,9 @@
 A native GNOME top-panel indicator for [`ai-usagebar`](../README.md). It puts
 the **5-hour session** and **weekly** usage bars next to the clock/network,
 with optional dynamic model-scoped (for example, Fable) and extra-usage rows
-in a native click dropdown.
+in a native click dropdown. The dropdown lists every provider enabled in
+`config.toml`. The top bar keeps showing the single provider chosen in
+preferences.
 
 This is the GNOME counterpart to the project's Waybar widget: Waybar is
 Wayland-only (Sway/Hyprland) and can't dock into the GNOME top bar, so this
@@ -13,16 +15,20 @@ GNOME screenshot is currently bundled.
 
 ## Vendor scope
 
-The selector supports **Claude, Codex, Z.AI, OpenRouter, DeepSeek, and
-Google Antigravity**. **Kimi is widget/TUI-only in this release**; desktop
-protocol and marker parity for Kimi is dedicated future work. DeepSeek is
-balance-only, so the extension shows its balance in the header and suppresses
-the 5h/weekly quota rows.
+The **top bar** selector supports **Claude, Codex, Z.AI, OpenRouter, DeepSeek, and
+Google Antigravity**. The **click menu** does not use that list. It draws every
+entry `ai-usagebar usage --json` returns, which is every provider enabled in
+`config.toml` — including Cursor and the others the bar selector does not offer.
+
+DeepSeek is balance-only, so a DeepSeek block shows its balance and suppresses
+the 5h/weekly quota rows when the report has no percentage window. An entry
+that carries an error shows that error instead of a 0% bar. A window the
+report omits is left out rather than drawn as empty.
 
 Antigravity is the first vendor with **two independent quota pools** (Gemini,
-and Claude & GPT OSS), each carrying its own 5-hour and weekly window. The
-dropdown groups them under `Session` and `Weekly` headings, and the panel draws
-one segment per pool per window — see [Two-pool vendors](#two-pool-vendors).
+and Claude & GPT OSS), each carrying its own 5-hour and weekly window. When
+the report groups those rows, the menu keeps the group labels, and the **top
+bar** still draws one segment per pool per window — see [Two-pool vendors](#two-pool-vendors).
 Quota comes from whichever Antigravity product is running locally (the app, the
 IDE, or an interactive `agy` session); with all of them closed the extension
 shows the last cached figures, then an error once those age out.
@@ -66,7 +72,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 | Show percentage | on | numeric `%` next to each bar |
 | Bar width | 8 | cells per bar (4–20) |
 | Refresh interval | 30 s | 5–3600 |
-| Vendor | `anthropic` | selectors: Claude, Codex, Z.AI, OpenRouter, DeepSeek, Antigravity (not Kimi). Claude, Codex, Z.AI and Antigravity expose generic session/weekly windows. |
+| Vendor | `anthropic` | Top bar only. Selectors: Claude, Codex, Z.AI, OpenRouter, DeepSeek, Antigravity. The click menu lists every enabled provider from `usage --json`. |
 | Panel pools | `both` | two-pool vendors only: `both`, first pool, second pool, or `auto` |
 | Auto threshold | 95 % | `auto` switches pools once the shown one reaches this usage |
 | Binary path | auto | empty = `PATH` then `~/.cargo/bin` |
@@ -75,19 +81,22 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 
 ## How it renders
 
-It runs:
+The **top bar** runs:
 
 ```
 ai-usagebar --vendor <vendor> --format '{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;{scoped_model};;{scoped_pct};;{scoped_reset};;{session_elapsed};;{weekly_elapsed};;{scoped_elapsed};;{vendor_short};;{extra_model};;{extra_reset};;{extra_elapsed};;{session_model};;{weekly_model};;__aiub_end__'
 ```
 
 parses the Waybar JSON (`{text, tooltip, class}`), extracts the formatted
-fields from `text`, and draws the plan, session, weekly, optional dynamic
-model-scoped (for example, Fable), and optional extra-usage values with native `St`
-widgets. Colors mirror the
+fields from `text`, and draws that one provider's session and weekly values
+with native `St` widgets. Colors mirror the
 binary's default One Dark theme and `severity_for()` thresholds (≥90 red · ≥75
-orange · ≥50 yellow · else green), so it matches the Waybar widget. The
-dropdown is a native aligned menu, not the tooltip markup rendered verbatim.
+orange · ≥50 yellow · else green), so it matches the Waybar widget.
+
+The **click menu** runs `ai-usagebar usage --json` on the same interval and
+draws one block per report entry. Metric rows use the report's label, percent
+(or `value` when `headline` is `value`), and `reset_at`. Text and block
+sections stay one line. An entry error replaces its bars.
 
 Pace markers require both a real reset and elapsed-time output. Anthropic and
 Antigravity supply that pair, so other vendors can render their generic windows
