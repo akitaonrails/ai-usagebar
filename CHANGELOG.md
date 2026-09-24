@@ -21,6 +21,11 @@ Each release is also published at
 
 ### Added
 
+- **Optional macOS usage goal.** Preferences can show an extra bar below each
+  usage metric with the percentage expected now for an even path to 100% at
+  the reset. The calculation uses the reported window length and reset time;
+  monthly windows without an exact start are clearly marked as estimates.
+
 - **Omarchy-style macOS menu-bar summary.** The tray shows every ready
   provider's name and quota headline beside its chart glyph by default.
   Middle-click or the right-click menu cycles providers; the menu can show one,

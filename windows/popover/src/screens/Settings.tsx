@@ -28,6 +28,7 @@ interface SettingsProps {
   payload: Payload;
   cards: Card[];
   onAlwaysShowPace: (on: boolean) => void;
+  onUsageGoal: (on: boolean) => void;
   onLanguage: (language: Language) => void;
   onOpenCustomize: () => void;
   onOpenProvider: (id: string) => void;
@@ -50,6 +51,7 @@ export function Settings({
   payload,
   cards,
   onAlwaysShowPace,
+  onUsageGoal,
   onLanguage,
   onOpenCustomize,
   onOpenProvider,
@@ -300,6 +302,15 @@ export function Settings({
         </SettingRow>
       </Section>
       <Section title={t("Usage Display")}>
+        {payload.os === "macos" ? (
+          <SettingRow hint={t("Show a goal based on time elapsed in each usage window. Monthly goals may be estimated.")} label={t("Usage goal")}>
+            <Switch
+              checked={layout.usageGoal}
+              aria-label={t("Usage goal")}
+              onCheckedChange={(on) => onUsageGoal(on === true)}
+            />
+          </SettingRow>
+        ) : null}
         <SettingRow hint={t("Used fills the bar with what is spent. Left fills it with what remains.")} label={t("Show Usage As")}>
           <Picker
             options={[

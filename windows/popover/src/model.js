@@ -491,6 +491,34 @@ export function pace(row, nowMs) {
   };
 }
 
+// The goal is the share of the window elapsed since its start. Unlike pace,
+// it remains useful at zero actual usage and during the first minute.
+// Monthly metrics without an exact duration use the preceding calendar month;
+// the UI labels those goals as estimates because billing dates may vary.
+export function usageGoal(row, nowMs) {
+  if (!row || typeof row !== "object") return null;
+  const resetMs = Date.parse(String(row.resetAt || ""));
+  const now = Number(nowMs);
+  if (!Number.isFinite(resetMs) || !Number.isFinite(now) || now > resetMs) return null;
+  const seconds = windowSeconds(row.window);
+  let startMs;
+  let estimated = false;
+  if (seconds > 0) {
+    startMs = resetMs - seconds * 1000;
+  } else if (/^monthly(?:\s|$|\()/i.test(String(row.label || ""))) {
+    const end = new Date(resetMs);
+    const year = end.getUTCFullYear();
+    const month = end.getUTCMonth();
+    const day = Math.min(end.getUTCDate(), new Date(Date.UTC(year, month, 0)).getUTCDate());
+    startMs = Date.UTC(year, month - 1, day, end.getUTCHours(), end.getUTCMinutes(), end.getUTCSeconds(), end.getUTCMilliseconds());
+    estimated = true;
+  } else {
+    return null;
+  }
+  if (!Number.isFinite(startMs) || startMs >= resetMs) return null;
+  return { percent: clampPercent((now - startMs) * 100 / (resetMs - startMs)), estimated };
+}
+
 function clampPercent(value) {
   const number = finiteNumber(value);
   return Math.max(0, Math.min(100, number));
@@ -685,6 +713,7 @@ export function prettyMetricLabel(entryId, raw, group) {
 export function emptyLayout() {
   return {
     alwaysShowPace: false,
+    usageGoal: false,
     cardOrder: [],
     hidden: {},
     collapsed: {},
@@ -827,6 +856,7 @@ export function normalizeLayout(raw) {
   const layout = emptyLayout();
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return layout;
   layout.alwaysShowPace = raw.alwaysShowPace === true;
+  layout.usageGoal = raw.usageGoal === true;
   layout.cardOrder = cleanIdList(raw.cardOrder);
   copyFlagMap(raw.hidden, layout.hidden);
   copyFlagMap(raw.collapsed, layout.collapsed);
@@ -914,6 +944,7 @@ export function syncLayout(layout, cardIds) {
   }
   return {
     alwaysShowPace: layout.alwaysShowPace === true,
+    usageGoal: layout.usageGoal === true,
     cardOrder: order,
     hidden,
     collapsed,

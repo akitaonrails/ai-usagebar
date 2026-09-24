@@ -11,6 +11,7 @@ export type Language = "en" | "pt-BR";
 
 export interface Layout {
   alwaysShowPace: boolean;
+  usageGoal: boolean;
   cardOrder: string[];
   collapsed: Record<string, boolean>;
   hidden: Record<string, boolean>;

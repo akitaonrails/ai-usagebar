@@ -452,6 +452,38 @@ body:has(.mac-panel) {
 .mac-meter-fill[data-severity="high"] { background: var(--orange); }
 .mac-meter-fill[data-severity="critical"] { background: var(--red); }
 
+.mac-usage-goal {
+  margin-top: 9px;
+}
+
+.mac-goal-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--label-2);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mac-goal-heading strong {
+  font-weight: 600;
+}
+
+.mac-goal-meter {
+  height: 3px;
+  overflow: hidden;
+  margin-top: 4px;
+  border-radius: 3px;
+  background: var(--fill-tertiary);
+}
+
+.mac-goal-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--label-2);
+}
+
 .mac-metric-note {
   gap: 8px;
   min-height: 14px;

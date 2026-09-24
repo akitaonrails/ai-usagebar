@@ -52,6 +52,7 @@ import {
   paceText,
   paceTickPercent,
   paceVisible,
+  usageGoal,
   prettyMetricLabel,
   shortcutFromKeyEvent,
   defaultStars,
@@ -521,34 +522,57 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(resetAlternate(sameDayRow, 'exact', resetNow, h24), 'Resets in 6h 38m');
 }
 
-// --- layout: timeFormat / alwaysShowPace ------------------------------------
+// --- layout: timeFormat / alwaysShowPace / usageGoal --------------------------
 
 {
   // ARRANGE / ACT
   const empty = emptyLayout();
-  const set = normalizeLayout({ timeFormat: '24', alwaysShowPace: true });
-  const junk = normalizeLayout({ timeFormat: 'military', alwaysShowPace: 'yes' });
+  const set = normalizeLayout({ timeFormat: '24', alwaysShowPace: true, usageGoal: true });
+  const junk = normalizeLayout({ timeFormat: 'military', alwaysShowPace: 'yes', usageGoal: 'yes' });
   // ASSERT: defaults, valid values, and junk
   assert.equal(empty.timeFormat, 'auto');
   assert.equal(empty.alwaysShowPace, false);
+  assert.equal(empty.usageGoal, false);
   assert.equal(set.timeFormat, '24');
   assert.equal(set.alwaysShowPace, true);
+  assert.equal(set.usageGoal, true);
   assert.equal(junk.timeFormat, 'auto');
   assert.equal(junk.alwaysShowPace, false);
+  assert.equal(junk.usageGoal, false);
   assert.equal(normalizeLayout({ timeFormat: '12' }).timeFormat, '12');
 
   // ASSERT: both survive storage and syncLayout
   const store = memoryStorage();
-  saveLayout(store, { cardOrder: ['cursor'], timeFormat: '12', alwaysShowPace: true });
+  saveLayout(store, { cardOrder: ['cursor'], timeFormat: '12', alwaysShowPace: true, usageGoal: true });
   const reloaded = loadLayout(store);
   assert.equal(reloaded.timeFormat, '12');
   assert.equal(reloaded.alwaysShowPace, true);
+  assert.equal(reloaded.usageGoal, true);
   const synced = syncLayout(reloaded, ['cursor']);
   assert.equal(synced.timeFormat, '12');
   assert.equal(synced.alwaysShowPace, true);
-  const cleaned = syncLayout({ cardOrder: [], timeFormat: 'nope', alwaysShowPace: 1 }, ['cursor']);
+  assert.equal(synced.usageGoal, true);
+  const cleaned = syncLayout({ cardOrder: [], timeFormat: 'nope', alwaysShowPace: 1, usageGoal: 1 }, ['cursor']);
   assert.equal(cleaned.timeFormat, 'auto');
   assert.equal(cleaned.alwaysShowPace, false);
+  assert.equal(cleaned.usageGoal, false);
+}
+
+// The goal follows wall-clock progress even when no usage has been reported.
+{
+  const end = Date.parse('2026-09-24T15:00:00Z');
+  for (const seconds of [18_000, 604_800, 2_592_000]) {
+    const row = { label: 'Session', resetAt: new Date(end).toISOString(), window: seconds, usedPercent: 0 };
+    assert.deepEqual(usageGoal(row, end - seconds * 1000), { percent: 0, estimated: false });
+    assert.deepEqual(usageGoal(row, end - seconds * 500), { percent: 50, estimated: false });
+    assert.deepEqual(usageGoal(row, end), { percent: 100, estimated: false });
+    assert.equal(usageGoal(row, end + 60_000), null);
+  }
+  const monthly = { label: 'Monthly', resetAt: '2026-03-31T12:00:00Z', window: 0 };
+  assert.deepEqual(usageGoal(monthly, Date.parse('2026-02-28T12:00:00Z')), { percent: 0, estimated: true });
+  assert.deepEqual(usageGoal(monthly, Date.parse('2026-03-31T12:00:00Z')), { percent: 100, estimated: true });
+  assert.equal(usageGoal({ ...monthly, label: 'Weekly' }, end), null);
+  assert.equal(usageGoal({ ...monthly, resetAt: 'bad' }, end), null);
 }
 
 // --- host payload: shortcut / updates / update / window_secs ------------------

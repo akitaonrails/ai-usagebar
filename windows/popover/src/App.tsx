@@ -440,6 +440,7 @@ export default function App() {
               nowMs={nowMs}
               payload={payload}
               onAlwaysShowPace={(alwaysShowPace) => commit({ ...layout, alwaysShowPace })}
+              onUsageGoal={(usageGoal) => commit({ ...layout, usageGoal })}
               onLanguage={(language) => commit({ ...layout, language })}
               onOpenCustomize={() => go("customize")}
               onOpenProvider={(id) => openProvider(id, "settings")}

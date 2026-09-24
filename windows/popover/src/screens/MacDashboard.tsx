@@ -4,7 +4,7 @@ import MdiRefresh from "~icons/mdi/refresh";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { useI18n } from "@/lib/i18n";
 import type { Card, Layout, MetricRow, Payload, Row } from "@/lib/types";
-import { nextUpdateLabel, resetText, sendCommand } from "../model.js";
+import { nextUpdateLabel, resetText, sendCommand, usageGoal } from "../model.js";
 
 interface MacDashboardProps {
   cards: Card[];
@@ -32,6 +32,7 @@ function Metric({ row, layout, nowMs }: { row: MetricRow; layout: Layout; nowMs:
   const { language, metricLabel, t } = useI18n();
   const percent = Math.min(100, Math.max(0, Number(row.usedPercent) || 0));
   const reset = resetText(row, layout.resetTimes, nowMs, { locale: language, timeFormat: layout.timeFormat });
+  const goal = layout.usageGoal ? usageGoal(row, nowMs) : null;
   const balance = row.headline === "value";
   const label = row.label === "Session" ? `${t("Session")} (5h)` : metricLabel(row.label);
   return (
@@ -54,6 +55,24 @@ function Metric({ row, layout, nowMs }: { row: MetricRow; layout: Layout; nowMs:
         <div className="mac-metric-note">
           <span>{reset || row.detail}</span>
           {balance && percent > 0 ? <span>{percent}% {t("used")}</span> : null}
+        </div>
+      ) : null}
+      {goal ? (
+        <div className="mac-usage-goal">
+          <div className="mac-goal-heading">
+            <span>{t(goal.estimated ? "Estimated goal now" : "Goal now")}</span>
+            <strong>{Math.round(goal.percent)}%</strong>
+          </div>
+          <div
+            className="mac-goal-meter"
+            role="progressbar"
+            aria-label={`${label}: ${t(goal.estimated ? "Estimated goal now" : "Goal now")}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(goal.percent)}
+          >
+            <span className="mac-goal-meter-fill" style={{ width: `${goal.percent}%` }} />
+          </div>
         </div>
       ) : null}
     </div>

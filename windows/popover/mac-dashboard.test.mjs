@@ -39,11 +39,23 @@ try {
 
   assert.equal(note('exact'), 'Redefine hoje às 12:00');
   assert.equal(note('countdown'), 'Redefine em 1h 0m');
+  const withGoal = renderToStaticMarkup(React.createElement(LanguageProvider, { language: 'pt-BR' },
+    React.createElement(MacDashboard, {
+      cards: [card], layout: { ...emptyLayout(), usageGoal: true }, nowMs, payload,
+      onOpenCustomize() {}, onOpenSettings() {},
+    })));
+  assert.match(withGoal, /Meta agora<\/span><strong>80%<\/strong>/);
+  assert.match(withGoal, /class="mac-goal-meter" role="progressbar"/);
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(LanguageProvider, { language: 'pt-BR' },
+    React.createElement(MacDashboard, {
+      cards: [card], layout: emptyLayout(), nowMs, payload,
+      onOpenCustomize() {}, onOpenSettings() {},
+    }))), /mac-goal-meter/);
   const settingsPayload = { ...emptyPayload(''), os: 'macos' };
   const settingsProps = {
     cards: [card], layout: emptyLayout(), nowMs, payload: settingsPayload,
     resetArmed: false,
-    onAlwaysShowPace() {}, onLanguage() {}, onOpenCustomize() {},
+    onAlwaysShowPace() {}, onUsageGoal() {}, onLanguage() {}, onOpenCustomize() {},
     onOpenProvider() {}, onReorderProviders() {}, onToggleProvider() {},
     onResetCustomization() {}, onResetTimes() {}, onShowAs() {},
     onTheme() {}, onTimeFormat() {}, onTabChange() {},
@@ -71,6 +83,7 @@ try {
   const preferences = settingsTab('preferences');
   assert.match(preferences, /Aparência/);
   assert.match(preferences, /Exibição do uso/);
+  assert.match(preferences, /Meta de uso/);
   assert.doesNotMatch(preferences, /Barra de menus/);
   console.log('macOS dashboard reset display: ok');
 } finally {

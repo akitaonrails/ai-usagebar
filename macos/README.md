@@ -42,6 +42,12 @@ The footer's Options menu opens Settings. Settings uses five tabs: **General**
 display), and **Alerts** (system notifications and the quota threshold). Start
 at Login writes a LaunchAgent under `~/Library/LaunchAgents`. Alerts are sent
 through macOS Notification Center after a fresh reading crosses the threshold.
+In **Preferences → Usage Display**, enable **Usage goal** to show a second,
+subtle bar below each metric. It marks how much of the quota would be used now
+at an even pace from the start of its reset window to 100% at the end. Five-hour,
+weekly, and other windows use the provider's reported duration. Monthly windows
+without an exact duration use the previous calendar month and are labeled as
+estimates. Metrics without a reset time or usable window do not show a goal.
 
 A legacy Swift `NSMenu` (`ai-usagebar-menubar.swift`) remains in this folder
 for the old dropdown. Prefer the tray.
