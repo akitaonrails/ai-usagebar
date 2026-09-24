@@ -21,6 +21,14 @@ Each release is also published at
 
 ### Added
 
+- **Switch the active Claude or Codex account from the macOS tray.** Each
+  named account's card gets a control beside Customize and Reset: a filled star
+  on the login in use, an outline star on the others that switches to it. A
+  Claude switch moves the `claude` CLI login (which the VS Code extension
+  shares) and, when the account has a Desktop profile, Claude Desktop; a Codex
+  switch moves `~/.codex/auth.json`, which the Codex CLI, desktop app and IDE
+  extension all read. The star spins while the switch runs and turns red with
+  the reason when it fails.
 - **`ai-usagebar account switch <label> --codex`.** The Codex counterpart of the
   Claude CLI switch: the outgoing login is saved back into its own account
   before the target's `auth.json` is moved into `~/.codex/auth.json`, so the

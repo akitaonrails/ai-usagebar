@@ -5,7 +5,7 @@ import type { RowAction } from "@/components/RowMenu";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { SortableItem, VerticalDnd } from "@/components/dnd";
 import type { Card, Layout, Payload } from "@/lib/types";
-import { explainError, updateBannerPending } from "../model.js";
+import { accountSwitchFor, explainError, updateBannerPending } from "../model.js";
 
 interface DashboardProps {
   cards: Card[];
@@ -21,6 +21,7 @@ interface DashboardProps {
   onResetProvider: (id: string) => void;
   onRowAction: (providerId: string, rowKey: string, action: RowAction) => void;
   onRowMenuOpenChange: (open: boolean) => void;
+  onSwitchAccount: (vendor: string, label: string) => void;
   onToggleCollapse: (id: string) => void;
   onToggleShowAs: () => void;
 }
@@ -40,6 +41,7 @@ export function Dashboard({
   onResetProvider,
   onRowAction,
   onRowMenuOpenChange,
+  onSwitchAccount,
   onToggleCollapse,
   onToggleShowAs,
 }: DashboardProps) {
@@ -100,6 +102,7 @@ export function Dashboard({
           <SortableItem key={card.id} id={card.id}>
             {({ attributes, listeners }) => (
               <ProviderSection
+                account={accountSwitchFor(card.id, payload.accounts)}
                 card={card}
                 handle={{ attributes, listeners }}
                 layout={layout}
@@ -108,6 +111,10 @@ export function Dashboard({
                 onReset={() => onResetProvider(card.id)}
                 onRowAction={(key, action) => onRowAction(card.id, key, action)}
                 onRowMenuOpenChange={onRowMenuOpenChange}
+                onSwitchAccount={() => {
+                  const account = accountSwitchFor(card.id, payload.accounts);
+                  if (account) onSwitchAccount(account.vendor, account.label);
+                }}
                 onToggleCollapse={() => onToggleCollapse(card.id)}
                 onToggleShowAs={onToggleShowAs}
               />

@@ -4,7 +4,10 @@ import MdiAlert from "~icons/mdi/alert";
 import MdiChevronDown from "~icons/mdi/chevron-down";
 import MdiChevronUp from "~icons/mdi/chevron-up";
 import MdiFire from "~icons/mdi/fire";
+import MdiLoading from "~icons/mdi/loading";
 import MdiRestore from "~icons/mdi/restore";
+import MdiStar from "~icons/mdi/star";
+import MdiStarOutline from "~icons/mdi/star-outline";
 import MdiTune from "~icons/mdi/tune-variant";
 import MdiArrowTopRight from "~icons/mdi/arrow-top-right";
 import { Chip } from "@/components/Chip";
@@ -16,6 +19,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type {
   BlockRow,
   Card,
+  CardAccount,
   CardWarning,
   ExplainedError,
   Layout,
@@ -54,6 +58,8 @@ interface SectionHandle {
 }
 
 interface ProviderSectionProps {
+  /** Switch control for an account card; absent on every other card. */
+  account?: CardAccount | null;
   card: Card;
   handle?: SectionHandle;
   layout: Layout;
@@ -63,6 +69,7 @@ interface ProviderSectionProps {
   onReset?: () => void;
   onRowAction?: (key: string, action: RowAction) => void;
   onRowMenuOpenChange?: (open: boolean) => void;
+  onSwitchAccount?: () => void;
   onToggleCollapse?: () => void;
   onToggleShowAs?: () => void;
 }
@@ -76,6 +83,7 @@ function noop() {}
  * the right-click menu; the drag overlay (`lifted`) never does.
  */
 export function ProviderSection({
+  account,
   card,
   handle,
   layout,
@@ -85,6 +93,7 @@ export function ProviderSection({
   onReset,
   onRowAction,
   onRowMenuOpenChange,
+  onSwitchAccount,
   onToggleCollapse,
   onToggleShowAs,
 }: ProviderSectionProps) {
@@ -137,7 +146,14 @@ export function ProviderSection({
       data-card-id={card.id}
       className={cn("flex flex-col gap-[var(--header-card-gap)]", lifted && "rounded-[var(--card-radius)]")}
     >
-      <ProviderSectionHeader card={card} handle={handle} onCustomize={onCustomize} onReset={onReset} />
+      <ProviderSectionHeader
+        account={account}
+        card={card}
+        handle={handle}
+        onCustomize={onCustomize}
+        onReset={onReset}
+        onSwitchAccount={onSwitchAccount}
+      />
       <div className={cn("py-[var(--card-gutter)]", lifted ? "lifted-surface" : "card-surface")}>
         {card.errorTitle ? <ErrorRow explained={explainError(card.errorDetail, card.id)} /> : null}
         {alwaysRows.map((row, index) => renderRow(row, index, condensedAlways, false))}
@@ -215,19 +231,29 @@ function ResetCreditsRow({ condensedTop, demand, layout, nowMs, row }: ResetCred
 }
 
 interface ProviderSectionHeaderProps {
+  account?: CardAccount | null;
   card: Card;
   handle?: SectionHandle;
   onCustomize?: () => void;
   onReset?: () => void;
+  onSwitchAccount?: () => void;
 }
 
 /**
  * ProviderSectionHeader: gray provider mark, name, plan badge, stale hint, warning triangle,
  * and on the trailing edge the per-provider shortcuts OpenUsage keeps in the context menu:
- * Customize (this provider's rows) and Reset (its default rows). The header is also the
- * drag handle, so the buttons stop the pointer-down from starting a drag.
+ * Customize (this provider's rows) and Reset (its default rows). An account card also gets the
+ * switch control first: a filled star on the login in use, an outline star button on the others. The
+ * header is also the drag handle, so the buttons stop the pointer-down from starting a drag.
  */
-export function ProviderSectionHeader({ card, handle, onCustomize, onReset }: ProviderSectionHeaderProps) {
+export function ProviderSectionHeader({
+  account,
+  card,
+  handle,
+  onCustomize,
+  onReset,
+  onSwitchAccount,
+}: ProviderSectionHeaderProps) {
   const plan = displayPlan(card.title, card.plan);
   return (
     <header
@@ -251,6 +277,7 @@ export function ProviderSectionHeader({ card, handle, onCustomize, onReset }: Pr
         </MdiAlert>
       ) : null}
       <span className="min-w-2 flex-1" />
+      {account ? <AccountControl account={account} title={card.title} onSwitch={onSwitchAccount} /> : null}
       {onCustomize ? (
         <HeaderAction icon={<MdiTune />} label={`Customize ${card.title}`} onClick={onCustomize} />
       ) : null}
@@ -261,18 +288,62 @@ export function ProviderSectionHeader({ card, handle, onCustomize, onReset }: Pr
   );
 }
 
+interface AccountControlProps {
+  account: CardAccount;
+  title: string;
+  onSwitch?: () => void;
+}
+
+/**
+ * The account switch beside the header shortcuts, in the star language the row menu already
+ * uses: the active login is a static filled star, not a button, since there is nothing to do
+ * there; every other account is an outline star that makes it the active one. A running switch
+ * spins in place; a failed one keeps the outline star, tinted red, with the reason as its tooltip.
+ */
+function AccountControl({ account, title, onSwitch }: AccountControlProps) {
+  if (account.active) {
+    const label = `${title} is the active account`;
+    return (
+      <span aria-label={label} className="header-action is-active [&_svg]:size-[14px]" role="img" title={label}>
+        <MdiStar />
+      </span>
+    );
+  }
+  if (account.switching) {
+    const label = `Switching to ${title}…`;
+    return (
+      <span aria-label={label} className="header-action [&_svg]:size-[14px]" role="status" title={label}>
+        <MdiLoading className="animate-spin" />
+      </span>
+    );
+  }
+  if (!onSwitch || account.busy) return null;
+  const label = account.error
+    ? `Switch to ${title} failed: ${account.error}`
+    : `Use ${title} (switches the CLI, desktop app and IDE extension)`;
+  return (
+    <HeaderAction
+      className={account.error ? "is-failed" : undefined}
+      icon={<MdiStarOutline />}
+      label={label}
+      onClick={onSwitch}
+    />
+  );
+}
+
 interface HeaderActionProps {
+  className?: string;
   icon: ReactNode;
   label: string;
   onClick: () => void;
 }
 
-function HeaderAction({ icon, label, onClick }: HeaderActionProps) {
+function HeaderAction({ className, icon, label, onClick }: HeaderActionProps) {
   return (
     <button
       type="button"
       aria-label={label}
-      className="header-action [&_svg]:size-[14px]"
+      className={cn("header-action [&_svg]:size-[14px]", className)}
       title={label}
       onClick={onClick}
       onKeyDown={(event) => event.stopPropagation()}

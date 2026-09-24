@@ -269,6 +269,16 @@ refresh when the account changed, but a refresh already in flight at the moment
 of the switch could still write the old account's tokens back. Restart open
 Codex sessions after switching.
 
+### Switch from the macOS menu bar
+
+With named accounts configured, each account's card in the `ai-usagebar-tray`
+popover shows a switch control beside Customize and Reset. The active login has
+a filled star; any other account has an outline star that runs the same
+`ai-usagebar account switch` (with `--codex` for a Codex card). A Claude switch
+quits and reopens Claude Desktop when that account also has a Desktop profile.
+The star spins while the switch runs, and a failed switch turns it red with
+the reason in its tooltip.
+
 ### Storage and history conflicts
 
 CLI accounts use `[[anthropic.accounts]]` or `accounts_dir`. Desktop profiles
