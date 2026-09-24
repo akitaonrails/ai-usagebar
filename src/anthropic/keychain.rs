@@ -6,24 +6,27 @@
 //! password item in the login Keychain (service `Claude Code-credentials`), so
 //! the file never exists and a naive read fails with an I/O error.
 //!
-//! Reads, deletes and normal-sized writes go through the built-in `security(1)`
-//! tool, because the *writer's* code identity is what macOS stamps onto the item's
+//! Reads, writes and deletes all go through the built-in `security(1)` tool,
+//! because the *writer's* code identity is what macOS stamps onto the item's
 //! XARA partition list. A native `SecItemAdd`/`SecItemUpdate` from this
 //! process leaves the item owned by `cdhash:<ai-usagebar>`, and every later
 //! read by `/usr/bin/security` — ours *and* Claude Code's — then trips
-//! `ACL partition mismatch: client apple-tool:` and raises a Keychain dialog
-//! that "Always Allow" cannot durably fix (that button edits the trusted-app
-//! list, not the partition list). Going through `security(1)` keeps writer and
-//! reader on the same `apple-tool:` partition. See issue #148.
+//! `ACL partition mismatch: client apple-tool:` and raises a Keychain dialog.
+//! "Always Allow" (with the Keychain password) does put `apple-tool:` back,
+//! but only until the next native write re-stamps the list, so the dialog
+//! returns at every token refresh. Going through `security(1)` keeps writer
+//! and reader on the same `apple-tool:` partition. See issue #148.
 //!
-//! Credential JSON still never enters process arguments: the command is fed to
-//! `security -i` on **stdin**, so argv is just `["/usr/bin/security", "-i"]`.
-//! That interactive reader truncates an over-long line *and stores the
-//! truncated value*, so [`SECURITY_STDIN_SAFE_MAX`] keeps us clear of the cap
-//! and an oversized blob falls back to the native API — the one case where the
-//! cdhash partition can still appear, and one no realistic credential reaches.
-//! The `security-framework` dependency is macOS-gated, keeping Linux builds
-//! untouched.
+//! Credential JSON normally never enters process arguments: the command is
+//! fed to `security -i` on **stdin**, so argv is just `["/usr/bin/security",
+//! "-i"]`. That interactive reader truncates an over-long line *and stores the
+//! truncated value*, so [`SECURITY_STDIN_SAFE_MAX`] keeps us clear of the cap.
+//! A blob past the cap — real since Claude Code started keeping `mcpOAuth`
+//! discovery state for every MCP plugin in the same item (3.6 KB measured on
+//! 2026-09-23) — is handed to `security(1)` as argv instead, exactly the
+//! fallback Claude Code itself uses. It is never written through the native
+//! API. The `security-framework` dependency is macOS-gated and only the opt-in
+//! Keychain tests use it.
 //!
 //! A `CLAUDE_CONFIG_DIR`-scoped login (`CLAUDE_CONFIG_DIR=<dir> claude`, the
 //! mechanism `accounts_dir` documents) also lands in the Keychain rather than
@@ -152,9 +155,9 @@ fn read_raw_service(service: &str) -> Result<Option<String>> {
 /// widget and Claude Code keep sharing a single source of truth (mirroring how
 /// they share one file on Linux).
 ///
-/// A native write requires the same account selector used by the read path.
-/// Fail closed if `$USER` is unavailable rather than falling back to the
-/// `security(1)` argv form and exposing the OAuth JSON to process inspection.
+/// Both write paths select by account exactly as the read does. Fail closed if
+/// `$USER` is unavailable: a write without `-a` could create a second item the
+/// read would never find again.
 pub fn write_raw(json: &str) -> Result<()> {
     write_raw_service(SERVICE, json)
 }
@@ -256,33 +259,74 @@ fn write_via_security_stdin(command: &str) -> Result<()> {
     if out.status.success() {
         return Ok(());
     }
+    Err(write_failure(&out))
+}
+
+/// Argv fallback for a blob too long for the `security -i` line cap. The
+/// secret is visible to `ps` for the few milliseconds `security` runs — the
+/// same trade Claude Code makes for this case ("exceeds security -i stdin
+/// limit; using argv"). The alternative, a native `SecItemAdd`, re-stamps the
+/// item with our `cdhash:` partition and brings the Keychain dialog back on
+/// every later read (issue #148).
+fn write_via_security_argv(service: &str, account: &str, json: &str) -> Result<()> {
+    let out = Command::new("/usr/bin/security")
+        .args([
+            "add-generic-password",
+            "-U",
+            "-a",
+            account,
+            "-s",
+            service,
+            "-w",
+            json,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| AppError::Other(format!("could not run `security`: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(write_failure(&out))
+}
+
+/// Map a failed `security add-generic-password` run to the user-facing error,
+/// with the tool's stderr sanitized like every other subprocess line.
+fn write_failure(out: &std::process::Output) -> AppError {
     let detail = sanitize_untrusted_line(&String::from_utf8_lossy(&out.stderr));
-    Err(AppError::Credentials(format!(
+    let detail = detail.trim();
+    AppError::Credentials(format!(
         "failed to update the Claude credentials in the macOS Keychain \
          (security exited {}): {}",
         out.status.code().unwrap_or(-1),
-        {
-            let detail = detail.trim();
-            if detail.is_empty() {
-                "no detail".to_string()
-            } else {
-                detail.to_string()
-            }
+        if detail.is_empty() {
+            "no detail"
+        } else {
+            detail
         }
-    )))
+    ))
 }
 
-/// Last resort for a blob too large for the `security -i` line cap. This is the
-/// write that stamps the item with our `cdhash:` partition (issue #148), so it
-/// runs only when the alternative is putting the credential in argv.
-fn write_via_native_api(service: &str, account: &str, json: &str) -> Result<()> {
-    security_framework::passwords::set_generic_password(service, account, json.as_bytes()).map_err(
-        |e| {
-            AppError::Credentials(format!(
-                "failed to update the Claude credentials in the macOS Keychain: {e}"
-            ))
-        },
-    )
+/// How a credential write reaches `security(1)`. Both paths keep the writer on
+/// the `apple-tool:` partition; the native Security API is never used for
+/// writes, because that is what re-stamps the item with our `cdhash:` (#148).
+///
+/// Deliberately not `Debug`: `Stdin` carries the composed command, secret
+/// included, and nothing should be able to print it by accident.
+enum WritePath {
+    /// One composed command fed to `security -i` over stdin: the secret never
+    /// enters argv.
+    Stdin(String),
+    /// The composed line would not fit the `security -i` cap (or could not be
+    /// quoted for it), so the blob goes to `security(1)` as argv instead.
+    Argv,
+}
+
+fn write_path_for(service: &str, account: &str, json: &str) -> WritePath {
+    match command_for_security_stdin(service, account, json) {
+        Some(command) => WritePath::Stdin(command),
+        None => WritePath::Argv,
+    }
 }
 
 fn write_raw_service(service: &str, json: &str) -> Result<()> {
@@ -295,9 +339,16 @@ fn write_raw_service(service: &str, json: &str) -> Result<()> {
         ));
     };
 
-    match command_for_security_stdin(service, &acct, json) {
-        Some(command) => write_via_security_stdin(&command),
-        _ => write_via_native_api(service, &acct, json),
+    write_raw_service_as(service, &acct, json)
+}
+
+/// The dispatch itself, with the account passed in so the opt-in Keychain
+/// tests can drive the production wiring under a synthetic account and prove
+/// the item's partition list stays `apple-tool:` on both paths.
+fn write_raw_service_as(service: &str, account: &str, json: &str) -> Result<()> {
+    match write_path_for(service, account, json) {
+        WritePath::Stdin(command) => write_via_security_stdin(&command),
+        WritePath::Argv => write_via_security_argv(service, account, json),
     }
 }
 
@@ -427,9 +478,14 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     fn write_test_item(service: &str, blob: &str) {
-        let command = command_for_security_stdin(service, TEST_ACCOUNT, blob)
-            .expect("synthetic test command is within the safe stdin limit");
-        write_via_security_stdin(&command).expect("write synthetic Keychain item");
+        assert!(
+            matches!(
+                write_path_for(service, TEST_ACCOUNT, blob),
+                WritePath::Stdin(_)
+            ),
+            "synthetic test command is within the safe stdin limit"
+        );
+        write_raw_service_as(service, TEST_ACCOUNT, blob).expect("write synthetic Keychain item");
     }
 
     #[cfg(target_os = "macos")]
@@ -454,6 +510,96 @@ mod tests {
             .strip_suffix(b"\n")
             .unwrap_or(&out.stdout)
             .to_vec()
+    }
+
+    /// A blob shaped like what Claude Code stores once MCP plugins have run
+    /// OAuth discovery. The real item that motivated this measured 3640 bytes
+    /// with 302 quotes on 2026-09-23, composing to ~4020 bytes for
+    /// `security -i` — just past the cap. The fixture is deliberately far past
+    /// it (about 5.7 KB composed) so the argv path is exercised even if the
+    /// safe limit is ever nudged upward.
+    fn oversized_blob() -> String {
+        let entries = (0..9)
+            .map(|i| {
+                format!(
+                    r#""plugin:p{i}:p{i}|0123456789abcdef":{{"accessToken":"","clientId":"{}","clientSecret":"{}","discoveryState":{{"authorizationServerUrl":"https://auth.example.test/oauth/{i}","oauthMetadataFound":true,"resourceMetadataUrl":"https://mcp.example.test/.well-known/oauth-protected-resource/mcp/{i}"}},"issuer":"https://auth.example.test/oauth/{i}","redirectUri":"http://localhost:3000/callback","serverName":"plugin:p{i}:p{i}","serverUrl":"https://mcp.example.test/mcp/{i}"}}"#,
+                    "c".repeat(36),
+                    "s".repeat(44),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            r#"{{"claudeAiOauth":{{"accessToken":"{}","expiresAt":1758600000000,"rateLimitTier":"default_claude_max_5x","refreshToken":"{}","scopes":["user:file_upload","user:inference","user:mcp_servers","user:profile","user:sessions:claude_code","user:sessions:claude_code_desktop"],"subscriptionType":"max"}},"mcpOAuth":{{{entries}}}}}"#,
+            "a".repeat(108),
+            "r".repeat(108),
+        )
+    }
+
+    /// The item's XARA partition list as `security dump-keychain -a` prints it
+    /// (attributes and ACLs only — it never decrypts, so it cannot prompt).
+    /// Dumps the default keychain, which is where the writes land. A
+    /// concurrent Keychain change (another test cleaning up, the menu bar
+    /// refreshing) can make one enumeration exit non-zero or come back short,
+    /// so only the presence of our item counts and the dump is retried.
+    #[cfg(target_os = "macos")]
+    fn partition_list_through_security(service: &str) -> String {
+        let keychain = default_keychain_path();
+        let needle = format!("\"svce\"<blob>=\"{service}\"");
+        let mut last_dump = String::new();
+        let mut last_status = String::new();
+        for attempt in 1u64..=5 {
+            let out = Command::new("/usr/bin/security")
+                .args(["dump-keychain", "-a", &keychain])
+                .output()
+                .expect("run security dump-keychain");
+            last_dump = String::from_utf8_lossy(&out.stdout).into_owned();
+            last_status = format!(
+                "exit {}, stderr {:?}",
+                out.status.code().unwrap_or(-1),
+                sanitize_untrusted_line(&String::from_utf8_lossy(&out.stderr)).trim()
+            );
+            if let Some(item) = last_dump
+                .split("keychain: \"")
+                .find(|chunk| chunk.contains(&needle))
+            {
+                let mut lines = item.lines();
+                while let Some(line) = lines.next() {
+                    if line.contains("partition_id") {
+                        for later in lines.by_ref() {
+                            if let Some(desc) = later.trim().strip_prefix("description: ") {
+                                return desc.to_string();
+                            }
+                        }
+                    }
+                }
+                panic!("no partition_id ACL entry for {service}");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500 * attempt));
+        }
+        panic!(
+            "test item {service} absent from 5 dumps of {keychain} (last: {last_status}; {} items / {} bytes)",
+            last_dump.matches("keychain: \"").count(),
+            last_dump.len()
+        );
+    }
+
+    /// Where `security add-generic-password` puts an item when no keychain is
+    /// named: the user's default keychain (normally login.keychain-db).
+    #[cfg(target_os = "macos")]
+    fn default_keychain_path() -> String {
+        let out = Command::new("/usr/bin/security")
+            .args(["default-keychain", "-d", "user"])
+            .output()
+            .expect("run security default-keychain");
+        let printed = String::from_utf8_lossy(&out.stdout);
+        let path = printed.trim().trim_matches('"').to_string();
+        if out.status.success() && !path.is_empty() {
+            path
+        } else {
+            let home = std::env::var("HOME").expect("HOME is set");
+            format!("{home}/Library/Keychains/login.keychain-db")
+        }
     }
 
     #[test]
@@ -532,10 +678,10 @@ mod tests {
 
     #[test]
     fn realistic_credential_blob_stays_under_the_stdin_cap() {
-        // ~2.8 KB of compact JSON is what Claude Code stores today; the
+        // ~2.8 KB of compact JSON is the bare OAuth blob (no `mcpOAuth`); the
         // composed line must clear `security -i`'s truncation point, or the
-        // write silently falls back to the native API and re-stamps the
-        // partition list (issue #148).
+        // write has to fall back to argv and expose the secret to `ps` for a
+        // moment.
         let json = format!(
             r#"{{"claudeAiOauth":{{"accessToken":"{}","refreshToken":"{}","expiresAt":1757430000000,"subscriptionType":"max","scopes":["user:inference","user:profile"]}}}}"#,
             "a".repeat(1300),
@@ -605,5 +751,88 @@ mod tests {
 
         assert!(unwind.is_err(), "the deliberate panic must be caught");
         assert_eq!(matching_item_count(&service, TEST_ACCOUNT), 0);
+    }
+
+    #[test]
+    fn oversized_blob_is_written_through_security_argv_not_the_native_api() {
+        // The only acceptable fallback past the stdin cap is `security(1)`
+        // itself via argv: a native `SecItemAdd` re-stamps the partition list
+        // with our cdhash and brings the Keychain dialog back (issue #148).
+        let json = oversized_blob();
+        assert!(
+            command_for_security_stdin(SERVICE, "alice", &json).is_none(),
+            "fixture must exceed the stdin cap, composed to {} bytes",
+            compose_write_command(SERVICE, "alice", &json)
+                .unwrap()
+                .len()
+        );
+        assert!(matches!(
+            write_path_for(SERVICE, "alice", &json),
+            WritePath::Argv
+        ));
+    }
+
+    #[test]
+    fn normal_blob_keeps_the_stdin_path() {
+        let json = r#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1}}"#;
+        match write_path_for(SERVICE, "alice", json) {
+            WritePath::Stdin(cmd) => {
+                assert_eq!(
+                    Some(cmd),
+                    command_for_security_stdin(SERVICE, "alice", json)
+                )
+            }
+            WritePath::Argv => {
+                panic!("a small blob must stay on stdin, keeping the secret out of argv")
+            }
+        }
+    }
+
+    /// Opt-in like the round-trip test:
+    /// `cargo test --lib -- --ignored keychain_oversized`.
+    ///
+    /// Exercises the argv fallback end to end on the real login Keychain: the
+    /// value round-trips byte for byte through `/usr/bin/security`, `-U` keeps
+    /// a single item, and the partition list stays `apple-tool:` — never our
+    /// `cdhash:` — so no later read can raise the XARA dialog.
+    #[test]
+    #[ignore = "writes to the real login Keychain"]
+    #[cfg(target_os = "macos")]
+    fn keychain_oversized_blob_round_trips_via_argv_and_keeps_apple_tool_partition() {
+        let service = unique_test_service("oversized");
+        let mut cleanup = KeychainTestCleanup::new(service.clone());
+        assert_eq!(matching_item_count(&service, TEST_ACCOUNT), 0);
+
+        let blob = oversized_blob();
+        assert!(matches!(
+            write_path_for(&service, TEST_ACCOUNT, &blob),
+            WritePath::Argv
+        ));
+
+        for pass in 0..2 {
+            write_raw_service_as(&service, TEST_ACCOUNT, &blob)
+                .expect("oversized write through the production dispatch");
+            let got = read_test_item_through_security(&service);
+            assert_eq!(got, blob.as_bytes(), "pass {pass}");
+        }
+        assert_eq!(
+            matching_item_count(&service, TEST_ACCOUNT),
+            1,
+            "-U must update in place, not add a second item"
+        );
+
+        let partitions = partition_list_through_security(&service);
+        assert!(
+            partitions.contains("apple-tool:"),
+            "partition list was {partitions:?}"
+        );
+        assert!(
+            !partitions.contains("cdhash:"),
+            "partition list was {partitions:?}"
+        );
+
+        cleanup.delete_now().expect("cleanup");
+        assert_eq!(matching_item_count(&service, TEST_ACCOUNT), 0);
+        cleanup.disarm();
     }
 }

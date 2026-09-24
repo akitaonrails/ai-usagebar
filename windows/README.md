@@ -35,7 +35,7 @@ standalone ZIP installs.
 
 - Windows 10 (recent) or Windows 11, with the **WebView2 Evergreen** runtime
   (preinstalled on Windows 11).
-- A Rust toolchain (`rustc` 1.88+).
+- A Rust toolchain (`rustc` 1.90+).
 - **Node.js 20+** on PATH — `cargo build --bin ai-usagebar-tray` runs
   `npm ci` / `npm run build` in `windows/popover/` (Vite emits
   `dist/popover.js` + `dist/popover.css`; `build.rs` stages them into

@@ -76,7 +76,7 @@ time, so one of those must be running for quota to load.
 
 ## Requirements
 
-- Rust (`rustc` 1.88+) and **Node.js 20+** (the tray embeds the Vite popover).
+- Rust (`rustc` 1.90+) and **Node.js 20+** (the tray embeds the Vite popover).
 - Run `claude` once on the Mac so its OAuth creds are in the login **Keychain**;
   ai-usagebar reads them there automatically (no env vars).
 

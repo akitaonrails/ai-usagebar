@@ -2,7 +2,7 @@
 name = "ai-usagebar"
 version = "1.22.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 license = "MIT"
 description = "Omarchy/Waybar widgets + TUI for tracking multi-provider AI plan usage"
 readme = "README.md"
@@ -85,11 +85,10 @@ unicode-width = "0.2"
 rustix = { version = "1", features = ["process"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
 # Same tray popover host as Windows: NSStatusItem + WKWebView.
 tao = "0.37"
 wry = "0.57"
-tray-icon = "0.24"
+tray-icon = "0.25.1"
 global-hotkey = "0.8"
 objc2 = "0.6"
 objc2-foundation = "0.3"
@@ -115,7 +114,13 @@ objc2-app-kit = { version = "0.3.2", features = [
     "block2",
 ] }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"] }
-png = "0.17"
+png = "0.18"
+
+# Only the opt-in Keychain tests use it (item counting). Production writes go
+# through `security(1)`, so a native Keychain write cannot creep back in
+# without first re-adding this as a real dependency.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+security-framework = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [
@@ -135,7 +140,7 @@ windows-sys = { version = "0.61.2", features = [
 # the AUR source build does not pull GTK/WebKit.
 tao = "0.37"
 wry = "0.57"
-tray-icon = "0.24"
+tray-icon = "0.25.1"
 # Global toggle shortcut for the popover: owns a message-only window and
 # delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.
 global-hotkey = "0.8"
