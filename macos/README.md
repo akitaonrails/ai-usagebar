@@ -2,7 +2,7 @@
 
 The product UI is **`ai-usagebar-tray`**: an NSStatusItem plus a WKWebView
 popover with a macOS provider switcher on an AppKit glass background. Its
-tabs show every detected provider and the current usage or balance; selecting
+tabs show only enabled providers and the current usage or balance; selecting
 one shows its metrics, reset times, and other account details. The header has
 Refresh and Settings buttons. The menu-bar item shows every ready provider's
 name and usage headline beside the
@@ -31,17 +31,17 @@ Open TUI, Start at Login, and Quit. No Dock icon.
 
 ![Previous chart-only mode in the macOS menu bar, next to the Cursor, Claude, Antigravity, Codex and Claude Code icons](../screenshots/macos-tray-icon.png)
 
-Star up to two metrics per provider from Customize; those fills are what the
-status item paints.
+Star up to two metrics per provider from **Settings → Providers**, then open
+that provider's details. Those fills are what the status item paints.
 
 ![Customize Claude — Always Visible rows Weekly (starred) and Fable, On Demand row Session, each with a star and an on/off switch, Back and Reset in the top bar](../screenshots/macos-tray-provider-stars.png)
 
-The footer's Options menu reaches Customize and Settings. Start at Login is a
-setting that writes a LaunchAgent under `~/Library/LaunchAgents`.
-
-![Options menu opened from the footer — Customize, Settings, Refresh, Detect Providers, Open TUI, Start at Login (checked), Quit](../screenshots/macos-tray-options.png)
-
-![Customize screen — provider list (Claude, Codex, Cursor, SuperGrok, Antigravity on; GitHub Copilot, Z.AI, OpenRouter, Ollama Cloud off) with metric counts, drag grips and on/off switches, and a Settings cross-link at the bottom](../screenshots/macos-tray-customize.png)
+The footer's Options menu opens Settings. Settings uses five tabs: **General**
+(startup, refresh, shortcut), **Providers** (visibility, order, metric details),
+**Menu** (the menu-bar summary), **Preferences** (language, appearance, usage
+display), and **Alerts** (system notifications and the quota threshold). Start
+at Login writes a LaunchAgent under `~/Library/LaunchAgents`. Alerts are sent
+through macOS Notification Center after a fresh reading crosses the threshold.
 
 A legacy Swift `NSMenu` (`ai-usagebar-menubar.swift`) remains in this folder
 for the old dropdown. Prefer the tray.

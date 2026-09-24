@@ -71,8 +71,10 @@ Turn **Launch at Login** off, or:
 rm ~/Library/LaunchAgents/com.akitaonrails.ai-usagebar-tray.plist
 ```
 
-**Change settings** from the popover: Options → Settings (theme, density,
-icon style, refresh, shortcut) and Options → Customize (providers, stars).
+**Change settings** from the popover: Options → Settings. Use the General,
+Providers, Menu, Preferences, and Alerts tabs for refresh and shortcut,
+provider order and stars, menu-bar display, language and appearance, and
+system notifications.
 
 ## Troubleshooting
 
@@ -81,5 +83,5 @@ icon style, refresh, shortcut) and Options → Customize (providers, stars).
 | `npm` missing during `cargo build` | install Node.js 20+ |
 | Popover is empty / stub page | `npm ci && npm run build` in `windows/popover/`, then rebuild the tray |
 | Two status items | quit `ai-usagebar-menubar` (legacy Swift dropdown) |
-| No usage in the glyph | star metrics in Customize (max two per provider); Icon Style = Bars |
+| No usage in the glyph | star metrics in Settings → Providers (max two per provider); turn on Chart Icon Only in the Menu tab |
 | macOS blocks the binary (Gatekeeper) | local build — launch from Terminal; if Finder blocks it, right-click → **Open** once |

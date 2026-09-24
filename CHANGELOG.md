@@ -28,6 +28,15 @@ Each release is also published at
   display options persist in `[tray]`; Chart Icon Only restores the previous
   glyph-only presentation.
 
+- **macOS usage panel and preferences.** An AppKit glass popover shows only
+  enabled providers, their usage and balance, reset times, and refresh controls.
+  Settings has General, Providers, Menu, Preferences, and Alerts tabs. The
+  provider list can be reordered and customized there; English and Brazilian
+  Portuguese are selectable in Preferences. Alerts deliver quota and expiring
+  credit notifications through macOS Notification Center, with an enable switch
+  and threshold in the panel. Exact reset times now follow the selected display
+  mode in the macOS panel.
+
 - **Quota-threshold desktop notifications.** After a fresh fetch, any vendor
   window that crosses `[notifications] threshold` (default 97%) raises a
   `notify-send` notification on Linux (`-a ai-usagebar -c quota`); an
@@ -39,8 +48,8 @@ Each release is also published at
   flock discipline as the vendor caches. Delivery is best-effort by design —
   a missing or failing notifier, an unwritable state file, or lock contention
   is a silent skip that never touches the bar, the report, or an exit code.
-  macOS and Windows delivery follow in a later release; the sink seam is in
-  place. Config: `[notifications]` with `enabled` (default `true`) and
+  macOS delivers through Notification Center; Windows delivery follows in a
+  later release. Config: `[notifications]` with `enabled` (default `true`) and
   `threshold` (1..=100, default `97`), also editable in the TUI Settings
   overlay.
 
