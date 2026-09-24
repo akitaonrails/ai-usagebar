@@ -126,6 +126,14 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Same gate as Linux, under BSD sed: maintainers run it locally on macOS
+      # before tagging, and a GNU-only expression would otherwise pass CI.
+      - name: Published changelog sections and versions are intact (BSD sed)
+        run: make changelog-check
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
