@@ -158,6 +158,7 @@ const portuguese: Record<string, string> = {
   "for menu bar": "na barra de menus",
   "used": "usado",
   "Used": "Usado",
+  "Updated just now": "Atualizado agora",
   "View release": "Ver versão",
   "Waiting for update": "Aguardando atualização",
   "Weekly": "Semanal",

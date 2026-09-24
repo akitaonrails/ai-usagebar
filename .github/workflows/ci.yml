@@ -59,6 +59,11 @@ jobs:
       - name: Test desktop integration models
         run: make desktop-test
 
+      # The MacDashboard SSR contract test needs vite, so it runs here (npm is
+      # guaranteed on ubuntu) rather than in the bare-node desktop-test gate.
+      - name: Test the popover SSR screens
+        run: make popover-ssr-test
+
       # The Omarchy model contract was only ever run by `make test` locally,
       # so changes to omarchy/Model.js reached main unverified. Node-only,
       # like desktop-test.
