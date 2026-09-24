@@ -7,7 +7,7 @@ bar. For configuration and how it works, see [README.md](README.md).
 
 | Need | How |
 |---|---|
-| **Rust** (`rustc` 1.88+) | `rustup` |
+| **Rust** (`rustc` 1.90+) | `rustup` |
 | **Node.js 20+** | first tray build runs `npm ci` in `windows/popover/` |
 | **Claude logged in once** | run `claude` once — its OAuth creds go to the login **Keychain**, which ai-usagebar reads automatically |
 
