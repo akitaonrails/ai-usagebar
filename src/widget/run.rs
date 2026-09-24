@@ -1157,6 +1157,7 @@ mod tests {
                 sonnet: None,
                 scoped: vec![],
                 extra: None,
+                reset_credits: Default::default(),
             },
             stale: false,
             last_error: None,

@@ -14,12 +14,25 @@ use super::creds::{self, OauthCreds};
 use super::oauth;
 use super::types::UsageResponse;
 
-pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+/// `cedar_ember=1` asks the endpoint to also compute the banked-reset block.
+/// It is additive — `five_hour`, `seven_day`, `limits[]`, `extra_usage` and
+/// `spend` all come back unchanged — so there is no second request and no
+/// separate failure mode: an account with no grant simply gets a null block.
+pub const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage?cedar_ember=1";
 pub const USAGE_BETA_HEADER: &str = "oauth-2025-04-20";
 /// The usage endpoint rate-limits hard unless the request carries a Claude Code
-/// `User-Agent`. The exact patch version isn't validated, so a stable recent
-/// `claude-code/<version>` (what the official client sends) is fine.
-pub const USAGE_USER_AGENT: &str = "claude-code/2.1.183";
+/// `User-Agent`, and the banked-reset block is gated on it twice over: the
+/// server reads the *surface* from the `claude-cli/<version> (external, cli)`
+/// shape (the older `claude-code/<version>` form answers
+/// `ineligible_reason: "surface"`), then the version itself against a floor —
+/// 2.1.279 is refused as `"cli_version"` where 2.1.280 is accepted.
+///
+/// So this pins a real published release (`latest` on npm at the time of
+/// writing), not a synthesized one: identifying as a client version that was
+/// never cut would be a lie to the server *and* to the next reader. If
+/// Anthropic raises the floor again this reverts to `ineligible`, the block
+/// arrives empty, and nothing but the resets row disappears.
+pub const USAGE_USER_AGENT: &str = "claude-cli/2.1.281 (external, cli)";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(25);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(45);
@@ -714,5 +727,66 @@ mod tests {
             "{message}"
         );
         assert!(!message.contains("invalid token"), "{message}");
+    }
+
+    /// The banked-reset block only exists when the request asks for it, and
+    /// the server reads the caller's surface off the User-Agent. Both live in
+    /// the production constants, so both are asserted against the constants —
+    /// a `USAGE_URL` that lost its query parameter would silently return a
+    /// payload with no `cedar_ember` key and the resets row would just stop
+    /// appearing, with nothing failing.
+    #[test]
+    fn the_usage_request_asks_for_banked_resets_as_a_recognised_client() {
+        assert!(
+            USAGE_URL.contains("cedar_ember=1"),
+            "the usage URL must opt into the banked-reset block: {USAGE_URL}"
+        );
+        assert!(
+            USAGE_USER_AGENT.starts_with("claude-cli/"),
+            "the `claude-code/<version>` form is rejected as an unknown \
+             surface: {USAGE_USER_AGENT}"
+        );
+    }
+
+    /// A refresh that fails falls back to the cached payload, and the cache
+    /// holds the raw response — so the grant has to survive the round trip.
+    /// It did not for SuperGrok until a test said so: a vendor can report its
+    /// resets for one refresh and then quietly stop mentioning them.
+    #[tokio::test]
+    async fn banked_resets_survive_the_cache_round_trip() {
+        let (_td, cache) = cache_fixture();
+        cache
+            .write_payload(
+                br#"{"five_hour":{"utilization":2},"seven_day":{"utilization":63},
+                     "cedar_ember":{"eligible":true,"grants":[
+                       {"id":"g","label":"Opus 5.5 launch reset","resets_left":1,
+                        "usable_now":true,"paused":false,
+                        "ends_at":"2026-10-22T16:00:00Z"}]}}"#,
+            )
+            .unwrap();
+
+        let creds = expired_creds_no_refresh();
+        let client = reqwest::Client::new();
+        // No server: the usage request fails and the cache is all there is.
+        let endpoints = Endpoints {
+            usage: "http://127.0.0.1:1/api/oauth/usage".into(),
+            token: "http://127.0.0.1:1/v1/oauth/token".into(),
+        };
+        let outcome = fetch_snapshot(
+            &client,
+            &creds::CredsTarget::Explicit(creds.path().to_path_buf()),
+            &cache,
+            &endpoints,
+            Duration::from_secs(600),
+        )
+        .await
+        .expect("the cached payload is served");
+
+        let credits = &outcome.snapshot.reset_credits;
+        assert_eq!(credits.available, 1);
+        assert_eq!(
+            credits.next_expiry(),
+            Some("2026-10-22T16:00:00Z".parse().unwrap())
+        );
     }
 }

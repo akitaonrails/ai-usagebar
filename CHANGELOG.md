@@ -9,6 +9,20 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Claude's banked limit resets.** Claude now grants redeemable usage-limit
+  resets during a campaign — the "Resets" offer with its own expiry date —
+  and they land on the same row Codex and SuperGrok resets already use: the
+  tooltip, the TUI panel, `usage --json`'s `reset_credits`, and from there the
+  Omarchy, GNOME and KDE surfaces, plus the 48-hour expiry notification. Two
+  new placeholders, `{resets_available}` and `{resets}`. The figures come from
+  the `cedar_ember` block on the existing usage endpoint, so there is no
+  second request; an account without a grant is the normal case and shows no
+  row at all. The redemption handle the API returns alongside each grant is
+  never deserialized — ai-usagebar reports that a reset exists and when it
+  lapses, and redeeming it stays with Claude Code (`/limit-reset`).
+
 ## [1.23.0] — 2026-09-24
 
 ### Fixed

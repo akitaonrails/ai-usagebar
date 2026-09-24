@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result as AppResult};
 use crate::usage::{
     OpenAiCredits, OpenAiNamedLimit, OpenAiSnapshot, OpenAiSource, OpenAiUnavailableModel,
-    ResetCredit as BankedReset, ResetCredits, UsageWindow,
+    ResetCredit as BankedReset, ResetCredits, UsageWindow, checked_reset_title,
 };
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
@@ -256,19 +256,6 @@ where
     T: Default + Deserialize<'de>,
 {
     Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
-}
-
-const MAX_RESET_TITLE_CHARS: usize = 80;
-
-fn checked_reset_title(value: Option<String>) -> Option<String> {
-    let value = value
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())?;
-    if value.chars().count() > MAX_RESET_TITLE_CHARS || value.chars().any(char::is_control) {
-        None
-    } else {
-        Some(value)
-    }
 }
 
 impl UsageResponse {
