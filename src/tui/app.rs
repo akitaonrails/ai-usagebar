@@ -40,6 +40,12 @@ pub struct ReadyTab {
     /// timestamp stays stable across redraws instead of drifting with the
     /// passing wall clock.
     pub fetched_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Bar-number settings this vendor was configured with — the tank size a
+    /// prepaid balance is metered against, and which of the two numbers goes on
+    /// the bar. Resolved from config at fetch time rather than stored in the
+    /// snapshot, so editing config.toml takes effect on the next redraw instead
+    /// of waiting for the cache to expire.
+    pub display: crate::balance::DisplayPrefs,
 }
 
 /// Where a tab's usage comes from: a built-in vendor, or a user-declared
@@ -477,17 +483,36 @@ pub async fn refresh_one(client: &Client, config: &Config, tab: &TabId) -> TabSt
             // `Utc::now() - cache_age` on every draw and the displayed time would
             // tick upward in real time instead of holding at the last refresh.
             let now = Utc::now();
+            let off_the_wire = outcome.off_the_wire();
             let fetched_at = outcome
                 .cache_age
                 .map(|age| now - chrono::Duration::from_std(age).unwrap_or_default());
-            TabState::Ready(Box::new(ReadyTab {
+            let state = TabState::Ready(Box::new(ReadyTab {
                 snapshot: outcome.snapshot,
                 stale: outcome.stale,
                 last_error: outcome.last_error.map(|(code, message)| {
                     (code, crate::display::sanitize_untrusted_field(&message))
                 }),
                 fetched_at,
-            }))
+                display: match &tab.source {
+                    TabSource::Builtin(vendor) => config.display_prefs(*vendor),
+                    // A `[[custom]]` provider states its own percentages; it has
+                    // no balance to meter and no headline to choose.
+                    TabSource::Custom { .. } => crate::balance::DisplayPrefs::default(),
+                },
+            }));
+            // The single notification hook every frontend shares: TUI, `usage`
+            // report, tray, and the GNOME/KDE/Omarchy frontends all land here.
+            // Wire-fresh outcomes only — never cached, stale, or failed ones —
+            // and best-effort by construction: `run` returns nothing and cannot
+            // change this function's result or the caller's exit code.
+            if off_the_wire
+                && config.notifications.enabled
+                && let Some(input) = crate::notify::RefreshInput::from_tab(tab, &state, now)
+            {
+                let _ = crate::notify::run(input, config.notifications.threshold).await;
+            }
+            state
         }
         Err(e) => TabState::error_with_plan(
             crate::display::sanitize_untrusted_field(&e.user_message()),
@@ -755,6 +780,23 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
             let cache = crate::cache::Cache::for_vendor("grokbot")?;
             let endpoints = crate::grokbot::fetch::Endpoints::default();
             let outcome = crate::grokbot::fetch::fetch_snapshot_with(
+                client,
+                &creds,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+            )
+            .await?;
+            Ok(outcome.into())
+        }
+        VendorId::ModelStudio => {
+            // The bl CLI's own console session is the login; its region/site
+            // pair picks the gateway, and only a token fingerprint persists.
+            let creds = crate::modelstudio::resolve_credentials(&config.modelstudio)?;
+            let cache = crate::cache::Cache::for_vendor("modelstudio")?;
+            let endpoints =
+                crate::modelstudio::fetch::Endpoints::for_gateway(creds.region, creds.site);
+            let outcome = crate::modelstudio::fetch_snapshot_with(
                 client,
                 &creds,
                 &cache,
@@ -1379,6 +1421,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: Some(fetched_at),
+            display: Default::default(),
         }))
     }
 

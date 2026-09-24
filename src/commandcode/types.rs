@@ -31,7 +31,7 @@ impl SpendWindow {
         if !self.cap.is_finite() || self.cap <= 0.0 {
             return 0;
         }
-        ((self.used / self.cap) * 100.0).round().clamp(0.0, 100.0) as i32
+        i32::from(crate::format::clamp_pct((self.used / self.cap) * 100.0))
     }
 }
 

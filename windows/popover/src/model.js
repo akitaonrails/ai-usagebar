@@ -207,6 +207,9 @@ function normalizeSection(raw) {
       percent: Math.max(0, Math.min(100, Math.round(percent))),
       value: clean(raw.value, 240),
       detail: clean(raw.detail, 1000),
+      // Which number the report puts on the bar. An older report omits it,
+      // and a metric is a percentage by default.
+      headline: raw.headline === "value" ? "value" : "percent",
       severity,
       resetAt: clean(raw.reset_at, 80),
       window: windowSeconds(raw.window_secs),
@@ -283,15 +286,27 @@ export function quotaAlternate(row, showAs) {
 // Dashboard headline under the meter. Unlike quotaLabel it never collapses a spent
 // row into "Limit reached": the flame beside the label carries that verdict, and the
 // headline keeps reading "0% left" / "100% used" like OpenUsage's WidgetRowView.
+//
+// A metric that names `value` as its headline (a prepaid balance with
+// `headline = "amount"`) puts that money figure there instead, like the Omarchy
+// bar does; the percentage and the report's detail move to the hover text.
 export function headlineLabel(row, showAs) {
   if (!row || row.kind !== "metric") return "";
-  if (showAs === "used") return row.usedPercent + "% used";
-  return row.leftPercent + "% left";
+  if (row.headline === "value") return row.value;
+  return percentHeadline(row, showAs);
 }
 
 export function headlineAlternate(row, showAs) {
   if (!row || row.kind !== "metric") return "";
-  return headlineLabel(row, showAs === "used" ? "left" : "used");
+  if (row.headline === "value") {
+    return [percentHeadline(row, showAs), row.detail].filter(Boolean).join(" · ");
+  }
+  return percentHeadline(row, showAs === "used" ? "left" : "used");
+}
+
+function percentHeadline(row, showAs) {
+  if (showAs === "used") return row.usedPercent + "% used";
+  return row.leftPercent + "% left";
 }
 
 /**
@@ -541,6 +556,9 @@ export function projectCards(payload, nowMs) {
           label: prettyMetricLabel(entry.id, hostLabel, group),
           leftPercent: left,
           usedPercent: section.percent,
+          headline: section.headline === "value" && section.value ? "value" : "percent",
+          value: section.value || "",
+          detail: section.detail || "",
           severity: section.severity,
           reset: resetLabel(section, now),
           resetAt: section.resetAt || "",

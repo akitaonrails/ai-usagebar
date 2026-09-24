@@ -9,7 +9,9 @@
 //! a subscriber whose credential is the Kimi Code CLI login has nothing to paste
 //! and enables `[kimi]` in config.toml instead.
 //!
-//! Persistence uses `toml_edit` so the existing config keeps its comments,
+//! Below the credentials sit the `[notifications]` fields: a toggle for the
+//! quota-threshold alerts and their threshold in percent. Everything persists
+//! through `toml_edit` so the existing config keeps its comments,
 //! whitespace, and unrelated fields. Writing a key also flips that vendor's
 //! `enabled = true` (the opt-in vendors are disabled by default), so "paste the
 //! credential and save" is all it takes. Files with inline credentials are atomically written
@@ -29,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, value};
 
 use crate::config::{
-    Config, is_valid_env_var_name, read_config_document, set_bool, write_config_document,
+    Config, is_valid_env_var_name, read_config_document, set_bool, set_value, write_config_document,
 };
 use crate::error::{AppError, Result};
 use crate::theme::Theme;
@@ -163,6 +165,8 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
 pub enum Focus {
     Primary,
     Key(usize),
+    NotifyEnabled,
+    NotifyThreshold,
     Save,
 }
 
@@ -171,7 +175,9 @@ impl Focus {
         match self {
             Focus::Primary => Focus::Key(0),
             Focus::Key(i) if i + 1 < KEY_VENDORS.len() => Focus::Key(i + 1),
-            Focus::Key(_) => Focus::Save,
+            Focus::Key(_) => Focus::NotifyEnabled,
+            Focus::NotifyEnabled => Focus::NotifyThreshold,
+            Focus::NotifyThreshold => Focus::Save,
             Focus::Save => Focus::Primary,
         }
     }
@@ -180,7 +186,9 @@ impl Focus {
             Focus::Primary => Focus::Save,
             Focus::Key(0) => Focus::Primary,
             Focus::Key(i) => Focus::Key(i - 1),
-            Focus::Save => Focus::Key(KEY_VENDORS.len() - 1),
+            Focus::Save => Focus::NotifyThreshold,
+            Focus::NotifyThreshold => Focus::NotifyEnabled,
+            Focus::NotifyEnabled => Focus::Key(KEY_VENDORS.len() - 1),
         }
     }
 }
@@ -289,6 +297,11 @@ pub struct SettingsState {
     pub primary: VendorId,
     /// One input per [`KEY_VENDORS`] entry, same order.
     pub keys: Vec<KeyInput>,
+    /// `[notifications] enabled` toggle. Written back only once toggled.
+    pub notify_enabled: bool,
+    pub notify_enabled_dirty: bool,
+    /// `[notifications] threshold`, edited as digits only (1..=100 at save).
+    pub notify_threshold: KeyInput,
     /// One-line status displayed in the footer ("saved …", "save failed …").
     pub status: String,
 }
@@ -354,6 +367,9 @@ impl SettingsState {
             primary_choices,
             primary,
             keys,
+            notify_enabled: cfg.notifications.enabled,
+            notify_enabled_dirty: false,
+            notify_threshold: KeyInput::from_config(Some(&cfg.notifications.threshold.to_string())),
             status: String::new(),
         }
     }
@@ -450,6 +466,8 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
                 handle_input(input, code);
             }
         }
+        Focus::NotifyEnabled => handle_notify_enabled(state, code),
+        Focus::NotifyThreshold => handle_threshold_input(&mut state.notify_threshold, code),
         Focus::Save => {
             if matches!(code, KeyCode::Enter) {
                 return try_save(state);
@@ -489,6 +507,31 @@ fn handle_primary(state: &mut SettingsState, code: KeyCode) {
 fn handle_input(input: &mut KeyInput, code: KeyCode) {
     match code {
         KeyCode::Char(c) => input.insert_char(c),
+        KeyCode::Backspace => input.backspace(),
+        KeyCode::Delete => input.delete(),
+        KeyCode::Left => input.move_left(),
+        KeyCode::Right => input.move_right(),
+        KeyCode::Home => input.move_home(),
+        KeyCode::End => input.move_end(),
+        _ => {}
+    }
+}
+
+/// The `[notifications] enabled` toggle. Left/Right/Space flip it; any other
+/// key leaves it alone.
+fn handle_notify_enabled(state: &mut SettingsState, code: KeyCode) {
+    if matches!(code, KeyCode::Left | KeyCode::Right | KeyCode::Char(' ')) {
+        state.notify_enabled = !state.notify_enabled;
+        state.notify_enabled_dirty = true;
+    }
+}
+
+/// The `[notifications] threshold` field: an edit buffer that only accepts
+/// digits, so the value can never be something save would have to reject as
+/// non-numeric (range is still checked at save).
+fn handle_threshold_input(input: &mut KeyInput, code: KeyCode) {
+    match code {
+        KeyCode::Char(c) if c.is_ascii_digit() => input.insert_char(c),
         KeyCode::Backspace => input.backspace(),
         KeyCode::Delete => input.delete(),
         KeyCode::Left => input.move_left(),
@@ -548,6 +591,31 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
             continue;
         };
         update_key(&mut doc, kv, input)?;
+    }
+
+    // [notifications]: each field is written only when the user touched it,
+    // so an untouched overlay save leaves an absent/commented section alone.
+    if state.notify_enabled_dirty {
+        set_bool(&mut doc, "notifications", "enabled", state.notify_enabled)?;
+    }
+    if state.notify_threshold.dirty {
+        let raw = state.notify_threshold.buf.trim();
+        let threshold = raw.parse::<u8>();
+        match threshold {
+            Ok(threshold) if (1..=100).contains(&threshold) => {
+                set_value(
+                    &mut doc,
+                    "notifications",
+                    "threshold",
+                    Some(toml_edit::Value::from(i64::from(threshold))),
+                )?;
+            }
+            _ => {
+                return Err(AppError::Other(format!(
+                    "[notifications] threshold must be a whole number between 1 and 100, got {raw:?}"
+                )));
+            }
+        }
     }
 
     write_config_document(path, &doc)
@@ -883,6 +951,16 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
     }
     lines.push(Line::from(""));
 
+    // — Notifications —
+    lines.push(section_header(
+        "Notifications",
+        "desktop alert when a quota window crosses the threshold",
+        &bubble,
+    ));
+    lines.push(notify_enabled_line(state, &bubble));
+    lines.push(notify_threshold_line(state, &bubble));
+    lines.push(Line::from(""));
+
     // — Save + status —
     lines.push(save_line(state.focus == Focus::Save, &bubble));
     if !state.status.is_empty() {
@@ -909,6 +987,18 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             ("↑↓/tab", "move"),
             ("type", "edit key"),
             ("^V", "reveal"),
+            ("^S", "save"),
+            ("esc", "close"),
+        ]),
+        Focus::NotifyEnabled => bubble.help_line([
+            ("↑↓/tab", "move"),
+            ("←→/space", "toggle"),
+            ("^S", "save"),
+            ("esc", "close"),
+        ]),
+        Focus::NotifyThreshold => bubble.help_line([
+            ("↑↓/tab", "move"),
+            ("type", "digits 1-100"),
             ("^S", "save"),
             ("esc", "close"),
         ]),
@@ -1018,6 +1108,76 @@ fn value_text(input: &KeyInput, focused: bool) -> String {
     chars.into_iter().collect()
 }
 
+/// `[notifications] enabled` row — a plain on/off toggle styled like the
+/// primary selector.
+fn notify_enabled_line(state: &SettingsState, theme: &BubbleTheme) -> Line<'static> {
+    let focused = state.focus == Focus::NotifyEnabled;
+    let label = format!("{:<11}", "Quota alerts");
+    let value = if state.notify_enabled { "on" } else { "off" };
+    if focused {
+        Line::from(vec![
+            theme.span("   "),
+            Span::styled("▸ ", theme.accent.add_modifier(Modifier::BOLD)),
+            Span::styled(label, theme.title.add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" ◀ {value} ▶ "),
+                theme
+                    .selected
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            theme.span("     "),
+            Span::styled(label, theme.text),
+            Span::styled(format!("  {value}"), theme.muted),
+        ])
+    }
+}
+
+/// `[notifications] threshold` row — the digits are never masked, so the
+/// number is readable at a glance.
+fn notify_threshold_line(state: &SettingsState, theme: &BubbleTheme) -> Line<'static> {
+    let focused = state.focus == Focus::NotifyThreshold;
+    let label = format!("{:<11}", "Threshold %");
+    let input = &state.notify_threshold;
+    let value = if input.buf.is_empty() {
+        if focused {
+            "‸".to_string()
+        } else {
+            "(97)".to_string()
+        }
+    } else {
+        let mut chars: Vec<char> = input.buf.chars().collect();
+        if focused {
+            let pos = input.cursor.min(chars.len());
+            chars.insert(pos, '‸');
+        }
+        chars.into_iter().collect()
+    };
+    if focused {
+        Line::from(vec![
+            theme.span("  "),
+            Span::styled("▸ ", theme.accent.add_modifier(Modifier::BOLD)),
+            Span::styled(label, theme.title.add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" {value} "),
+                theme
+                    .selected
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            ),
+            theme.muted("   1-100"),
+        ])
+    } else {
+        Line::from(vec![
+            theme.span("    "),
+            Span::styled(label, theme.text),
+            Span::styled(format!(" {value}"), theme.text),
+            theme.muted("   1-100"),
+        ])
+    }
+}
+
 fn save_line(focused: bool, theme: &BubbleTheme) -> Line<'static> {
     let style = if focused {
         theme
@@ -1097,6 +1257,9 @@ mod tests {
             primary_choices: VendorId::all().to_vec(),
             primary,
             keys: KEY_VENDORS.iter().map(|_| KeyInput::default()).collect(),
+            notify_enabled: true,
+            notify_enabled_dirty: false,
+            notify_threshold: KeyInput::from_config(Some("97")),
             status: String::new(),
         }
     }
@@ -1112,23 +1275,30 @@ mod tests {
     }
 
     #[test]
-    fn focus_cycles_through_primary_all_keys_and_save() {
+    fn focus_cycles_through_primary_all_keys_notifications_and_save() {
         let mut f = Focus::Primary;
         let mut seen = vec![f];
-        // Full cycle = Primary + N key rows + Save.
-        for _ in 0..(KEY_VENDORS.len() + 2) {
+        // Full cycle = Primary + N key rows + both notification fields + Save.
+        for _ in 0..(KEY_VENDORS.len() + 4) {
             f = f.next();
             seen.push(f);
         }
-        // Primary, Key(0..n), Save, back to Primary.
+        // Primary, Key(0..n), NotifyEnabled, NotifyThreshold, Save, Primary.
         assert_eq!(seen.first(), Some(&Focus::Primary));
         assert_eq!(seen.last(), Some(&Focus::Primary));
         assert!(seen.contains(&Focus::Key(0)));
         assert!(seen.contains(&Focus::Key(KEY_VENDORS.len() - 1)));
+        assert!(seen.contains(&Focus::NotifyEnabled));
+        assert!(seen.contains(&Focus::NotifyThreshold));
         assert!(seen.contains(&Focus::Save));
         // prev() is the inverse of next().
         assert_eq!(Focus::Primary.next().prev(), Focus::Primary);
         assert_eq!(Focus::Save.prev().next(), Focus::Save);
+        assert_eq!(
+            Focus::NotifyEnabled.prev(),
+            Focus::Key(KEY_VENDORS.len() - 1)
+        );
+        assert_eq!(Focus::NotifyThreshold.next(), Focus::Save);
         assert_eq!(Focus::Primary.prev(), Focus::Save);
     }
 
@@ -1161,6 +1331,107 @@ mod tests {
         let s = SettingsState::from_config(&cfg);
         assert_eq!(s.keys[key_index(VendorId::Kilo)].buf, "sk-kilo");
         assert!(!s.keys[key_index(VendorId::Kilo)].dirty);
+    }
+
+    #[test]
+    fn from_config_prefills_the_notification_fields() {
+        let mut cfg = Config::default();
+        cfg.notifications.enabled = false;
+        cfg.notifications.threshold = 100;
+        let s = SettingsState::from_config_with(&cfg, |_| false);
+        assert!(!s.notify_enabled);
+        assert!(!s.notify_enabled_dirty);
+        assert_eq!(s.notify_threshold.buf, "100");
+        assert!(!s.notify_threshold.dirty);
+    }
+
+    #[test]
+    fn notification_toggle_flips_on_left_right_and_space() {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.focus = Focus::NotifyEnabled;
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert!(!s.notify_enabled);
+        assert!(s.notify_enabled_dirty);
+        handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::NONE);
+        assert!(s.notify_enabled);
+        handle_key(&mut s, KeyCode::Left, KeyModifiers::NONE);
+        assert!(!s.notify_enabled);
+        // Any other key leaves the toggle (and its dirty flag) alone.
+        handle_key(&mut s, KeyCode::Up, KeyModifiers::NONE);
+        assert!(!s.notify_enabled);
+    }
+
+    #[test]
+    fn threshold_edits_accept_digits_and_reject_everything_else() {
+        let mut s = blank_state(VendorId::Anthropic);
+        s.focus = Focus::NotifyThreshold;
+        // Start from an empty buffer to observe each accepted char.
+        s.notify_threshold = KeyInput::default();
+        for c in ['9', 'a', '.', '-', '→'] {
+            handle_key(&mut s, KeyCode::Char(c), KeyModifiers::NONE);
+        }
+        assert_eq!(s.notify_threshold.buf, "9");
+        assert!(s.notify_threshold.dirty);
+        handle_key(&mut s, KeyCode::Char('8'), KeyModifiers::NONE);
+        assert_eq!(s.notify_threshold.buf, "98");
+        handle_key(&mut s, KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(s.notify_threshold.buf, "9");
+    }
+
+    #[test]
+    fn save_writes_the_notification_fields_and_round_trips() {
+        let (_dir, path) = temp_config(Some("[ui]\nprimary = \"anthropic\"\n"));
+        let mut s = blank_state(VendorId::Anthropic);
+        s.notify_enabled = false;
+        s.notify_enabled_dirty = true;
+        // Start from an empty buffer so the written value is exactly "90".
+        s.notify_threshold = KeyInput::default();
+        for c in "90".chars() {
+            s.notify_threshold.insert_char(c);
+        }
+        save_to_path(&s, &path).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("[notifications]"), "{raw}");
+        assert!(raw.contains("enabled = false"), "{raw}");
+        assert!(raw.contains("threshold = 90"), "{raw}");
+        // The written file parses back through the same config path.
+        let reloaded = Config::load_from(&path).unwrap();
+        assert!(!reloaded.notifications.enabled);
+        assert_eq!(reloaded.notifications.threshold, 90);
+    }
+
+    #[test]
+    fn save_leaves_an_untouched_notification_section_alone() {
+        let (_dir, path) = temp_config(None);
+        let s = blank_state(VendorId::Anthropic);
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("[notifications]"), "{raw}");
+    }
+
+    #[test]
+    fn save_rejects_an_out_of_range_threshold_without_writing() {
+        let (_dir, path) = temp_config(None);
+        let mut s = blank_state(VendorId::Anthropic);
+        for c in "300".chars() {
+            s.notify_threshold.insert_char(c);
+        }
+        let err = save_to_path(&s, &path).unwrap_err().to_string();
+        assert!(
+            err.contains("[notifications] threshold must be a whole number between 1 and 100"),
+            "{err}"
+        );
+        // A failed save must not leave a partial file behind.
+        assert!(!path.exists());
+
+        // An empty dirty buffer is the same refusal.
+        let (_dir, path) = temp_config(None);
+        let mut s = blank_state(VendorId::Anthropic);
+        s.notify_threshold = KeyInput::default();
+        s.notify_threshold.dirty = true;
+        assert!(save_to_path(&s, &path).is_err());
+        assert!(!path.exists());
     }
 
     #[test]

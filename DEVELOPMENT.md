@@ -19,7 +19,7 @@ invariants see [CLAUDE.md](CLAUDE.md).
 
 | Tool | Version | Notes |
 |---|---|---|
-| Rust / Cargo | **1.88+** (MSRV) | [rustup](https://rustup.rs/) |
+| Rust / Cargo | **1.90+** (MSRV) | [rustup](https://rustup.rs/) |
 | Node.js | 18+ | GNOME / KDE / Omarchy / Windows popover contract tests |
 | Git | any | |
 
@@ -201,7 +201,7 @@ Details, PATH, and tray install: [docs/windows-build.md](docs/windows-build.md).
 | `tests/` | Integration, live smoke, fixtures |
 | `gnome-extension/`, `kde-plasmoid/`, `omarchy/`, `macos/`, `windows/` | Native frontends |
 | `docs/` | Configuration, placeholders, vendor endpoints |
-| `.github/workflows/` | `ci.yml` (fmt, clippy, tests, MSRV 1.88, Nix) and `release.yml` |
+| `.github/workflows/` | `ci.yml` (fmt, clippy, tests, MSRV 1.90, Nix) and `release.yml` |
 
 Adding a vendor is an exhaustive-match exercise: `VendorId`, `VendorSnapshot`,
 `VendorId::all()`, config section, catalog, detect, widget CLI, TUI fetch,

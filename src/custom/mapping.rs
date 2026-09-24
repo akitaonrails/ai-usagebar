@@ -15,6 +15,7 @@ use serde_json::Value;
 use crate::config::{CustomMetricSpec, CustomProviderConfig, CustomTextSpec};
 use crate::display::sanitize_untrusted_line;
 use crate::error::{AppError, Result};
+use crate::format::clamp_pct;
 
 use super::types::{CustomMetric, CustomSnapshot, CustomText};
 
@@ -201,14 +202,6 @@ fn epoch_to_datetime(n: f64) -> Option<DateTime<Utc>> {
         DateTime::from_timestamp(n.trunc() as i64, 0)
     } else {
         DateTime::from_timestamp_millis(n.trunc() as i64)
-    }
-}
-
-fn clamp_pct(v: f64) -> u16 {
-    if v.is_nan() {
-        0
-    } else {
-        v.round().clamp(0.0, 100.0) as u16
     }
 }
 

@@ -9,17 +9,6 @@ Each release is also published at
 
 ## [Unreleased]
 
-### Added
-
-- **OrcaRouter** as an opt-in API-key vendor (`[orcarouter]`,
-  `ORCAROUTER_API_KEY`). Reports the credit card from the one-api compatible
-  dashboard billing endpoints — cumulative spend (US cents on the wire,
-  rendered as exact dollars), total credit limit, remaining, and the key's
-  expiry when it has one. Unlimited-quota keys report the `100000000` sentinel
-  in the limit fields and render spend-only, never as a $100M wallet. Errors
-  that arrive as HTTP 200 with an OpenAI error envelope surface as failures,
-  not zeros. (#193)
-
 ### Fixed
 
 - **macOS Claude Code Keychain prompts, the oversized case (#148).** Releases
@@ -37,6 +26,98 @@ Each release is also published at
   runs); the native write is gone and `security-framework` is a dev-dependency
   used only by the opt-in Keychain tests, which now also cover an oversized
   blob through the production dispatch.
+- **The macOS tray opens its popover on left click again (#236).** On macOS
+  27 a left click on the status item opened the Refresh / Quit context menu
+  instead of the dashboard. tray-icon 0.24 keeps the menu attached to the
+  `NSStatusItem`, and on macOS 27 an attached menu keeps left clicks from
+  reaching tray-icon's click handler, so `with_menu_on_left_click(false)` had
+  no effect (tauri-apps/tray-icon#355). tray-icon 0.25.1 attaches the menu
+  only while it is being shown. The MSRV is now Rust 1.90, which tray-icon
+  0.25 and muda 0.20 require.
+- **The Omarchy panel keeps the provider you chose.** A refresh gap (fetch
+  error, sleep/wake stale list) briefly dropped entries, and the panel's
+  fallback re-resolved to the configured primary; when the chosen entry
+  returned, that transient selection stuck and the panel showed the primary
+  until a shell restart. The persisted choice is now the source of truth:
+  once the chosen entry is back in the list, it wins over any selection that
+  only exists because of the gap.
+
+### Added
+
+- **Quota-threshold desktop notifications.** After a fresh fetch, any vendor
+  window that crosses `[notifications] threshold` (default 97%) raises a
+  `notify-send` notification on Linux (`-a ai-usagebar -c quota`); an
+  exhausted window (100%) is marked critical. Banked reset credits (Codex,
+  SuperGrok) notify 48 hours before they expire. One crossing is one
+  notification: a key re-arms only when usage drops 7 points below the
+  threshold or the window's reset moves to a later instant, and the dedupe
+  state lives in `~/.cache/ai-usagebar/notifications.json` behind the same
+  flock discipline as the vendor caches. Delivery is best-effort by design —
+  a missing or failing notifier, an unwritable state file, or lock contention
+  is a silent skip that never touches the bar, the report, or an exit code.
+  macOS and Windows delivery follow in a later release; the sink seam is in
+  place. Config: `[notifications]` with `enabled` (default `true`) and
+  `threshold` (1..=100, default `97`), also editable in the TUI Settings
+  overlay.
+
+## [1.22.0] — 2026-09-23
+
+### Added
+
+- **A tank for a prepaid balance.** DeepSeek, Kilo, Novita, Moonshot and
+  prepaid Grok report money remaining and no denominator, so their row was a
+  plain balance. `[vendor] display_limit` states the tank size, in the currency
+  that vendor already reports, and turns it into a consumed meter —
+  `(display_limit - balance) / display_limit`, clamped 0–100, so a balance over
+  the cap reads 0% used. It must be finite and greater than zero, there is no
+  default, and it is a fallback rather than an override: a vendor that states
+  its own limit keeps it, which is why `[openrouter]` has none.
+- **`[vendor] headline`.** Picks which number goes on the bar, `"amount"` or
+  `"percent"`; whichever is not the headline stays in the detail line. Balance
+  vendors default to `"amount"`, OpenRouter to `"percent"`. Setting
+  `display_limit` does not switch it, and `"percent"` with no limit from either
+  source leaves the amount on the bar. Report metrics carry the resolved choice
+  as a new `headline` field (`"percent"` or `"value"`).
+- **Alibaba Cloud Model Studio Token Plan** as an opt-in local-login vendor
+  (`[modelstudio]`). Reads the console session the official `bl` CLI stores
+  at `~/.bailian/config.json` after `bl auth login --console` (read-only;
+  `config_dir`/`BAILIAN_CONFIG_DIR` override the location), and reports the
+  plan's 5-hour and weekly windows through the same region×site console
+  gateway the CLI uses. Wire percentages are ratios in [0,1] and resets are
+  epoch milliseconds; an absent window is no-data (possibly unlimited), never
+  0%, and an out-of-range value is schema drift rather than a figure. The
+  vendor cache is scoped by a fingerprint of the access token — the token
+  itself never persists. (#147)
+
+- **OrcaRouter** as an opt-in API-key vendor (`[orcarouter]`,
+  `ORCAROUTER_API_KEY`). Reports the credit card from the one-api compatible
+  dashboard billing endpoints — cumulative spend (US cents on the wire,
+  rendered as exact dollars), total credit limit, remaining, and the key's
+  expiry when it has one. Unlimited-quota keys report the `100000000` sentinel
+  in the limit fields and render spend-only, never as a $100M wallet. Errors
+  that arrive as HTTP 200 with an OpenAI error envelope surface as failures,
+  not zeros. (#193)
+
+### Changed
+
+- **The Omarchy panel and KDE plasmoid read a metric's `headline` instead of
+  testing its label for "balance".** The label check put OpenRouter's dollar
+  figure on the bar and hid its real consumed percent; OpenRouter now shows the
+  percent by default.
+- **The tray popover honours `headline` too** (Windows and macOS). A balance
+  metered against `display_limit` with `headline = "amount"` shows the money
+  figure under its meter, with the percentage and the detail line in the hover
+  text; `"percent"` keeps the popover's used/left toggle.
+
+### Fixed
+
+- **Omarchy Quattro panel: the first provider tab keeps its left border at
+  fractional display scales.** The panel's scroll content sat flush against
+  the `Flickable`'s clip edge, so at a 125% monitor scale Qt snapped the
+  first tab's 1px border to a device pixel outside the clip and only that
+  strip was dropped — the tab rendered with three borders while every other
+  tab kept all four. The content now keeps a hairline of slack on both sides,
+  so no bordered control sits exactly on the clip boundary. (#231)
 
 ## [1.21.1] — 2026-09-22
 
@@ -2670,7 +2751,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.21.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.22.0...HEAD
+[1.22.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.21.1...v1.22.0
 [1.21.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.21.0...v1.21.1
 [1.21.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.2...v1.21.0
 [1.20.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.20.1...v1.20.2

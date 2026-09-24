@@ -1059,6 +1059,45 @@ assert.equal(headlineAlternate({ kind: 'metric', leftPercent: 0, usedPercent: 10
 assert.equal(headlineAlternate({ kind: 'metric', leftPercent: 81, usedPercent: 19 }, 'used'), '81% left');
 assert.equal(headlineAlternate(null, 'left'), '');
 
+// A metric that names `value` as its headline draws the money figure, like the
+// Omarchy bar; the percentage and the report's detail move to the hover text.
+// `percent` keeps the used/left toggle, and an older report without the field
+// is a percentage.
+const tank = (headline) => projectCards(parseHostPayload({
+  version: '1.21.0',
+  entries: [{
+    id: 'deepseek',
+    display_name: 'DeepSeek',
+    sections: [{
+      type: 'metric',
+      label: 'Balance',
+      percent: 40,
+      value: headline === 'value' ? '$12.00' : '40%',
+      detail: headline === 'value' ? '40% of $20.00 used ($12.00 left)' : '$12.00 of $20.00 left (40% used)',
+      severity: 'low',
+      ...(headline ? { headline } : {}),
+    }],
+  }],
+}), 0)[0].rows[0];
+const amountRow = tank('value');
+assert.equal(amountRow.headline, 'value');
+assert.equal(headlineLabel(amountRow, 'left'), '$12.00');
+assert.equal(headlineLabel(amountRow, 'used'), '$12.00');
+assert.equal(headlineAlternate(amountRow, 'used'), '40% used · 40% of $20.00 used ($12.00 left)');
+assert.equal(headlineAlternate(amountRow, 'left'), '60% left · 40% of $20.00 used ($12.00 left)');
+const percentRow = tank('percent');
+assert.equal(percentRow.headline, 'percent');
+assert.equal(headlineLabel(percentRow, 'used'), '40% used');
+assert.equal(headlineAlternate(percentRow, 'used'), '60% left');
+assert.equal(tank(undefined).headline, 'percent');
+assert.equal(headlineLabel(tank(undefined), 'left'), '60% left');
+// A `value` headline with no value to draw falls back to the percentage
+// rather than an empty button.
+assert.equal(projectCards(parseHostPayload({
+  version: '1.21.0',
+  entries: [{ id: 'deepseek', sections: [{ type: 'metric', label: 'Balance', percent: 40, value: '', headline: 'value' }] }],
+}), 0)[0].rows[0].headline, 'percent');
+
 // --- condensedTextRowIndexes -------------------------------------------------
 
 assert.deepEqual(

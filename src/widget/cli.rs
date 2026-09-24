@@ -341,6 +341,8 @@ pub enum Vendor {
     CommandCode,
     Ollama,
     OrcaRouter,
+    #[value(name = "modelstudio")]
+    ModelStudio,
 }
 
 impl Vendor {
@@ -369,6 +371,7 @@ impl Vendor {
             Vendor::CommandCode => crate::vendor::VendorId::CommandCode,
             Vendor::Ollama => crate::vendor::VendorId::Ollama,
             Vendor::OrcaRouter => crate::vendor::VendorId::OrcaRouter,
+            Vendor::ModelStudio => crate::vendor::VendorId::ModelStudio,
         }
     }
 }
@@ -464,6 +467,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::CommandCode => Vendor::CommandCode,
         crate::vendor::VendorId::Ollama => Vendor::Ollama,
         crate::vendor::VendorId::OrcaRouter => Vendor::OrcaRouter,
+        crate::vendor::VendorId::ModelStudio => Vendor::ModelStudio,
     }
 }
 
@@ -781,6 +785,20 @@ mod tests {
         assert_eq!(
             id_to_vendor(crate::vendor::VendorId::Grokbot),
             Vendor::Grokbot
+        );
+    }
+
+    #[test]
+    fn vendor_modelstudio_parses_to_modelstudio_variant() {
+        let cli = Cli::parse_from(["ai-usagebar", "--vendor", "modelstudio"]);
+        assert_eq!(cli.vendor, Some(Vendor::ModelStudio));
+        assert_eq!(
+            cli.vendor.unwrap().to_id(),
+            crate::vendor::VendorId::ModelStudio
+        );
+        assert_eq!(
+            id_to_vendor(crate::vendor::VendorId::ModelStudio),
+            Vendor::ModelStudio
         );
     }
 

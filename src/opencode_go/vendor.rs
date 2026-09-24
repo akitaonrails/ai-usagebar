@@ -166,7 +166,7 @@ fn as_usage_window(window: &Window, duration: chrono::Duration) -> UsageWindow {
 }
 
 fn utilization_pct(window: &Window) -> i32 {
-    window.percent.round().clamp(0.0, 100.0) as i32
+    i32::from(crate::format::clamp_pct(window.percent))
 }
 
 #[derive(Debug)]

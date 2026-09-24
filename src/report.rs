@@ -67,6 +67,13 @@ enum ReportSection {
         percent: u16,
         value: String,
         detail: String,
+        /// Which of `percent` and `value` this metric puts on the bar —
+        /// `"percent"` or `"value"`. A consumer that honours it draws the named
+        /// one and leaves the other in the detail line, rather than inferring a
+        /// balance row from its label. Always present, so no consumer has to
+        /// guess; not every consumer reads it — Waybar and GNOME take their bar
+        /// text from per-vendor formats instead.
+        headline: String,
         severity: String,
         reset_at: Option<DateTime<Utc>>,
         /// Full length of the reset window in seconds, present only when the
@@ -259,6 +266,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
                     percent: pct,
                     value: value_label,
                     detail: footnote,
+                    headline: projected.headline.as_str().into(),
                     severity: severity.as_str().into(),
                     reset_at: projected.reset_at,
                     window_secs: projected
@@ -302,8 +310,9 @@ fn report_exit_code(entries: &[Entry]) -> i32 {
 
 /// Stable machine id shared by aggregate views and the macOS menu bar:
 /// `<vendor>@<label>` for named accounts, `custom:<id>` for a `[[custom]]`
-/// provider (which never has accounts).
-fn tab_id(tab: &TabId) -> String {
+/// provider (which never has accounts). Also the entry half of the
+/// notification dedupe key.
+pub(crate) fn tab_id(tab: &TabId) -> String {
     match &tab.source {
         TabSource::Custom { id, .. } => format!("custom:{id}"),
         TabSource::Builtin(vendor) => match &tab.account {
@@ -425,6 +434,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         percent,
                         value,
                         detail,
+                        headline,
                         severity,
                         reset_at,
                         window_secs,
@@ -435,6 +445,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                             "percent": percent,
                             "value": value,
                             "detail": detail,
+                            "headline": headline,
                             "severity": severity,
                             "reset_at": reset_at,
                         });
@@ -590,6 +601,7 @@ mod tests {
             percent,
             value: value.into(),
             detail: detail.into(),
+            headline: "percent".into(),
             severity: "mid".into(),
             reset_at: None,
             window_secs: None,
@@ -865,6 +877,7 @@ mod tests {
             stale: true,
             last_error: None,
             fetched_at: Some(fetched_at),
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Kiro), &state, Utc::now());
         let rendered = render_json_for_primary(&[projected], None);
@@ -909,6 +922,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: None,
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Supergrok), &state, Utc::now());
         let rendered = render_json_for_primary(&[projected], None);
@@ -947,6 +961,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: None,
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Openai), &state, Utc::now());
         let value: serde_json::Value =
@@ -989,6 +1004,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: None,
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Supergrok), &state, Utc::now());
         let value: serde_json::Value =
@@ -1030,6 +1046,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: None,
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Anthropic), &state, now);
         let rendered = render_json_for_primary(&[projected], None);
@@ -1151,6 +1168,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: None,
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Kimi), &state, Utc::now());
         // Pair each reset with its own row rather than pinning the row order —
@@ -1226,6 +1244,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: None,
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Openrouter), &state, Utc::now());
         assert!(projected.sections.iter().any(|section| matches!(
@@ -1257,6 +1276,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: None,
+            display: Default::default(),
         }));
         let projected = entry_from_state(&TabId::vendor(VendorId::Deepseek), &state, Utc::now());
         assert!(projected.sections.iter().any(|section| matches!(
@@ -1269,6 +1289,87 @@ mod tests {
                 .iter()
                 .any(|section| matches!(section, ReportSection::Metric { .. }))
         );
+    }
+
+    /// Every metric declares which of its two numbers goes on the bar, in both
+    /// the ordered `sections` list and the `metrics` convenience view, so no
+    /// frontend has to infer a balance row from its label.
+    #[test]
+    fn json_metrics_name_their_headline() {
+        let deepseek = |display: crate::balance::DisplayPrefs| {
+            let state = TabState::Ready(Box::new(ReadyTab {
+                snapshot: VendorSnapshot::Deepseek(DeepseekSnapshot {
+                    is_available: true,
+                    balance: 50.0,
+                    granted: 50.0,
+                    topped_up: 0.0,
+                    currency: "USD".into(),
+                }),
+                stale: false,
+                last_error: None,
+                fetched_at: None,
+                display,
+            }));
+            let entry = entry_from_state(&TabId::vendor(VendorId::Deepseek), &state, Utc::now());
+            let rendered = render_json_entries(&[entry]);
+            serde_json::from_str::<serde_json::Value>(&rendered).unwrap()
+        };
+
+        let amount = deepseek(crate::balance::DisplayPrefs::balance(
+            Some(200.0),
+            crate::balance::Headline::Amount,
+        ));
+        let metric = &amount["entries"][0]["metrics"][0];
+        assert_eq!(metric["headline"], "value");
+        assert_eq!(metric["percent"], 75);
+        assert_eq!(metric["value"], "$50.00");
+        assert!(
+            metric["detail"].as_str().unwrap().contains("$200.00"),
+            "{metric}"
+        );
+
+        let percent = deepseek(crate::balance::DisplayPrefs::balance(
+            Some(200.0),
+            crate::balance::Headline::Percent,
+        ));
+        let section = percent["entries"][0]["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|section| section["type"] == "metric")
+            .expect("a metric section");
+        assert_eq!(section["headline"], "percent");
+        assert_eq!(section["value"], "75%");
+        assert!(
+            section["detail"].as_str().unwrap().contains("$50.00"),
+            "{section}"
+        );
+
+        // A quota vendor is unchanged: still a percent headline.
+        let anthropic_api = entry_from_state(
+            &TabId::vendor(VendorId::Openrouter),
+            &TabState::Ready(Box::new(ReadyTab {
+                snapshot: VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
+                    label: "OpenRouter".into(),
+                    total_credits: 100.0,
+                    total_usage: 40.0,
+                    usage_daily: 0.0,
+                    usage_weekly: 0.0,
+                    usage_monthly: 0.0,
+                    is_free_tier: false,
+                    limit: None,
+                    limit_remaining: None,
+                }),
+                stale: false,
+                last_error: None,
+                fetched_at: None,
+                display: Default::default(),
+            })),
+            Utc::now(),
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[anthropic_api])).unwrap();
+        assert_eq!(value["entries"][0]["metrics"][0]["headline"], "percent");
     }
 
     #[test]
@@ -1416,6 +1517,7 @@ mod tests {
             stale: false,
             last_error: None,
             fetched_at: Some(now),
+            display: Default::default(),
         }));
         let projected = entry_from_state(&tab, &state, now);
         assert_eq!(projected.id, "custom:mytool");

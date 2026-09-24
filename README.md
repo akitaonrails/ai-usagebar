@@ -28,6 +28,12 @@ codebase.
   initial provider in both the widget and TUI.
 - Atomic caches and file locking prevent duplicate requests from multi-monitor
   Waybar setups.
+- Quota-threshold desktop notifications are on by default: a window crossing
+  97% (configurable in `[notifications]`) raises one `notify-send` alert per
+  crossing on Linux, 100% counts as critical, and banked Codex/SuperGrok
+  reset credits warn 48h before expiring. Set `enabled = false` under
+  `[notifications]` to turn them off — see the
+  [configuration reference](docs/configuration.md#notifications).
 - Network failures keep the previous data visible; HTTP errors appear in the
   tooltip.
 - A vendor that answers HTTP 429 is left alone for five minutes: the last good
@@ -278,6 +284,7 @@ come from environment variables or `config.toml`.
 | Nous Research | OAuth device flow | Enable `[nous]`, click **Log in with Nous Research** in the Omarchy settings panel, or run `ai-usagebar auth nous login`. Credentials are kept in ai-usagebar's separate platform config directory (`~/.config/ai-usagebar/credentials.json` on Linux). |
 | OpenCode Go | API key (`OPENCODE_GO_API_KEY` env or `[opencode-go] api_key` in config) | Enable `[opencode-go]`, then enter the key in the Omarchy settings panel or set the environment variable. |
 | Command Code | Existing `commandcode` or pi login | Enable `[commandcode]` and sign in to either one once. No key to paste; `COMMANDCODE_API_KEY` overrides if you prefer one. |
+| Model Studio | Existing `bl auth login --console` (Alibaba Cloud) | Opt in (`[modelstudio]`), install the official `bl` CLI, and run `bl auth login --console` once. Reports the Token Plan's 5-hour and weekly percentage windows with resets, through the same console gateway the CLI uses; the credential file `~/.bailian/config.json` is only ever read. |
 
 ### Nous credits and OpenCode Go
 
@@ -345,6 +352,26 @@ team_id = "your-team-id"
 
 Without it, an organization-scoped key reports an error saying exactly this
 rather than silently querying the wrong URL.
+
+#### Giving a prepaid balance a tank
+
+DeepSeek, Kilo, Novita, Moonshot and prepaid Grok report money **left** and no
+denominator, so their row is a plain balance rather than a meter. Tell them how
+big the tank is and it becomes one:
+
+```toml
+[deepseek]
+display_limit = 200        # in the currency that vendor already reports
+headline = "percent"       # "amount" (default here) puts the money on the bar
+```
+
+The percentage is consumed — `(display_limit - balance) / display_limit`,
+clamped to 0–100 — and whichever number is not the headline stays in the detail
+line. There is no default limit: without one nothing changes. A vendor that
+states its own limit keeps it, which is why `[openrouter]` has no
+`display_limit` — it reports credits purchased against credits used. It does
+take `headline`. Full rules in
+[docs/configuration.md](docs/configuration.md#balance-tanks).
 
 ### Enabling a vendor
 
@@ -548,6 +575,15 @@ enabled = true
 # api_key = "..."  # or set KIMI_API_KEY
 ```
 
+Desktop notifications for quota thresholds are on by default (97%); to turn
+them off or retune the threshold:
+
+```toml
+[notifications]
+enabled = false
+# threshold = 90   # 1..=100
+```
+
 See the [configuration reference](docs/configuration.md) for every provider,
 display option, account path, region, and API-key setting.
 
@@ -630,7 +666,10 @@ of the reset window in seconds. `window_secs` is present only when the vendor
 states the window (rolling 5h/7d windows; Cursor's billing cycle from
 `billingCycleStart`/`billingCycleEnd`, assumed to be 30 days when the start is
 missing) and is omitted, not `null`, otherwise — a calendar month or an unstated
-window gives a frontend nothing to pace against. These fields are additive, so
+window gives a frontend nothing to pace against. Every metric row also carries
+`headline` — `"percent"` or `"value"` — naming which of its two numbers belongs
+on the bar; a frontend draws that one and leaves the other in the detail line,
+rather than inferring a balance row from its label. These fields are additive, so
 existing consumers remain compatible. `short_name` is the same three-letter
 code `{vendor_short}` prints, so a frontend that wants a compact provider tag
 takes it from the report instead of keeping its own table.

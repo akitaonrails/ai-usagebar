@@ -18,8 +18,9 @@ use ratatui::widgets::Paragraph;
 use ratatui_bubbletea_components::{Progress, Spinner, SpinnerFrames};
 use ratatui_bubbletea_theme::BubbleTheme;
 
+use crate::balance::{self, DisplayPrefs, MetricHeadline};
 use crate::countdown;
-use crate::format::{local_time_hms, money, reset_credit_lines, usd};
+use crate::format::{clamp_pct, local_time_hms, money, reset_credit_lines, usd};
 use crate::pacing::{self, PaceSeverity};
 use crate::pango::severity_for;
 use crate::theme::Theme;
@@ -68,6 +69,13 @@ pub(crate) struct SectionProjection {
     /// row beneath a heading instead of a peer of the overall meter. The TUI
     /// renders grouped metrics like any other; only the report carries this.
     pub group: Option<&'static str>,
+    /// Which of the metric's two numbers a report-driven frontend puts on the
+    /// bar. Every metric is a percentage unless its vendor says otherwise, so
+    /// this is [`MetricHeadline::Percent`] by default — the bar draws it and
+    /// leaves the money figure in the detail. A prepaid-balance vendor flips
+    /// it, and that declaration is what the frontend reads instead of guessing
+    /// from the label.
+    pub headline: MetricHeadline,
 }
 
 struct SectionBuilder(Vec<SectionProjection>);
@@ -87,6 +95,7 @@ impl SectionBuilder {
                         reset_at: None,
                         window: None,
                         group: None,
+                        headline: MetricHeadline::Percent,
                     }
                 })
                 .collect(),
@@ -103,6 +112,7 @@ impl SectionBuilder {
             reset_at: None,
             window: None,
             group: None,
+            headline: MetricHeadline::Percent,
         });
     }
 
@@ -115,6 +125,21 @@ impl SectionBuilder {
             reset_at,
             window: None,
             group: None,
+            headline: MetricHeadline::Percent,
+        });
+    }
+
+    /// A metric whose vendor chose which of its two numbers goes on the bar.
+    /// Only a prepaid-balance vendor needs this; everything else is a
+    /// percentage and uses [`SectionBuilder::push_metric`].
+    fn push_metric_with_headline(&mut self, section: Section, headline: MetricHeadline) {
+        assert!(matches!(section, Section::Metric { .. }));
+        self.0.push(SectionProjection {
+            section,
+            reset_at: None,
+            window: None,
+            group: None,
+            headline,
         });
     }
 
@@ -132,6 +157,7 @@ impl SectionBuilder {
             reset_at,
             window: Some(window),
             group: None,
+            headline: MetricHeadline::Percent,
         });
     }
 
@@ -146,8 +172,66 @@ impl SectionBuilder {
             reset_at: None,
             window: None,
             group: Some(group),
+            headline: MetricHeadline::Percent,
         });
     }
+}
+
+/// The headline row of a prepaid-balance vendor: money remaining, drawn as a
+/// consumed meter when something supplies a tank size and as a plain text row
+/// when nothing does.
+///
+/// Every balance-only vendor gets the same shape from here, so the tank, the
+/// severity floor and the detail line cannot drift apart between them.
+///
+/// `api_limit` is the denominator the vendor's own API states, if any; it wins
+/// over the user's `display_limit`. `money_severity` is the vendor's existing
+/// money-based tier, which stays the floor: a nearly empty wallet is still
+/// critical however large the tank, and a mostly-spent tank is still high
+/// however much money is nominally left.
+fn push_balance_headline(
+    v: &mut SectionBuilder,
+    label: &str,
+    remaining: f64,
+    currency: &str,
+    money_severity: PaceSeverity,
+    api_limit: Option<f64>,
+    prefs: DisplayPrefs,
+) {
+    let amount = money(remaining, currency);
+    let Some(limit) = balance::denominator(api_limit, prefs.display_limit) else {
+        // No denominator from either source: nothing to meter against, so the
+        // row stays free text rather than becoming a fabricated 0% gauge.
+        v.push(Section::Text {
+            label: label.into(),
+            value: amount,
+        });
+        return;
+    };
+
+    let pct = balance::consumed_pct(limit, remaining);
+    let headline = balance::resolve_headline(prefs.headline, Some(limit));
+    let of_limit = money(limit, currency);
+    let (value_label, footnote) = match headline {
+        MetricHeadline::Percent => (
+            format!("{pct}%"),
+            format!("{amount} of {of_limit} left ({pct}% used)"),
+        ),
+        MetricHeadline::Value => (
+            amount.clone(),
+            format!("{pct}% of {of_limit} used ({amount} left)"),
+        ),
+    };
+    v.push_metric_with_headline(
+        Section::Metric {
+            label: label.into(),
+            pct,
+            severity: money_severity.max(severity_for(i32::from(pct))),
+            value_label,
+            footnote,
+        },
+        headline,
+    );
 }
 
 /// Compact one-line projection of a vendor snapshot for the Overview: a short
@@ -244,6 +328,19 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             };
             (s.plan.clone(), cells)
         }
+        VendorSnapshot::ModelStudio(s) => {
+            // Absent windows drop their cell — no-data is not 0%.
+            let cells = [("5h", s.session.as_ref()), ("wk", s.weekly.as_ref())]
+                .into_iter()
+                .filter_map(|(label, window)| window.map(|w| pct(label, w.utilization_pct)))
+                .collect::<Vec<_>>();
+            (
+                crate::vendor::VendorId::ModelStudio
+                    .display_name()
+                    .to_string(),
+                cells,
+            )
+        }
         VendorSnapshot::Antigravity(s) => (
             s.plan.clone(),
             [
@@ -269,7 +366,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         VendorSnapshot::NousResearch(s) => {
             let cell = s
                 .usage_percent()
-                .map(|value| pct("usage", value.round().clamp(0.0, 100.0) as i32))
+                .map(|value| pct("usage", i32::from(clamp_pct(value))))
                 .unwrap_or_else(|| ("—".into(), PaceSeverity::Low));
             (s.plan.clone().unwrap_or_default(), vec![cell])
         }
@@ -292,7 +389,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             ]
             .into_iter()
             .filter_map(|(label, window)| {
-                window.map(|window| pct(label, window.percent.round().clamp(0.0, 100.0) as i32))
+                window.map(|window| pct(label, i32::from(clamp_pct(window.percent))))
             })
             .collect();
             ("OpenCode Go".into(), cells)
@@ -369,9 +466,9 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         VendorSnapshot::Cursor(s) => (!s.unlimited).then_some(s.total_pct),
         VendorSnapshot::Minimax(s) => Some(s.session.utilization_pct.max(s.weekly.utilization_pct)),
         VendorSnapshot::Kiro(s) => Some(s.pct()),
-        VendorSnapshot::NousResearch(s) => s
-            .usage_percent()
-            .map(|value| value.round().clamp(0.0, 100.0) as i32),
+        VendorSnapshot::NousResearch(s) => {
+            s.usage_percent().map(|value| i32::from(clamp_pct(value)))
+        }
         VendorSnapshot::CommandCode(s) => {
             let worst = s.worst_pct();
             (s.five_hour.is_some() || s.weekly.is_some()).then_some(worst)
@@ -392,6 +489,11 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .max(),
         VendorSnapshot::SuperGrok(s) => Some(s.weekly_pct),
         VendorSnapshot::Grokbot(s) => s.has_included_allowance.then_some(s.weekly_pct),
+        VendorSnapshot::ModelStudio(s) => [s.session.as_ref(), s.weekly.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|w| w.utilization_pct)
+            .max(),
         VendorSnapshot::Ollama(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
@@ -459,22 +561,24 @@ pub(crate) fn sections_with_metadata_for(
         TabState::Ready(r) => {
             let snapshot = &r.snapshot;
             let last_error = &r.last_error;
+            let prefs = r.display;
             let mut sections = match snapshot {
                 VendorSnapshot::Anthropic(s) => anthropic_sections(s, now, pace_tolerance),
                 VendorSnapshot::AnthropicApi(s) => anthropic_api_sections(s),
                 VendorSnapshot::Openai(s) => openai_sections(s, now, pace_tolerance),
                 VendorSnapshot::Copilot(s) => copilot_sections(s, now),
                 VendorSnapshot::Zai(s) => zai_sections(s, now, pace_tolerance),
-                VendorSnapshot::Openrouter(s) => openrouter_sections(s),
+                VendorSnapshot::Openrouter(s) => openrouter_sections(s, prefs),
                 VendorSnapshot::OrcaRouter(s) => orcarouter_sections(s, now),
-                VendorSnapshot::Deepseek(s) => deepseek_sections(s),
+                VendorSnapshot::Deepseek(s) => deepseek_sections(s, prefs),
                 VendorSnapshot::Kimi(s) => kimi_sections(s, now, pace_tolerance),
-                VendorSnapshot::Kilo(s) => kilo_sections(s),
-                VendorSnapshot::Novita(s) => novita_sections(s),
-                VendorSnapshot::Moonshot(s) => moonshot_sections(s),
-                VendorSnapshot::Grok(s) => grok_sections(s),
+                VendorSnapshot::Kilo(s) => kilo_sections(s, prefs),
+                VendorSnapshot::Novita(s) => novita_sections(s, prefs),
+                VendorSnapshot::Moonshot(s) => moonshot_sections(s, prefs),
+                VendorSnapshot::Grok(s) => grok_sections(s, prefs),
                 VendorSnapshot::SuperGrok(s) => supergrok_sections(s, now),
                 VendorSnapshot::Grokbot(s) => grokbot_sections(s, now),
+                VendorSnapshot::ModelStudio(s) => modelstudio_sections(s, now, pace_tolerance),
                 VendorSnapshot::Antigravity(s) => antigravity_sections(s, now),
                 VendorSnapshot::Cursor(s) => cursor_sections(s, now),
                 VendorSnapshot::Minimax(s) => minimax_sections(s, now, pace_tolerance),
@@ -814,14 +918,26 @@ fn zai_sections(s: &crate::usage::ZaiSnapshot, now: DateTime<Utc>, tol: u32) -> 
     v
 }
 
-fn openrouter_sections(s: &crate::usage::OpenRouterSnapshot) -> SectionBuilder {
+fn openrouter_sections(
+    s: &crate::usage::OpenRouterSnapshot,
+    prefs: DisplayPrefs,
+) -> SectionBuilder {
     let mut v = SectionBuilder::new(vec![Section::Title {
         left: s.label.clone(),
         right: None,
     }]);
     let pct = s.consumed_pct().clamp(0, 100) as u16;
+    // OpenRouter states its own denominator — credits purchased — so there is
+    // no user tank to fall back to and `None` is passed literally rather than
+    // `prefs.display_limit`. A free-tier-only account buys nothing, so
+    // `total_credits` is 0, `denominator` is `None`, and the money stays on the
+    // bar. Routing `prefs.display_limit` in here instead would let a tank take
+    // over in exactly that case and name the headline `percent` — while `pct`
+    // below still came from `consumed_pct()`, which is 0 without credits. The
+    // bar would read "0%" for an account with money in it.
+    let denominator = balance::denominator(Some(s.total_credits), None);
     v.push(Section::Spacer);
-    v.push_metric(
+    v.push_metric_with_headline(
         Section::Metric {
             label: "Credit balance".into(),
             pct,
@@ -836,7 +952,7 @@ fn openrouter_sections(s: &crate::usage::OpenRouterSnapshot) -> SectionBuilder {
                 usd(s.total_credits)
             ),
         },
-        None,
+        balance::resolve_headline(prefs.headline, denominator),
     );
     v.push(Section::Spacer);
     v.push(Section::Block {
@@ -1052,12 +1168,12 @@ fn nous_sections(s: &crate::nous::types::AccountSnapshot, now: DateTime<Utc>) ->
         right: None,
     }]);
     if let Some(value) = s.usage_percent() {
-        let pct = value.round().clamp(0.0, 100.0) as i32;
+        let pct = clamp_pct(value);
         sections.push_metric(
             Section::Metric {
                 label: "Usage".into(),
-                pct: pct as u16,
-                severity: severity_for(pct),
+                pct,
+                severity: severity_for(i32::from(pct)),
                 value_label: format!("{pct}%"),
                 footnote: "current period".into(),
             },
@@ -1157,7 +1273,7 @@ fn opencode_go_sections(
             continue;
         };
         any = true;
-        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        let pct = i32::from(clamp_pct(window.percent));
         let projected = crate::usage::UsageWindow {
             utilization_pct: pct,
             resets_at: Some(window.resets_at),
@@ -1171,12 +1287,12 @@ fn opencode_go_sections(
     // is what withholds the window from machine-readable frontends.
     if let Some(window) = s.monthly.as_ref() {
         any = true;
-        let pct = window.percent.round().clamp(0.0, 100.0) as i32;
+        let pct = clamp_pct(window.percent);
         sections.push_metric(
             Section::Metric {
                 label: "Monthly".into(),
-                pct: pct as u16,
-                severity: severity_for(pct),
+                pct,
+                severity: severity_for(i32::from(pct)),
                 value_label: format!("{pct}%"),
                 footnote: format!(
                     "Resets in {}",
@@ -1259,39 +1375,52 @@ fn minimax_sections(
     v
 }
 
-fn kilo_sections(s: &crate::usage::KiloSnapshot) -> SectionBuilder {
-    SectionBuilder::new(vec![
+fn kilo_sections(s: &crate::usage::KiloSnapshot, prefs: DisplayPrefs) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![
         Section::Title {
             left: s.label.clone(),
             right: None,
         },
         Section::Spacer,
-        Section::Text {
-            label: "Balance".into(),
-            value: usd(s.balance),
-        },
-    ])
+    ]);
+    push_balance_headline(
+        &mut v,
+        "Balance",
+        s.balance,
+        "USD",
+        crate::kilo::vendor::severity(s),
+        None,
+        prefs,
+    );
+    v
 }
 
-fn novita_sections(s: &crate::usage::NovitaSnapshot) -> SectionBuilder {
+fn novita_sections(s: &crate::usage::NovitaSnapshot, prefs: DisplayPrefs) -> SectionBuilder {
     let mut v = SectionBuilder::new(vec![
         Section::Title {
             left: "Novita".into(),
             right: None,
         },
         Section::Spacer,
-        Section::Text {
-            label: "Balance".into(),
-            value: usd(s.available),
-        },
-        Section::Block {
-            label: "Breakdown".into(),
-            body: vec![format!(
-                "top-up ${:.2} · credit limit ${:.2}",
-                s.cash, s.credit_limit
-            )],
-        },
     ]);
+    // `credit_limit` is a credit line Novita extends, not a cap on spend, so it
+    // is not a denominator — it stays in the breakdown.
+    push_balance_headline(
+        &mut v,
+        "Balance",
+        s.available,
+        "USD",
+        crate::novita::vendor::severity(s),
+        None,
+        prefs,
+    );
+    v.push(Section::Block {
+        label: "Breakdown".into(),
+        body: vec![format!(
+            "top-up ${:.2} · credit limit ${:.2}",
+            s.cash, s.credit_limit
+        )],
+    });
     if s.outstanding > 0.0 {
         v.push(Section::Spacer);
         v.push(Section::Block {
@@ -1302,38 +1431,50 @@ fn novita_sections(s: &crate::usage::NovitaSnapshot) -> SectionBuilder {
     v
 }
 
-fn moonshot_sections(s: &crate::usage::MoonshotSnapshot) -> SectionBuilder {
+fn moonshot_sections(s: &crate::usage::MoonshotSnapshot, prefs: DisplayPrefs) -> SectionBuilder {
     let cur = &s.currency;
     let fmt = |v: f64| money(v, cur);
-    SectionBuilder::new(vec![
+    let mut v = SectionBuilder::new(vec![
         Section::Title {
             left: "Kimi (Moonshot)".into(),
             right: None,
         },
         Section::Spacer,
-        Section::Text {
-            label: "Balance".into(),
-            value: fmt(s.available),
-        },
-        Section::Block {
-            label: "Breakdown".into(),
-            body: vec![format!("cash {} · voucher {}", fmt(s.cash), fmt(s.voucher))],
-        },
-    ])
+    ]);
+    push_balance_headline(
+        &mut v,
+        "Balance",
+        s.available,
+        cur,
+        crate::moonshot::vendor::severity(s),
+        None,
+        prefs,
+    );
+    v.push(Section::Block {
+        label: "Breakdown".into(),
+        body: vec![format!("cash {} · voucher {}", fmt(s.cash), fmt(s.voucher))],
+    });
+    v
 }
 
-fn grok_sections(s: &crate::usage::GrokSnapshot) -> SectionBuilder {
-    SectionBuilder::new(vec![
+fn grok_sections(s: &crate::usage::GrokSnapshot, prefs: DisplayPrefs) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![
         Section::Title {
             left: "Grok (xAI)".into(),
             right: None,
         },
         Section::Spacer,
-        Section::Text {
-            label: "Prepaid balance".into(),
-            value: usd(s.balance),
-        },
-    ])
+    ]);
+    push_balance_headline(
+        &mut v,
+        "Prepaid balance",
+        s.balance,
+        "USD",
+        crate::grok::vendor::severity(s),
+        None,
+        prefs,
+    );
+    v
 }
 
 /// A user-declared `[[custom]]` provider: the plan (if the response carried
@@ -1511,7 +1652,7 @@ fn push_reset_credits(
     });
 }
 
-fn deepseek_sections(s: &crate::usage::DeepseekSnapshot) -> SectionBuilder {
+fn deepseek_sections(s: &crate::usage::DeepseekSnapshot, prefs: DisplayPrefs) -> SectionBuilder {
     let currency = &s.currency;
     let fmt = |v: f64| money(v, currency);
     let avail = if s.is_available {
@@ -1524,10 +1665,17 @@ fn deepseek_sections(s: &crate::usage::DeepseekSnapshot) -> SectionBuilder {
         right: None,
     }]);
     v.push(Section::Spacer);
-    v.push(Section::Text {
-        label: "Balance".into(),
-        value: fmt(s.balance),
-    });
+    // `/user/balance` reports money remaining and no denominator at all, so
+    // `api_limit` is unconditionally `None` here.
+    push_balance_headline(
+        &mut v,
+        "Balance",
+        s.balance,
+        currency,
+        crate::deepseek::vendor::severity(s),
+        None,
+        prefs,
+    );
     v.push(Section::Block {
         label: "Breakdown".into(),
         body: vec![format!(
@@ -1625,6 +1773,35 @@ fn grokbot_sections(s: &crate::usage::GrokbotSnapshot, now: DateTime<Utc>) -> Se
         v.push(Section::Text {
             label: "On-demand".into(),
             value: note.into(),
+        });
+    }
+    v
+}
+
+/// Model Studio Token Plan: a 5h and a weekly window, each of which the
+/// console account may not report. Present windows ride the shared
+/// `push_window`; an absent one is no-data (possibly unlimited), drawn as a
+/// text row — never a 0% meter.
+fn modelstudio_sections(
+    s: &crate::usage::ModelStudioSnapshot,
+    now: DateTime<Utc>,
+    tol: u32,
+) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![Section::Title {
+        left: crate::modelstudio::vendor::PLAN_LABEL.into(),
+        right: None,
+    }]);
+    v.push(Section::Spacer);
+    if let Some(session) = s.session.as_ref() {
+        push_window(&mut v, "Token Plan 5h", session, now, tol, true);
+    }
+    if let Some(weekly) = s.weekly.as_ref() {
+        push_window(&mut v, "Token Plan 7d", weekly, now, tol, true);
+    }
+    if s.session.is_none() && s.weekly.is_none() {
+        v.push(Section::Text {
+            label: "Usage".into(),
+            value: "no usage windows reported".into(),
         });
     }
     v
@@ -1886,11 +2063,16 @@ mod tests {
     }
 
     fn ready(snapshot: VendorSnapshot) -> TabState {
+        ready_with(snapshot, DisplayPrefs::default())
+    }
+
+    fn ready_with(snapshot: VendorSnapshot, display: DisplayPrefs) -> TabState {
         TabState::Ready(Box::new(crate::tui::app::ReadyTab {
             snapshot,
             stale: false,
             last_error: None,
             fetched_at: Some(now() - chrono::Duration::seconds(15)),
+            display,
         }))
     }
 
@@ -3038,6 +3220,104 @@ mod tests {
         assert_eq!(only_metric(&sections).window, None);
     }
 
+    fn modelstudio_snap() -> crate::usage::ModelStudioSnapshot {
+        crate::usage::ModelStudioSnapshot {
+            session: Some(crate::usage::UsageWindow {
+                utilization_pct: 42,
+                resets_at: Some(now() + chrono::Duration::hours(2)),
+                window_duration: chrono::Duration::hours(5),
+            }),
+            weekly: Some(crate::usage::UsageWindow {
+                utilization_pct: 74,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            }),
+        }
+    }
+
+    /// Present windows ride the shared window metric, so the absolute reset
+    /// travels with each row and a frontend can pace against the real length.
+    #[test]
+    fn modelstudio_sections_show_both_windows_with_resets() {
+        let sections = sections_with_metadata_for(
+            &ready(VendorSnapshot::ModelStudio(modelstudio_snap())),
+            now(),
+            5,
+        );
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter_map(|projected| match &projected.section {
+                Section::Metric {
+                    label, value_label, ..
+                } => Some((label.clone(), value_label.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            metrics,
+            vec![
+                ("Token Plan 5h".to_string(), "42%".to_string()),
+                ("Token Plan 7d".to_string(), "74%".to_string()),
+            ]
+        );
+        let with_meta: Vec<_> = sections
+            .iter()
+            .filter(|p| matches!(p.section, Section::Metric { .. }))
+            .map(|p| (p.window, p.reset_at))
+            .collect();
+        assert_eq!(
+            with_meta[0],
+            (
+                Some(chrono::Duration::hours(5)),
+                modelstudio_snap().session.unwrap().resets_at
+            )
+        );
+        assert_eq!(
+            with_meta[1],
+            (
+                Some(chrono::Duration::days(7)),
+                modelstudio_snap().weekly.unwrap().resets_at
+            )
+        );
+    }
+
+    /// An absent percentage is no-data (possibly unlimited): the window drops
+    /// its meter and its compact cell — never a 0% anything.
+    #[test]
+    fn modelstudio_absent_windows_are_text_rows_never_zero_meters() {
+        let snap = crate::usage::ModelStudioSnapshot {
+            session: None,
+            weekly: None,
+        };
+        let sections = sections_for(&ready(VendorSnapshot::ModelStudio(snap.clone())), now(), 5);
+        assert!(
+            sections
+                .iter()
+                .all(|s| !matches!(s, Section::Metric { .. })),
+            "no meter without a reported window"
+        );
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Text { value, .. } if value.contains("no usage windows reported")
+        )));
+        assert_eq!(
+            headline_pct(&VendorSnapshot::ModelStudio(snap.clone())),
+            None
+        );
+        let (_, cells) = compact_cells(&VendorSnapshot::ModelStudio(snap));
+        assert!(cells.is_empty(), "{cells:?}");
+
+        // One window present: one meter, one cell, worst-of headline.
+        let snap = crate::usage::ModelStudioSnapshot {
+            session: None,
+            weekly: modelstudio_snap().weekly,
+        };
+        let (_, cells) = compact_cells(&VendorSnapshot::ModelStudio(snap.clone()));
+        assert_eq!(cells.len(), 1);
+        assert!(cells[0].0.contains("74%"), "{cells:?}");
+        assert_eq!(headline_pct(&VendorSnapshot::ModelStudio(snap)), Some(74));
+    }
+
     #[test]
     fn schema_drift_and_generic_code_zero_diagnostics_are_visible_without_http_labels() {
         let snap = KimiSnapshot {
@@ -3224,5 +3504,343 @@ mod tests {
         assert_eq!(sections.len(), 2);
         assert_eq!(compact_cells(&bare), (String::new(), vec![]));
         assert_eq!(headline_pct(&bare), None);
+    }
+
+    // --- prepaid-balance tank + headline (display_limit) ---
+
+    fn deepseek(balance: f64) -> VendorSnapshot {
+        VendorSnapshot::Deepseek(crate::usage::DeepseekSnapshot {
+            is_available: true,
+            balance,
+            granted: balance,
+            topped_up: 0.0,
+            currency: "USD".into(),
+        })
+    }
+
+    fn balance_row(sections: &[SectionProjection]) -> &SectionProjection {
+        sections
+            .iter()
+            .find(|projection| {
+                matches!(&projection.section,
+                    Section::Metric { label, .. } | Section::Text { label, .. }
+                        if label == "Balance" || label == "Prepaid balance")
+            })
+            .expect("a balance row")
+    }
+
+    /// No `display_limit`: nothing supplies a denominator, so the row stays
+    /// free text rather than becoming a fabricated 0% gauge.
+    #[test]
+    fn a_balance_vendor_without_a_tank_keeps_its_plain_text_row() {
+        let sections = sections_with_metadata_for(&ready(deepseek(5.50)), now(), 5);
+        assert!(matches!(
+            &balance_row(&sections).section,
+            Section::Text { value, .. } if value == "$5.50"
+        ));
+    }
+
+    /// A tank turns the same row into a consumed meter. The default headline
+    /// for a balance vendor is the money figure, and setting `display_limit`
+    /// alone does not change that — the percentage rides in the detail.
+    #[test]
+    fn a_tank_meters_the_balance_without_moving_the_money_off_the_bar() {
+        let prefs = DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Amount);
+        let sections = sections_with_metadata_for(&ready_with(deepseek(50.0), prefs), now(), 5);
+        let row = balance_row(&sections);
+        assert_eq!(row.headline, MetricHeadline::Value);
+        match &row.section {
+            Section::Metric {
+                pct,
+                value_label,
+                footnote,
+                ..
+            } => {
+                assert_eq!(*pct, 75);
+                assert_eq!(value_label, "$50.00");
+                assert_eq!(footnote, "75% of $200.00 used ($50.00 left)");
+            }
+            _ => panic!("expected a metric"),
+        }
+    }
+
+    /// Choosing `percent` moves the percentage onto the bar and the dollar
+    /// figure into the detail line — the two numbers swap, neither is lost.
+    #[test]
+    fn choosing_percent_swaps_which_number_is_the_headline() {
+        let prefs = DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(deepseek(50.0), prefs), now(), 5);
+        let row = balance_row(&sections);
+        assert_eq!(row.headline, MetricHeadline::Percent);
+        match &row.section {
+            Section::Metric {
+                pct,
+                value_label,
+                footnote,
+                ..
+            } => {
+                assert_eq!(*pct, 75);
+                assert_eq!(value_label, "75%");
+                assert_eq!(footnote, "$50.00 of $200.00 left (75% used)");
+            }
+            _ => panic!("expected a metric"),
+        }
+    }
+
+    /// `percent` with nothing to divide by keeps the amount on the bar rather
+    /// than inventing a denominator.
+    #[test]
+    fn percent_without_a_tank_keeps_the_amount_on_the_bar() {
+        let prefs = DisplayPrefs::balance(None, crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(deepseek(5.50), prefs), now(), 5);
+        assert!(matches!(
+            &balance_row(&sections).section,
+            Section::Text { value, .. } if value == "$5.50"
+        ));
+    }
+
+    /// A balance above the cap is 0% used; the money figure is what says how
+    /// far above it sits, and it stays in the detail line.
+    #[test]
+    fn a_balance_over_the_cap_reads_as_zero_percent_with_the_money_in_the_detail() {
+        let prefs = DisplayPrefs::balance(Some(20.0), crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(deepseek(50.0), prefs), now(), 5);
+        match &balance_row(&sections).section {
+            Section::Metric {
+                pct,
+                value_label,
+                footnote,
+                severity,
+                ..
+            } => {
+                assert_eq!(*pct, 0);
+                assert_eq!(value_label, "0%");
+                assert!(footnote.contains("$50.00"), "{footnote}");
+                assert_eq!(*severity, PaceSeverity::Low);
+            }
+            _ => panic!("expected a metric"),
+        }
+    }
+
+    /// The money tier stays the floor: a nearly-empty wallet is critical even
+    /// when the tank it is measured against is tiny enough to look healthy.
+    #[test]
+    fn severity_is_the_worse_of_the_money_tier_and_the_percentage_tier() {
+        // $0.50 left of a $1 tank: 50% used is only "mid", but under the $1
+        // USD floor the wallet itself is critical.
+        let prefs = DisplayPrefs::balance(Some(1.0), crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(deepseek(0.50), prefs), now(), 5);
+        match &balance_row(&sections).section {
+            Section::Metric { severity, .. } => assert_eq!(*severity, PaceSeverity::Critical),
+            _ => panic!("expected a metric"),
+        }
+
+        // $30 left of a $200 tank: the money tier is comfortable, but 85% of
+        // the tank is gone and the meter has to say so.
+        let prefs = DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(deepseek(30.0), prefs), now(), 5);
+        match &balance_row(&sections).section {
+            Section::Metric { pct, severity, .. } => {
+                assert_eq!(*pct, 85);
+                assert_eq!(*severity, PaceSeverity::High);
+            }
+            _ => panic!("expected a metric"),
+        }
+    }
+
+    /// Every balance-only vendor gets the same shape from one helper, so a
+    /// tank and a headline behave identically across all of them.
+    #[test]
+    fn every_balance_only_vendor_meters_the_same_way() {
+        let snapshots: Vec<VendorSnapshot> = vec![
+            deepseek(50.0),
+            VendorSnapshot::Kilo(crate::usage::KiloSnapshot {
+                label: "Kilo".into(),
+                balance: 50.0,
+            }),
+            VendorSnapshot::Novita(crate::usage::NovitaSnapshot {
+                available: 50.0,
+                cash: 50.0,
+                credit_limit: 0.0,
+                outstanding: 0.0,
+            }),
+            VendorSnapshot::Moonshot(crate::usage::MoonshotSnapshot {
+                available: 50.0,
+                cash: 50.0,
+                voucher: 0.0,
+                currency: "USD".into(),
+            }),
+            VendorSnapshot::Grok(crate::usage::GrokSnapshot { balance: 50.0 }),
+        ];
+        for snapshot in snapshots {
+            let bare = sections_with_metadata_for(&ready(snapshot.clone()), now(), 5);
+            assert!(
+                matches!(&balance_row(&bare).section, Section::Text { .. }),
+                "{snapshot:?} should keep a text row without a tank"
+            );
+
+            let prefs = DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Percent);
+            let metered =
+                sections_with_metadata_for(&ready_with(snapshot.clone(), prefs), now(), 5);
+            let row = balance_row(&metered);
+            assert_eq!(row.headline, MetricHeadline::Percent, "{snapshot:?}");
+            match &row.section {
+                Section::Metric {
+                    pct, value_label, ..
+                } => {
+                    assert_eq!(*pct, 75, "{snapshot:?}");
+                    assert_eq!(value_label, "75%", "{snapshot:?}");
+                }
+                _ => panic!("{snapshot:?} should meter with a tank"),
+            }
+        }
+    }
+
+    /// OpenRouter states its own denominator, so a `display_limit` on it never
+    /// applies — the fallback order puts the API's number first.
+    #[test]
+    fn openrouters_own_credits_win_over_a_configured_display_limit() {
+        let snapshot = VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
+            label: "OpenRouter".into(),
+            total_credits: 100.0,
+            total_usage: 25.0,
+            usage_daily: 0.0,
+            usage_weekly: 0.0,
+            usage_monthly: 0.0,
+            is_free_tier: false,
+            limit: None,
+            limit_remaining: None,
+        });
+        // A wildly different tank size changes nothing: 25 of 100 is 25%.
+        // `[openrouter]` carries no `display_limit`, so this can only arrive
+        // through a hand-built `DisplayPrefs` — and the call site drops it.
+        let prefs = DisplayPrefs::balance(Some(10_000.0), crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(snapshot, prefs), now(), 5);
+        let metric = only_metric(&sections);
+        assert_eq!(metric.headline, MetricHeadline::Percent);
+        match &metric.section {
+            Section::Metric { pct, .. } => assert_eq!(*pct, 25),
+            _ => unreachable!(),
+        }
+    }
+
+    /// The default for OpenRouter is the percent it always has a denominator
+    /// for; the dollar figure stays available in `value` for the detail line.
+    #[test]
+    fn openrouter_defaults_to_percent_and_keeps_the_money_in_the_value() {
+        let snapshot = VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
+            label: "OpenRouter".into(),
+            total_credits: 100.0,
+            total_usage: 25.0,
+            usage_daily: 0.0,
+            usage_weekly: 0.0,
+            usage_monthly: 0.0,
+            is_free_tier: false,
+            limit: None,
+            limit_remaining: None,
+        });
+        let sections = sections_with_metadata_for(
+            &ready_with(
+                snapshot,
+                crate::config::Config::default().display_prefs(crate::vendor::VendorId::Openrouter),
+            ),
+            now(),
+            5,
+        );
+        let metric = only_metric(&sections);
+        assert_eq!(metric.headline, MetricHeadline::Percent);
+        match &metric.section {
+            Section::Metric { value_label, .. } => assert_eq!(value_label, "$75.00"),
+            _ => unreachable!(),
+        }
+    }
+
+    /// A free-tier-only OpenRouter account bought no credits, so there is no
+    /// denominator and the money stays on the bar even at the percent default.
+    ///
+    /// The `prefs` loop is the regression: `openrouter_sections` used to route
+    /// `prefs.display_limit` into `balance::denominator`, and with credits at 0
+    /// the API value was dropped as unusable, so a tank took over and named the
+    /// headline `percent` — while `pct` still came from `consumed_pct()`, which
+    /// is 0 without credits. The bar read "0%" for an account holding money. No
+    /// `[openrouter] display_limit` exists any more, and the call site passes
+    /// `None` literally, so neither half of that can come back.
+    #[test]
+    fn a_free_tier_openrouter_account_has_no_denominator_and_shows_the_money() {
+        let snapshot = VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
+            label: "OpenRouter".into(),
+            total_credits: 0.0,
+            total_usage: 0.0,
+            usage_daily: 0.0,
+            usage_weekly: 0.0,
+            usage_monthly: 0.0,
+            is_free_tier: true,
+            limit: None,
+            limit_remaining: None,
+        });
+        for prefs in [
+            DisplayPrefs::default(),
+            DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Percent),
+            DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Amount),
+        ] {
+            let sections =
+                sections_with_metadata_for(&ready_with(snapshot.clone(), prefs), now(), 5);
+            let metric = only_metric(&sections);
+            assert_eq!(metric.headline, MetricHeadline::Value, "{prefs:?}");
+            match &metric.section {
+                Section::Metric { value_label, .. } => {
+                    assert_eq!(value_label, "$0.00", "{prefs:?}")
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// The same corner with money actually in the account: an overdrawn or
+    /// zero-credit snapshot must never be metered against a tank, because the
+    /// percentage on that row does not come from one.
+    #[test]
+    fn a_credit_less_openrouter_snapshot_is_never_metered_against_a_tank() {
+        let snapshot = VendorSnapshot::Openrouter(crate::usage::OpenRouterSnapshot {
+            label: "OpenRouter".into(),
+            total_credits: 0.0,
+            total_usage: 0.0,
+            usage_daily: 0.0,
+            usage_weekly: 0.0,
+            usage_monthly: 0.0,
+            is_free_tier: false,
+            limit: Some(50.0),
+            limit_remaining: Some(50.0),
+        });
+        let prefs = DisplayPrefs::balance(Some(200.0), crate::balance::Headline::Percent);
+        let sections = sections_with_metadata_for(&ready_with(snapshot, prefs), now(), 5);
+        let metric = only_metric(&sections);
+        assert_eq!(metric.headline, MetricHeadline::Value);
+        match &metric.section {
+            // Not "0%": the row reports the money, which is what this snapshot
+            // actually knows.
+            Section::Metric {
+                pct, value_label, ..
+            } => {
+                assert_eq!(*pct, 0);
+                assert_eq!(value_label, "$0.00");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Nothing else moved: a quota vendor's metrics stay percentages.
+    #[test]
+    fn a_quota_vendors_metrics_stay_percent_headlines() {
+        let sections = sections_with_metadata_for(
+            &ready(supergrok(crate::usage::SuperGrokPeriod::Weekly)),
+            now(),
+            5,
+        );
+        for projection in &sections {
+            if matches!(projection.section, Section::Metric { .. }) {
+                assert_eq!(projection.headline, MetricHeadline::Percent);
+            }
+        }
     }
 }

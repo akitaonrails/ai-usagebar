@@ -28,6 +28,10 @@ export interface Layout {
 }
 
 export interface MetricRow {
+  /** The report's detail line; the hover text when `headline` is "value". */
+  detail: string;
+  /** Which number the headline shows: the percentage, or `value`. */
+  headline: "percent" | "value";
   key?: string;
   kind: "metric";
   label: string;
@@ -36,6 +40,8 @@ export interface MetricRow {
   resetAt: string;
   severity: string;
   usedPercent: number;
+  /** The report's value text; the headline when `headline` is "value" (a money figure). */
+  value: string;
   /** Reset window length in seconds; 0 when the host reports none. */
   window: number;
 }
@@ -126,6 +132,7 @@ export interface Card {
 
 export interface MetricSection {
   detail: string;
+  headline: "percent" | "value";
   label: string;
   percent: number;
   resetAt: string;

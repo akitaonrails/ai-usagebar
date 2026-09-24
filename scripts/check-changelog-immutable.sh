@@ -67,7 +67,8 @@ newest=$(git tag --list 'v*' --sort=-v:refname | head -1)
 if [ -n "$newest" ]; then
   want=${newest#v}
   check_version() {
-    got=$(sed -n "0,/$2/s//\1/p" "$1")
+    # First matching line only; `0,/re/` is GNU-only and BSD sed prints nothing.
+    got=$(sed -n "/$2/{s//\1/p;q;}" "$1")
     [ -z "$got" ] && { echo "error: could not read a version from $1"; fail=1; return; }
     # A release PR bumps past the tag and must pass; going backwards must not.
     if [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | head -1)" != "$want" ]; then
