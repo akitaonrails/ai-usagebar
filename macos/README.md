@@ -3,8 +3,16 @@
 The product UI is **`ai-usagebar-tray`**: an NSStatusItem plus a WKWebView
 popover that shares its dashboard with the [Windows tray](../windows/README.md)
 (OpenUsage layout: provider cards, capsule meters, Customize, Settings). The
-menu-bar glyph is a compact **usage chart** of starred metrics (at most two
-per provider).
+menu-bar item shows an Omarchy-style provider code and usage headline beside
+the compact usage-chart glyph. Middle-click switches to the next provider;
+left-click opens the dashboard. Right-click offers Show All Providers, Hide
+Usage Value, and a choice of 5-hour, weekly, or monthly quota window. A
+provider without the chosen window falls back to its highest metric. The
+selection and display options survive restarts in `config.toml`.
+
+**Chart Icon Only** in the right-click menu restores the old compact glyph
+without the text summary. Its bars use starred metrics (at most two per
+provider).
 
 ![macOS tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, pace notes such as "~8% spare" and "Limit in 19d 16h", "used / Resets in" lines under each bar, Cursor's On-Demand row with its Status and Dashboard links, SuperGrok's Grok Build slice, and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](../screenshots/macos-tray-dashboard.png)
 
@@ -14,10 +22,10 @@ cargo build --release --bin ai-usagebar-tray
 ```
 
 Needs Node.js 20+ on PATH for the first build (`windows/popover/` Vite bundle).
-Left-click the status item to toggle the popover; right-click for Refresh /
-Detect / Open TUI / Start at Login / Quit. No Dock icon.
+Left-click the status item to toggle the popover; right-click for display
+options, Refresh, Detect, Open TUI, Start at Login, and Quit. No Dock icon.
 
-![macOS menu bar — the ai-usagebar usage-chart glyph (two stacked bars) at the left of the status items, next to the Cursor, Claude, Antigravity, Codex and Claude Code icons](../screenshots/macos-tray-icon.png)
+![Previous chart-only mode in the macOS menu bar, next to the Cursor, Claude, Antigravity, Codex and Claude Code icons](../screenshots/macos-tray-icon.png)
 
 Star up to two metrics per provider from a row's right-click menu or from
 Customize; those fills are what the status item paints.

@@ -34,6 +34,7 @@ use wry::{WebView, WebViewBuilder, WebViewBuilderExtDarwin};
 use super::browse;
 use super::hotkey::{self, HotkeyBinding};
 use super::icon::{Severity, tray_icon_rgba};
+use super::menu_bar::{self, UsageWindow};
 use super::panel::{
     CLICK_LOCK_MS, CORNER_RADIUS, CocoaRect, DARK_BACKGROUND, FALLBACK_WORK_AREA_HEIGHT,
     LIGHT_BACKGROUND, PopoverPlacement, WINDOW_HEIGHT, WINDOW_WIDTH, clamp_popover_height,
@@ -107,6 +108,14 @@ impl Theme {
 }
 
 struct MenuItems {
+    next_provider: MenuItem,
+    show_all: CheckMenuItem,
+    hide_value: CheckMenuItem,
+    usage_auto: CheckMenuItem,
+    usage_session: CheckMenuItem,
+    usage_weekly: CheckMenuItem,
+    usage_monthly: CheckMenuItem,
+    usage_chart: CheckMenuItem,
     refresh: MenuItem,
     detect: MenuItem,
     open_tui: MenuItem,
@@ -137,6 +146,11 @@ struct TrayState {
     strip_style: StripStyle,
     stars: Stars,
     strip_order: Vec<String>,
+    menu_bar_provider: String,
+    menu_bar_show_all: bool,
+    menu_bar_hide_value: bool,
+    menu_bar_window: UsageWindow,
+    menu_bar_chart: bool,
 }
 
 pub fn run() -> i32 {
@@ -200,7 +214,16 @@ fn run_loop() -> Result<(), String> {
     let _ = cmd_tx.send(WorkerCmd::Refresh);
 
     let empty = wrap_report("{}", &facts_snapshot(&facts), now_ms(), None);
-    let menu = build_menu(startup::is_enabled());
+    let menu_bar_window =
+        UsageWindow::parse(config.tray.menu_bar_window.as_deref().unwrap_or("auto"));
+    let menu_bar_chart = config.tray.menu_bar_style.as_deref() == Some("bars");
+    let menu = build_menu(
+        startup::is_enabled(),
+        config.tray.menu_bar_show_all,
+        config.tray.menu_bar_hide_value,
+        menu_bar_window,
+        menu_bar_chart,
+    );
     let context_menu = make_menu(&menu);
     let tray = build_tray(context_menu)?;
 
@@ -227,6 +250,11 @@ fn run_loop() -> Result<(), String> {
         strip_style: StripStyle::Bars,
         stars: Stars::new(),
         strip_order: Vec::new(),
+        menu_bar_provider: config.tray.menu_bar_provider.unwrap_or_default(),
+        menu_bar_show_all: config.tray.menu_bar_show_all,
+        menu_bar_hide_value: config.tray.menu_bar_hide_value,
+        menu_bar_window,
+        menu_bar_chart,
     };
     apply_strip_icon(&mut state);
 
@@ -438,6 +466,13 @@ fn apply_entry(state: &mut TrayState, entry: Value) {
 
 fn apply_strip_icon(state: &mut TrayState) {
     let content = content_from_payload(&state.payload, &state.stars, &state.strip_order);
+    let tooltip = menu_bar::tooltip(
+        &state.payload,
+        &state.menu_bar_provider,
+        state.menu_bar_show_all,
+        state.menu_bar_window,
+    );
+    let _ = state.tray.set_tooltip(Some(tooltip.as_str()));
     match state.strip_style {
         StripStyle::Bars => {
             let fractions: Vec<f64> = content.bars.iter().map(|m| m.fraction).collect();
@@ -448,7 +483,20 @@ fn apply_strip_icon(state: &mut TrayState) {
                 let _ = state.tray.set_icon(Some(icon));
             }
             state.tray.set_icon_as_template(true);
-            state.tray.set_title(None::<&str>);
+            if state.menu_bar_chart {
+                // tray-icon's macOS set_title(None) leaves the old title in
+                // NSStatusBarButton. An empty title actually clears it.
+                state.tray.set_title(Some(""));
+            } else {
+                let title = menu_bar::title(
+                    &state.payload,
+                    &state.menu_bar_provider,
+                    state.menu_bar_show_all,
+                    !state.menu_bar_hide_value,
+                    state.menu_bar_window,
+                );
+                state.tray.set_title(Some(title.as_str()));
+            }
             if let Some(image) = template_bars_image(&fractions) {
                 set_status_button_image(&image);
             }
@@ -578,22 +626,97 @@ fn push_to_webview(state: &TrayState) {
 
 fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
     if let TrayIconEvent::Click {
-        button: MouseButton::Left,
+        button,
         button_state: MouseButtonState::Up,
         ..
     } = event
     {
-        if state.popover_open {
-            hide_popover(state);
-        } else {
-            state.last_anchor = Some(cocoa_mouse());
-            show_popover(state);
+        match button {
+            MouseButton::Left => {
+                if state.popover_open {
+                    hide_popover(state);
+                } else {
+                    state.last_anchor = Some(cocoa_mouse());
+                    show_popover(state);
+                }
+            }
+            MouseButton::Middle => next_menu_bar_provider(state),
+            _ => {}
         }
     }
 }
 
+fn persist_menu_bar_value(key: &str, value: toml_edit::Value) {
+    if let Some(path) = config_path() {
+        let _ = crate::config::set_tray_value(&path, key, Some(value));
+    }
+}
+
+fn next_menu_bar_provider(state: &mut TrayState) {
+    if let Some(id) = menu_bar::next_id(&state.payload, &state.menu_bar_provider) {
+        state.menu_bar_provider = id.clone();
+        persist_menu_bar_value("menu_bar_provider", id.into());
+        apply_strip_icon(state);
+    }
+}
+
+fn set_menu_bar_window(state: &mut TrayState, window: UsageWindow) {
+    state.menu_bar_window = window;
+    persist_menu_bar_value("menu_bar_window", window.as_str().into());
+    state
+        .menu
+        .usage_auto
+        .set_checked(window == UsageWindow::Auto);
+    state
+        .menu
+        .usage_session
+        .set_checked(window == UsageWindow::Session);
+    state
+        .menu
+        .usage_weekly
+        .set_checked(window == UsageWindow::Weekly);
+    state
+        .menu
+        .usage_monthly
+        .set_checked(window == UsageWindow::Monthly);
+    apply_strip_icon(state);
+}
+
 fn handle_menu(state: &mut TrayState, event: &MenuEvent, control_flow: &mut ControlFlow) {
-    if event.id == state.menu.refresh.id() {
+    if event.id == state.menu.next_provider.id() {
+        next_menu_bar_provider(state);
+    } else if event.id == state.menu.show_all.id() {
+        state.menu_bar_show_all = !state.menu_bar_show_all;
+        state.menu.show_all.set_checked(state.menu_bar_show_all);
+        persist_menu_bar_value("menu_bar_show_all", state.menu_bar_show_all.into());
+        apply_strip_icon(state);
+    } else if event.id == state.menu.hide_value.id() {
+        state.menu_bar_hide_value = !state.menu_bar_hide_value;
+        state.menu.hide_value.set_checked(state.menu_bar_hide_value);
+        persist_menu_bar_value("menu_bar_hide_value", state.menu_bar_hide_value.into());
+        apply_strip_icon(state);
+    } else if event.id == state.menu.usage_auto.id() {
+        set_menu_bar_window(state, UsageWindow::Auto);
+    } else if event.id == state.menu.usage_session.id() {
+        set_menu_bar_window(state, UsageWindow::Session);
+    } else if event.id == state.menu.usage_weekly.id() {
+        set_menu_bar_window(state, UsageWindow::Weekly);
+    } else if event.id == state.menu.usage_monthly.id() {
+        set_menu_bar_window(state, UsageWindow::Monthly);
+    } else if event.id == state.menu.usage_chart.id() {
+        state.menu_bar_chart = !state.menu_bar_chart;
+        state.menu.usage_chart.set_checked(state.menu_bar_chart);
+        persist_menu_bar_value(
+            "menu_bar_style",
+            (if state.menu_bar_chart {
+                "bars"
+            } else {
+                "provider"
+            })
+            .into(),
+        );
+        apply_strip_icon(state);
+    } else if event.id == state.menu.refresh.id() {
         let _ = state.worker.send(WorkerCmd::Refresh);
     } else if event.id == state.menu.detect.id() {
         let _ = state.worker.send(WorkerCmd::Detect);
@@ -798,8 +921,52 @@ fn position_popover(state: &TrayState) {
     apply_cocoa_frame(&state.window, frame);
 }
 
-fn build_menu(startup_enabled: bool) -> MenuItems {
+fn build_menu(
+    startup_enabled: bool,
+    show_all: bool,
+    hide_value: bool,
+    window: UsageWindow,
+    chart: bool,
+) -> MenuItems {
     MenuItems {
+        next_provider: MenuItem::with_id("next-provider", "Next Provider", true, None),
+        show_all: CheckMenuItem::with_id("show-all", "Show All Providers", true, show_all, None),
+        hide_value: CheckMenuItem::with_id(
+            "hide-value",
+            "Hide Usage Value",
+            true,
+            hide_value,
+            None,
+        ),
+        usage_auto: CheckMenuItem::with_id(
+            "usage-auto",
+            "Usage: Highest",
+            true,
+            window == UsageWindow::Auto,
+            None,
+        ),
+        usage_session: CheckMenuItem::with_id(
+            "usage-session",
+            "Usage: 5-hour",
+            true,
+            window == UsageWindow::Session,
+            None,
+        ),
+        usage_weekly: CheckMenuItem::with_id(
+            "usage-weekly",
+            "Usage: Weekly",
+            true,
+            window == UsageWindow::Weekly,
+            None,
+        ),
+        usage_monthly: CheckMenuItem::with_id(
+            "usage-monthly",
+            "Usage: Monthly",
+            true,
+            window == UsageWindow::Monthly,
+            None,
+        ),
+        usage_chart: CheckMenuItem::with_id("usage-chart", "Chart Icon Only", true, chart, None),
         refresh: MenuItem::with_id("refresh", "Refresh", true, None),
         detect: MenuItem::with_id("detect", "Detect Providers", true, None),
         open_tui: MenuItem::with_id("open-tui", "Open TUI", true, None),
@@ -810,13 +977,25 @@ fn build_menu(startup_enabled: bool) -> MenuItems {
 
 fn make_menu(items: &MenuItems) -> Menu {
     let menu = Menu::new();
-    let sep = PredefinedMenuItem::separator();
+    let display_sep = PredefinedMenuItem::separator();
+    let actions_sep = PredefinedMenuItem::separator();
+    let startup_sep = PredefinedMenuItem::separator();
     let _ = menu.append_items(&[
+        &items.next_provider,
+        &items.show_all,
+        &items.hide_value,
+        &items.usage_auto,
+        &items.usage_session,
+        &items.usage_weekly,
+        &items.usage_monthly,
+        &items.usage_chart,
+        &display_sep,
         &items.refresh,
         &items.detect,
         &items.open_tui,
-        &sep,
+        &actions_sep,
         &items.startup,
+        &startup_sep,
         &items.quit,
     ]);
     menu

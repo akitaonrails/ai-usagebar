@@ -7,6 +7,8 @@
 mod browse;
 pub mod hotkey;
 mod icon;
+#[cfg(any(target_os = "macos", test))]
+mod menu_bar;
 mod panel;
 mod payload;
 mod strip;

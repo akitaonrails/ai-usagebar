@@ -97,10 +97,9 @@ impl UiConfig {
     }
 }
 
-/// Windows tray popover preferences the host process needs before the
-/// WebView is up: the global shortcut it registers, how often it polls and
-/// how it treats new releases. Screen-only preferences (theme, density, time
-/// format) live in the popover's own storage instead.
+/// Tray preferences the host process needs before the WebView is up: shortcut,
+/// polling, updates, and the macOS menu-bar summary. Screen-only preferences
+/// (theme, density, time format) live in the popover's own storage instead.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct TrayConfig {
@@ -112,6 +111,17 @@ pub struct TrayConfig {
     pub refresh_minutes: Option<u64>,
     /// What the tray does when a newer release is published.
     pub updates: Option<UpdateMode>,
+    /// macOS menu-bar presentation: `provider` (Omarchy-style) or `bars`.
+    pub menu_bar_style: Option<String>,
+    /// The last provider selected in the macOS menu bar. A missing entry falls
+    /// back for display without erasing this choice during a transient gap.
+    pub menu_bar_provider: Option<String>,
+    /// Show every provider's short code and headline in the macOS menu bar.
+    pub menu_bar_show_all: bool,
+    /// Hide headline values, leaving only provider codes.
+    pub menu_bar_hide_value: bool,
+    /// Which quota window the macOS menu bar displays.
+    pub menu_bar_window: Option<String>,
 }
 
 /// Poll intervals the tray offers, in minutes. The provider cache TTL is

@@ -21,6 +21,13 @@ Each release is also published at
 
 ### Added
 
+- **Omarchy-style macOS menu-bar summary.** The tray shows the selected
+  provider's short code and quota headline beside its chart glyph. Middle-click
+  or the right-click menu cycles providers; the menu can show all providers,
+  hide values, or pin the 5-hour, weekly, or monthly window. Selection and
+  display options persist in `[tray]`; Chart Icon Only restores the previous
+  glyph-only presentation.
+
 - **Quota-threshold desktop notifications.** After a fresh fetch, any vendor
   window that crosses `[notifications] threshold` (default 97%) raises a
   `notify-send` notification on Linux (`-a ai-usagebar -c quota`); an
