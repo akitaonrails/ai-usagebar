@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  accountSwitchFor,
   formatDuration,
   nextUpdateLabel,
   parseHostPayload,
@@ -1381,6 +1382,42 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.equal(card.rows[0].key, 'metric:Codex weekly');
   assert.equal(card.rows[1].label, 'Session');
   assert.equal(card.rows[1].key, 'metric:Codex 5h');
+}
+
+// Account switch: only the macOS host reports switchable logins, keyed by
+// vendor; each named card finds its own label and nothing else does.
+{
+  const payload = parseHostPayload(JSON.stringify({
+    entries: [],
+    accounts: {
+      anthropic: { active: 'main', labels: ['main', 'work'], target: 'work', switching: false, error: 'no stored credential' },
+      openai: { active: '', labels: ['main', 'work'], target: 'work', switching: true, error: '' },
+      cursor: { active: 'x', labels: ['x'] },
+      grok: 'not an object',
+    },
+  }));
+  assert.deepEqual(Object.keys(payload.accounts).sort(), ['anthropic', 'openai']);
+
+  const active = accountSwitchFor('anthropic@main', payload.accounts);
+  assert.equal(active.active, true);
+  assert.equal(active.error, '');
+
+  const failed = accountSwitchFor('anthropic@work', payload.accounts);
+  assert.equal(failed.active, false);
+  assert.equal(failed.error, 'no stored credential');
+
+  const running = accountSwitchFor('openai@work', payload.accounts);
+  assert.equal(running.switching, true);
+  assert.equal(running.busy, false);
+  const waiting = accountSwitchFor('openai@main', payload.accounts);
+  assert.equal(waiting.busy, true);
+  assert.equal(waiting.switching, false);
+
+  assert.equal(accountSwitchFor('anthropic', payload.accounts), null);
+  assert.equal(accountSwitchFor('anthropic@unknown', payload.accounts), null);
+  assert.equal(accountSwitchFor('cursor@x', payload.accounts), null);
+  assert.equal(accountSwitchFor('openai@work', {}), null);
+  assert.deepEqual(parseHostPayload(JSON.stringify({ entries: [] })).accounts, {});
 }
 
 console.log('ok');

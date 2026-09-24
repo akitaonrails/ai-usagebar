@@ -19,6 +19,8 @@ pub const USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(25);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(45);
+/// A switch holds the credentials lock for a few file writes only.
+const CREDENTIALS_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct Endpoints {
@@ -48,6 +50,16 @@ pub async fn fetch_snapshot(
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
     let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
+    // `account switch --codex` moves these files under the same lock, so a
+    // refresh can never write one account's tokens over another's. Only an
+    // existing directory is locked: creating one is not a fetch's business.
+    let credentials_lock = super::account::lock_path(creds_path);
+    let _credentials_lock = match credentials_lock.parent() {
+        Some(dir) if dir.is_dir() => {
+            Some(acquire_lock_async(&credentials_lock, CREDENTIALS_LOCK_TIMEOUT).await?)
+        }
+        _ => None,
+    };
 
     let mut auth = creds::read_from(creds_path)?;
     let plan_hint = auth.tokens.plan_type_from_id_token();

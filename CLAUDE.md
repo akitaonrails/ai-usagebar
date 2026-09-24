@@ -276,14 +276,17 @@ vendor's response shape drifts:
   auth file and pass the paths in; never touch the real ones.
 - `src/anthropic/keychain.rs` — macOS-only Keychain fallback when
   `~/.claude/.credentials.json` is absent (Claude Code on macOS stores
-  the OAuth blob in the login Keychain). Reads, deletes and normal-sized writes
-  use `security(1)`: the writer's code identity is what macOS stamps onto the item's
+  the OAuth blob in the login Keychain). Reads, writes and deletes all use
+  `security(1)`: the writer's code identity is what macOS stamps onto the item's
   XARA partition list, so a native write left the item owned by
   `cdhash:<ai-usagebar>` and made every `/usr/bin/security` read — ours and
-  Claude Code's — raise a Keychain dialog (#148). OAuth JSON still never enters
-  process arguments: the command goes to `security -i` on stdin. Only a blob
-  over that reader's line cap falls back to Security.framework. Module-gated with
-  `#[cfg(target_os = "macos")]`; Linux build never compiles it.
+  Claude Code's — raise a Keychain dialog (#148). Normal-sized blobs go to
+  `security -i` on stdin, keeping the JSON out of argv; a blob over that
+  reader's line cap (real once Claude Code keeps `mcpOAuth` plugin state in the
+  item) is passed to `security add-generic-password` as an argument instead —
+  never through Security.framework, which is now a dev-dependency used only by
+  the opt-in Keychain tests. Module-gated with `#[cfg(target_os = "macos")]`;
+  Linux build never compiles it.
 - `src/cache.rs` — atomic per-vendor cache writes + flock, plus the shared
   cross-platform path resolvers (`xdg_cache_dir`, `home_dir`). `home_dir`
   resolves `$HOME` / `%USERPROFILE%` via `directories::BaseDirs` and is reused

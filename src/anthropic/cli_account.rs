@@ -277,6 +277,70 @@ pub fn switch_cli_account(
     }
 }
 
+/// Register the login plain `claude` is signed into as `account`, without a
+/// new sign-in.
+///
+/// Only the identity marker in the account's own `CLAUDE_CONFIG_DIR` is
+/// written: the rotating credential stays in the default slot alone, and the
+/// first `switch` away from this account captures it into the account's named
+/// slot like any other outgoing login. Signing in again instead would mint a
+/// second, independent grant for the same account.
+pub fn adopt_current(
+    home_claude_json: &Path,
+    accounts: &[AnthropicAccount],
+    account: &AnthropicAccount,
+    store: &dyn CredentialStore,
+) -> Result<()> {
+    // The same lock as `switch_cli_account`, so an adoption and a switch
+    // cannot interleave and both see the same live login.
+    let lock_path = home_claude_json
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".ai-usagebar-account-switch.lock");
+    let _lock = crate::cache::acquire_lock(&lock_path, Duration::from_secs(2))?;
+
+    // One read: the identity checked is the identity written.
+    let live = oauth_account_in(home_claude_json).ok_or_else(|| {
+        AppError::Credentials(
+            "plain `claude` is not signed in, so there is no login to adopt; run `claude` first"
+                .into(),
+        )
+    })?;
+    let live_uuid = live
+        .get("accountUuid")
+        .and_then(Value::as_str)
+        .filter(|uuid| !uuid.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            AppError::Credentials("the live `claude` login records no account uuid".into())
+        })?;
+    if let Some(owner) = accounts.iter().find(|other| {
+        other.label != account.label
+            && account_uuid_in(&marker_path(&other.config_dir())).as_deref() == Some(&live_uuid)
+    }) {
+        return Err(AppError::Credentials(format!(
+            "the live `claude` login already belongs to account {:?}",
+            owner.label
+        )));
+    }
+    if store.read_named(&account.config_dir())?.is_some() {
+        return Err(AppError::Credentials(format!(
+            "{:?} already has its own Claude login; adopting would leave two copies of one \
+             account",
+            account.label
+        )));
+    }
+    if store.read_default()?.is_none() {
+        return Err(AppError::Credentials(
+            "the default `claude` credential slot is empty; run `claude` to sign in first".into(),
+        ));
+    }
+    let marker = marker_path(&account.config_dir());
+    let existing = read_optional(&marker)?;
+    let merged = merge_oauth_account(existing.as_deref().unwrap_or_default(), Some(&live))?;
+    crate::cache::atomic_write(&marker, &merged)
+}
+
 struct RollbackState<'a> {
     target: &'a AnthropicAccount,
     target_blob: &'a str,
@@ -547,6 +611,57 @@ mod tests {
             account_email_in(&f.home).as_deref(),
             Some("me@personal.test")
         );
+    }
+
+    #[test]
+    fn adopting_marks_the_live_login_and_leaves_the_credential_alone() {
+        let f = fixture();
+        write(&f.home, &marker("uuid-main", "me@main.test"));
+        let main = AnthropicAccount {
+            label: "main".into(),
+            credentials_path: f
+                .home
+                .parent()
+                .unwrap()
+                .join("main")
+                .join(".credentials.json"),
+        };
+        let mut accounts = f.accounts.clone();
+        accounts.push(main.clone());
+        adopt_current(&f.home, &accounts, &main, &f.store).unwrap();
+        assert_eq!(
+            resolve_active_label(&f.home, &accounts).as_deref(),
+            Some("main")
+        );
+        assert_eq!(f.store.read_named(&main.config_dir()).unwrap(), None);
+        assert_eq!(
+            f.store.read_default().unwrap().as_deref(),
+            Some("personal-live")
+        );
+    }
+
+    #[test]
+    fn adopting_refuses_a_login_another_account_owns() {
+        let f = fixture();
+        let main = AnthropicAccount {
+            label: "main".into(),
+            credentials_path: f
+                .home
+                .parent()
+                .unwrap()
+                .join("main")
+                .join(".credentials.json"),
+        };
+        let error = adopt_current(&f.home, &f.accounts, &main, &f.store).unwrap_err();
+        assert!(error.to_string().contains("\"personal\""), "{error}");
+    }
+
+    #[test]
+    fn adopting_refuses_an_account_with_its_own_login() {
+        let f = fixture();
+        write(&f.home, &marker("uuid-main", "me@main.test"));
+        let error = adopt_current(&f.home, &f.accounts, &f.accounts[0], &f.store).unwrap_err();
+        assert!(error.to_string().contains("two copies"), "{error}");
     }
 
     #[test]

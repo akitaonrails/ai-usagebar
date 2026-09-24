@@ -32,6 +32,29 @@ pub struct HostFacts {
     /// "auto" | "notify" | "off".
     pub updates: String,
     pub version: String,
+    /// Vendors whose active login the popover can switch. Only the macOS host
+    /// fills this; an empty list hides the control everywhere else.
+    pub accounts: Vec<AccountSwitchFact>,
+}
+
+/// One vendor's switchable logins, as the popover renders them beside each
+/// account's card.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountSwitchFact {
+    /// Report entry slug: "anthropic" or "openai".
+    pub vendor: String,
+    /// Label the vendor's default login belongs to; `None` when it is not a
+    /// managed account.
+    pub active: Option<String>,
+    /// Labels that can be made active.
+    pub labels: Vec<String>,
+    /// Label of the last switch requested, running or finished; empty before
+    /// the first one.
+    pub target: String,
+    /// Whether that switch is still running.
+    pub switching: bool,
+    /// Why that switch failed, or empty.
+    pub error: String,
 }
 
 /// State of a newer release as the popover renders it.
@@ -69,6 +92,7 @@ impl Default for HostFacts {
             update_checked_at: 0,
             updates: String::new(),
             version: String::new(),
+            accounts: Vec::new(),
         }
     }
 }
@@ -141,6 +165,26 @@ pub fn wrap_report(
             "error": sanitize_untrusted_field(&u.error),
         })
     });
+    let accounts: serde_json::Map<String, Value> = facts
+        .accounts
+        .iter()
+        .map(|fact| {
+            (
+                fact.vendor.clone(),
+                json!({
+                    "active": fact.active.as_deref().map(sanitize_untrusted_field),
+                    "labels": fact
+                        .labels
+                        .iter()
+                        .map(|label| sanitize_untrusted_field(label))
+                        .collect::<Vec<_>>(),
+                    "target": sanitize_untrusted_field(&fact.target),
+                    "switching": fact.switching,
+                    "error": sanitize_untrusted_field(&fact.error),
+                }),
+            )
+        })
+        .collect();
     let mut payload = json!({
         "version": facts.version,
         "generated_at": now_ms,
@@ -154,6 +198,7 @@ pub fn wrap_report(
         "update": update,
         "update_checked_at": facts.update_checked_at,
         "repository": repository_page(),
+        "accounts": accounts,
         "host_error": host_error.map(sanitize_untrusted_field),
         "primary": Value::Null,
         "entries": [],
@@ -514,5 +559,33 @@ mod tests {
         let payload = wrap_report(&sample_report(), &host, 1_000, None);
         assert_eq!(payload["next_refresh_at"], 601_000);
         assert_eq!(payload["refresh_minutes"], 10);
+    }
+
+    #[test]
+    fn switchable_accounts_are_keyed_by_vendor() {
+        let mut host = facts("1.10.0", false);
+        host.accounts = vec![AccountSwitchFact {
+            vendor: "openai".into(),
+            active: Some("main".into()),
+            labels: vec!["main".into(), "work\u{1b}[31m".into()],
+            target: "work".into(),
+            switching: false,
+            error: "no stored Codex login".into(),
+        }];
+        let payload = wrap_report(&sample_report(), &host, 0, None);
+        let openai = &payload["accounts"]["openai"];
+        assert_eq!(openai["active"], "main");
+        assert_eq!(openai["labels"][0], "main");
+        assert!(!openai["labels"][1].as_str().unwrap().contains('\u{1b}'));
+        assert_eq!(openai["target"], "work");
+        assert_eq!(openai["switching"], false);
+        assert_eq!(openai["error"], "no stored Codex login");
+        assert!(payload["accounts"].get("anthropic").is_none());
+    }
+
+    #[test]
+    fn no_switchable_accounts_is_an_empty_object() {
+        let payload = wrap_report(&sample_report(), &facts("1.10.0", false), 0, None);
+        assert_eq!(payload["accounts"], json!({}));
     }
 }

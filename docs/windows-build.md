@@ -17,7 +17,7 @@ toolchain and PATH.
 
 | Tool | Why | Install |
 |---|---|---|
-| **Rust 1.88+** | MSRV | [rustup.rs](https://rustup.rs/) (`winget install Rustlang.Rustup`) |
+| **Rust 1.90+** | MSRV | [rustup.rs](https://rustup.rs/) (`winget install Rustlang.Rustup`) |
 | **MSVC Build Tools 2022** | linker (`link.exe`) | `winget install Microsoft.VisualStudio.2022.BuildTools --override "--wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"` |
 | **NASM** | `ring` compiles assembly | `winget install NASM.NASM` |
 | **Git** | clone | optional |
@@ -26,7 +26,7 @@ After installing, **open a new terminal** so `cargo` and `nasm` are on `PATH`.
 NASM often lands in `%LOCALAPPDATA%\bin\NASM`; rustup in `%USERPROFILE%\.cargo\bin`.
 
 ```powershell
-rustc --version    # 1.88 or newer
+rustc --version    # 1.90 or newer
 where.exe nasm
 where.exe link
 ```

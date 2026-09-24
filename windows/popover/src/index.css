@@ -766,6 +766,19 @@ body:has(.mac-panel) {
   transform: scale(0.88);
 }
 
+/* Account switch: the login in use is a static yellow filled star, and a
+   switch that failed keeps its outline star tinted until the next attempt. */
+.header-action.is-active,
+.header-action.is-active:hover {
+  background: transparent;
+  color: var(--yellow);
+  transform: none;
+}
+
+.header-action.is-failed {
+  color: var(--red);
+}
+
 /* Plain text buttons (headline / reset toggles): no chrome at all. */
 .plain-btn {
   background: none;

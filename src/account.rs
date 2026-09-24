@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::anthropic::cli_account::{self, CliSwitchOpts, CliSwitchOutcome, KeychainStore};
 use crate::claude_desktop::{self, Paths, SwitchOpts, SwitchPlan};
 use crate::config::Config;
+use crate::display::{sanitize_untrusted_line, sanitize_untrusted_path};
 use crate::error::{AppError, Result};
 use crate::widget::cli::AccountAction;
 
@@ -38,9 +39,15 @@ pub fn run(action: &AccountAction) -> i32 {
             desktop,
             email,
             yes,
+            codex,
+            adopt_current,
         } => {
             if *desktop {
                 add_desktop(label, email.as_deref(), *yes)
+            } else if *codex {
+                add_codex(label, !no_login, *adopt_current)
+            } else if *adopt_current {
+                adopt_claude(label)
             } else {
                 add(label, !no_login)
             }
@@ -48,6 +55,7 @@ pub fn run(action: &AccountAction) -> i32 {
         AccountAction::Status { json } => status(*json),
         AccountAction::Switch {
             label,
+            codex,
             desktop,
             cli,
             dry_run,
@@ -59,6 +67,7 @@ pub fn run(action: &AccountAction) -> i32 {
             delete_conflict,
         } => switch(&SwitchArgs {
             label,
+            codex: *codex,
             desktop: *desktop,
             cli: *cli,
             dry_run: *dry_run,
@@ -220,6 +229,7 @@ fn status(json: bool) -> i32 {
     let report = serde_json::json!({
         "desktop": desktop,
         "cli": cli,
+        "codex": codex_status(&config),
         "usage_accounts": usage_accounts,
     });
     if json {
@@ -228,6 +238,56 @@ fn status(json: bool) -> i32 {
     }
     print_status(&report);
     0
+}
+
+/// The `codex` half of `account status --json`: which `[[openai.accounts]]`
+/// entry `~/.codex/auth.json` belongs to. Public so the tray reads the same
+/// answer the CLI prints.
+pub fn codex_status(config: &Config) -> serde_json::Value {
+    let default = config.openai.resolve_auth_path(None).ok();
+    let accounts = &config.openai.accounts;
+    let active = default
+        .as_deref()
+        .and_then(|default| crate::openai::account::resolve_active_label(default, accounts));
+    let rows: Vec<serde_json::Value> = accounts
+        .iter()
+        .map(|account| {
+            serde_json::json!({
+                "label": account.label,
+                "codex_auth_path": account.codex_auth_path,
+                "signed_in": default.as_deref().is_some_and(|default| {
+                    crate::openai::account::has_login(default, accounts, account)
+                }),
+                "active": Some(&account.label) == active.as_ref(),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "default_path": default,
+        "active_label": active,
+        "accounts": rows,
+    })
+}
+
+/// The file `account switch --codex` moves logins into: the Codex CLI's
+/// default. A `[openai] codex_auth_path` pointing anywhere else only changes
+/// what ai-usagebar reads, so moving logins there would not change the account
+/// Codex uses; the switch refuses rather than report a switch that did not
+/// happen.
+fn codex_switch_slot(config: &Config) -> Result<PathBuf> {
+    codex_switch_slot_with(config, crate::openai::creds::default_path()?)
+}
+
+fn codex_switch_slot_with(config: &Config, codex_default: PathBuf) -> Result<PathBuf> {
+    match &config.openai.codex_auth_path {
+        Some(path) if *path != codex_default => Err(AppError::Credentials(format!(
+            "[openai] codex_auth_path points at {}, not the {} the Codex CLI, desktop app and \
+             IDE extension use; remove it to switch Codex accounts",
+            sanitize_untrusted_path(path),
+            sanitize_untrusted_path(&codex_default)
+        ))),
+        _ => Ok(codex_default),
+    }
 }
 
 fn print_status(report: &serde_json::Value) {
@@ -298,6 +358,40 @@ fn status_lines(report: &serde_json::Value) -> Vec<String> {
              saved copies may be stale."
                 .to_string(),
         );
+    }
+
+    let codex = report["codex"]["accounts"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    if !codex.is_empty() {
+        out.push(String::new());
+        out.push(format!(
+            "Codex            {}",
+            sanitize_untrusted_line(
+                report["codex"]["default_path"]
+                    .as_str()
+                    .unwrap_or("~/.codex/auth.json")
+            )
+        ));
+        for account in codex {
+            out.push(format!(
+                "  {:<12} {:<28}{}",
+                account["label"].as_str().unwrap_or("?"),
+                if account["signed_in"].as_bool().unwrap_or(false) {
+                    "signed in"
+                } else {
+                    "not signed in"
+                },
+                active_tag(&account["active"]),
+            ));
+        }
+        if report["codex"]["active_label"].is_null() {
+            out.push(
+                "  note: ~/.codex belongs to no account listed here; register it with \
+                 `ai-usagebar account add <label> --codex --adopt-current`."
+                    .to_string(),
+            );
+        }
     }
     out
 }
@@ -428,6 +522,8 @@ fn add_desktop(label: &str, email: Option<&str>, assume_yes: bool) -> i32 {
 
 struct SwitchArgs<'a> {
     label: &'a str,
+    /// Switch the Codex login instead of either Claude identity.
+    codex: bool,
     desktop: bool,
     cli: bool,
     dry_run: bool,
@@ -447,6 +543,9 @@ fn switch(args: &SwitchArgs) -> i32 {
             return 1;
         }
     };
+    if args.codex {
+        return switch_codex(&config, args);
+    }
     // Neither flag means both surfaces. A label that only exists on one side is
     // then a skip, not a failure: the two namespaces are independent and may
     // legitimately hold different sets of accounts.
@@ -1075,6 +1174,251 @@ fn register_at(config_path: &Path, label: &str, home: Option<&Path>) -> Result<R
     })
 }
 
+/// `account switch --codex`: move a Codex login into `~/.codex/auth.json`.
+fn switch_codex(config: &Config, args: &SwitchArgs) -> i32 {
+    use crate::openai::account::{SwitchOpts as CodexSwitchOpts, SwitchOutcome, switch_account};
+
+    let outcome = codex_switch_slot(config).and_then(|default| {
+        switch_account(
+            &default,
+            &config.openai.accounts,
+            args.label,
+            CodexSwitchOpts {
+                force: args.force,
+                dry_run: args.dry_run,
+            },
+        )
+    });
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            eprintln!("ai-usagebar account switch: {error}");
+            return 1;
+        }
+    };
+    println!("Codex            → {}", args.label);
+    match outcome {
+        SwitchOutcome::AlreadyActive => {
+            println!("  already the active Codex login; nothing to do");
+        }
+        SwitchOutcome::WouldSwitch { outgoing } => {
+            print_cli_capture(outgoing.as_deref());
+            println!("  (dry run — nothing was changed)");
+        }
+        SwitchOutcome::Switched { outgoing } => {
+            print_cli_capture(outgoing.as_deref());
+            println!(
+                "  switched — the Codex CLI, desktop app and IDE extension now sign in as {:?}; \
+                 restart any Codex session that was already open.",
+                args.label
+            );
+        }
+    }
+    0
+}
+
+struct RegisteredCodex {
+    config_path: PathBuf,
+    auth_path: PathBuf,
+    display: String,
+    already_existed: bool,
+}
+
+/// `account add <label> --codex`: register the account, then either adopt the
+/// live `~/.codex` login or sign a new one in under the account's own
+/// `CODEX_HOME`.
+fn add_codex(label: &str, login: bool, adopt: bool) -> i32 {
+    let config_path = crate::config::resolved_path().or_else(crate::config::default_path);
+    let home = crate::cache::home_dir();
+    let registration = match (config_path, home) {
+        (Some(config_path), Ok(home)) => register_codex_at(&config_path, label, &home),
+        (None, _) => Err(AppError::Other(
+            "could not resolve a config.toml path (no home directory?)".into(),
+        )),
+        (_, Err(error)) => Err(error),
+    };
+    let registration = match registration {
+        Ok(registration) => registration,
+        Err(error) => {
+            eprintln!("ai-usagebar account: could not add Codex account {label:?}: {error}");
+            return 1;
+        }
+    };
+    if registration.already_existed {
+        println!(
+            "Codex account {label:?} is already configured in {}.",
+            sanitize_untrusted_path(&registration.config_path)
+        );
+    } else {
+        println!(
+            "Added Codex account {label:?} to {}.",
+            sanitize_untrusted_path(&registration.config_path)
+        );
+        println!(
+            "  codex_auth_path = {}",
+            sanitize_untrusted_line(&registration.display)
+        );
+    }
+    println!();
+
+    let codex_home = registration
+        .auth_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    if adopt {
+        let adopted = Config::load_from(&registration.config_path).and_then(|config| {
+            let default = codex_switch_slot(&config)?;
+            let account = config
+                .openai
+                .accounts
+                .iter()
+                .find(|account| account.label == label)
+                .ok_or_else(|| AppError::Other(format!("{label:?} vanished from config.toml")))?;
+            crate::openai::account::adopt_current(&default, &config.openai.accounts, account)
+        });
+        return match adopted {
+            Ok(()) => {
+                println!(
+                    "The current Codex login is now {label:?}; `account switch <label> --codex` \
+                     saves it here before switching away."
+                );
+                0
+            }
+            Err(error) => {
+                eprintln!("ai-usagebar account: could not adopt the current Codex login: {error}");
+                1
+            }
+        };
+    }
+    let login_command = format!(
+        "CODEX_HOME='{}' codex login",
+        sanitize_untrusted_path(&codex_home).replace('\'', "'\\''")
+    );
+    if !login {
+        println!("Sign in later with:\n\n  {login_command}\n");
+        return 0;
+    }
+    println!("Opening `codex login` for {label:?}; your default Codex login is untouched.");
+    println!();
+    let mut command = std::process::Command::new("codex");
+    command.arg("login").env("CODEX_HOME", &codex_home);
+    match command.status() {
+        Ok(status) if status.success() => {
+            let _ = restamp_config(&registration.config_path);
+            0
+        }
+        Ok(status) => {
+            eprintln!(
+                "`codex login` exited with status {}. The account remains registered; retry with:\n\n  {login_command}\n",
+                status.code().unwrap_or(-1)
+            );
+            1
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!(
+                "`codex` was not found on PATH. The account remains registered; sign in with:\n\n  {login_command}\n"
+            );
+            1
+        }
+        Err(error) => {
+            eprintln!("could not start `codex login`: {error}");
+            1
+        }
+    }
+}
+
+fn register_codex_at(config_path: &Path, label: &str, home: &Path) -> Result<RegisteredCodex> {
+    let original = match std::fs::read_to_string(config_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(AppError::io_at(config_path, error)),
+    };
+    let mut doc: toml_edit::DocumentMut = if original.trim().is_empty() {
+        toml_edit::DocumentMut::new()
+    } else {
+        original.parse().map_err(|error: toml_edit::TomlError| {
+            AppError::Other(format!("config.toml is not valid TOML: {error}"))
+        })?
+    };
+    let existing = if config_path.exists() {
+        Config::load_from(config_path)?
+            .openai
+            .accounts
+            .into_iter()
+            .find(|account| account.label == label)
+    } else {
+        None
+    };
+    let already_existed = existing.is_some();
+    let auth_path = existing.map_or_else(
+        || crate::config::default_codex_auth_path(home, label),
+        |account| account.codex_auth_path,
+    );
+    let display = crate::config::tildify(&auth_path, home);
+    if !already_existed {
+        crate::config::add_openai_account_to_doc(&mut doc, label, &display)?;
+        let dir = auth_path
+            .parent()
+            .ok_or_else(|| AppError::Other("codex_auth_path has no parent directory".into()))?;
+        if !dir.exists() {
+            std::fs::create_dir_all(dir).map_err(|error| AppError::io_at(dir, error))?;
+            restrict_account_dir(dir)?;
+        }
+        crate::cache::atomic_write(config_path, doc.to_string().as_bytes())?;
+    }
+    Ok(RegisteredCodex {
+        config_path: config_path.to_path_buf(),
+        auth_path,
+        display,
+        already_existed,
+    })
+}
+
+/// `account add <label> --adopt-current`: register a Claude account for the
+/// login plain `claude` already uses, without signing in again.
+fn adopt_claude(label: &str) -> i32 {
+    let registration = match register(label) {
+        Ok(registration) => registration,
+        Err(error) => {
+            eprintln!("ai-usagebar account: could not add {label:?}: {error}");
+            return 1;
+        }
+    };
+    if !registration.already_existed {
+        println!(
+            "Added Claude account {label:?} to {}.",
+            registration.config_path.display()
+        );
+    }
+    let adopted = Config::load_from(&registration.config_path).and_then(|config| {
+        let accounts = config.anthropic.all_accounts();
+        let account = accounts
+            .iter()
+            .find(|account| account.label == label)
+            .ok_or_else(|| AppError::Other(format!("{label:?} vanished from config.toml")))?;
+        cli_account::adopt_current(
+            &cli_account::home_claude_json()?,
+            &accounts,
+            account,
+            &KeychainStore,
+        )
+    });
+    match adopted {
+        Ok(()) => {
+            println!(
+                "The current `claude` login is now {label:?}; `account switch <label>` saves it \
+                 here before switching away."
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("ai-usagebar account: could not adopt the current Claude login: {error}");
+            1
+        }
+    }
+}
+
 fn restamp_config(path: &Path) -> Result<()> {
     let file = std::fs::OpenOptions::new()
         .write(true)
@@ -1433,6 +1777,68 @@ mod tests {
         let written = std::fs::read_to_string(config_path).unwrap();
         assert!(written.contains("label = \"work\""));
         assert!(written.contains("credentials_path = \"~/accounts/work/.credentials.json\""));
+    }
+
+    #[test]
+    fn codex_registration_uses_a_codex_home_per_account() {
+        let temporary = tempfile::TempDir::new().unwrap();
+        let config_path = temporary.path().join("config.toml");
+        let registration = register_codex_at(&config_path, "work", temporary.path()).unwrap();
+
+        assert!(!registration.already_existed);
+        assert_eq!(
+            registration.auth_path,
+            temporary.path().join(".codex-work/auth.json")
+        );
+        assert!(temporary.path().join(".codex-work").is_dir());
+        let written = std::fs::read_to_string(&config_path).unwrap();
+        assert!(written.contains("[[openai.accounts]]"), "{written}");
+        assert!(
+            written.contains("codex_auth_path = \"~/.codex-work/auth.json\""),
+            "{written}"
+        );
+
+        let again = register_codex_at(&config_path, "work", temporary.path()).unwrap();
+        assert!(again.already_existed);
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), written);
+    }
+
+    #[test]
+    fn a_codex_switch_only_targets_the_file_codex_reads() {
+        let codex_default = PathBuf::from("/home/me/.codex/auth.json");
+        let mut config = Config::default();
+        assert_eq!(
+            codex_switch_slot_with(&config, codex_default.clone()).unwrap(),
+            codex_default
+        );
+        config.openai.codex_auth_path = Some(codex_default.clone());
+        assert_eq!(
+            codex_switch_slot_with(&config, codex_default.clone()).unwrap(),
+            codex_default
+        );
+        config.openai.codex_auth_path = Some(PathBuf::from("/tmp/mirror/auth.json"));
+        let error = codex_switch_slot_with(&config, codex_default).unwrap_err();
+        assert!(error.to_string().contains("codex_auth_path"), "{error}");
+    }
+
+    #[test]
+    fn status_lines_list_codex_accounts_and_flag_an_unmanaged_login() {
+        let report = serde_json::json!({
+            "desktop": null,
+            "cli": {"accounts": [], "active_label": null},
+            "codex": {
+                "default_path": "/home/me/.codex/auth.json",
+                "active_label": null,
+                "accounts": [{"label": "work", "signed_in": true, "active": false}],
+            },
+        });
+        let lines = status_lines(&report).join("\n");
+        assert!(
+            lines.contains("Codex            /home/me/.codex/auth.json"),
+            "{lines}"
+        );
+        assert!(lines.contains("work"), "{lines}");
+        assert!(lines.contains("--adopt-current"), "{lines}");
     }
 
     #[cfg(unix)]

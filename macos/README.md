@@ -34,6 +34,10 @@ Open TUI, Start at Login, and Quit. No Dock icon.
 Star up to two metrics per provider from **Settings → Providers**, then open
 that provider's details. Those fills are what the status item paints.
 
+With named Claude or Codex accounts, each account's card also shows which login
+is active (a filled star) and an outline star to switch to the others; see "Switch from
+the macOS menu bar" in [docs/claude-accounts.md](../docs/claude-accounts.md).
+
 ![Customize Claude — Always Visible rows Weekly (starred) and Fable, On Demand row Session, each with a star and an on/off switch, Back and Reset in the top bar](../screenshots/macos-tray-provider-stars.png)
 
 The footer's Options menu opens Settings. Settings uses five tabs: **General**
@@ -89,7 +93,7 @@ time, so one of those must be running for quota to load.
 
 ## Requirements
 
-- Rust (`rustc` 1.88+) and **Node.js 20+** (the tray embeds the Vite popover).
+- Rust (`rustc` 1.90+) and **Node.js 20+** (the tray embeds the Vite popover).
 - Run `claude` once on the Mac so its OAuth creds are in the login **Keychain**;
   ai-usagebar reads them there automatically (no env vars).
 

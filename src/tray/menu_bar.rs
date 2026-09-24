@@ -14,10 +14,14 @@ pub enum UsageWindow {
     Auto,
     Session,
     Weekly,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Monthly,
 }
 
 impl UsageWindow {
+    /// Read by the macOS host's set-menu-bar-window IPC handler; the Linux
+    /// test build never calls it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn parse(value: &str) -> Self {
         match value {
             "session" => Self::Session,
@@ -27,6 +31,7 @@ impl UsageWindow {
         }
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Auto => "auto",
@@ -125,6 +130,8 @@ pub fn title(
     chips.join("   ")
 }
 
+/// Rendered by the macOS status item only; the Linux test build never calls it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn tooltip(
     payload: &Value,
     remembered: &str,
