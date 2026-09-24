@@ -86,13 +86,8 @@ pub fn title(
     show_value: bool,
     window: UsageWindow,
 ) -> String {
-    let Some(entries) = payload.get("entries").and_then(Value::as_array) else {
-        return String::new();
-    };
-    let selected = selected_id(payload, remembered);
-    let chips: Vec<String> = entries
-        .iter()
-        .filter(|entry| show_all || entry.get("id").and_then(Value::as_str) == selected)
+    let chips: Vec<String> = displayed_entries(payload, remembered, show_all)
+        .into_iter()
         .map(|entry| chip(entry, show_value, window))
         .filter(|chip| !chip.is_empty())
         .collect();
@@ -100,13 +95,8 @@ pub fn title(
 }
 
 pub fn tooltip(payload: &Value, remembered: &str, show_all: bool, window: UsageWindow) -> String {
-    let Some(entries) = payload.get("entries").and_then(Value::as_array) else {
-        return "AI Usage".into();
-    };
-    let selected = selected_id(payload, remembered);
-    let lines: Vec<String> = entries
-        .iter()
-        .filter(|entry| show_all || entry.get("id").and_then(Value::as_str) == selected)
+    let lines: Vec<String> = displayed_entries(payload, remembered, show_all)
+        .into_iter()
         .map(|entry| {
             let name = entry
                 .get("display_name")
@@ -132,19 +122,45 @@ pub fn tooltip(payload: &Value, remembered: &str, show_all: bool, window: UsageW
     }
 }
 
+fn displayed_entries<'a>(
+    payload: &'a Value,
+    remembered: &'a str,
+    show_all: bool,
+) -> Vec<&'a Value> {
+    let Some(entries) = payload.get("entries").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    if show_all {
+        let ready: Vec<&Value> = entries
+            .iter()
+            .filter(|entry| entry.get("status").and_then(Value::as_str) != Some("error"))
+            .collect();
+        if !ready.is_empty() {
+            return ready;
+        }
+    }
+    let selected = selected_id(payload, remembered);
+    entries
+        .iter()
+        .filter(|entry| entry.get("id").and_then(Value::as_str) == selected)
+        .collect()
+}
+
 fn chip(entry: &Value, show_value: bool, window: UsageWindow) -> String {
     let id = entry.get("id").and_then(Value::as_str).unwrap_or("");
-    let code = entry
-        .get("short_name")
+    let name = entry
+        .get("display_name")
+        .or_else(|| entry.get("name"))
+        .or_else(|| entry.get("short_name"))
         .and_then(Value::as_str)
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| id.split('@').next().unwrap_or(""));
-    let code = safe_text(code, 12);
-    if code.is_empty() || !show_value {
-        return code;
+    let name = safe_text(name, 24);
+    if name.is_empty() || !show_value {
+        return name;
     }
     let summary = headline(entry, window);
-    format!("{code} {summary}")
+    format!("{name} {summary}")
 }
 
 fn headline(entry: &Value, window: UsageWindow) -> String {
@@ -295,6 +311,32 @@ mod tests {
         assert_eq!(
             title(&report, "", true, true, UsageWindow::Auto),
             "cdx 80%   opr $12.50"
+        );
+    }
+
+    #[test]
+    fn default_strip_shows_ready_providers_and_skips_disabled_failures() {
+        let report = json!({"primary":"anthropic", "entries":[
+            {"id":"anthropic", "display_name":"Claude", "status":"ready", "sections":[
+                {"type":"metric", "label":"Session (5h)", "percent":17},
+                {"type":"metric", "label":"Weekly (7d)", "percent":21}
+            ]},
+            {"id":"openai", "display_name":"Codex", "status":"ready", "sections":[
+                {"type":"metric", "label":"Codex weekly", "percent":15}
+            ]},
+            {"id":"zai", "display_name":"Z.AI", "status":"error", "sections":[]}
+        ]});
+        assert_eq!(
+            title(&report, "", true, true, UsageWindow::Auto),
+            "Claude 21%   Codex 15%"
+        );
+        assert_eq!(
+            title(&report, "", true, true, UsageWindow::Session),
+            "Claude 17%   Codex 15%"
+        );
+        assert_eq!(
+            title(&report, "zai", false, true, UsageWindow::Auto),
+            "Z.AI !"
         );
     }
 }

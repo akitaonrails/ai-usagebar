@@ -71,11 +71,11 @@
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"
-# macOS menu bar: Omarchy-style provider code + quota headline by default.
+# macOS menu bar: provider names + quota headlines by default.
 # menu_bar_style = "provider"  # "bars" restores the chart-only icon
 # menu_bar_provider = "openai" # last selected provider; optional
-# menu_bar_show_all = false    # show every provider at once
-# menu_bar_hide_value = false  # show only provider codes
+# menu_bar_show_all = true     # show every ready provider at once (default)
+# menu_bar_hide_value = false  # show only provider names
 # menu_bar_window = "auto"     # auto | session | weekly | monthly
 
 # Quota-threshold desktop notifications, fired after a fresh fetch when a

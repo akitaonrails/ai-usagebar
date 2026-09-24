@@ -116,8 +116,8 @@ pub struct TrayConfig {
     /// The last provider selected in the macOS menu bar. A missing entry falls
     /// back for display without erasing this choice during a transient gap.
     pub menu_bar_provider: Option<String>,
-    /// Show every provider's short code and headline in the macOS menu bar.
-    pub menu_bar_show_all: bool,
+    /// Show all ready providers in the macOS menu bar; defaults to true.
+    pub menu_bar_show_all: Option<bool>,
     /// Hide headline values, leaving only provider codes.
     pub menu_bar_hide_value: bool,
     /// Which quota window the macOS menu bar displays.
@@ -151,6 +151,10 @@ impl Default for NotificationsConfig {
 }
 
 impl TrayConfig {
+    pub fn menu_bar_show_all(&self) -> bool {
+        self.menu_bar_show_all.unwrap_or(true)
+    }
+
     pub fn refresh_minutes(&self) -> u64 {
         self.refresh_minutes.unwrap_or(DEFAULT_TRAY_REFRESH_MINUTES)
     }

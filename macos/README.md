@@ -3,10 +3,13 @@
 The product UI is **`ai-usagebar-tray`**: an NSStatusItem plus a WKWebView
 popover that shares its dashboard with the [Windows tray](../windows/README.md)
 (OpenUsage layout: provider cards, capsule meters, Customize, Settings). The
-menu-bar item shows an Omarchy-style provider code and usage headline beside
-the compact usage-chart glyph. Middle-click switches to the next provider;
-left-click opens the dashboard. Right-click offers Show All Providers, Hide
-Usage Value, and a choice of 5-hour, weekly, or monthly quota window. A
+menu-bar item shows every ready provider's name and usage headline beside the
+compact usage-chart glyph by default (for example, `Claude 21%   Codex 15%`).
+Providers with a fetch error stay available in the dashboard and when cycling,
+but do not crowd the default summary. Middle-click focuses the next provider
+and switches to the single-provider summary; left-click opens the dashboard.
+Right-click offers Show All Providers,
+Hide Usage Value, and a choice of 5-hour, weekly, or monthly quota window. A
 provider without the chosen window falls back to its highest metric. The
 selection and display options survive restarts in `config.toml`.
 

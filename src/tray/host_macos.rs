@@ -217,9 +217,10 @@ fn run_loop() -> Result<(), String> {
     let menu_bar_window =
         UsageWindow::parse(config.tray.menu_bar_window.as_deref().unwrap_or("auto"));
     let menu_bar_chart = config.tray.menu_bar_style.as_deref() == Some("bars");
+    let menu_bar_show_all = config.tray.menu_bar_show_all();
     let menu = build_menu(
         startup::is_enabled(),
-        config.tray.menu_bar_show_all,
+        menu_bar_show_all,
         config.tray.menu_bar_hide_value,
         menu_bar_window,
         menu_bar_chart,
@@ -251,7 +252,7 @@ fn run_loop() -> Result<(), String> {
         stars: Stars::new(),
         strip_order: Vec::new(),
         menu_bar_provider: config.tray.menu_bar_provider.unwrap_or_default(),
-        menu_bar_show_all: config.tray.menu_bar_show_all,
+        menu_bar_show_all,
         menu_bar_hide_value: config.tray.menu_bar_hide_value,
         menu_bar_window,
         menu_bar_chart,
@@ -656,6 +657,12 @@ fn next_menu_bar_provider(state: &mut TrayState) {
     if let Some(id) = menu_bar::next_id(&state.payload, &state.menu_bar_provider) {
         state.menu_bar_provider = id.clone();
         persist_menu_bar_value("menu_bar_provider", id.into());
+        // A cycle must visibly change the strip even when Show All was on.
+        if state.menu_bar_show_all {
+            state.menu_bar_show_all = false;
+            state.menu.show_all.set_checked(false);
+            persist_menu_bar_value("menu_bar_show_all", false.into());
+        }
         apply_strip_icon(state);
     }
 }
