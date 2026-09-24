@@ -669,6 +669,27 @@ pub fn set_tray_value(path: &Path, key: &str, value: Option<toml_edit::Value>) -
     write_config_document(path, &doc)
 }
 
+/// Persist one validated notification preference without disturbing other
+/// config sections or their comments.
+pub fn set_notification_value(path: &Path, key: &str, value: toml_edit::Value) -> Result<()> {
+    match key {
+        "enabled" if value.as_bool().is_some() => {}
+        "threshold" if value.as_integer().is_some_and(|n| (1..=100).contains(&n)) => {}
+        _ => {
+            return Err(AppError::Other(format!(
+                "invalid notification preference: {key}"
+            )));
+        }
+    }
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    set_value(&mut doc, "notifications", key, Some(value))?;
+    if doc.to_string() == before {
+        return Ok(());
+    }
+    write_config_document(path, &doc)
+}
+
 /// Read `path` into a `toml_edit` document with comments intact. A missing
 /// file is an empty document, so a writer can create the config from nothing;
 /// any other I/O failure or a parse error is reported rather than clobbered.
@@ -4779,6 +4800,22 @@ enabled = true
             let config = Config::load_from(file.path()).unwrap();
             assert_eq!(config.notifications.threshold.to_string(), threshold);
         }
+    }
+
+    #[test]
+    fn notification_preferences_round_trip_without_changing_other_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# keep this\n[tray]\nrefresh_minutes = 10\n").unwrap();
+        set_notification_value(&path, "enabled", false.into()).unwrap();
+        set_notification_value(&path, "threshold", 85i64.into()).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# keep this\n[tray]\nrefresh_minutes = 10"));
+        let config = Config::load_from(&path).unwrap();
+        assert!(!config.notifications.enabled);
+        assert_eq!(config.notifications.threshold, 85);
+        assert!(set_notification_value(&path, "threshold", 101i64.into()).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
     }
 
     #[test]

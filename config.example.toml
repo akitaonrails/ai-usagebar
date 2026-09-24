@@ -79,8 +79,8 @@
 # menu_bar_window = "auto"     # auto | session | weekly | monthly
 
 # Quota-threshold desktop notifications, fired after a fresh fetch when a
-# window crosses the threshold (Linux notify-send today; macOS and Windows
-# delivery follow). One notification per crossing: a window re-arms only when
+# window crosses the threshold (Linux notify-send or macOS Notification Center;
+# Windows delivery follows). One notification per crossing: a window re-arms only when
 # usage drops 7 points below the threshold or the window's reset moves later.
 # Banked reset credits (Codex, SuperGrok) also notify 48h before they expire.
 # [notifications]

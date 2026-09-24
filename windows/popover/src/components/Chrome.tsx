@@ -125,7 +125,7 @@ export function Footer({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" side="top" sideOffset={6} className="min-w-[184px] rounded-[10px] border-0 p-[5px] shadow-lg">
-          <MenuItem icon={<MdiTune />} label={t("Customize")} onSelect={onOpenCustomize} />
+          {payload.os === "macos" ? null : <MenuItem icon={<MdiTune />} label={t("Customize")} onSelect={onOpenCustomize} />}
           <MenuItem icon={<MdiCogOutline />} label={t("Settings")} onSelect={onOpenSettings} />
           <DropdownMenuSeparator />
           <MenuItem icon={<MdiRefresh />} label={t("Refresh")} onSelect={() => sendCommand("refresh")} />

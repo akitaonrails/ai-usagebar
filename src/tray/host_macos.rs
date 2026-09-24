@@ -128,6 +128,8 @@ struct TrayState {
     menu_bar_hide_value: bool,
     menu_bar_window: UsageWindow,
     menu_bar_chart: bool,
+    notifications_enabled: bool,
+    notifications_threshold: u8,
 }
 
 pub fn run() -> i32 {
@@ -223,6 +225,8 @@ fn run_loop() -> Result<(), String> {
         menu_bar_hide_value: config.tray.menu_bar_hide_value,
         menu_bar_window,
         menu_bar_chart,
+        notifications_enabled: config.notifications.enabled,
+        notifications_threshold: config.notifications.threshold,
     };
     apply_strip_icon(&mut state);
 
@@ -601,6 +605,8 @@ fn popover_payload(state: &TrayState) -> String {
     payload["menu_bar_window"] = json!(state.menu_bar_window.as_str());
     payload["menu_bar_provider"] = json!(state.menu_bar_provider);
     payload["menu_bar_chart"] = json!(state.menu_bar_chart);
+    payload["notifications_enabled"] = json!(state.notifications_enabled);
+    payload["notifications_threshold"] = json!(state.notifications_threshold);
     host_payload(&payload)
 }
 
@@ -691,6 +697,30 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
         "set-refresh" => {
             if let Some(minutes) = value.get("minutes").and_then(Value::as_u64) {
                 set_refresh(state, minutes);
+            }
+        }
+        "set-notifications-enabled" => {
+            if let Some(enabled) = value.get("value").and_then(Value::as_bool)
+                && let Some(path) = config_path()
+                && crate::config::set_notification_value(&path, "enabled", enabled.into()).is_ok()
+            {
+                state.notifications_enabled = enabled;
+                push_to_webview(state);
+            }
+        }
+        "set-notifications-threshold" => {
+            if let Some(threshold) = value.get("value").and_then(Value::as_u64)
+                && (1..=100).contains(&threshold)
+                && let Some(path) = config_path()
+                && crate::config::set_notification_value(
+                    &path,
+                    "threshold",
+                    (threshold as i64).into(),
+                )
+                .is_ok()
+            {
+                state.notifications_threshold = threshold as u8;
+                push_to_webview(state);
             }
         }
         "next-menu-bar-provider" => {

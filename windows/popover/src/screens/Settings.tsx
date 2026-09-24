@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import MdiInformationOutline from "~icons/mdi/information-outline";
 import MdiTune from "~icons/mdi/tune-variant";
 import { ScreenCrossLinkRow } from "@/components/Chrome";
@@ -6,18 +6,25 @@ import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { Language, Layout, Payload } from "@/lib/types";
+import type { Card, Language, Layout, Payload } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
 import { useBusyLabel } from "@/lib/useBusyLabel";
 import { sendCommand, updateModeLabel, updateStatusLabel } from "../model.js";
+import { Customize } from "./Customize";
 
 interface SettingsProps {
   layout: Layout;
   nowMs: number;
   payload: Payload;
+  cards: Card[];
   onAlwaysShowPace: (on: boolean) => void;
   onLanguage: (language: Language) => void;
   onOpenCustomize: () => void;
+  onOpenProvider: (id: string) => void;
+  onReorderProviders: (ids: string[]) => void;
+  onToggleProvider: (id: string, on: boolean) => void;
+  onResetCustomization: () => void;
+  resetArmed: boolean;
   onResetTimes: (resetTimes: string) => void;
   onShowAs: (showAs: string) => void;
   onTheme: (theme: string) => void;
@@ -29,9 +36,15 @@ export function Settings({
   layout,
   nowMs,
   payload,
+  cards,
   onAlwaysShowPace,
   onLanguage,
   onOpenCustomize,
+  onOpenProvider,
+  onReorderProviders,
+  onToggleProvider,
+  onResetCustomization,
+  resetArmed,
   onResetTimes,
   onShowAs,
   onTheme,
@@ -39,6 +52,17 @@ export function Settings({
 }: SettingsProps) {
   const { language, t } = useI18n();
   const [busy, startBusy] = useBusyLabel();
+  const [thresholdDraft, setThresholdDraft] = useState(String(payload.notificationsThreshold));
+  useEffect(() => setThresholdDraft(String(payload.notificationsThreshold)), [payload.notificationsThreshold]);
+
+  function saveThreshold() {
+    const threshold = Number(thresholdDraft);
+    if (Number.isInteger(threshold) && threshold >= 1 && threshold <= 100) {
+      sendCommand("set-notifications-threshold", { value: threshold });
+    } else {
+      setThresholdDraft(String(payload.notificationsThreshold));
+    }
+  }
 
   const hostButton = updateButtonFor(payload.update);
   const updateButton = busy ? { ...hostButton, disabled: true, label: t(busy) } : { ...hostButton, label: t(hostButton.label) };
@@ -61,6 +85,17 @@ export function Settings({
 
   return (
     <div className="flex flex-col gap-[var(--section-gap)]">
+      {payload.os === "macos" && cards.length > 0 ? (
+        <div className="flex flex-col gap-[var(--header-card-gap)]">
+          <div className="flex items-center justify-between gap-2">
+            <div className="section-title">{t("Providers")}</div>
+            <button type="button" className="text-[length:var(--sz-badge)] text-label-2 hover:text-foreground" onClick={onResetCustomization}>
+              {t(resetArmed ? "Click again to confirm" : "Reset All Customization")}
+            </button>
+          </div>
+          <Customize embedded cards={cards} layout={layout} onOpen={onOpenProvider} onOpenSettings={onOpenCustomize} onReorder={onReorderProviders} onToggle={onToggleProvider} />
+        </div>
+      ) : null}
       <Section title={t("General")}>
         <SettingRow label={t("Launch at Login")}>
           <Switch
@@ -93,6 +128,35 @@ export function Settings({
           </div>
         ) : null}
       </Section>
+      {payload.os === "macos" ? (
+        <Section title={t("Notifications")}>
+          <SettingRow hint={t("System notifications for quota limits and expiring reset credits.")} label={t("Quota alerts")}>
+            <Switch
+              checked={payload.notificationsEnabled}
+              aria-label={t("Quota alerts")}
+              onCheckedChange={(on) => sendCommand("set-notifications-enabled", { value: on === true })}
+            />
+          </SettingRow>
+          <SettingRow hint={t("Notify when a fresh usage reading reaches this percentage.")} label={t("Alert threshold")}>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                inputMode="numeric"
+                className="h-7 w-14 rounded-[6px] border border-[var(--border)] bg-[var(--control-fill)] px-1.5 text-right tabular-nums"
+                aria-label={t("Alert threshold")}
+                value={thresholdDraft}
+                onChange={(event) => setThresholdDraft(event.target.value)}
+                onBlur={saveThreshold}
+                onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+              />
+              <span className="text-label-2">%</span>
+            </div>
+          </SettingRow>
+        </Section>
+      ) : null}
       {payload.os === "macos" ? (
         <Section title={t("Menu Bar")}>
           <SettingRow label={t("Show All Providers")}>
@@ -228,12 +292,12 @@ export function Settings({
         </div>
       </Section>
       )}
-      <ScreenCrossLinkRow
+      {payload.os === "macos" ? null : <ScreenCrossLinkRow
         icon={<MdiTune />}
         subtitle={t("Choose what's visible and where")}
         title={t("Customize")}
         onClick={onOpenCustomize}
-      />
+      />}
     </div>
   );
 }

@@ -17,10 +17,11 @@ interface CustomizeProps {
   onOpenSettings: () => void;
   onReorder: (ids: string[]) => void;
   onToggle: (id: string, on: boolean) => void;
+  embedded?: boolean;
 }
 
 /** CustomizeProviderListView (L1): one grouped card of provider rows, then the Settings cross-link. */
-export function Customize({ cards, layout, onOpen, onOpenSettings, onReorder, onToggle }: CustomizeProps) {
+export function Customize({ cards, layout, onOpen, onOpenSettings, onReorder, onToggle, embedded = false }: CustomizeProps) {
   const { t } = useI18n();
   const ordered = orderedCards(cards, layout);
   const ids = ordered.map((card) => card.id);
@@ -58,12 +59,12 @@ export function Customize({ cards, layout, onOpen, onOpenSettings, onReorder, on
           })}
         </div>
       </VerticalDnd>
-      <ScreenCrossLinkRow
+      {embedded ? null : <ScreenCrossLinkRow
         icon={<MdiCogOutline />}
         subtitle={t("Startup, appearance and more")}
         title={t("Settings")}
         onClick={onOpenSettings}
-      />
+      />}
     </div>
   );
 }

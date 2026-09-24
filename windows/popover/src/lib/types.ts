@@ -192,6 +192,8 @@ export interface Payload {
   menuBarProvider: string;
   menuBarWindow: "auto" | "session" | "weekly" | "monthly";
   menuBarChart: boolean;
+  notificationsEnabled: boolean;
+  notificationsThreshold: number;
   /** Host OS: macos, windows, or linux. */
   os: string;
   nextRefreshAt: number;

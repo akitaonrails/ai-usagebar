@@ -13,9 +13,8 @@
 //! - [`NotifyState`] is the persisted dedupe map
 //!   (`~/.cache/ai-usagebar/notifications.json`), written atomically under
 //!   the same flock discipline as the vendor caches.
-//! - [`NotifySink`] is the delivery seam. Slice 1 ships `notify-send` on
-//!   Linux and a no-op everywhere else; macOS and Windows delivery slot in
-//!   as new sinks without touching the decision or the state.
+//! - [`NotifySink`] delivers through `notify-send` on Linux and Notification
+//!   Center on macOS, without changing the decision or persisted state.
 //!
 //! Everything here is best-effort: a missing notifier, an unwritable state
 //! file, or a contended lock is a silent skip — a missed notification beats
@@ -49,7 +48,7 @@ const CREDIT_WARNING_SECS: i64 = 48 * 3600;
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A notifier that hangs must not hang the bar with it.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const SPAWN_KILL_AFTER: Duration = Duration::from_secs(5);
 
 /// Urgency band for one notification. `notify-send`'s `-u` maps directly.
@@ -312,8 +311,7 @@ impl NotifyState {
 
 // ─── Delivery seam ─────────────────────────────────────────────────────────
 
-/// Delivery backend. Implementations own one platform each; slice 1 ships
-/// `notify-send` on Linux and a no-op elsewhere.
+/// Delivery backend. Implementations own one platform each.
 ///
 /// `deliver` returns nothing and must never panic: a failing or missing
 /// notifier is ALWAYS a silent no-op, and nothing in this module may change
@@ -322,13 +320,12 @@ pub trait NotifySink {
     fn deliver(&mut self, notification: &Notification);
 }
 
-/// The do-nothing sink: non-Linux delivery is a later slice, and until it
-/// lands the check runs (state stays correct) without side effects.
-#[cfg(any(not(target_os = "linux"), test))]
+/// The do-nothing sink for platforms without a desktop delivery backend.
+#[cfg(any(not(any(target_os = "linux", target_os = "macos")), test))]
 #[derive(Debug, Default)]
 pub struct NoopSink;
 
-#[cfg(any(not(target_os = "linux"), test))]
+#[cfg(any(not(any(target_os = "linux", target_os = "macos")), test))]
 impl NotifySink for NoopSink {
     fn deliver(&mut self, _notification: &Notification) {}
 }
@@ -389,9 +386,9 @@ impl NotifySink for NotifySendSink {
     }
 }
 
-/// Wait for the notifier, killing it at the cap. `notify-send` normally
-/// returns in milliseconds; the cap only matters when the daemon is wedged.
-#[cfg(target_os = "linux")]
+/// Wait for the notifier, killing it at the cap. Desktop delivery normally
+/// returns in milliseconds; the cap only matters when the service is wedged.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn reap(mut child: std::process::Child) {
     let deadline = std::time::Instant::now() + SPAWN_KILL_AFTER;
     loop {
@@ -412,8 +409,35 @@ fn reap(mut child: std::process::Child) {
 fn production_sink() -> Box<dyn NotifySink + Send> {
     #[cfg(target_os = "linux")]
     return Box::new(NotifySendSink::new());
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    return Box::new(MacNotificationSink);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     return Box::new(NoopSink);
+}
+
+/// AppleScript's Standard Additions sends a native Notification Center banner.
+/// Passing title and body as argv keeps provider text out of the script source.
+#[cfg(target_os = "macos")]
+struct MacNotificationSink;
+
+#[cfg(target_os = "macos")]
+impl NotifySink for MacNotificationSink {
+    fn deliver(&mut self, notification: &Notification) {
+        const SCRIPT: &str = "on run argv\n display notification (item 2 of argv) with title (item 1 of argv)\nend run";
+        let spawned = std::process::Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(SCRIPT)
+            .arg("--")
+            .arg(&notification.title)
+            .arg(&notification.body)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(child) = spawned {
+            reap(child);
+        }
+    }
 }
 
 // ─── Orchestration ─────────────────────────────────────────────────────────

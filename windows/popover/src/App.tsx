@@ -83,6 +83,7 @@ export default function App() {
   }
 
   function go(next: Screen) {
+    if (next === "customize" && payload.os === "macos") next = "settings";
     setDirection(SCREEN_DEPTH[next] < SCREEN_DEPTH[screen] ? "back" : "forward");
     setScreen(next);
     setResetArmed(false);
@@ -94,7 +95,7 @@ export default function App() {
       go(aboutFrom === "about" ? "dashboard" : aboutFrom);
       return;
     }
-    if (screen === "provider") go(providerFrom === "dashboard" ? "dashboard" : "customize");
+    if (screen === "provider") go(providerFrom);
     else go("dashboard");
   }
 
@@ -423,12 +424,23 @@ export default function App() {
           {screen === "about" ? <About nowMs={nowMs} payload={payload} /> : null}
           {screen === "settings" ? (
             <Settings
+              cards={cards}
               layout={layout}
               nowMs={nowMs}
               payload={payload}
               onAlwaysShowPace={(alwaysShowPace) => commit({ ...layout, alwaysShowPace })}
               onLanguage={(language) => commit({ ...layout, language })}
               onOpenCustomize={() => go("customize")}
+              onOpenProvider={(id) => openProvider(id, "settings")}
+              onReorderProviders={(ids) => commit({ ...layout, cardOrder: mergeVisibleOrder(layout.cardOrder, ids) })}
+              onToggleProvider={(id, on) => {
+                const hidden = { ...layout.hidden };
+                if (on) delete hidden[id];
+                else hidden[id] = true;
+                commit({ ...layout, hidden });
+              }}
+              onResetCustomization={resetAll}
+              resetArmed={resetArmed}
               onResetTimes={(resetTimes) => commit({ ...layout, resetTimes })}
               onShowAs={(showAs) => commit({ ...layout, showAs })}
               onTheme={(theme) => commit({ ...layout, theme })}

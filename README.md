@@ -29,8 +29,9 @@ codebase.
 - Atomic caches and file locking prevent duplicate requests from multi-monitor
   Waybar setups.
 - Quota-threshold desktop notifications are on by default: a window crossing
-  97% (configurable in `[notifications]`) raises one `notify-send` alert per
-  crossing on Linux, 100% counts as critical, and banked Codex/SuperGrok
+  97% (configurable in `[notifications]` or macOS Preferences) raises one
+  system alert per crossing on Linux and macOS. At 100% the limit is critical,
+  and banked Codex/SuperGrok
   reset credits warn 48h before expiring. Set `enabled = false` under
   `[notifications]` to turn them off — see the
   [configuration reference](docs/configuration.md#notifications).
