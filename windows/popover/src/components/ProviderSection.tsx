@@ -1,13 +1,13 @@
 import type { DraggableAttributes, DraggableSyntheticListeners } from "@dnd-kit/core";
 import type { ReactNode } from "react";
-import MdiAccountCheck from "~icons/mdi/account-check";
-import MdiAccountSwitch from "~icons/mdi/account-switch";
 import MdiAlert from "~icons/mdi/alert";
 import MdiChevronDown from "~icons/mdi/chevron-down";
 import MdiChevronUp from "~icons/mdi/chevron-up";
 import MdiFire from "~icons/mdi/fire";
 import MdiLoading from "~icons/mdi/loading";
 import MdiRestore from "~icons/mdi/restore";
+import MdiStar from "~icons/mdi/star";
+import MdiStarOutline from "~icons/mdi/star-outline";
 import MdiTune from "~icons/mdi/tune-variant";
 import MdiArrowTopRight from "~icons/mdi/arrow-top-right";
 import { Chip } from "@/components/Chip";
@@ -243,7 +243,7 @@ interface ProviderSectionHeaderProps {
  * ProviderSectionHeader: gray provider mark, name, plan badge, stale hint, warning triangle,
  * and on the trailing edge the per-provider shortcuts OpenUsage keeps in the context menu:
  * Customize (this provider's rows) and Reset (its default rows). An account card also gets the
- * switch control first: a green check on the login in use, a switch button on the others. The
+ * switch control first: a filled star on the login in use, an outline star button on the others. The
  * header is also the drag handle, so the buttons stop the pointer-down from starting a drag.
  */
 export function ProviderSectionHeader({
@@ -295,16 +295,17 @@ interface AccountControlProps {
 }
 
 /**
- * The account switch beside the header shortcuts. The active login is a static check, not a
- * button: there is nothing to do there. A running switch spins in place; a failed one keeps the
- * switch button, tinted red, with the reason as its tooltip.
+ * The account switch beside the header shortcuts, in the star language the row menu already
+ * uses: the active login is a static filled star, not a button, since there is nothing to do
+ * there; every other account is an outline star that makes it the active one. A running switch
+ * spins in place; a failed one keeps the outline star, tinted red, with the reason as its tooltip.
  */
 function AccountControl({ account, title, onSwitch }: AccountControlProps) {
   if (account.active) {
     const label = `${title} is the active account`;
     return (
       <span aria-label={label} className="header-action is-active [&_svg]:size-[14px]" role="img" title={label}>
-        <MdiAccountCheck />
+        <MdiStar />
       </span>
     );
   }
@@ -323,7 +324,7 @@ function AccountControl({ account, title, onSwitch }: AccountControlProps) {
   return (
     <HeaderAction
       className={account.error ? "is-failed" : undefined}
-      icon={<MdiAccountSwitch />}
+      icon={<MdiStarOutline />}
       label={label}
       onClick={onSwitch}
     />

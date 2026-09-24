@@ -261,10 +261,10 @@ overwrite the new login. Restart it to use the new account.
 
 With named accounts configured, each account's card in the `ai-usagebar-tray`
 popover shows a switch control beside Customize and Reset. The active login has
-a green check; any other account has a switch button that runs the same
+a filled star; any other account has an outline star that runs the same
 `ai-usagebar account switch` (with `--codex` for a Codex card). A Claude switch
 quits and reopens Claude Desktop when that account also has a Desktop profile.
-The button spins while the switch runs, and a failed switch turns it red with
+The star spins while the switch runs, and a failed switch turns it red with
 the reason in its tooltip.
 
 ### Storage and history conflicts
