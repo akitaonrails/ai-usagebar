@@ -254,6 +254,16 @@ impl Cache {
         self.stale_path().exists()
     }
 
+    /// Drop the payload and its sidecars when the credential behind this cache
+    /// changed hands: they describe the previous login, and a fresh payload
+    /// would be served as the new one's. Best-effort, like the other markers.
+    pub fn forget(&self) {
+        let _ = fs::remove_file(self.payload_path());
+        let _ = fs::remove_file(self.stale_path());
+        let _ = fs::remove_file(self.last_error_path());
+        self.clear_backoff();
+    }
+
     /// Write the `.last_error` marker — first line `code`, everything after it
     /// `msg`. Best-effort, never errors (matches claudebar:478-486 which
     /// silently continues if the cache dir isn't writable).
@@ -468,6 +478,21 @@ mod tests {
         cache.write_payload(b"hello world").unwrap();
         let got = cache.maybe_payload().unwrap();
         assert_eq!(got.as_deref(), Some(&b"hello world"[..]));
+    }
+
+    #[test]
+    fn forget_drops_the_payload_and_its_sidecars() {
+        let (_td, cache) = fixture();
+        cache.write_payload(b"previous login").unwrap();
+        cache.mark_stale();
+        cache.write_last_error(401, "expired");
+        cache.note_rate_limit_at(SystemTime::now());
+        cache.forget();
+        assert!(cache.maybe_payload().unwrap().is_none());
+        assert!(!cache.is_stale());
+        assert!(cache.read_last_error().is_none());
+        assert!(cache.backoff_remaining().is_none());
+        assert!(cache.dir().is_dir());
     }
 
     #[test]

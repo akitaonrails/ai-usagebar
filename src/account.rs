@@ -376,7 +376,7 @@ fn status_lines(report: &serde_json::Value) -> Vec<String> {
         for account in codex {
             out.push(format!(
                 "  {:<12} {:<28}{}",
-                account["label"].as_str().unwrap_or("?"),
+                sanitize_untrusted_line(account["label"].as_str().unwrap_or("?")),
                 if account["signed_in"].as_bool().unwrap_or(false) {
                     "signed in"
                 } else {
@@ -937,7 +937,10 @@ fn switch_cli(config: &Config, args: &SwitchArgs, tolerant: bool) -> Result<bool
 
 fn print_cli_capture(outgoing: Option<&str>) {
     match outgoing {
-        Some(label) => println!("  saving          {label}'s credential back into its own account"),
+        Some(label) => println!(
+            "  saving          {}'s credential back into its own account",
+            sanitize_untrusted_line(label)
+        ),
         None => println!("  saving          nothing to save (--force discarded the live login)"),
     }
 }
@@ -1192,11 +1195,15 @@ fn switch_codex(config: &Config, args: &SwitchArgs) -> i32 {
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
-            eprintln!("ai-usagebar account switch: {error}");
+            eprintln!(
+                "ai-usagebar account switch: {}",
+                sanitize_untrusted_line(&error.to_string())
+            );
             return 1;
         }
     };
-    println!("Codex            → {}", args.label);
+    let shown = sanitize_untrusted_line(args.label);
+    println!("Codex            → {shown}");
     match outcome {
         SwitchOutcome::AlreadyActive => {
             println!("  already the active Codex login; nothing to do");
@@ -1206,11 +1213,16 @@ fn switch_codex(config: &Config, args: &SwitchArgs) -> i32 {
             println!("  (dry run — nothing was changed)");
         }
         SwitchOutcome::Switched { outgoing } => {
+            // The unnamed account's cache is keyed by the default slot, not by
+            // who is signed in there, so it now holds the previous login's
+            // usage. Named accounts keep their own caches.
+            if let Ok(cache) = crate::cache::Cache::for_vendor("openai") {
+                cache.forget();
+            }
             print_cli_capture(outgoing.as_deref());
             println!(
-                "  switched — the Codex CLI, desktop app and IDE extension now sign in as {:?}; \
-                 restart any Codex session that was already open.",
-                args.label
+                "  switched — the Codex CLI, desktop app and IDE extension now sign in as {shown:?}; \
+                 restart any Codex session that was already open."
             );
         }
     }
@@ -1228,6 +1240,7 @@ struct RegisteredCodex {
 /// live `~/.codex` login or sign a new one in under the account's own
 /// `CODEX_HOME`.
 fn add_codex(label: &str, login: bool, adopt: bool) -> i32 {
+    let shown = sanitize_untrusted_line(label);
     let config_path = crate::config::resolved_path().or_else(crate::config::default_path);
     let home = crate::cache::home_dir();
     let registration = match (config_path, home) {
@@ -1240,18 +1253,21 @@ fn add_codex(label: &str, login: bool, adopt: bool) -> i32 {
     let registration = match registration {
         Ok(registration) => registration,
         Err(error) => {
-            eprintln!("ai-usagebar account: could not add Codex account {label:?}: {error}");
+            eprintln!(
+                "ai-usagebar account: could not add Codex account {shown:?}: {}",
+                sanitize_untrusted_line(&error.to_string())
+            );
             return 1;
         }
     };
     if registration.already_existed {
         println!(
-            "Codex account {label:?} is already configured in {}.",
+            "Codex account {shown:?} is already configured in {}.",
             sanitize_untrusted_path(&registration.config_path)
         );
     } else {
         println!(
-            "Added Codex account {label:?} to {}.",
+            "Added Codex account {shown:?} to {}.",
             sanitize_untrusted_path(&registration.config_path)
         );
         println!(
@@ -1280,13 +1296,16 @@ fn add_codex(label: &str, login: bool, adopt: bool) -> i32 {
         return match adopted {
             Ok(()) => {
                 println!(
-                    "The current Codex login is now {label:?}; `account switch <label> --codex` \
+                    "The current Codex login is now {shown:?}; `account switch <label> --codex` \
                      saves it here before switching away."
                 );
                 0
             }
             Err(error) => {
-                eprintln!("ai-usagebar account: could not adopt the current Codex login: {error}");
+                eprintln!(
+                    "ai-usagebar account: could not adopt the current Codex login: {}",
+                    sanitize_untrusted_line(&error.to_string())
+                );
                 1
             }
         };
@@ -1299,7 +1318,7 @@ fn add_codex(label: &str, login: bool, adopt: bool) -> i32 {
         println!("Sign in later with:\n\n  {login_command}\n");
         return 0;
     }
-    println!("Opening `codex login` for {label:?}; your default Codex login is untouched.");
+    println!("Opening `codex login` for {shown:?}; your default Codex login is untouched.");
     println!();
     let mut command = std::process::Command::new("codex");
     command.arg("login").env("CODEX_HOME", &codex_home);
@@ -1378,17 +1397,21 @@ fn register_codex_at(config_path: &Path, label: &str, home: &Path) -> Result<Reg
 /// `account add <label> --adopt-current`: register a Claude account for the
 /// login plain `claude` already uses, without signing in again.
 fn adopt_claude(label: &str) -> i32 {
+    let shown = sanitize_untrusted_line(label);
     let registration = match register(label) {
         Ok(registration) => registration,
         Err(error) => {
-            eprintln!("ai-usagebar account: could not add {label:?}: {error}");
+            eprintln!(
+                "ai-usagebar account: could not add {shown:?}: {}",
+                sanitize_untrusted_line(&error.to_string())
+            );
             return 1;
         }
     };
     if !registration.already_existed {
         println!(
-            "Added Claude account {label:?} to {}.",
-            registration.config_path.display()
+            "Added Claude account {shown:?} to {}.",
+            sanitize_untrusted_path(&registration.config_path)
         );
     }
     let adopted = Config::load_from(&registration.config_path).and_then(|config| {
@@ -1407,13 +1430,16 @@ fn adopt_claude(label: &str) -> i32 {
     match adopted {
         Ok(()) => {
             println!(
-                "The current `claude` login is now {label:?}; `account switch <label>` saves it \
+                "The current `claude` login is now {shown:?}; `account switch <label>` saves it \
                  here before switching away."
             );
             0
         }
         Err(error) => {
-            eprintln!("ai-usagebar account: could not adopt the current Claude login: {error}");
+            eprintln!(
+                "ai-usagebar account: could not adopt the current Claude login: {}",
+                sanitize_untrusted_line(&error.to_string())
+            );
             1
         }
     }

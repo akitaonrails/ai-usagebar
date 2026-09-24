@@ -634,11 +634,16 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                 Some(label) => crate::cache::Cache::for_vendor_account("openai", label)?,
                 None => crate::cache::Cache::for_vendor("openai")?,
             };
-            let creds_path = config.openai.fetch_auth_path(label)?;
+            let route = || config.openai.fetch_auth_path(label);
             let endpoints = crate::openai::fetch::Endpoints::default();
-            let outcome =
-                crate::openai::fetch_snapshot(client, &creds_path, &cache, &endpoints, DEFAULT_TTL)
-                    .await?;
+            let outcome = crate::openai::fetch_snapshot_routed(
+                client,
+                route,
+                &cache,
+                &endpoints,
+                DEFAULT_TTL,
+            )
+            .await?;
             Ok(outcome.into())
         }
         VendorId::Copilot => {
