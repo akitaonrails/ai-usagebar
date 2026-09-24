@@ -15,7 +15,7 @@ use serde_json::{Map, Value};
 use crate::error::{AppError, Result};
 
 /// Per-account schedule registry, stored beside that account's session indexes.
-const SCHEDULED_TASKS: &str = "scheduled-tasks.json";
+pub(super) const SCHEDULED_TASKS: &str = "scheduled-tasks.json";
 
 /// Session-index files that a switch would bring into the target account's
 /// history folder, so it shows the union of everything rather than only the
