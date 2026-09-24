@@ -4,7 +4,7 @@ import MdiRefresh from "~icons/mdi/refresh";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { useI18n } from "@/lib/i18n";
 import type { Card, Layout, MetricRow, Payload, Row } from "@/lib/types";
-import { nextUpdateLabel, resetText, sendCommand, usageGoal } from "../model.js";
+import { nextUpdateLabel, pace, paceVisible, resetText, sendCommand, usageGoal } from "../model.js";
 
 interface MacDashboardProps {
   cards: Card[];
@@ -33,48 +33,52 @@ function Metric({ row, layout, nowMs }: { row: MetricRow; layout: Layout; nowMs:
   const percent = Math.min(100, Math.max(0, Number(row.usedPercent) || 0));
   const reset = resetText(row, layout.resetTimes, nowMs, { locale: language, timeFormat: layout.timeFormat });
   const goal = layout.usageGoal ? usageGoal(row, nowMs) : null;
+  const currentPace = pace(row, nowMs);
+  const projection = paceVisible(currentPace, layout) && currentPace
+    ? language === "pt-BR"
+      ? `Nesse ritmo, chegará a ${Math.round(currentPace.projectedPercent)}% ao fim da janela`
+      : `At this pace, usage will reach ${Math.round(currentPace.projectedPercent)}% by the end of the window`
+    : "";
+  const note = [reset || row.detail, projection].filter(Boolean).join(" · ");
   const balance = row.headline === "value";
   const label = row.label === "Session" ? `${t("Session")} (5h)` : metricLabel(row.label);
   return (
     <div className="mac-metric">
       <div className="mac-metric-heading">
         <span>{label}</span>
-        <strong>{balance ? row.value : `${percent}%`}</strong>
+        {balance ? <strong>{row.value}</strong> : null}
       </div>
-      <div
-        className="mac-meter"
-        role="progressbar"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-      >
-        <span className="mac-meter-fill" data-severity={row.severity} style={{ width: `${percent}%` }} />
-      </div>
-      {reset || row.detail || (balance && percent > 0) ? (
-        <div className="mac-metric-note">
-          <span>{reset || row.detail}</span>
-          {balance && percent > 0 ? <span>{percent}% {t("used")}</span> : null}
+      <div className="mac-meter-line">
+        <div
+          className="mac-meter"
+          role="progressbar"
+          aria-label={label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+        >
+          <span className="mac-meter-fill" data-severity={row.severity} style={{ width: `${percent}%` }} />
         </div>
-      ) : null}
+        <strong className="mac-meter-value">{percent}%</strong>
+      </div>
       {goal ? (
         <div className="mac-usage-goal">
-          <div className="mac-goal-heading">
-            <span>{t(goal.estimated ? "Estimated goal now" : "Goal now")}</span>
-            <strong>{Math.round(goal.percent)}%</strong>
-          </div>
-          <div
-            className="mac-goal-meter"
-            role="progressbar"
-            aria-label={`${label}: ${t(goal.estimated ? "Estimated goal now" : "Goal now")}`}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(goal.percent)}
-          >
-            <span className="mac-goal-meter-fill" style={{ width: `${goal.percent}%` }} />
+          <div className="mac-meter-line" title={t(goal.estimated ? "Estimated goal now" : "Goal now")}>
+            <div
+              className="mac-goal-meter"
+              role="progressbar"
+              aria-label={`${label}: ${t(goal.estimated ? "Estimated goal now" : "Goal now")}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(goal.percent)}
+            >
+              <span className="mac-goal-meter-fill" style={{ width: `${goal.percent}%` }} />
+            </div>
+            <strong className="mac-meter-value">{Math.round(goal.percent)}%</strong>
           </div>
         </div>
       ) : null}
+      {note ? <div className="mac-metric-note">{note}</div> : null}
     </div>
   );
 }

@@ -51,7 +51,11 @@ subtle bar below each metric. It marks how much of the quota would be used now
 at an even pace from the start of its reset window to 100% at the end. Five-hour,
 weekly, and other windows use the provider's reported duration. Monthly windows
 without an exact duration use the previous calendar month and are labeled as
-estimates. Metrics without a reset time or usable window do not show a goal.
+estimates. The current usage and goal percentages sit at the right edge of their
+respective bars. The reset note below them can include the projected usage at
+the end of the window; **Always Show Pacing** makes that projection visible
+even for metrics comfortably below the limit. Metrics without a reset time or
+usable window do not show a goal.
 
 A legacy Swift `NSMenu` (`ai-usagebar-menubar.swift`) remains in this folder
 for the old dropdown. Prefer the tray.

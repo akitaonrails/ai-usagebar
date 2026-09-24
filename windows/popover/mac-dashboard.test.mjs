@@ -34,18 +34,29 @@ try {
           onOpenCustomize() {}, onOpenSettings() {},
         })),
     );
-    return html.match(/<div class="mac-metric-note"><span>([^<]+)<\/span>/)?.[1];
+    return html.match(/<div class="mac-metric-note">([^<]+)<\/div>/)?.[1];
   }
 
   assert.equal(note('exact'), 'Redefine hoje às 12:00');
   assert.equal(note('countdown'), 'Redefine em 1h 0m');
+  const paceCard = {
+    ...card,
+    rows: [{ ...card.rows[0], usedPercent: 63, leftPercent: 37,
+      resetAt: '2026-09-24T13:45:00Z' }],
+  };
   const withGoal = renderToStaticMarkup(React.createElement(LanguageProvider, { language: 'pt-BR' },
     React.createElement(MacDashboard, {
-      cards: [card], layout: { ...emptyLayout(), usageGoal: true }, nowMs, payload,
+      cards: [paceCard], layout: { ...emptyLayout(), usageGoal: true, alwaysShowPace: true }, nowMs, payload,
       onOpenCustomize() {}, onOpenSettings() {},
     })));
-  assert.match(withGoal, /Meta agora<\/span><strong>80%<\/strong>/);
+  assert.match(withGoal, /class="mac-metric-heading"><span>Sessão \(5h\)<\/span><\/div><div class="mac-meter-line">/);
+  assert.match(withGoal, /class="mac-meter-value">63%<\/strong>/);
+  assert.match(withGoal, /class="mac-usage-goal"/);
+  assert.match(withGoal, /class="mac-meter-value">45%<\/strong>/);
   assert.match(withGoal, /class="mac-goal-meter" role="progressbar"/);
+  assert.match(withGoal, /Nesse ritmo, chegará a 140% ao fim da janela/);
+  assert.ok(withGoal.indexOf('class="mac-meter-value">63%') < withGoal.indexOf('class="mac-usage-goal"'));
+  assert.ok(withGoal.indexOf('class="mac-usage-goal"') < withGoal.indexOf('class="mac-metric-note"'));
   assert.doesNotMatch(renderToStaticMarkup(React.createElement(LanguageProvider, { language: 'pt-BR' },
     React.createElement(MacDashboard, {
       cards: [card], layout: emptyLayout(), nowMs, payload,

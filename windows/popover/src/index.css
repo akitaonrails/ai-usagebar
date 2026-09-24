@@ -433,10 +433,26 @@ body:has(.mac-panel) {
   font-variant-numeric: tabular-nums;
 }
 
+.mac-meter-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.mac-meter-value {
+  min-width: 38px;
+  color: var(--label-1);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .mac-meter {
+  flex: 1;
   height: 5px;
   overflow: hidden;
-  margin-top: 8px;
   border-radius: 5px;
   background: var(--fill-tertiary);
 }
@@ -453,26 +469,21 @@ body:has(.mac-panel) {
 .mac-meter-fill[data-severity="critical"] { background: var(--red); }
 
 .mac-usage-goal {
-  margin-top: 9px;
+  margin-top: 6px;
 }
 
-.mac-goal-heading {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+.mac-usage-goal .mac-meter-line {
+  margin-top: 0;
+}
+
+.mac-usage-goal .mac-meter-value {
   color: var(--label-2);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.mac-goal-heading strong {
-  font-weight: 600;
 }
 
 .mac-goal-meter {
+  flex: 1;
   height: 3px;
   overflow: hidden;
-  margin-top: 4px;
   border-radius: 3px;
   background: var(--fill-tertiary);
 }
@@ -485,9 +496,8 @@ body:has(.mac-panel) {
 }
 
 .mac-metric-note {
-  gap: 8px;
   min-height: 14px;
-  margin-top: 5px;
+  margin-top: 8px;
   color: var(--label-2);
   font-size: 10px;
 }
