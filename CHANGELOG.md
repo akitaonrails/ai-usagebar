@@ -11,6 +11,14 @@ Each release is also published at
 
 ### Fixed
 
+- **The macOS tray opens its popover on left click again (#236).** On macOS
+  27 a left click on the status item opened the Refresh / Quit context menu
+  instead of the dashboard. tray-icon 0.24 keeps the menu attached to the
+  `NSStatusItem`, and on macOS 27 an attached menu keeps left clicks from
+  reaching tray-icon's click handler, so `with_menu_on_left_click(false)` had
+  no effect (tauri-apps/tray-icon#355). tray-icon 0.25.1 attaches the menu
+  only while it is being shown. The MSRV is now Rust 1.90, which tray-icon
+  0.25 and muda 0.20 require.
 - **The Omarchy panel keeps the provider you chose.** A refresh gap (fetch
   error, sleep/wake stale list) briefly dropped entries, and the panel's
   fallback re-resolved to the configured primary; when the chosen entry
