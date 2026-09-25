@@ -29,6 +29,42 @@ pub(super) fn status_item_content(chart: bool, has_content: bool) -> StatusItemC
     }
 }
 
+/// One entry of the emergency menu attached to the status item when the
+/// popover's WKWebView could not be built (#249).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct FallbackItem {
+    /// muda menu id the host matches `MenuEvent`s against.
+    pub(super) id: &'static str,
+    pub(super) label: &'static str,
+}
+
+/// The fallback status-item menu for the webview-less tray (#249): an
+/// accessory app (no Dock icon, no app menu) otherwise has no quit affordance
+/// short of `killall`. Refresh stays because the status-item readout works
+/// without the webview; Quit terminates through the same loop exit the
+/// popover's own Quit control uses.
+pub(super) fn fallback_menu_items() -> [FallbackItem; 2] {
+    [
+        FallbackItem {
+            id: "fallback-refresh",
+            label: "Refresh",
+        },
+        FallbackItem {
+            id: "fallback-quit",
+            label: "Quit AI Usage",
+        },
+    ]
+}
+
+/// The fallback menu exists **only** while the popover's webview is absent.
+/// Normal operation keeps the status item menu-free (see `build_tray`) so
+/// both mouse buttons reach the popover; attaching a menu makes AppKit
+/// intercept clicks, which is exactly the trade wanted when there is no
+/// popover to open.
+pub(super) fn fallback_menu_attached(webview_built: bool) -> bool {
+    !webview_built
+}
+
 /// One provider's visible logo (or short-name fallback) and starred values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LogoSegment {
@@ -130,6 +166,31 @@ mod tests {
         );
         assert_eq!(status_item_content(true, true), StatusItemContent::Chart);
         assert_eq!(status_item_content(false, true), StatusItemContent::Logos);
+    }
+
+    /// #249: the emergency menu attaches only when the webview is absent, so
+    /// normal operation — menu-free status item, clicks open the popover — is
+    /// untouched.
+    #[test]
+    fn fallback_menu_attaches_only_without_the_webview() {
+        assert!(!fallback_menu_attached(true));
+        assert!(fallback_menu_attached(false));
+    }
+
+    /// The host matches `MenuEvent` ids against these strings, so they must be
+    /// unique and Quit must be the terminal action of the menu.
+    #[test]
+    fn fallback_menu_items_have_unique_nonempty_ids_ending_in_quit() {
+        let items = fallback_menu_items();
+        assert!(items.iter().all(|item| !item.id.is_empty()));
+        assert!(items.iter().all(|item| !item.label.is_empty()));
+        let ids: Vec<&str> = items.iter().map(|item| item.id).collect();
+        let mut unique = ids.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(ids.len(), unique.len(), "ids must be unique: {ids:?}");
+        assert_eq!(items[items.len() - 1].id, "fallback-quit");
+        assert_eq!(items[0].id, "fallback-refresh");
     }
 
     #[test]

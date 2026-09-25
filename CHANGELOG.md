@@ -54,6 +54,18 @@ Each release is also published at
   dashboard drew it.
 - **Text cut short shows the full value on hover**, and picker values are
   capped so a long one no longer pushes its label out.
+- **Per-provider on/off switches in the settings surfaces (#244).** The
+  terminal Settings overlay grew a Providers section — one on/off row per
+  known vendor — and the Omarchy settings form a Providers section of
+  toggles, both writing `enabled = true/false` under the vendor's own
+  config.toml section through the same comment-preserving save path. Only
+  toggled providers are written, so an untouched save adds no section; an
+  explicit off in the same save wins over the enable-a-pasted-key rule; and
+  the switch names built-in vendors only (the slug is validated against the
+  vendor list before anything is written, on both the TUI and the native
+  stdin patch). Defaults are unchanged — this is only the switch. The
+  overlay's body now scrolls to follow focus, keeping Save reachable with
+  every provider listed.
 
 ### Changed
 
@@ -206,6 +218,14 @@ Each release is also published at
   the full bar as if there were room left, and Always Show Pacing counted it
   as visible. A spent row now has no pace at all, as in OpenUsage; a row one
   percent short of the limit keeps its tick.
+- **The macOS tray offers Quit when the popover's webview cannot be built
+  (#249).** A WKWebView that fails to build left the accessory app (no Dock
+  icon, no app menu) with no menu and no way out but `killall`: clicking the
+  status item flashed an empty window. The status item now attaches a
+  minimal fallback menu — Refresh and Quit AI Usage — only on that failure
+  path, with Quit exiting through the same clean loop shutdown the popover's
+  own Quit control uses. Normal operation is unchanged: the status item stays
+  menu-free so both mouse buttons open the popover.
 
 
 ## [1.24.0] — 2026-09-24

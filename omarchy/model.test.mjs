@@ -148,6 +148,16 @@ assert.match(settingsViewSource, /Log in with Nous Research/);
 assert.match(settingsViewSource, /Log in with GitHub Copilot/);
 assert.match(settingsViewSource, /choose GitHub Copilot as primary and save/);
 assert.match(settingsViewSource, /model:\s*root\.snapshot\.keys/);
+// Provider on/off switches (#244): the section lists the snapshot's vendors
+// and routes every change through the same stdin patch as the keys.
+assert.match(settingsViewSource, /text:\s*"PROVIDERS"/);
+assert.match(settingsViewSource, /model:\s*root\.snapshot\.vendors/);
+assert.match(settingsViewSource, /function\s+collectVendorToggles\s*\(/);
+assert.match(settingsViewSource, /function\s+setVendorOverride\s*\(/);
+assert.match(
+  settingsViewSource,
+  /Model\.buildSettingsPatch\(selectedPrimary,\s*collectChanges\(\),\s*collectVendorToggles\(\)\)/
+);
 assert.match(settingsViewSource, /Paste\s*"\s*\+\s*\(keyCard\.modelData\.secret_label/);
 assert.match(panelSource, /function\s+openNousLogin\s*\(/);
 assert.match(panelSource, /ai-usagebar auth nous login/);
@@ -564,6 +574,59 @@ assert.equal(model.buildSettingsPatch('openai', [{id: 'kimi', action: 'set', val
 assert.equal(model.buildSettingsPatch('openai', [{id: 'kimi', action: 'bogus'}]).ok, false);
 assert.equal(model.parseSettingsApplyResult('{"ok":true}'), true);
 assert.equal(model.parseSettingsApplyResult('{"ok":false}'), false);
+
+// Provider on/off switches (#244): the snapshot carries every provider's
+// enabled state, an older binary's vendor-less snapshot still parses, and the
+// patch gains `vendors` only when a toggle is pending.
+const vendorsRaw = JSON.stringify({
+  schema_version: 1, primary: 'anthropic',
+  primary_choices: [{id: 'anthropic', label: 'Claude'}],
+  keys: [],
+  vendors: [
+    {id: 'anthropic', label: 'Claude', enabled: true},
+    {id: 'grok', label: 'Grok', enabled: false},
+    {id: 'opencode-go', label: 'OpenCode Go', enabled: true},
+    {id: '__proto__', label: 'never', enabled: true},
+    {id: 'kimi', label: 'Kimi', enabled: 'yes'}
+  ]
+});
+const vendorSnapshot = model.parseSettingsSnapshot(vendorsRaw);
+assert.equal(vendorSnapshot.ok, true);
+assert.equal(vendorSnapshot.vendors.length, 4);
+assert.equal(vendorSnapshot.vendors[0].id, 'anthropic');
+assert.equal(vendorSnapshot.vendors[0].enabled, true);
+assert.equal(vendorSnapshot.vendors[1].id, 'grok');
+assert.equal(vendorSnapshot.vendors[1].enabled, false);
+assert.equal(vendorSnapshot.vendors[2].label, 'OpenCode Go');
+// A non-boolean enabled is treated as off, never coerced from a string.
+assert.equal(vendorSnapshot.vendors[3].enabled, false);
+const noVendors = model.parseSettingsSnapshot(JSON.stringify({
+  schema_version: 1, primary: 'anthropic',
+  primary_choices: [{id: 'anthropic', label: 'Claude'}], keys: []
+}));
+assert.equal(noVendors.ok, true);
+assert.equal(noVendors.vendors.length, 0);
+
+const togglePatch = model.buildSettingsPatch('', [], [
+  {id: 'grok', enabled: true},
+  {id: 'zai', enabled: false}
+]);
+assert.equal(togglePatch.ok, true);
+assert.deepEqual(JSON.parse(togglePatch.payload), {
+  schema_version: 1, keys: {}, vendors: {grok: true, zai: false}
+});
+// A save with no pending toggle omits `vendors`, so an older binary still
+// accepts a display-only patch (its ApplyRequest denies unknown fields).
+const noTogglePatch = model.buildSettingsPatch('anthropic', []);
+assert.deepEqual(JSON.parse(noTogglePatch.payload), {
+  schema_version: 1, primary: 'anthropic', keys: {}
+});
+assert.equal(model.buildSettingsPatch('', [{id: 'kimi', action: 'clear'}], undefined).ok, true);
+assert.equal(model.buildSettingsPatch('', [], [{id: '__proto__', enabled: true}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], [{id: 'grok'}, {id: 'grok', enabled: true}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], [{id: 'grok', enabled: true}, {id: 'grok', enabled: false}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], [{id: 'grok', enabled: 'on'}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], []).ok, false);
 
 // Top bar window pinning: auto keeps history, session/weekly/monthly pin one
 // window class, unknown pins fall back to highest instead of blanking.

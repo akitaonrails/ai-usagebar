@@ -593,7 +593,7 @@ function parseSettingsSnapshot(raw) {
     var parsed = JSON.parse(String(raw || ""))
     if (!parsed || Number(parsed.schema_version) !== 1
         || !Array.isArray(parsed.primary_choices) || !Array.isArray(parsed.keys))
-      return { ok: false, error: "The settings command returned an unsupported response.", primary: "", primary_choices: [], keys: [] }
+      return { ok: false, error: "The settings command returned an unsupported response.", primary: "", primary_choices: [], keys: [], vendors: [] }
 
     var choices = []
     for (var i = 0; i < parsed.primary_choices.length && i < 64; i++) {
@@ -620,6 +620,22 @@ function parseSettingsSnapshot(raw) {
       })
     }
 
+    // Provider on/off switches (#244). An older binary sends no vendors list;
+    // the section simply stays hidden rather than failing the whole form.
+    var vendors = []
+    if (Array.isArray(parsed.vendors)) {
+      for (var v = 0; v < parsed.vendors.length && v < 64; v++) {
+        var vendor = parsed.vendors[v]
+        var vendorId = settingsId(vendor && vendor.id)
+        if (vendorId === "") continue
+        vendors.push({
+          id: vendorId,
+          label: cleanText(vendor.label, 120) || vendorId,
+          enabled: vendor.enabled === true
+        })
+      }
+    }
+
     var primary = settingsId(parsed.primary)
     var primaryAvailable = false
     for (var k = 0; k < choices.length; k++) {
@@ -629,13 +645,17 @@ function parseSettingsSnapshot(raw) {
       }
     }
     if (!primaryAvailable) primary = choices.length > 0 ? choices[0].id : ""
-    return { ok: true, error: "", primary: primary, primary_choices: choices, keys: keys }
+    return { ok: true, error: "", primary: primary, primary_choices: choices, keys: keys, vendors: vendors }
   } catch (error) {
-    return { ok: false, error: "The settings command returned invalid JSON.", primary: "", primary_choices: [], keys: [] }
+    return { ok: false, error: "The settings command returned invalid JSON.", primary: "", primary_choices: [], keys: [], vendors: [] }
   }
 }
 
-function buildSettingsPatch(primary, changes) {
+// Build the stdin patch for `settings apply`. `vendorToggles` (#244) is an
+// optional array of {id, enabled}; it is included in the payload only when a
+// toggle is pending, so a display-only save keeps the older patch shape a
+// pre-#244 binary still accepts.
+function buildSettingsPatch(primary, changes, vendorToggles) {
   var primaryId = settingsId(primary)
   var rawPrimary = String(primary || "").trim()
   if (rawPrimary !== "" && primaryId === "")
@@ -658,10 +678,24 @@ function buildSettingsPatch(primary, changes) {
       keys[id] = { action: "set", value: value }
     } else return { ok: false, error: "A settings row has an invalid action.", payload: "" }
   }
-  if (primaryId === "" && seen.length === 0)
+  var vendors = {}
+  var toggles = Array.isArray(vendorToggles) ? vendorToggles : []
+  var seenVendors = []
+  for (var t = 0; t < toggles.length; t++) {
+    var toggle = toggles[t] || {}
+    var vendorId = settingsId(toggle.id)
+    if (vendorId === "" || seenVendors.indexOf(vendorId) >= 0)
+      return { ok: false, error: "A provider switch has an invalid provider id.", payload: "" }
+    if (toggle.enabled !== true && toggle.enabled !== false)
+      return { ok: false, error: "A provider switch needs an on or off state.", payload: "" }
+    seenVendors.push(vendorId)
+    vendors[vendorId] = toggle.enabled
+  }
+  if (primaryId === "" && seen.length === 0 && seenVendors.length === 0)
     return { ok: false, error: "There are no settings changes to save.", payload: "" }
   var patch = { schema_version: 1, keys: keys }
   if (primaryId !== "") patch.primary = primaryId
+  if (seenVendors.length > 0) patch.vendors = vendors
   return {
     ok: true,
     error: "",

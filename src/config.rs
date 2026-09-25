@@ -727,6 +727,40 @@ pub fn set_notification_value(path: &Path, key: &str, value: toml_edit::Value) -
     write_config_document(path, &doc)
 }
 
+/// Flip one provider's `enabled` switch in the config at `path`, creating the
+/// file and the provider's section when either doesn't exist and leaving every
+/// other line — comments, keys, unrelated sections — exactly as it was
+/// (#244). An unchanged document is not rewritten. This is the whitelisted
+/// writer the settings surfaces go through; the slug is validated inside
+/// [`set_vendor_enabled_in_doc`], so no caller can create an arbitrary
+/// section or reach a `[[custom]]` entry from here.
+pub fn set_vendor_enabled(path: &Path, slug: &str, enabled: bool) -> Result<()> {
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    set_vendor_enabled_in_doc(&mut doc, slug, enabled)?;
+    if doc.to_string() == before {
+        return Ok(());
+    }
+    write_config_document(path, &doc)
+}
+
+/// The validated core of [`set_vendor_enabled`], over an already-open
+/// document: strictly `slug → VendorId → config_section()` — never a
+/// caller-chosen section name — then the shared comment-preserving
+/// [`set_bool`] both the Settings overlay and `enable_vendors_in` use.
+pub fn set_vendor_enabled_in_doc(
+    doc: &mut toml_edit::DocumentMut,
+    slug: &str,
+    enabled: bool,
+) -> Result<()> {
+    let Some(vendor) = VendorId::from_slug(slug) else {
+        return Err(AppError::Other(format!(
+            "unknown provider {slug:?}: not a built-in vendor"
+        )));
+    };
+    set_bool(doc, vendor.config_section(), "enabled", enabled)
+}
+
 /// Read `path` into a `toml_edit` document with comments intact. A missing
 /// file is an empty document, so a writer can create the config from nothing;
 /// any other I/O failure or a parse error is reported rather than clobbered.
@@ -4961,6 +4995,78 @@ enabled = true
         assert_eq!(config.notifications.threshold, 85);
         assert!(set_notification_value(&path, "threshold", 101i64.into()).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    /// #244's whitelist: a real slug round-trips onto that vendor's `enabled`
+    /// switch (creating the section when the config never had one) while the
+    /// rest of the file is untouched, and a slug that names no built-in vendor
+    /// is refused without writing anything.
+    #[test]
+    fn vendor_enabled_round_trips_and_rejects_unknown_slugs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# keep\n[zai]\nenabled = true # mine\n").unwrap();
+
+        set_vendor_enabled(&path, "zai", false).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# keep\n"), "{text}");
+        assert!(text.contains("enabled = false # mine"), "{text}");
+        assert!(!config_enabled(&path, VendorId::Zai));
+
+        set_vendor_enabled(&path, "grok", true).unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert!(config.is_enabled(VendorId::Grok));
+        assert!(
+            !config.is_enabled(VendorId::Deepseek),
+            "only the named vendor moves; untouched opt-in vendors stay off"
+        );
+        assert!(
+            config.is_enabled(VendorId::Openai),
+            "an untouched default-on vendor is not switched off either"
+        );
+
+        for bad in ["", "custom", "not-a-vendor", "anthropic "] {
+            let error = set_vendor_enabled(&path, bad, true)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("unknown provider"), "{bad}: {error}");
+        }
+        // A refused write leaves the file byte-for-byte alone.
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("enabled = false # mine")
+        );
+    }
+
+    /// The doc-level core only ever lands on the vendor's own section, and an
+    /// idempotent call does not rewrite the file.
+    #[test]
+    fn set_vendor_enabled_in_doc_targets_the_section_and_stays_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[grok]\nenabled = true\napi_key = \"k\"\n").unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        set_vendor_enabled(&path, "grok", true).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[grok]\nenabled = true\napi_key = \"k\"\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
+
+        let mut doc = toml_edit::DocumentMut::new();
+        set_vendor_enabled_in_doc(&mut doc, "opencode-go", true).unwrap();
+        assert_eq!(doc.to_string(), "[opencode-go]\nenabled = true\n");
+        assert!(set_vendor_enabled_in_doc(&mut doc, "mytool", true).is_err());
+    }
+
+    fn config_enabled(path: &std::path::Path, vendor: VendorId) -> bool {
+        Config::load_from(path).unwrap().is_enabled(vendor)
     }
 
     #[test]
