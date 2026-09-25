@@ -9,6 +9,114 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Grok Bot on Windows.** `[grokbot]` read the desktop app's session only on
+  Linux and macOS and failed closed elsewhere. On Windows it now reads
+  `%APPDATA%\Grok Bot\sand-secrets.json`, whose tokens are Chromium's Windows
+  `v10` values (AES-256-GCM), with the key from the `Local State` beside it,
+  unprotected by DPAPI for the signed-in user. Both files stay read-only;
+  refreshed tokens still go only to ai-usagebar's own cache. Chromium's newer
+  app-bound `v20` encryption is refused with an error that says so.
+- **The macOS tray updates itself.** Releases now also publish the tray, CLI
+  and TUI for Apple Silicon and Intel Macs, as a tarball and as bare binaries
+  with `.sha256` sidecars. The tray checks once an hour (Settings → Updates:
+  Automatic, Notify me or Off), downloads the binary for its architecture,
+  verifies it, swaps it in place and relaunches — nothing is compiled on the
+  user's machine. The CLI and TUI are replaced only when they already sit
+  beside the tray, so an update never drops a new executable into a `PATH`
+  directory that could shadow a `cargo install` copy.
+- **Options → Check for Updates opens a dialog over the current screen**:
+  Checking, then You're Up to Date, Update Available with Install, or the
+  reason it failed with Try Again. Settings → Check Now opens the same dialog.
+
+### Changed
+
+- **The Grok Bot card names the subscription that bills it** — "Cursor
+  Ultra" — instead of the app's own "Grok Bot Plan", which reads the same on
+  every account (the popover trimmed it to a bare "Plan"). It comes from the
+  usage response's `billingBrand` and the plan it reports; a brand not seen
+  yet shows the old label rather than a guess. `{gbt_plan}` is unchanged.
+- **The About screen says what AI Usage is** and links the source code,
+  release notes, issue tracker and license. It no longer repeats the version
+  from the footer or hosts the update check.
+- **An update the tray cannot install offers its release page.** A release
+  without a build for this OS and architecture, an install directory the tray
+  cannot write (a root-owned `/usr/local/bin`), or a copy another tool owns —
+  Homebrew, Nix, a link into place, cargo's `target/` directory — shows View
+  Release instead of an Install button that could only fail or would fight the
+  tool that installed it.
+- **A meter too early in its window for a pace estimate says "Estimating…"**
+  (with Always Show Pacing on), and explains on hover when the pace appears.
+  The estimate now waits 1% of the window but never more than an hour, so a
+  weekly or monthly meter no longer sits blank for 1h 41m or 7h 12m.
+
+### Fixed
+
+- **The Windows tray popover no longer runs under the taskbar.** A tall popover
+  was sized and kept on screen against the whole monitor, so on a 1440 px
+  display with a 48 px taskbar its bottom went behind it. It now uses the
+  monitor's work area and counts the window frame, and it opens just clear of
+  the taskbar, leaving room for its shadow. A click on the tray icon opens it
+  centered on the icon on the side away from the taskbar, so a taskbar docked
+  at the top, left or right works the same; it used to hang a margin above the
+  icon, twice as far from a bottom taskbar as the global shortcut put it.
+- **A click outside the Windows tray popover closes it right after opening.**
+  The popover took focus 400 ms after the tray click and ignored blurs for 400
+  ms more, so a click elsewhere in that time left it open until it was clicked
+  into and out of again. It is focused at once now, and a press outside it
+  closes it whether or not Windows handed it focus. A click on the tray icon
+  while the popover is open closes it; the press used to close it and the
+  release reopened it.
+- **The Windows tray icon is white on a dark taskbar.** It was always drawn in
+  black, which almost disappears on the Windows 11 default. It follows the
+  "default Windows mode" setting the taskbar uses, and recolors when it changes.
+- **A manual update check could fail once with "error sending request".** The
+  tray kept an idle connection that GitHub had already closed; checks now open
+  a fresh one each time.
+- **Enter in the update dialog presses its default button** (Install, Try Again
+  or OK), and closing a menu or popover with the mouse no longer leaves a focus
+  ring on the button that opened it.
+- **A starred SuperGrok meter was missing from the menu-bar bars.** The meter
+  was renamed "Weekly usage" and the popover learned to drop the suffix, but
+  the tray host still only dropped "Build credits", so the star it looked up
+  never matched and that bar was skipped. Both sides now derive star keys from
+  one shared fixture that their tests read, so a rule changed on one side alone
+  fails a test.
+- **The armed Reset button in the tray popover turns red.** The first click of
+  Reset asks for a second; the red it was meant to show never applied, because
+  the button's own style outranked it, so only its tooltip changed.
+- **Install Update did nothing on macOS.** The banner sent a command the macOS
+  host never handled, so the button read "Updating…" and nothing happened.
+- **A failed update check no longer poses as an available update.** The footer
+  dot and the dashboard banner need a release in hand; the dialog reports a
+  failed check.
+- **Tray popover reset details open the way each one is used.** Hovering a
+  meter's "Resets in …" shows the other format (the exact time, or the
+  countdown in exact mode) in the same hint style as Settings; the banked
+  "Rate Limit Resets" list now opens on click, on the Options menu's surface.
+  The two had it the other way round and neither followed the popover's own
+  radius and padding. Banked resets are colored by how soon each expires
+  instead of by position.
+- **Menus and pickers in the tray popover highlight the hovered row in dark
+  mode.** The highlight was the card gray, a shade away from the dark menu
+  background, so it was nearly invisible. Menus, pickers and popover lists now
+  share one hover color per theme.
+- **The update banner matches the other dashboard notices** (padding, icon,
+  button), instead of a near-copy with its own spacing.
+- **Everything clickable in the tray popover shows a hover highlight** — metric
+  readings, row chevrons, dismiss buttons, list rows — the same one the menus
+  use; things that only show a hint on hover get none. Every hover hint is the
+  popover's own tooltip now, never the system's `title` bubble: it appears after
+  half a second, dark gray on the light theme and a step above the cards on the
+  dark one, with no arrow. The footer's "Next update in" countdown is plain
+  text now; Refresh lives in Options and on each provider. Dashboard notices put the
+  icon beside the title, with the message and button on the card's left edge.
+- **Buttons, chips and pickers share one height and label size**, the Options
+  button included; the banked-resets count is a chip like Status and
+  Dashboard.
+
+
 ## [1.24.0] — 2026-09-24
 
 ### Added
