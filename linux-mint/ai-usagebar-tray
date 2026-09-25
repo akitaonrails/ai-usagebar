@@ -11,6 +11,9 @@ import json
 import subprocess
 import threading
 import shutil
+import socket
+import fcntl
+import time
 from datetime import datetime
 
 import gi
@@ -26,11 +29,19 @@ except ValueError:
     except ValueError:
         AppIndicator = None
 
-from gi.repository import Gtk, Gdk, GLib, Pango
+from gi.repository import Gtk, Gdk, GLib
+try:
+    gi.require_version('XApp', '1.0')
+    from gi.repository import XApp
+except (ValueError, ImportError):
+    XApp = None
 
 # Path to ai-usagebar binary
 AI_USAGEBAR_BIN = os.path.expanduser("~/.local/bin/ai-usagebar")
 ICON_NAME = "ai-usagebar"
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache")
+LOCK_PATH = os.path.join(RUNTIME_DIR, "ai-usagebar-tray.lock")
+SOCKET_PATH = os.path.join(RUNTIME_DIR, "ai-usagebar-tray.sock")
 
 def get_theme_mode():
     """Detect if Linux Mint is in Dark or Light mode."""
@@ -373,13 +384,19 @@ class AIUsageTrayApp:
         self.status_icon = None
         self.indicator = None
 
-        # Cinnamon on X11 supports a native GTK status icon with separate
-        # left-click activation and right-click menu events. AppIndicator
-        # exposes only a menu activation on left click in this desktop.
-        if os.environ.get("XDG_SESSION_TYPE", "").lower() == "x11" and "cinnamon" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower():
+        self.xapp_icon = None
+        # Cinnamon's native XApp applet supports distinct left and right clicks.
+        if XApp and "cinnamon" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower() and XApp.StatusIcon.any_monitors():
+            self.xapp_icon = XApp.StatusIcon()
+            self.xapp_icon.set_name("ai-usagebar")
+            self.xapp_icon.set_icon_name(ICON_NAME)
+            self.xapp_icon.set_tooltip_text("AI Usage Bar — abrir painel")
+            self.xapp_icon.connect("activate", self.on_xapp_activate)
+            self.xapp_icon.set_visible(True)
+        elif os.environ.get("XDG_SESSION_TYPE", "").lower() == "x11":
             self.status_icon = Gtk.StatusIcon.new_from_icon_name(ICON_NAME)
             self.status_icon.set_tooltip_text("AI Usage Bar — abrir painel")
-            self.status_icon.connect("activate", lambda icon: self.toggle_window())
+            self.status_icon.connect("activate", lambda icon: self.toggle_window(near_pointer=True))
             self.status_icon.connect("popup-menu", self.on_popup_menu)
             self.status_icon.set_visible(True)
         elif AppIndicator:
@@ -401,33 +418,24 @@ class AIUsageTrayApp:
         menu = Gtk.Menu()
 
         entries = (data or {}).get("entries", [])
-        if entries:
-            for entry in entries:
-                name = entry.get("display_name") or entry.get("name", "Provedor")
-                plan = entry.get("plan")
-                heading = Gtk.MenuItem(label=f"{name}  ·  {plan}" if plan else name)
-                heading.set_sensitive(False)
-                menu.append(heading)
-                metrics = entry.get("metrics") or []
-                for metric in metrics:
-                    value = metric_display(metric)
-                    row = Gtk.MenuItem(label=f"    {metric.get('label', '')}: {value}")
-                    row.set_sensitive(False)
-                    menu.append(row)
-                if entry.get("stale"):
-                    row = Gtk.MenuItem(label="    Dados anteriores")
-                    row.set_sensitive(False)
-                    menu.append(row)
-                if not metrics and entry.get("error"):
-                    row = Gtk.MenuItem(label=f"    {str(entry['error'])[:70]}")
-                    row.set_sensitive(False)
-                    menu.append(row)
-                menu.append(Gtk.SeparatorMenuItem())
-        else:
-            loading = Gtk.MenuItem(label="Carregando uso...")
-            loading.set_sensitive(False)
-            menu.append(loading)
-            menu.append(Gtk.SeparatorMenuItem())
+        summaries = []
+        for entry in entries:
+            metrics = entry.get("metrics") or []
+            if not metrics:
+                continue
+            metric = max(metrics, key=lambda item: item.get("percent") or 0)
+            name = entry.get("display_name") or entry.get("name", "Provedor")
+            suffix = " · antigo" if entry.get("stale") else ""
+            summaries.append(f"{name}: {metric_display(metric)}{suffix}")
+        for summary in summaries[:4]:
+            row = Gtk.MenuItem(label=summary)
+            row.set_sensitive(False)
+            menu.append(row)
+        if not summaries:
+            row = Gtk.MenuItem(label="Carregando uso..." if not entries else "Sem métricas disponíveis")
+            row.set_sensitive(False)
+            menu.append(row)
+        menu.append(Gtk.SeparatorMenuItem())
 
         title_item = Gtk.MenuItem(label="📊 Abrir Painel Completo")
         title_item.connect("activate", lambda w: self.toggle_window())
@@ -452,7 +460,13 @@ class AIUsageTrayApp:
         menu.show_all()
         if self.indicator:
             self.indicator.set_menu(menu)
+        if self.xapp_icon:
+            self.xapp_icon.set_secondary_menu(menu)
         self.menu = menu
+
+    def on_xapp_activate(self, icon, button, activate_time):
+        if button == Gdk.BUTTON_PRIMARY:
+            self.toggle_window(near_pointer=True)
 
     def on_popup_menu(self, icon, button, activate_time):
         self.menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
@@ -460,12 +474,30 @@ class AIUsageTrayApp:
     def update_menu_summary(self, data):
         self.build_menu(data)
 
-    def toggle_window(self):
+    def toggle_window(self, near_pointer=False):
         if self.window.is_visible():
             self.window.hide()
         else:
             self.window.show_all()
+            if near_pointer:
+                self.position_window_near_pointer()
             self.window.present()
+
+    def position_window_near_pointer(self):
+        display = Gdk.Display.get_default()
+        _, pointer_x, pointer_y = display.get_default_seat().get_pointer().get_position()
+        monitor = display.get_monitor_at_point(pointer_x, pointer_y)
+        area = monitor.get_workarea() if monitor else Gdk.Screen.get_default().get_monitor_geometry(0)
+        width, height = self.window.get_size()
+        left = area.x
+        top = area.y
+        right = left + area.width
+        bottom = top + area.height
+        x = max(left, min(pointer_x - width // 2, right - width))
+        y = pointer_y - height - 12
+        if y < top:
+            y = min(pointer_y + 12, bottom - height)
+        self.window.move(x, max(top, y))
 
     def launch_tui(self):
         terminal = shutil.which("x-terminal-emulator") or shutil.which("gnome-terminal")
@@ -503,20 +535,72 @@ class AIUsageTrayApp:
     def _on_data_received(self, data):
         self.latest_data = data
         self.window.render_data(data)
-        if self.indicator or self.status_icon:
+        if self.indicator or self.status_icon or self.xapp_icon:
             self.update_menu_summary(data)
         self.refreshing = False
         self.window.refresh_btn.set_sensitive(True)
         return False
 
 
+def notify_existing(command):
+    for _ in range(15):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(0.5)
+                client.connect(SOCKET_PATH)
+                client.sendall(command.encode("ascii"))
+            return True
+        except (OSError, socket.timeout):
+            time.sleep(0.1)
+    return False
+
+
+def on_ipc_ready(fd, condition, server, app):
+    try:
+        connection, _ = server.accept()
+        with connection:
+            command = connection.recv(32)
+        if command == b"SHOW":
+            app.window.show_all()
+            app.window.present()
+        elif command == b"REFRESH":
+            app.trigger_refresh()
+    except OSError as error:
+        print(f"Tray IPC error: {error}", file=sys.stderr)
+    return True
+
+
 def main():
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        if "--window" in sys.argv and not notify_existing("SHOW"):
+            print("The tray is running but did not respond.", file=sys.stderr)
+        return
+
+    try:
+        os.unlink(SOCKET_PATH)
+    except FileNotFoundError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(SOCKET_PATH)
+    os.chmod(SOCKET_PATH, 0o600)
+    server.listen(4)
+    server.setblocking(False)
     app = AIUsageTrayApp()
+    GLib.io_add_watch(server.fileno(), GLib.IO_IN, on_ipc_ready, server, app)
     # Check if launched with --window or if no tray available
-    if "--window" in sys.argv or not (app.indicator or app.status_icon):
+    if "--window" in sys.argv or not (app.indicator or app.status_icon or app.xapp_icon):
         app.window.show_all()
         app.window.present()
-    Gtk.main()
+    try:
+        Gtk.main()
+    finally:
+        server.close()
+        os.unlink(SOCKET_PATH)
+        os.close(lock_fd)
 
 
 if __name__ == "__main__":
