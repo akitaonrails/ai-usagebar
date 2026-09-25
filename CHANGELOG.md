@@ -168,6 +168,11 @@ Each release is also published at
 - **Buttons, chips and pickers share one height and label size**, the Options
   button included; the banked-resets count is a chip like Status and
   Dashboard.
+- **No pace tick on a spent meter.** A tray popover row at 100% reads "Limit
+  reached", yet it still got a behind verdict, so the even-pace tick sat on
+  the full bar as if there were room left, and Always Show Pacing counted it
+  as visible. A spent row now has no pace at all, as in OpenUsage; a row one
+  percent short of the limit keeps its tick.
 
 
 ## [1.24.0] — 2026-09-24

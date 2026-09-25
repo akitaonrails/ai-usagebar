@@ -783,12 +783,24 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
     'Limit today at 12:30 PM',
   );
 
-  // behind without a run-out instant (the limit is already spent) has no text: the flame alone
+  // a spent meter (100%, "Limit reached") has no pace at all: no tick, no text, not visible
   const spent = pace(row(100, 2 * 3600_000), now);
-  assert.equal(spent.state, 'behind');
-  assert.equal(spent.runsOutMs, null);
+  assert.equal(spent, null);
+  assert.equal(paceTickPercent(spent, 'used'), null);
+  assert.equal(paceTickPercent(spent, 'left'), null);
   assert.equal(paceText(spent, now), '');
-  assert.equal(paceText(spent, now, { resetTimes: 'exact', timeZone: 'UTC' }), '');
+  assert.equal(paceVisible(spent, { alwaysShowPace: true }), false);
+  assert.equal(pace(row(100.5, 2 * 3600_000), now), null); // past the limit is still spent
+  // one percent short of the limit is still a live row: behind, with the tick on the bar
+  const almostSpent = pace(row(99, 2 * 3600_000), now);
+  assert.equal(almostSpent.state, 'behind');
+  assert.equal(almostSpent.elapsedPercent, 40);
+  assert.equal(paceTickPercent(almostSpent, 'used'), 40);
+  assert.equal(paceTickPercent(almostSpent, 'left'), 60);
+  // behind without a run-out instant has no text: the flame alone
+  const noRunOut = { state: 'behind', sparePercent: -100, projectedPercent: 200, runsOutMs: null, elapsedPercent: 40 };
+  assert.equal(paceText(noRunOut, now), '');
+  assert.equal(paceText(noRunOut, now, { resetTimes: 'exact', timeZone: 'UTC' }), '');
 
   // ASSERT: the tick follows the meter's reading — elapsed in Used mode, remaining in Left mode
   assert.equal(paceTickPercent(behind, 'used'), 40);
