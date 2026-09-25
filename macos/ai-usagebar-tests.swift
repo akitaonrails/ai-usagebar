@@ -902,11 +902,13 @@ func testDesktopAccounts() {
                 [DESKTOP_ACCOUNT_ID_PREFIX + "work", CLAUDE_ACCOUNT_ID_PREFIX + "personal"],
                 "menu uses the source selected by Rust status")
 
-    let openRouter = openRouterAccountMenuEntries(["work", "personal"])
-    assertEqual(openRouter.map { $0.id },
-                [OPENROUTER_ACCOUNT_ID_PREFIX + "work",
-                 OPENROUTER_ACCOUNT_ID_PREFIX + "personal"],
+    let router = VendorCatalogEntry(id: "openrouter", name: "OpenRouter", shortName: "or",
+        kind: "api_key", enabled: true, configured: true, needsCredential: true, env: "", login: "")
+    let openRouter = apiKeyAccountMenuEntries(vendor: router, labels: ["work", "personal"])
+    assertEqual(openRouter.map { $0.id }, ["openrouter@work", "openrouter@personal"],
                 "OpenRouter accounts use generic report ids")
+    assertEqual(openRouter.map { $0.name }, ["OpenRouter · work", "OpenRouter · personal"],
+                "OpenRouter account names come from the catalog")
 }
 
 func testSubprocessEnvironment() {
@@ -1055,10 +1057,40 @@ func testCodexAccounts() {
     assertEqual(vendorArgs(for: "openai@work"), ["--vendor", "openai", "--account", "work"],
                 "fetch selects the named auth file via Rust")
     assertEqual(entryDisplayName("openai@work", catalog: ready), "Codex · work", "preference label uses catalog name")
-    assertEqual(preferenceVendorIds(catalog: ready, claude: [], openRouter: [], codex: labels), ids,
+    assertEqual(preferenceVendorIds(catalog: ready, claude: [], apiKeyAccounts: [:], codex: labels), ids,
                 "Preferences includes named Codex accounts")
-    assertEqual(preferenceVendorIds(catalog: disabled, claude: [], openRouter: [], codex: labels), [],
+    assertEqual(preferenceVendorIds(catalog: disabled, claude: [], apiKeyAccounts: [:], codex: labels), [],
                 "Preferences respects disabled Codex")
+}
+
+func testApiKeyAccounts() {
+    print("API-key vendor accounts")
+    func catalog(_ id: String, _ name: String, configured: Bool) -> [VendorCatalogEntry] {
+        [VendorCatalogEntry(id: id, name: name, shortName: "x", kind: "api_key",
+            enabled: true, configured: configured, needsCredential: true, env: "", login: "")]
+    }
+    let labels = ["work", "personal"]
+    let deepseek = catalog("deepseek", "DeepSeek", configured: true)
+    let entries = vendorEntries(active: "overview", catalog: deepseek, codexLabels: { [] },
+                                apiKeyLabels: { $0 == "deepseek" ? labels : [] })
+    assertEqual(entries.map { $0.id }, ["deepseek", "deepseek@work", "deepseek@personal"],
+                "DeepSeek expands into named accounts after the default")
+    assertEqual(entries.map { $0.name }, ["DeepSeek", "DeepSeek · work", "DeepSeek · personal"],
+                "names come from the catalog")
+    assertEqual(vendorEntries(active: "overview", catalog: catalog("orcarouter", "OrcaRouter", configured: false),
+                              codexLabels: { [] }, apiKeyLabels: { _ in ["team"] }).map { $0.id },
+                ["orcarouter@team"], "named accounts need no default key")
+    assertEqual(vendorEntries(active: "overview", catalog: catalog("cursor", "Cursor", configured: true),
+                              codexLabels: { [] }, apiKeyLabels: { _ in labels }).map { $0.id },
+                ["cursor"], "vendors without an accounts array never expand")
+    assertEqual(vendorArgs(for: "deepseek@work"), ["--vendor", "deepseek", "--account", "work"],
+                "fetch selects the named key via Rust")
+    assertEqual(preferenceVendorIds(catalog: deepseek, claude: [], apiKeyAccounts: ["deepseek": labels],
+                                    codex: []),
+                ["deepseek", "deepseek@work", "deepseek@personal"],
+                "Preferences includes named API-key accounts")
+    assertEqual(accountLabels(inTOML: "[[kilo.accounts]]\nlabel = \"team\"\n", vendor: "kilo"), ["team"],
+                "any vendor's array is parsed")
 }
 
 func testEnableVendorCommand() {
@@ -1101,6 +1133,7 @@ func testDisabledVendorPreferences() {
 struct TestRunner {
     static func main() {
         testCodexAccounts()
+        testApiKeyAccounts()
         testEnableVendorCommand()
         testDisabledVendorPreferences()
         testRingArc()

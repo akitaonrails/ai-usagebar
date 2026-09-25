@@ -9,6 +9,34 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Named accounts for every API-key provider.** The `[[openrouter.accounts]]`
+  array (#221) now works for `[zai]`, `[deepseek]`, `[kilo]`, `[novita]`,
+  `[moonshot]`, `[grok]`, `[minimax]`, and `[orcarouter]`: one entry per extra
+  key, each with its own TUI tab, `usage` report entry (`deepseek@work`),
+  macOS menu choice, and `<vendor>/<label>` cache, selected in the widget with
+  `--vendor <vendor> --account <label>`. The section's existing key stays the
+  default account and its cache path does not move; `show_default_account`
+  hides it once every key is named. Labels follow OpenRouter's rules — no path
+  separators, no duplicates, a key source per entry — and an unknown label
+  fails instead of falling back to the default key. Region, team,
+  organization, and display settings stay per provider, which the new
+  [API-key account guide](docs/api-key-accounts.md) spells out. Kimi is left
+  out: its fallback is the Kimi Code CLI's single OAuth login. Existing
+  configs need no change.
+
+### Fixed
+
+- **OrcaRouter from the macOS menu bar.** The menu bar selects a provider with
+  `--vendor <slug>`, but the widget only accepted OrcaRouter as `orca-router`,
+  so `--vendor orcarouter` was rejected and the entry never fetched. The
+  widget now takes the slug; `orca-router` stays accepted as an alias.
+- **`detect` counts a named API-key account as a credential.** A provider whose
+  keys all live in `[[<vendor>.accounts]]` — OpenRouter included — was treated
+  as unconfigured and never switched on, although each named key has a tab of
+  its own.
+
 ## [1.25.0] — 2026-09-25
 
 ### Added

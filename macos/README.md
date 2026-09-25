@@ -238,12 +238,15 @@ Setting `[ui] overview_vendors = ["openai"]` includes all configured Codex
 accounts. Each Overview checkbox still controls that account's visibility.
 Selecting an entry changes whose usage is displayed, not the active Codex login.
 
-## Multiple OpenRouter accounts
+## Multiple API-key accounts
 
-Entries from `[[openrouter.accounts]]` appear as separate menu choices and use
-`--vendor openrouter --account <label>` behind the scenes. Each account keeps
-its own cache. Set `[openrouter] show_default_account = false` when you do not
-want the unnamed key listed. See the main
+Entries from `[[openrouter.accounts]]` — and the same array under `[zai]`,
+`[deepseek]`, `[kilo]`, `[novita]`, `[moonshot]`, `[grok]`, `[minimax]`, and
+`[orcarouter]` — appear as separate menu choices and use
+`--vendor <vendor> --account <label>` behind the scenes. Each account keeps its
+own cache. Set `show_default_account = false` in the provider's section when
+you do not want the unnamed key listed. See the main
+[API-key account guide](../docs/api-key-accounts.md) and the
 [OpenRouter account guide](../docs/openrouter-accounts.md) for configuration.
 
 ## Live config reload

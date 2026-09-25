@@ -33,7 +33,7 @@ use crate::orcarouter;
 use crate::pango::escape;
 use crate::supergrok;
 use crate::theme::Theme;
-use crate::vendor::{HTTP_CLIENT_TIMEOUT, RenderOpts, VendorOutcome};
+use crate::vendor::{HTTP_CLIENT_TIMEOUT, RenderOpts, VendorId, VendorOutcome};
 use crate::waybar::WaybarOutput;
 use crate::widget::cli::{Cli, Vendor};
 use crate::widget::pretty::print_pretty;
@@ -176,13 +176,14 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
 
 fn validate_vendor_options(cli: &Cli, vendor: Vendor) -> Result<()> {
     if cli.account.is_some()
-        && !matches!(
-            vendor,
-            Vendor::Anthropic | Vendor::Openrouter | Vendor::Openai
-        )
+        && !matches!(vendor, Vendor::Anthropic | Vendor::Openai)
+        && !Config::API_KEY_ACCOUNT_VENDORS.contains(&vendor.to_id())
     {
         return Err(AppError::Other(
-            "--account is supported only for Claude, OpenRouter, and Codex (OpenAI)".into(),
+            "--account is supported only for Claude, Codex (OpenAI), and the API-key \
+             vendors with a [[<vendor>.accounts]] array: Z.AI, OpenRouter, DeepSeek, \
+             Kilo, Novita, Moonshot, Grok, MiniMax, and OrcaRouter"
+                .into(),
         ));
     }
     if cli.desktop && vendor != Vendor::Anthropic {
@@ -334,13 +335,8 @@ async fn ollama_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 /// OrcaRouter: Bearer key against the one-api compatible dashboard billing
 /// endpoints — spend in US cents, total credit limit, key expiry.
 async fn orcarouter_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let api_key = crate::config::resolve_api_key(
-        "OrcaRouter",
-        &config.orcarouter.api_key_env,
-        config.orcarouter.api_key.as_deref(),
-    )?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::OrcaRouter)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "orcarouter")?;
     let endpoints = orcarouter::fetch::Endpoints::default();
     let outcome = match orcarouter::fetch_snapshot(
         &client,
@@ -473,13 +469,8 @@ async fn kiro_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn grok_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let key = crate::config::resolve_api_key(
-        "Grok",
-        &config.grok.api_key_env,
-        config.grok.api_key.as_deref(),
-    )?;
+    let (key, cache) = api_key_target(cli, config, VendorId::Grok)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "grok")?;
     let endpoints = grok::fetch::Endpoints::default();
     let outcome = match grok::fetch_snapshot(
         &client,
@@ -545,13 +536,8 @@ async fn supergrok_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn moonshot_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let api_key = crate::config::resolve_api_key(
-        "Moonshot",
-        &config.moonshot.api_key_env,
-        config.moonshot.api_key.as_deref(),
-    )?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Moonshot)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "moonshot")?;
     let (endpoints, currency) = moonshot::fetch::Endpoints::for_region(&config.moonshot.region);
     let outcome = match moonshot::fetch_snapshot(
         &client,
@@ -582,13 +568,8 @@ async fn moonshot_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn minimax_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let api_key = crate::config::resolve_api_key(
-        "MiniMax",
-        &config.minimax.api_key_env,
-        config.minimax.api_key.as_deref(),
-    )?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Minimax)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "minimax")?;
     let endpoints = minimax::fetch::Endpoints::for_region(&config.minimax.region);
     let outcome =
         match minimax::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await {
@@ -611,13 +592,8 @@ async fn minimax_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn novita_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let api_key = crate::config::resolve_api_key(
-        "Novita",
-        &config.novita.api_key_env,
-        config.novita.api_key.as_deref(),
-    )?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Novita)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "novita")?;
     let endpoints = novita::fetch::Endpoints::default();
     let outcome =
         match novita::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await {
@@ -640,13 +616,8 @@ async fn novita_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn kilo_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let api_key = crate::config::resolve_api_key(
-        "Kilo",
-        &config.kilo.api_key_env,
-        config.kilo.api_key.as_deref(),
-    )?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Kilo)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "kilo")?;
     let endpoints = kilo::fetch::Endpoints::default();
     let outcome = match kilo::fetch_snapshot(
         &client,
@@ -714,7 +685,7 @@ async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput
 }
 
 /// The cache for the Codex login `--account` names, kept to one identity the
-/// way [`openrouter_target`] does for a key. The default login keeps the historical
+/// way [`api_key_target`] does for a key. The default login keeps the historical
 /// vendor-root cache; each named account is isolated below `openai/<label>`, so
 /// two ChatGPT subscriptions never serve each other's usage from a warm cache.
 ///
@@ -787,13 +758,8 @@ async fn copilot_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn zai_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let api_key = crate::config::resolve_api_key(
-        "Zai",
-        &config.zai.api_key_env,
-        config.zai.api_key.as_deref(),
-    )?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Zai)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "zai")?;
     let endpoints = zai::fetch::Endpoints::default();
     let outcome = match zai::fetch_snapshot(
         &client,
@@ -824,7 +790,7 @@ async fn zai_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn openrouter_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let (api_key, cache) = openrouter_target(cli, config)?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Openrouter)?;
     let client = http_client()?;
     let endpoints = openrouter::fetch::Endpoints::default();
     let outcome = match openrouter::fetch_snapshot(
@@ -858,26 +824,25 @@ async fn openrouter_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 /// Resolve an OpenRouter key and its cache as one identity. The unnamed key
 /// keeps the historical vendor-root cache; each named key is isolated below
 /// `openrouter/<label>` so fresh data can never cross accounts.
-fn openrouter_target(cli: &Cli, config: &Config) -> Result<(String, Cache)> {
+/// Key and cache for an API-key vendor, honoring `--account` and
+/// `--cache-dir`: a named account reads its own `[[<vendor>.accounts]]` key and
+/// caches under `<slug>/<label>`; the default key keeps the vendor-root cache.
+fn api_key_target(cli: &Cli, config: &Config, vendor: VendorId) -> Result<(String, Cache)> {
     let label = cli.account.as_deref();
-    let api_key = config.openrouter.resolve_api_key(label)?;
+    let api_key = config.resolve_account_api_key_for(vendor, label)?;
+    let slug = vendor.slug();
     let cache = match (cli.cache_dir.as_deref(), label) {
-        (Some(root), Some(label)) => Cache::at(root.join("openrouter").join(label)),
-        (Some(root), None) => Cache::at(root.join("openrouter")),
-        (None, Some(label)) => Cache::for_vendor_account("openrouter", label)?,
-        (None, None) => Cache::for_vendor("openrouter")?,
+        (Some(root), Some(label)) => Cache::at(root.join(slug).join(label)),
+        (Some(root), None) => Cache::at(root.join(slug)),
+        (None, Some(label)) => Cache::for_vendor_account(slug, label)?,
+        (None, None) => Cache::for_vendor(slug)?,
     };
     Ok((api_key, cache))
 }
 
 async fn deepseek_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let api_key = crate::config::resolve_api_key(
-        "DeepSeek",
-        &config.deepseek.api_key_env,
-        config.deepseek.api_key.as_deref(),
-    )?;
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Deepseek)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "deepseek")?;
     let endpoints = deepseek::fetch::Endpoints::default();
     let outcome =
         match deepseek::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await {
@@ -1401,7 +1366,7 @@ mod tests {
         config
             .openrouter
             .accounts
-            .push(crate::config::OpenRouterAccount {
+            .push(crate::config::ApiKeyAccount {
                 label: "work".into(),
                 api_key_env: None,
                 api_key: Some("work-key".into()),
@@ -1409,7 +1374,7 @@ mod tests {
         config
             .openrouter
             .accounts
-            .push(crate::config::OpenRouterAccount {
+            .push(crate::config::ApiKeyAccount {
                 label: "personal".into(),
                 api_key_env: None,
                 api_key: Some("personal-key".into()),
@@ -1417,13 +1382,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let root_str = root.path().to_str().unwrap();
         let cli = cli_with(Some("work"), None, Some(root_str));
-        let (key, cache) = openrouter_target(&cli, &config).unwrap();
+        let (key, cache) = api_key_target(&cli, &config, VendorId::Openrouter).unwrap();
         assert_eq!(key, "work-key");
         assert_eq!(cache.dir(), root.path().join("openrouter/work"));
         cache.write_payload(b"work-only").unwrap();
 
         let personal_cli = cli_with(Some("personal"), None, Some(root_str));
-        let (personal_key, personal_cache) = openrouter_target(&personal_cli, &config).unwrap();
+        let (personal_key, personal_cache) =
+            api_key_target(&personal_cli, &config, VendorId::Openrouter).unwrap();
         assert_eq!(personal_key, "personal-key");
         assert!(
             personal_cache.maybe_payload().unwrap().is_none(),
@@ -1437,7 +1403,7 @@ mod tests {
         config.openrouter.api_key_env.clear();
         config.openrouter.api_key = Some("default-key".into());
         let cli = cli_with(None, None, Some("/tmp/cache"));
-        let (key, cache) = openrouter_target(&cli, &config).unwrap();
+        let (key, cache) = api_key_target(&cli, &config, VendorId::Openrouter).unwrap();
         assert_eq!(key, "default-key");
         assert_eq!(cache.dir(), std::path::Path::new("/tmp/cache/openrouter"));
     }
@@ -1445,10 +1411,59 @@ mod tests {
     #[test]
     fn account_flag_rejects_unrelated_vendors() {
         let cli = cli_with(Some("work"), None, Some("/tmp/cache"));
-        assert!(validate_vendor_options(&cli, Vendor::Zai).is_err());
+        for vendor in [Vendor::Copilot, Vendor::Cursor, Vendor::Kimi, Vendor::Kiro] {
+            assert!(validate_vendor_options(&cli, vendor).is_err(), "{vendor:?}");
+        }
         assert!(validate_vendor_options(&cli, Vendor::Anthropic).is_ok());
-        assert!(validate_vendor_options(&cli, Vendor::Openrouter).is_ok());
         assert!(validate_vendor_options(&cli, Vendor::Openai).is_ok());
+    }
+
+    #[test]
+    fn account_flag_accepts_every_api_key_account_vendor() {
+        let cli = cli_with(Some("work"), None, Some("/tmp/cache"));
+        let accepted: Vec<_> = <Vendor as clap::ValueEnum>::value_variants()
+            .iter()
+            .filter(|vendor| validate_vendor_options(&cli, **vendor).is_ok())
+            .map(|vendor| vendor.to_id())
+            .filter(|id| !matches!(id, VendorId::Anthropic | VendorId::Openai))
+            .collect();
+        assert_eq!(accepted, Config::API_KEY_ACCOUNT_VENDORS);
+    }
+
+    #[test]
+    fn deepseek_named_account_uses_its_key_and_cache_subdir() {
+        let mut config = Config::default();
+        config.deepseek.api_key_env.clear();
+        config.deepseek.api_key = Some("default-key".into());
+        config.deepseek.accounts.push(crate::config::ApiKeyAccount {
+            label: "work".into(),
+            api_key_env: None,
+            api_key: Some("work-key".into()),
+        });
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap();
+
+        let cli = cli_with(Some("work"), None, Some(root_str));
+        let (key, cache) = api_key_target(&cli, &config, VendorId::Deepseek).unwrap();
+        assert_eq!(key, "work-key");
+        assert_eq!(cache.dir(), root.path().join("deepseek/work"));
+
+        // The default key keeps the vendor-root cache it always had.
+        let default_cli = cli_with(None, None, Some(root_str));
+        let (key, cache) = api_key_target(&default_cli, &config, VendorId::Deepseek).unwrap();
+        assert_eq!(key, "default-key");
+        assert_eq!(cache.dir(), root.path().join("deepseek"));
+
+        // An unknown label fails instead of falling back to the default key.
+        let unknown = cli_with(Some("typo"), None, Some(root_str));
+        let err = api_key_target(&unknown, &config, VendorId::Deepseek)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("[[deepseek.accounts]]"), "{err}");
+        assert!(
+            !err.contains("work-key") && !err.contains("default-key"),
+            "{err}"
+        );
     }
 
     #[test]

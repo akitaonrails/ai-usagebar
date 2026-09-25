@@ -1050,6 +1050,13 @@ impl Default for OllamaConfig {
 #[serde(default)]
 pub struct OrcaRouterConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so OrcaRouter never
+    /// loses its only tab.
+    pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
 }
@@ -1058,6 +1065,8 @@ impl Default for OrcaRouterConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "ORCAROUTER_API_KEY".to_string(),
             api_key: None,
         }
@@ -1095,6 +1104,13 @@ impl Default for OpenCodeGoConfig {
 #[serde(default)]
 pub struct ZaiConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so Z.AI never
+    /// loses its only tab.
+    pub show_default_account: bool,
     /// Env var name to read the key from (env wins over `api_key`).
     pub api_key_env: String,
     /// Inline key (fallback when the env var is unset). Chmod 600 your
@@ -1108,6 +1124,8 @@ impl Default for ZaiConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "ZAI_API_KEY".to_string(),
             api_key: None,
             plan_tier: None,
@@ -1121,7 +1139,7 @@ pub struct OpenRouterConfig {
     pub enabled: bool,
     /// Extra OpenRouter accounts beyond the default key. Each account gets a
     /// separate aggregate-view entry and cache directory.
-    pub accounts: Vec<OpenRouterAccount>,
+    pub accounts: Vec<ApiKeyAccount>,
     /// Whether aggregate views include the default (unnamed) key when named
     /// accounts exist. Ignored when `accounts` is empty so OpenRouter never
     /// loses its only tab.
@@ -1155,10 +1173,12 @@ impl Default for OpenRouterConfig {
     }
 }
 
-/// One named OpenRouter account. The default account continues to use the
-/// singular `api_key_env` / `api_key` fields under `[openrouter]`.
+/// One named API-key account — the shape every `[[<vendor>.accounts]]` array
+/// shares. OpenRouter shipped it first (#221); the other API-key vendors
+/// follow the same array. The default account continues to use the singular
+/// `api_key_env` / `api_key` fields under the vendor's own section.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub struct OpenRouterAccount {
+pub struct ApiKeyAccount {
     /// Stable CLI/report label and account-scoped cache subdirectory.
     pub label: String,
     /// Optional environment variable containing this account's key.
@@ -1169,49 +1189,41 @@ pub struct OpenRouterAccount {
     pub api_key: Option<String>,
 }
 
-impl OpenRouterConfig {
-    /// Find a named account or fail loudly instead of falling back to the
-    /// default key (which would show the wrong account's usage).
-    pub fn account(&self, label: &str) -> Result<&OpenRouterAccount> {
-        validate_account_label_for("openrouter", label)?;
-        self.accounts
-            .iter()
-            .find(|account| account.label == label)
-            .ok_or_else(|| {
-                let known: Vec<&str> = self
-                    .accounts
-                    .iter()
-                    .map(|account| account.label.as_str())
-                    .collect();
-                AppError::Credentials(format!(
-                    "openrouter account {label:?} not found in [[openrouter.accounts]]; \
-                     known labels: {known:?}"
-                ))
-            })
-    }
-
-    /// Resolve either the backward-compatible default key or one named
-    /// account. Configured values are never included in an error message.
-    pub fn resolve_api_key(&self, label: Option<&str>) -> Result<String> {
-        match label {
-            None => resolve_api_key("OpenRouter", &self.api_key_env, self.api_key.as_deref()),
-            Some(label) => {
-                let account = self.account(label)?;
-                resolve_api_key_in_section(
-                    &format!("OpenRouter account {label:?}"),
-                    "[[openrouter.accounts]]",
-                    account.api_key_env.as_deref().unwrap_or(""),
-                    account.api_key.as_deref(),
-                )
-            }
-        }
-    }
+/// The `[[<slug>.accounts]]` lookup behind every API-key vendor: find a named
+/// account or fail loudly instead of falling back to the default key (which
+/// would show the wrong account's usage).
+fn api_key_account<'a>(
+    slug: &str,
+    accounts: &'a [ApiKeyAccount],
+    label: &str,
+) -> Result<&'a ApiKeyAccount> {
+    validate_account_label_for(slug, label)?;
+    accounts
+        .iter()
+        .find(|account| account.label == label)
+        .ok_or_else(|| {
+            let known: Vec<&str> = accounts
+                .iter()
+                .map(|account| account.label.as_str())
+                .collect();
+            AppError::Credentials(format!(
+                "{slug} account {label:?} not found in [[{slug}.accounts]]; \
+                 known labels: {known:?}"
+            ))
+        })
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DeepseekConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so DeepSeek never
+    /// loses its only tab.
+    pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
     /// Tank size in the currency `/user/balance` reports, so the remaining
@@ -1225,6 +1237,8 @@ impl Default for DeepseekConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "DEEPSEEK_API_KEY".to_string(),
             api_key: None,
             display_limit: None,
@@ -1268,6 +1282,13 @@ impl Default for KimiConfig {
 #[serde(default)]
 pub struct KiloConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so Kilo never
+    /// loses its only tab.
+    pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
     /// Optional Kilo organization id — scopes the balance to a team via the
@@ -1286,6 +1307,8 @@ impl Default for KiloConfig {
         // disabled and never affects existing installs.
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "KILO_API_KEY".to_string(),
             api_key: None,
             organization_id: None,
@@ -1299,6 +1322,13 @@ impl Default for KiloConfig {
 #[serde(default)]
 pub struct NovitaConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so Novita never
+    /// loses its only tab.
+    pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
     /// Tank size in USD, so the available balance can be drawn as a meter.
@@ -1314,6 +1344,8 @@ impl Default for NovitaConfig {
         // Opt-in like DeepSeek/Kilo: needs an explicit API key.
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "NOVITA_API_KEY".to_string(),
             api_key: None,
             display_limit: None,
@@ -1326,6 +1358,13 @@ impl Default for NovitaConfig {
 #[serde(default)]
 pub struct MinimaxConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so MiniMax never
+    /// loses its only tab.
+    pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
     /// `"global"` → api.minimax.io; `"cn"` → api.minimaxi.com. Unlike
@@ -1341,6 +1380,8 @@ impl Default for MinimaxConfig {
         // Opt-in like the other API-key vendors: needs an explicit key.
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "MINIMAX_API_KEY".to_string(),
             api_key: None,
             region: "global".to_string(),
@@ -1352,6 +1393,13 @@ impl Default for MinimaxConfig {
 #[serde(default)]
 pub struct MoonshotConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so Moonshot never
+    /// loses its only tab.
+    pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
     /// `"global"` → api.moonshot.ai (USD); `"cn"` → api.moonshot.cn (CNY).
@@ -1368,6 +1416,8 @@ impl Default for MoonshotConfig {
         // Opt-in like DeepSeek/Kilo/Novita: needs an explicit API key.
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "MOONSHOT_API_KEY".to_string(),
             api_key: None,
             region: "global".to_string(),
@@ -1381,6 +1431,13 @@ impl Default for MoonshotConfig {
 #[serde(default)]
 pub struct GrokConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so Grok never
+    /// loses its only tab.
+    pub show_default_account: bool,
     /// Env var for the xAI **Management** key (distinct from the inference key).
     pub api_key_env: String,
     pub api_key: Option<String>,
@@ -1398,6 +1455,8 @@ impl Default for GrokConfig {
         // Opt-in: needs a management key (and, for prepaid, a team).
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "XAI_MANAGEMENT_KEY".to_string(),
             api_key: None,
             team_id: None,
@@ -2022,9 +2081,9 @@ impl Config {
         ]
         .into_iter()
         .chain(
-            self.openrouter
-                .accounts
-                .iter()
+            Self::API_KEY_ACCOUNT_VENDORS
+                .into_iter()
+                .flat_map(|id| self.api_key_accounts(id).unwrap_or(&[]))
                 .map(|account| account.api_key.as_deref()),
         )
         .chain(self.custom.iter().map(|c| c.api_key.as_deref()))
@@ -2171,6 +2230,81 @@ impl Config {
         raw.filter(|key| !key.is_empty())
     }
 
+    /// The API-key vendors that take a `[[<vendor>.accounts]]` array —
+    /// OpenRouter's (#221), generalized. Kimi is left out on purpose: its
+    /// fallback is the Kimi Code CLI's single OAuth login, not a key.
+    pub const API_KEY_ACCOUNT_VENDORS: [VendorId; 9] = [
+        VendorId::Zai,
+        VendorId::Openrouter,
+        VendorId::Deepseek,
+        VendorId::Kilo,
+        VendorId::Novita,
+        VendorId::Moonshot,
+        VendorId::Grok,
+        VendorId::Minimax,
+        VendorId::OrcaRouter,
+    ];
+
+    /// The named `[[<vendor>.accounts]]` array, or `None` for a vendor that
+    /// has no such array (see [`Self::API_KEY_ACCOUNT_VENDORS`]).
+    pub fn api_key_accounts(&self, id: VendorId) -> Option<&[ApiKeyAccount]> {
+        match id {
+            VendorId::Zai => Some(&self.zai.accounts),
+            VendorId::Openrouter => Some(&self.openrouter.accounts),
+            VendorId::Deepseek => Some(&self.deepseek.accounts),
+            VendorId::Kilo => Some(&self.kilo.accounts),
+            VendorId::Novita => Some(&self.novita.accounts),
+            VendorId::Moonshot => Some(&self.moonshot.accounts),
+            VendorId::Grok => Some(&self.grok.accounts),
+            VendorId::Minimax => Some(&self.minimax.accounts),
+            VendorId::OrcaRouter => Some(&self.orcarouter.accounts),
+            _ => None,
+        }
+    }
+
+    /// Whether the default key keeps its tab next to the named accounts.
+    /// `true` for every vendor without an accounts array.
+    pub fn show_default_api_key_account(&self, id: VendorId) -> bool {
+        match id {
+            VendorId::Zai => self.zai.show_default_account,
+            VendorId::Openrouter => self.openrouter.show_default_account,
+            VendorId::Deepseek => self.deepseek.show_default_account,
+            VendorId::Kilo => self.kilo.show_default_account,
+            VendorId::Novita => self.novita.show_default_account,
+            VendorId::Moonshot => self.moonshot.show_default_account,
+            VendorId::Grok => self.grok.show_default_account,
+            VendorId::Minimax => self.minimax.show_default_account,
+            VendorId::OrcaRouter => self.orcarouter.show_default_account,
+            _ => true,
+        }
+    }
+
+    /// The default key, or one named `[[<vendor>.accounts]]` key, for a vendor
+    /// in [`Self::API_KEY_ACCOUNT_VENDORS`]. The default path is exactly the
+    /// single-key resolution each vendor always had, error text included. A
+    /// label for a vendor without the array fails loudly rather than falling
+    /// back to the default key, which would show the wrong account's usage.
+    pub fn resolve_account_api_key_for(&self, id: VendorId, label: Option<&str>) -> Result<String> {
+        // The missing-key error predates `display_name()`; Z.AI's always said
+        // "Zai", and its section is derived from this spelling.
+        let name = match id {
+            VendorId::Zai => "Zai",
+            other => other.display_name(),
+        };
+        let Some(label) = label else {
+            return resolve_api_key(name, self.api_key_env_for(id), self.inline_api_key(id));
+        };
+        let slug = id.config_section();
+        let account = api_key_account(slug, self.api_key_accounts(id).unwrap_or(&[]), label)?;
+        // Names the account and its array section; never a configured value.
+        resolve_api_key_in_section(
+            &format!("{name} account {label:?}"),
+            &format!("[[{slug}.accounts]]"),
+            account.api_key_env.as_deref().unwrap_or(""),
+            account.api_key.as_deref(),
+        )
+    }
+
     /// Bar-number settings for one vendor.
     ///
     /// Only the prepaid-balance vendors declare these; everything else keeps
@@ -2306,28 +2440,34 @@ impl Config {
                 )));
             }
         }
-        let mut openrouter_labels = HashSet::new();
-        for account in &self.openrouter.accounts {
-            validate_account_label_for("openrouter", &account.label)?;
-            if !openrouter_labels.insert(&account.label) {
-                return Err(AppError::Credentials(format!(
-                    "duplicate openrouter account label {:?}",
-                    account.label
-                )));
-            }
-            let has_env = account
-                .api_key_env
-                .as_deref()
-                .is_some_and(|name| !name.is_empty());
-            let has_inline = account
-                .api_key
-                .as_deref()
-                .is_some_and(|key| !key.is_empty());
-            if !has_env && !has_inline {
-                return Err(AppError::Credentials(format!(
-                    "openrouter account {:?} must set api_key_env or api_key",
-                    account.label
-                )));
+        // Every `[[<vendor>.accounts]]` array follows OpenRouter's rules: labels
+        // become cache subdirectories, stay unique as CLI selectors and tab
+        // identities, and each entry names a key source.
+        for id in Self::API_KEY_ACCOUNT_VENDORS {
+            let slug = id.config_section();
+            let mut labels = HashSet::new();
+            for account in self.api_key_accounts(id).unwrap_or(&[]) {
+                validate_account_label_for(slug, &account.label)?;
+                if !labels.insert(&account.label) {
+                    return Err(AppError::Credentials(format!(
+                        "duplicate {slug} account label {:?}",
+                        account.label
+                    )));
+                }
+                let has_env = account
+                    .api_key_env
+                    .as_deref()
+                    .is_some_and(|name| !name.is_empty());
+                let has_inline = account
+                    .api_key
+                    .as_deref()
+                    .is_some_and(|key| !key.is_empty());
+                if !has_env && !has_inline {
+                    return Err(AppError::Credentials(format!(
+                        "{slug} account {:?} must set api_key_env or api_key",
+                        account.label
+                    )));
+                }
             }
         }
         self.validate_custom()
@@ -2763,12 +2903,25 @@ enabled = true
     #[test]
     fn openrouter_named_inline_keys_receive_config_file_protection() {
         let mut config = Config::default();
-        config.openrouter.accounts.push(OpenRouterAccount {
+        config.openrouter.accounts.push(ApiKeyAccount {
             label: "work".into(),
             api_key_env: None,
             api_key: Some("<redacted>".into()),
         });
         assert!(config.has_inline_secrets());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_named_inline_api_key_receives_config_file_protection() {
+        for vendor in Config::API_KEY_ACCOUNT_VENDORS {
+            let section = vendor.config_section();
+            let config: Config = toml::from_str(&format!(
+                "[[{section}.accounts]]\nlabel = \"work\"\napi_key = \"<redacted>\"\n"
+            ))
+            .unwrap();
+            assert!(config.has_inline_secrets(), "{vendor:?}");
+        }
     }
 
     #[test]
@@ -3563,11 +3716,15 @@ enabled = false
         assert!(!config.openrouter.show_default_account);
         assert_eq!(config.openrouter.accounts.len(), 2);
         assert_eq!(
-            config.openrouter.resolve_api_key(None).unwrap(),
+            config
+                .resolve_account_api_key_for(VendorId::Openrouter, None)
+                .unwrap(),
             "default-inline"
         );
         assert_eq!(
-            config.openrouter.resolve_api_key(Some("personal")).unwrap(),
+            config
+                .resolve_account_api_key_for(VendorId::Openrouter, Some("personal"))
+                .unwrap(),
             "personal-inline"
         );
     }
@@ -3600,17 +3757,15 @@ enabled = false
 
     #[test]
     fn openrouter_unknown_account_never_falls_back_to_default_key() {
-        let mut config = OpenRouterConfig {
-            api_key: Some("default-secret".into()),
-            ..OpenRouterConfig::default()
-        };
-        config.accounts.push(OpenRouterAccount {
+        let mut config = Config::default();
+        config.openrouter.api_key = Some("default-secret".into());
+        config.openrouter.accounts.push(ApiKeyAccount {
             label: "work".into(),
             api_key_env: None,
             api_key: Some("work-secret".into()),
         });
         let message = config
-            .resolve_api_key(Some("missing"))
+            .resolve_account_api_key_for(VendorId::Openrouter, Some("missing"))
             .unwrap_err()
             .to_string();
         assert!(message.contains("missing") && message.contains("work"));
@@ -3620,22 +3775,121 @@ enabled = false
 
     #[test]
     fn openrouter_account_key_errors_do_not_echo_configured_values() {
-        let config = OpenRouterConfig {
-            accounts: vec![OpenRouterAccount {
-                label: "work".into(),
-                api_key_env: Some("sk_pasted_secret".into()),
-                api_key: None,
-            }],
-            ..OpenRouterConfig::default()
-        };
+        let mut config = Config::default();
+        config.openrouter.accounts.push(ApiKeyAccount {
+            label: "work".into(),
+            api_key_env: Some("sk_pasted_secret".into()),
+            api_key: None,
+        });
         let _g = env_guard();
         unsafe { std::env::remove_var("sk_pasted_secret") };
         let message = config
-            .resolve_api_key(Some("work"))
+            .resolve_account_api_key_for(VendorId::Openrouter, Some("work"))
             .unwrap_err()
             .to_string();
         assert!(message.contains("[[openrouter.accounts]]"));
         assert!(!message.contains("sk_pasted_secret"));
+    }
+
+    #[test]
+    fn every_api_key_account_vendor_validates_its_array_like_openrouter() {
+        for vendor in Config::API_KEY_ACCOUNT_VENDORS {
+            let section = vendor.config_section();
+            let parse = |accounts: &str| -> Result<Config> {
+                let config: Config =
+                    toml::from_str(&format!("[{section}]\nenabled = true\n{accounts}")).unwrap();
+                config.validate().map(|()| config)
+            };
+            let config = parse(&format!(
+                "[[{section}.accounts]]\nlabel = \"work\"\napi_key = \"k\"\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                config.api_key_accounts(vendor).unwrap().len(),
+                1,
+                "{vendor:?}"
+            );
+            assert!(config.show_default_api_key_account(vendor), "{vendor:?}");
+
+            let duplicate = parse(&format!(
+                "[[{section}.accounts]]\nlabel = \"work\"\napi_key = \"a\"\n\
+                 [[{section}.accounts]]\nlabel = \"work\"\napi_key = \"b\"\n"
+            ))
+            .unwrap_err()
+            .to_string();
+            assert!(
+                duplicate.contains(&format!("duplicate {section} account label")),
+                "{duplicate}"
+            );
+
+            let keyless = parse(&format!("[[{section}.accounts]]\nlabel = \"work\"\n"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                keyless.contains("must set api_key_env or api_key"),
+                "{keyless}"
+            );
+
+            // A label becomes a cache subdirectory, so a path is refused.
+            assert!(
+                parse(&format!(
+                    "[[{section}.accounts]]\nlabel = \"../x\"\napi_key = \"k\"\n"
+                ))
+                .is_err(),
+                "{vendor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn named_api_key_accounts_resolve_their_own_key_and_never_the_default() {
+        let mut config = Config::default();
+        config.deepseek.api_key_env.clear();
+        config.deepseek.api_key = Some("default-key".into());
+        config.deepseek.accounts.push(ApiKeyAccount {
+            label: "work".into(),
+            api_key_env: Some("AI_USAGEBAR_TEST_DEEPSEEK_WORK".into()),
+            api_key: Some("work-inline".into()),
+        });
+        let _g = env_guard();
+        unsafe { std::env::set_var("AI_USAGEBAR_TEST_DEEPSEEK_WORK", "work-env") };
+        let resolve = |label| config.resolve_account_api_key_for(VendorId::Deepseek, label);
+        assert_eq!(resolve(None).unwrap(), "default-key");
+        assert_eq!(resolve(Some("work")).unwrap(), "work-env", "env wins");
+        unsafe { std::env::remove_var("AI_USAGEBAR_TEST_DEEPSEEK_WORK") };
+        assert_eq!(resolve(Some("work")).unwrap(), "work-inline");
+
+        let unknown = resolve(Some("typo")).unwrap_err().to_string();
+        assert!(unknown.contains("[[deepseek.accounts]]"), "{unknown}");
+        assert!(
+            unknown.contains("\"work\""),
+            "lists known labels: {unknown}"
+        );
+        assert!(!unknown.contains("default-key"), "{unknown}");
+    }
+
+    #[test]
+    fn the_default_key_error_keeps_each_vendors_historic_wording() {
+        let mut config = Config::default();
+        config.zai.api_key_env.clear();
+        config.minimax.api_key_env.clear();
+        let zai = config
+            .resolve_account_api_key_for(VendorId::Zai, None)
+            .unwrap_err()
+            .to_string();
+        let expected = resolve_api_key("Zai", "", None).unwrap_err().to_string();
+        assert_eq!(zai, expected);
+        assert!(zai.contains("[zai]"), "{zai}");
+        let minimax = config
+            .resolve_account_api_key_for(VendorId::Minimax, None)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            minimax,
+            resolve_api_key("MiniMax", "", None)
+                .unwrap_err()
+                .to_string()
+        );
     }
 
     #[test]
