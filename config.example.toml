@@ -496,13 +496,11 @@ enabled = false
 api_key_env = "OPENCODE_GO_API_KEY"
 # api_key = "[REDACTED]"  # optional inline fallback; prefer the environment
 
-# Command Code (commandcode.ai). Enabled by default, like OpenAI/Codex; when no
-# local agent harness is signed in, its TUI tab reports that state. There is no
-# key to paste: the OAuth
-# credential written by the official `commandcode` CLI is reused as-is, and
-# it is only ever read, never refreshed or rewritten.
+# Command Code (commandcode.ai). Leave disabled if you do not use it. To opt in,
+# set enabled = true; the OAuth credential written by the official `commandcode`
+# CLI is reused as-is, never refreshed or rewritten.
 [commandcode]
-enabled = true
+enabled = false
 # Override where the credential is looked for. Leave commented out to search,
 # in order:
 #   ~/.commandcode/auth.json   (official command-code CLI)

@@ -975,23 +975,13 @@ pub struct OpenCodeGoConfig {
 
 /// Command Code reads the OAuth credential from the official CLI or pi, so it
 /// has no API key of its own. `auth_paths` overrides that search list for a
-/// non-standard install. It is enabled by default, like OpenAI/Codex; when no
-/// local credential exists the TUI reports that tab as unavailable instead of
-/// silently hiding the provider.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// non-standard install. It is disabled until explicitly enabled or detected
+/// from a local credential.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CommandCodeConfig {
     pub enabled: bool,
     pub auth_paths: Option<Vec<PathBuf>>,
-}
-
-impl Default for CommandCodeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            auth_paths: None,
-        }
-    }
 }
 
 /// Ollama Cloud (`ollama.com/api/usage`). Disabled by default: the local
@@ -2637,13 +2627,12 @@ mod tests {
     }
 
     #[test]
-    fn defaults_enable_only_the_five_core_vendors() {
+    fn defaults_enable_only_the_four_core_vendors() {
         let c = Config::default();
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
         assert!(c.is_enabled(VendorId::Zai));
         assert!(c.is_enabled(VendorId::Openrouter));
-        assert!(c.is_enabled(VendorId::CommandCode));
         for opt_in in [
             VendorId::AnthropicApi,
             VendorId::Copilot,
@@ -2658,12 +2647,25 @@ mod tests {
             VendorId::Cursor,
             VendorId::Minimax,
             VendorId::Kiro,
+            VendorId::CommandCode,
             VendorId::OrcaRouter,
             VendorId::ModelStudio,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
-        assert_eq!(c.enabled_vendors().len(), 5);
+        assert_eq!(c.enabled_vendors().len(), 4);
+    }
+
+    #[test]
+    fn commandcode_is_opt_in_when_loading_existing_configs() {
+        let absent: Config = toml::from_str("[openai]\nenabled = true\n").unwrap();
+        assert!(!absent.is_enabled(VendorId::CommandCode));
+
+        let opted_in: Config = toml::from_str("[commandcode]\nenabled = true\n").unwrap();
+        assert!(opted_in.is_enabled(VendorId::CommandCode));
+
+        let opted_out: Config = toml::from_str("[commandcode]\nenabled = false\n").unwrap();
+        assert!(!opted_out.is_enabled(VendorId::CommandCode));
     }
 
     #[test]
@@ -3614,7 +3616,6 @@ enabled = false
                 VendorId::Openai,
                 VendorId::Zai,
                 VendorId::Openrouter,
-                VendorId::CommandCode,
             ]
         );
     }
@@ -3781,7 +3782,6 @@ enabled = false
                 VendorId::Openrouter,
                 VendorId::Deepseek,
                 VendorId::Kimi,
-                VendorId::CommandCode,
             ]
         );
     }

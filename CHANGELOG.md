@@ -93,6 +93,11 @@ Each release is also published at
 
 ### Fixed
 
+- **Command Code no longer appears without a login on fresh configurations.**
+  It was enabled by default, so the bar showed a red credentials error even for
+  people who never used it. It now starts off and can be enabled explicitly or
+  by local credential detection. Existing explicit `[commandcode] enabled = true`
+  settings remain respected; switch that setting off to hide it.
 - **Antigravity says what a free plan means.** Accounts whose plan does not
   include Antigravity get 403 `SUBSCRIPTION_REQUIRED` from the cloud quota
   fallback; the widget called that a rejected session, sending the user to
