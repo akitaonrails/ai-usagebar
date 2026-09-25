@@ -157,6 +157,28 @@ pub async fn fetch_quota(
         };
         let status = resp.status();
         if matches!(status.as_u16(), 401 | 403) {
+            // Google answers 403 with `SUBSCRIPTION_REQUIRED` when the
+            // account's plan does not include Antigravity — the session is
+            // fine, the plan is the problem, and the generic "session was
+            // rejected" wording sends the user to re-sign-in for nothing
+            // (#256). Only a body that says otherwise keeps that wording.
+            if status.as_u16() == 403 {
+                if let Ok(bytes) = read_body_capped(resp, MAX_BODY_BYTES).await
+                    && String::from_utf8_lossy(&bytes).contains("SUBSCRIPTION_REQUIRED")
+                {
+                    return Err(AppError::Http {
+                        status: 403,
+                        body: "this account's plan has no Antigravity quota — the Cloud Code \
+                               API requires a paid subscription, so there is nothing to \
+                               report (disable [antigravity] if this is expected)"
+                            .into(),
+                    });
+                }
+                return Err(AppError::Http {
+                    status: 403,
+                    body: SESSION_REJECTED.into(),
+                });
+            }
             return Err(AppError::Http {
                 status: status.as_u16(),
                 body: SESSION_REJECTED.into(),
@@ -561,6 +583,67 @@ mod tests {
         }
         daily.assert_async().await;
         prod.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn quota_403_subscription_required_names_the_real_problem() {
+        // #256: a free-plan account gets 403 SUBSCRIPTION_REQUIRED — the
+        // session is fine, the plan is the problem. The wording must say so
+        // instead of sending the user to re-sign-in for nothing.
+        let mut server = mockito::Server::new_async().await;
+        let daily = server
+            .mock("POST", "/daily/quota")
+            .with_status(403)
+            .with_body(
+                r#"{"error":{"code":403,"status":"PERMISSION_DENIED","details":
+                     [{"reason":"SUBSCRIPTION_REQUIRED","domain":"cloud.google.com"}]}}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let prod = server
+            .mock("POST", "/prod/quota")
+            .with_status(200)
+            .with_body("{}")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let err = fetch_quota(&reqwest::Client::new(), &endpoints(&server), "AT")
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Http { status, body } => {
+                assert_eq!(status, 403);
+                assert!(body.contains("paid subscription"), "{body}");
+                assert!(!body.contains("SUBSCRIPTION_REQUIRED"), "{body}");
+            }
+            other => panic!("expected Http, got {other:?}"),
+        }
+        daily.assert_async().await;
+        prod.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn quota_403_without_subscription_reason_keeps_the_session_wording() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("POST", "/daily/quota")
+            .with_status(403)
+            .with_body(r#"{"error":{"message":"acl detail"}}"#)
+            .create_async()
+            .await;
+
+        let err = fetch_quota(&reqwest::Client::new(), &endpoints(&server), "AT")
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Http { status, body } => {
+                assert_eq!(status, 403);
+                assert_eq!(body, SESSION_REJECTED);
+            }
+            other => panic!("expected Http, got {other:?}"),
+        }
     }
 
     #[tokio::test]

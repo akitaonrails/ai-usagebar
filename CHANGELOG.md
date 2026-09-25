@@ -53,6 +53,12 @@ Each release is also published at
 
 ### Fixed
 
+- **Antigravity says what a free plan means.** Accounts whose plan does not
+  include Antigravity get 403 `SUBSCRIPTION_REQUIRED` from the cloud quota
+  fallback; the widget called that a rejected session, sending the user to
+  re-sign-in for nothing. The message now says the plan has no quota to
+  report and names the `[antigravity]` toggle, and only a 403 without that
+  reason keeps the session wording. (#256)
 - **The Windows tray popover no longer runs under the taskbar.** A tall popover
   was sized and kept on screen against the whole monitor, so on a 1440 px
   display with a 48 px taskbar its bottom went behind it. It now uses the
