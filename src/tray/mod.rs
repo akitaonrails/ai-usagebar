@@ -44,6 +44,9 @@ mod placement;
 // everywhere like `placement`; only the Windows host calls them.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod blur;
+// Where the Windows popover's WebView2 profile lives, and the one-time adoption of the old one.
+// Paths and file copies, compiled everywhere like `placement`; only the Windows host calls it.
+mod profile;
 // Popover style parsing compiles everywhere so Linux CI runs its unit tests;
 // the native tray hosts use it on Windows and macOS.
 #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]

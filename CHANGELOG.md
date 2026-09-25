@@ -100,6 +100,16 @@ Each release is also published at
 
 ### Fixed
 
+- **The Windows tray popover keeps its layout when the exe moves.** WebView2
+  kept the popover's profile next to the exe (`<exe dir>\ai-usagebar-tray.exe.WebView2`),
+  so running the tray from another folder, or a Scoop update into a new
+  version folder, started from an empty profile and lost the Customize
+  layout, theme, style and dismissed hints; under Program Files the folder is
+  not writable at all. The profile now lives in
+  `%LOCALAPPDATA%\ai-usagebar\popover`, beside `detect.json`. The first run
+  copies the `Local Storage` of the profile beside the exe (the layout, a few
+  KB) into it and leaves the old folder alone. If the folder cannot be created the popover
+  falls back to the old location and still opens.
 - **Antigravity says what a free plan means.** Accounts whose plan does not
   include Antigravity get 403 `SUBSCRIPTION_REQUIRED` from the cloud quota
   fallback; the widget called that a rejected session, sending the user to

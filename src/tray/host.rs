@@ -32,7 +32,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetWindowTextW, GetWindowThreadProcessId, SM_CXSMICON, WindowFromPoint,
 };
 use wry::http::{Request, Response, StatusCode, header::CONTENT_TYPE};
-use wry::{WebView, WebViewBuilder};
+use wry::{WebContext, WebView, WebViewBuilder};
 
 use super::blur::{self, Blur, Foreground, PressHide, Verdict};
 use super::hotkey::{self, HotkeyBinding};
@@ -43,7 +43,7 @@ use super::payload::{
 use super::placement::{self, Area, Insets};
 use super::style::PopoverStyle;
 use super::updates::Updates;
-use super::{now_ms, startup, taskbar_theme, tui_launch, update_flow};
+use super::{now_ms, profile, startup, taskbar_theme, tui_launch, update_flow};
 use crate::config::{Config, UpdateMode};
 use crate::update::{current_os, sweep_old};
 
@@ -164,6 +164,9 @@ struct MenuItems {
 struct TrayState {
     window: Window,
     webview: Option<WebView>,
+    /// The context the webview was built with. wry ties the user-data folder to it, so it must
+    /// outlive the webview: kept here, never in a `build_webview` local.
+    _web_context: WebContext,
     tray: TrayIcon,
     menu: MenuItems,
     context_menu: Menu,
@@ -295,7 +298,8 @@ fn run_loop() -> Result<(), String> {
     }
 
     let theme = Theme::Light;
-    let webview = build_webview(&window, proxy.clone()).ok();
+    let mut web_context = popover_web_context();
+    let webview = build_webview(&mut web_context, &window, proxy.clone()).ok();
     if webview.is_none() {
         let _ = tray.set_tooltip(Some(WEBVIEW2_MISSING));
     }
@@ -303,6 +307,7 @@ fn run_loop() -> Result<(), String> {
     let mut state = TrayState {
         window,
         webview,
+        _web_context: web_context,
         tray,
         menu,
         context_menu,
@@ -1328,11 +1333,34 @@ fn refresh_icon(state: &mut TrayState) {
     }
 }
 
-fn build_webview(window: &Window, proxy: EventLoopProxy<UserEvent>) -> Result<WebView, String> {
+/// The WebView2 user-data folder, pinned under the cache root (see `profile`) so the popover's
+/// layout survives updates, a move of the exe and a read-only install dir. The first run adopts
+/// the layout from the old profile next to the exe. If the folder cannot be created the context
+/// carries no directory and WebView2 falls back to that old default: the popover still opens,
+/// only without a stable profile.
+fn popover_web_context() -> WebContext {
+    let Some(dir) = crate::cache::xdg_cache_dir()
+        .ok()
+        .map(|root| profile::popover_data_dir(&root))
+        .filter(|dir| std::fs::create_dir_all(dir).is_ok())
+    else {
+        return WebContext::new(None);
+    };
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = profile::adopt_legacy_local_storage(&profile::legacy_local_storage(&exe), &dir);
+    }
+    WebContext::new(Some(dir))
+}
+
+fn build_webview(
+    web_context: &mut WebContext,
+    window: &Window,
+    proxy: EventLoopProxy<UserEvent>,
+) -> Result<WebView, String> {
     // Transparent at creation and left that way (see `apply_popover_style`): WebView2 takes the
     // controller's default background from its creation options, and an opaque one never goes
     // back to transparent. Classic's page paints its own solid surface over the viewport.
-    WebViewBuilder::new()
+    WebViewBuilder::new_with_web_context(web_context)
         .with_custom_protocol("aiub".into(), move |_id, request| {
             protocol_response(request)
         })

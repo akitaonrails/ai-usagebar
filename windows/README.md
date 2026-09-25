@@ -195,6 +195,9 @@ Open TUI launches `ai-usagebar-tui` in Windows Terminal (`wt.exe -e …`) when
 present, otherwise `conhost.exe`. Provider keys stay in the TUI (`s`).
 Provider order, hidden providers, Always Visible / On Demand rows, theme,
 “show usage as” and reset-time format are remembered in the popover.
+That memory is the popover's WebView2 profile, kept in
+`%LOCALAPPDATA%\ai-usagebar\popover\`, so it survives updates and moves of
+the install directory.
 Provider marks live in `windows/popover/src/icons/providers/` (OpenUsage, MIT;
 simple-icons, CC0) and load through an `unplugin-icons` custom collection;
 a provider without a mark shows its initials — including `[[custom]]`
