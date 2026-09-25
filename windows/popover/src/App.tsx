@@ -134,12 +134,17 @@ export default function App() {
   }
 
   useEffect(() => {
-    applyTheme(layout.theme);
+    // The host tints its native backdrop by the page's theme, so it hears about every change,
+    // including a System theme flipping with the OS, which moves no height to report.
+    const apply = () => {
+      applyTheme(layout.theme);
+      sendCommand("resize", { theme: resolvedTheme(layout.theme), style: layout.popoverStyle });
+    };
+    apply();
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyTheme(layout.theme);
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, [layout.theme]);
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [layout.theme, layout.popoverStyle]);
 
   useEffect(() => {
     document.documentElement.lang = layout.language;

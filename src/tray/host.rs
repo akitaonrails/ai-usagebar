@@ -21,8 +21,8 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND,
 };
 use windows_sys::Win32::Graphics::Dwm::{
-    DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
+    DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
 use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
@@ -144,6 +144,13 @@ impl Theme {
             Self::Dark => DARK_BACKGROUND,
         }
     }
+
+    fn window_theme(self) -> tao::window::Theme {
+        match self {
+            Self::Light => tao::window::Theme::Light,
+            Self::Dark => tao::window::Theme::Dark,
+        }
+    }
 }
 
 struct MenuItems {
@@ -182,8 +189,6 @@ struct TrayState {
     theme: Theme,
     /// Last style requested by the page; this also controls layout width.
     style: PopoverStyle,
-    /// Whether DWM accepted the backdrop for the current Native style.
-    backdrop_active: bool,
     /// DWM refused the system backdrop (Windows 10): Native stays solid, untried again.
     backdrop_refused: bool,
     /// Last valid CSS/logical height reported by the page.
@@ -235,6 +240,8 @@ fn run_loop() -> Result<(), String> {
         .with_visible(false)
         .with_transparent(true)
         .with_no_redirection_bitmap(true)
+        // The page's theme, never the system's: see `apply_theme`. Light until the page says.
+        .with_theme(Some(Theme::Light.window_theme()))
         .with_decorations(false)
         .with_always_on_top(true)
         .with_resizable(false)
@@ -310,7 +317,6 @@ fn run_loop() -> Result<(), String> {
         last_tray_rect: None,
         theme,
         style: PopoverStyle::Classic,
-        backdrop_active: false,
         backdrop_refused: false,
         popover_height: WINDOW_HEIGHT,
         ink,
@@ -881,9 +887,11 @@ fn apply_theme(state: &mut TrayState, theme: Theme) {
         return;
     }
     state.theme = theme;
-    if state.backdrop_active {
-        set_immersive_dark_mode(&state.window, theme);
-    } else if state.backdrop_refused
+    // Through tao, not DwmSetWindowAttribute: tao rewrites the window's dark-mode attribute
+    // from its own preferred theme on every WM_SETTINGCHANGE, and with none set it followed the
+    // system, so a light Windows put light Acrylic under the dark page's white text.
+    state.window.set_theme(Some(theme.window_theme()));
+    if state.backdrop_refused
         && let Some(webview) = state.webview.as_ref()
     {
         let _ = webview.set_background_color(theme.background());
@@ -905,7 +913,6 @@ fn apply_popover_style(state: &mut TrayState, style: PopoverStyle) {
         PopoverStyle::Classic => {
             set_system_backdrop(&state.window, DWMSBT_NONE);
             state.style = PopoverStyle::Classic;
-            state.backdrop_active = false;
         }
         PopoverStyle::Native => {
             if state.backdrop_refused {
@@ -920,9 +927,7 @@ fn apply_popover_style(state: &mut TrayState, style: PopoverStyle) {
                 state.style = PopoverStyle::Native;
                 return;
             }
-            set_immersive_dark_mode(&state.window, state.theme);
             state.style = PopoverStyle::Native;
-            state.backdrop_active = true;
         }
     }
 }
@@ -939,22 +944,6 @@ fn set_system_backdrop(window: &Window, backdrop: i32) -> bool {
             std::ptr::from_ref(&backdrop).cast(),
             std::mem::size_of_val(&backdrop) as u32,
         ) >= 0
-    }
-}
-
-/// Tint the Acrylic backdrop for the page's theme.
-fn set_immersive_dark_mode(window: &Window, theme: Theme) {
-    let hwnd = window.hwnd() as HWND;
-    let dark = if theme == Theme::Dark { 1 } else { 0 };
-    // SAFETY: hwnd is the live popover window; `dark` outlives the call and
-    // its size is passed as `cbattribute`.
-    unsafe {
-        let _ = DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
-            std::ptr::from_ref(&dark).cast(),
-            std::mem::size_of_val(&dark) as u32,
-        );
     }
 }
 
