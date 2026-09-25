@@ -93,8 +93,12 @@ another's, UI changes follow one rule: **add, don't replace.**
   by the OS, never by the style.
 - Do not change a default (style, width, menu-bar look) in the same PR as a
   new look. Propose it separately, with the reason.
-- Fixes and features that apply to every style are welcome as usual; say which
-  styles you checked, with a screenshot of each.
+- **Show a visual change.** Anything that changes how the popover, the menu
+  bar or the tray icon looks puts before/after screenshots in the PR
+  description, for every style, OS and theme it touches. A look cannot be
+  judged from a diff: screenshots let it be reviewed without building it, and
+  nobody finds out after an update. Fixes and features that apply to every
+  style are welcome as usual; say which styles you checked.
 - Open an issue first for a new style: a screenshot or mockup and who it is
   for is enough to agree it belongs before anyone writes it.
 

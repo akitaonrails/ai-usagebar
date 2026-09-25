@@ -7,6 +7,11 @@ otherwise ask for — see CONTRIBUTING.md for the reasoning behind each.
 
 
 
+## Screenshots
+
+<!-- For a visual change (popover, menu bar, tray icon): before and after,
+for every style, OS and theme it touches. Delete this section otherwise. -->
+
 ## Checklist
 
 - [ ] `make test`, `cargo clippy --all-targets -- -D warnings` and
