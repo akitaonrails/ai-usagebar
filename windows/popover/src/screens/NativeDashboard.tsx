@@ -119,7 +119,7 @@ export function NativeDashboard({
                     onClick={() => setSelectedId(card.id)}
                   >
                     <ProviderIcon className="text-label-2" slug={card.id} title={card.title} size={17} />
-                    <span className="native-tab-value">{preview}</span>
+                    <span className="native-tab-value" data-text={preview}>{preview}</span>
                   </button>
                 </Hint>
               );

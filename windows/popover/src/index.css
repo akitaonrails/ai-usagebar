@@ -642,25 +642,59 @@ body:has(.native-panel[data-os="windows"]) [data-slot="switch-thumb"][data-state
   background: var(--subtle-hover);
 }
 
-/* Tabs as a WinUI SelectorBar: bare labels, a subtle hover, the selection an accent pill under
-   the label. Every tab keeps the same weight, so selecting one never shifts the row. */
+/* Tabs as Fluent 2's transparent Tab: content-sized, regular weight at rest; the selected tab
+   turns semibold with its icon in the accent, over a 3px capsule indicator as wide as its content
+   (the padding insets it). Hovering an idle tab shows the same indicator in a neutral stroke. The
+   bold label's width is reserved by a hidden copy (`data-text`), so selecting never shifts the row. */
+body:has(.native-panel[data-os="windows"]) {
+  --tab-pad-x: 8px;
+  --tab-hover-indicator: rgba(0, 0, 0, 0.22);
+}
+
+.dark body:has(.native-panel[data-os="windows"]) {
+  --tab-hover-indicator: rgba(255, 255, 255, 0.4);
+}
+
 .native-panel[data-os="windows"] .native-tabs {
-  gap: 4px;
+  justify-content: flex-start;
+  gap: 2px;
   padding: 0;
   border-radius: 0;
   background: transparent;
 }
 
-.native-panel[data-os="windows"] .native-tab {
+.native-panel[data-os="windows"] .native-tab,
+.native-panel[data-os="windows"] .settings-tabs .native-tab {
   position: relative;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 6px var(--tab-pad-x) 9px;
   border-radius: var(--radius-sm);
   color: var(--label-2);
+  font-size: 12px;
+  font-weight: 400;
+  overflow: visible;
+}
+
+.native-panel[data-os="windows"] :is(.native-tab-label, .native-tab-value) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.native-panel[data-os="windows"] :is(.native-tab-label, .native-tab-value)::after {
+  content: attr(data-text);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
 }
 
 .native-panel[data-os="windows"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover,
 .dark .native-panel[data-os="windows"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover {
-  background: var(--subtle-hover);
+  background: transparent;
   box-shadow: none;
+  color: var(--label-1);
 }
 
 .native-panel[data-os="windows"] .native-tab[aria-selected="true"],
@@ -669,21 +703,37 @@ body:has(.native-panel[data-os="windows"]) [data-slot="switch-thumb"][data-state
 .dark .native-panel[data-os="windows"] .native-tab[data-active="true"] {
   background: transparent;
   color: var(--label-1);
+  font-weight: 600;
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-.native-panel[data-os="windows"] .native-tab[aria-selected="true"]::after,
-.native-panel[data-os="windows"] .native-tab[data-active="true"]::after {
+.native-panel[data-os="windows"] .native-tab[data-active="true"] svg {
+  color: var(--accent);
+}
+
+.native-panel[data-os="windows"] .native-tab[data-active="true"] .native-tab-value {
+  color: var(--label-1);
+}
+
+.native-panel[data-os="windows"] .native-tab::after {
   content: "";
   position: absolute;
-  bottom: 1px;
-  left: 50%;
-  width: 16px;
+  right: var(--tab-pad-x);
+  bottom: 0;
+  left: var(--tab-pad-x);
   height: 3px;
-  margin-left: -8px;
-  border-radius: 1.5px;
+  border-radius: var(--radius-full);
+  background: transparent;
+}
+
+.native-panel[data-os="windows"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover::after {
+  background: var(--tab-hover-indicator);
+}
+
+.native-panel[data-os="windows"] .native-tab[aria-selected="true"]::after,
+.native-panel[data-os="windows"] .native-tab[data-active="true"]::after {
   background: var(--accent);
 }
 

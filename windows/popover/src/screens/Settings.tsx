@@ -122,7 +122,7 @@ export function Settings({
               onClick={() => onTabChange(name)}
               onKeyDown={(event) => onTabKeyDown(event, name)}
             >
-              {label()}
+              <span className="native-tab-label" data-text={label()}>{label()}</span>
             </button>
           ))}
         </div>
