@@ -376,16 +376,16 @@ fn refresh_account_facts(facts: &SharedFacts) {
     });
 }
 
-/// Run `ai-usagebar account switch` out of process, exactly as a terminal
-/// would: the Claude half may quit and reopen the Desktop app, and its errors
+/// Run `account switch` out of process, through this binary's `account` mode,
+/// exactly as a terminal would: the Claude half may quit and reopen the Desktop app, and its errors
 /// arrive on stderr, which becomes the card's message. Runs on its own thread,
 /// so a slow switch never holds up the refresh worker; the switch is a
 /// transaction with its own rollback, so it is left to finish rather than
 /// killed on a timer.
 fn run_account_switch(facts: &SharedFacts, vendor: &str, label: &str) {
-    let error = match resolve_cli() {
-        Some(cli) => switch_with(&cli, vendor, label),
-        None => "the ai-usagebar CLI was not found next to the tray or in ~/.cargo/bin".into(),
+    let error = match std::env::current_exe() {
+        Ok(tray) => switch_with(&tray, vendor, label),
+        Err(error) => format!("could not locate the running tray binary: {error}"),
     };
     with_facts(facts, |f| {
         for fact in f.accounts.iter_mut().filter(|fact| fact.vendor == vendor) {
@@ -395,9 +395,11 @@ fn run_account_switch(facts: &SharedFacts, vendor: &str, label: &str) {
     });
 }
 
-/// The switch itself; returns the error to show, or empty on success.
-fn switch_with(cli: &std::path::Path, vendor: &str, label: &str) -> String {
-    let mut command = std::process::Command::new(cli);
+/// The switch itself, run by this tray binary in its `account` mode (see
+/// `src/bin/ai-usagebar-tray.rs`); returns the error to show, or empty on
+/// success.
+fn switch_with(tray: &std::path::Path, vendor: &str, label: &str) -> String {
+    let mut command = std::process::Command::new(tray);
     command.args(["account", "switch", "--yes"]);
     if vendor == "openai" {
         command.arg("--codex");
@@ -414,28 +416,8 @@ fn switch_with(cli: &std::path::Path, vendor: &str, label: &str) -> String {
                     .to_string()
             })
             .unwrap_or_else(|| format!("account switch exited with {}", output.status)),
-        Err(error) => format!("could not run ai-usagebar: {error}"),
+        Err(error) => format!("could not run the account switch: {error}"),
     }
-}
-
-/// The `ai-usagebar` CLI next to this tray binary, then `~/.cargo/bin`.
-/// Never a `PATH` lookup: this runs a command that moves logins, so the
-/// binary must not be an ambient choice.
-fn resolve_cli() -> Option<std::path::PathBuf> {
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        let sibling = dir.join("ai-usagebar");
-        if sibling.is_file() {
-            return Some(sibling);
-        }
-    }
-    let cargo = crate::cache::home_dir()
-        .ok()?
-        .join(".cargo")
-        .join("bin")
-        .join("ai-usagebar");
-    cargo.is_file().then_some(cargo)
 }
 
 async fn push_report(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {

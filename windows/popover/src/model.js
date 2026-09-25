@@ -68,11 +68,17 @@ function clean(value, max) {
   return text.slice(0, limit - 1) + "…";
 }
 
+// How many report entries are rendered, and how long a card id may be. The
+// account switch metadata is bounded by the same two numbers, so every card
+// that renders can still find its switch control.
+const MAX_ENTRIES = 64;
+const MAX_ENTRY_ID = 180;
+
 /** @returns {Payload} */
 function normalizePayload(parsed) {
   const entriesIn = Array.isArray(parsed.entries) ? parsed.entries : [];
   const entries = [];
-  for (let i = 0; i < entriesIn.length && i < 64; i++) {
+  for (let i = 0; i < entriesIn.length && i < MAX_ENTRIES; i++) {
     const entry = normalizeEntry(entriesIn[i]);
     if (entry) entries.push(entry);
   }
@@ -113,9 +119,9 @@ function normalizeAccounts(value) {
   for (const vendor of SWITCHABLE_VENDORS) {
     const raw = value[vendor];
     if (!isPlainObject(raw) || !Array.isArray(raw.labels)) continue;
-    // Labels are matched against card ids verbatim, so they are never
-    // shortened: a truncated label would silently match no card.
-    const labels = raw.labels.slice(0, 32).map((label) => clean(label, 4096)).filter(Boolean);
+    // Labels are kept whole, since the whole label is what a switch sends;
+    // matching a card goes through the card id's own cut (see `cardIdOf`).
+    const labels = raw.labels.slice(0, MAX_ENTRIES).map((label) => clean(label, 4096)).filter(Boolean);
     if (labels.length === 0) continue;
     out[vendor] = {
       active: clean(raw.active, 4096),
@@ -128,6 +134,11 @@ function normalizeAccounts(value) {
   return out;
 }
 
+/** The id the card for `vendor`'s `label` account gets, cut as entry ids are. */
+function cardIdOf(vendor, label) {
+  return clean(`${vendor}@${label}`, MAX_ENTRY_ID).trim();
+}
+
 /**
  * The switch control for one card: a `vendor@label` entry whose label the host
  * listed as switchable. Null for every other card, including the unnamed default.
@@ -138,9 +149,13 @@ export function accountSwitchFor(cardId, accounts) {
   const at = id.indexOf("@");
   if (at <= 0) return null;
   const vendor = id.slice(0, at);
-  const label = id.slice(at + 1);
   const info = accounts && Object.prototype.hasOwnProperty.call(accounts, vendor) ? accounts[vendor] : null;
-  if (!info || !info.labels.includes(label)) return null;
+  if (!info) return null;
+  // Two labels that only differ past the cut share one card; neither is
+  // offered, since the control could not say which one it switches to.
+  const matches = info.labels.filter((label) => cardIdOf(vendor, label) === id);
+  if (matches.length !== 1) return null;
+  const label = matches[0];
   const mine = info.target === label;
   return {
     vendor,
@@ -208,7 +223,7 @@ function normalizeUpdate(raw) {
 
 function normalizeEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
-  const id = clean(raw.id, 180).trim();
+  const id = clean(raw.id, MAX_ENTRY_ID).trim();
   if (id === "") return null;
   const source = Array.isArray(raw.sections) ? raw.sections : [];
   const sections = [];

@@ -891,7 +891,9 @@ impl OpenAiConfig {
     /// The auth file a fetch for `label` reads. Unlike
     /// [`resolve_auth_path`](OpenAiConfig::resolve_auth_path), this follows
     /// `account switch --codex`: the active account's login has been moved
-    /// into the default slot, so it is read there.
+    /// into the default slot, so it is read there. The answer holds only while
+    /// no switch runs, so a fetch asks it under the credentials lock; see
+    /// [`fetch_snapshot_routed`](crate::openai::fetch_snapshot_routed).
     pub fn fetch_auth_path(&self, label: Option<&str>) -> Result<PathBuf> {
         let Some(label) = label else {
             return self.resolve_auth_path(None);
