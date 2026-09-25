@@ -107,6 +107,14 @@ Each release is also published at
   centered on the icon on the side away from the taskbar, so a taskbar docked
   at the top, left or right works the same; it used to hang a margin above the
   icon, twice as far from a bottom taskbar as the global shortcut put it.
+- **A Codex credit balance sent as a numeric string reads as dollars.** The
+  usage endpoint sometimes sends the balance as a bare string (`"0"` on a Pro
+  account with no extra-usage credits) instead of a number, and only numbers
+  were formatted, so the Credits block, the Waybar tooltip,
+  `{oai_credit_balance}`, `usage --json` and the tray popover showed
+  "balance: 0". A string that is only a finite number is now formatted like a
+  number (`$0.00`, a negative as `-$1.00`); anything else, such as an already
+  formatted `$2.50`, passes through unchanged.
 - **A click outside the Windows tray popover closes it right after opening.**
   The popover took focus 400 ms after the tray click and ignored blurs for 400
   ms more, so a click elsewhere in that time left it open until it was clicked
