@@ -77,6 +77,9 @@ api_key_env = "OPENROUTER_API_KEY"
 # label = "work"
 # api_key_env = "OPENROUTER_WORK_API_KEY"
 # api_key = "sk-or-v1-..."      # optional fallback; chmod 600 if inline
+# One entry per workspace; keys inside one workspace share its billing
+# account, so the per-entry split is per login session, not per key within
+# a bill. See docs/openrouter-accounts.md.
 
 [deepseek]
 enabled = true             # disabled by default; enable once you add an API key

@@ -298,6 +298,171 @@ mod tests {
         );
     }
 
+    /// The fan-out behind `[[openrouter.accounts]]` (#221): every account is
+    /// its own `fetch_snapshot` call with its own key and its own cache
+    /// subdirectory (what `Cache::for_vendor_account` lays out in production),
+    /// so two keys must land as two distinct snapshots that never share a
+    /// payload — not even a stale one.
+    #[tokio::test]
+    async fn two_accounts_fan_out_to_distinct_entries_and_caches() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/api/v1/credits")
+            .match_header("authorization", "Bearer work-key")
+            .with_status(200)
+            .with_body(r#"{"data":{"total_credits":100.0,"total_usage":25.5}}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/api/v1/key")
+            .match_header("authorization", "Bearer work-key")
+            .with_status(200)
+            .with_body(
+                r#"{"data":{"label":"work","limit":null,"limit_remaining":null,
+                "usage":25.5,"usage_daily":1.0,"usage_weekly":7.0,"usage_monthly":25.5,
+                "is_free_tier":false}}"#,
+            )
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/api/v1/credits")
+            .match_header("authorization", "Bearer personal-key")
+            .with_status(200)
+            .with_body(r#"{"data":{"total_credits":40.0,"total_usage":4.0}}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/api/v1/key")
+            .match_header("authorization", "Bearer personal-key")
+            .with_status(200)
+            .with_body(
+                r#"{"data":{"label":"home","limit":null,"limit_remaining":null,
+                "usage":4.0,"usage_daily":0.5,"usage_weekly":2.0,"usage_monthly":4.0,
+                "is_free_tier":true}}"#,
+            )
+            .create_async()
+            .await;
+
+        let td = tempfile::TempDir::new().unwrap();
+        let endpoints = Endpoints {
+            credits: format!("{}/api/v1/credits", server.url()),
+            key: format!("{}/api/v1/key", server.url()),
+        };
+        let mut outcomes = Vec::new();
+        let mut caches = Vec::new();
+        for (label, key) in [("work", "work-key"), ("personal", "personal-key")] {
+            // The same per-account subdirectory `Cache::for_vendor_account`
+            // builds in production, created via the hermetic `Cache::at`.
+            let cache = Cache::at(td.path().join("openrouter").join(label));
+            cache.ensure_dir().unwrap();
+            let outcome = fetch_snapshot(
+                &reqwest::Client::new(),
+                key,
+                &cache,
+                &endpoints,
+                Duration::from_secs(0),
+            )
+            .await
+            .unwrap();
+            outcomes.push(outcome);
+            caches.push(cache);
+        }
+
+        let [work, personal] = &outcomes[..] else {
+            panic!("expected exactly two account outcomes");
+        };
+        assert_eq!(work.snapshot.label, "OpenRouter — work");
+        assert!((work.snapshot.balance() - 74.5).abs() < 1e-9);
+        assert_eq!(personal.snapshot.label, "OpenRouter — home");
+        assert!((personal.snapshot.balance() - 36.0).abs() < 1e-9);
+        assert_ne!(work.snapshot, personal.snapshot);
+
+        // Each cache holds its own account's payload, and only its own.
+        let work_bytes = caches[0].maybe_payload().unwrap().unwrap();
+        let personal_bytes = caches[1].maybe_payload().unwrap().unwrap();
+        assert_ne!(work_bytes, personal_bytes);
+        assert_eq!(parse_cache(&work_bytes).unwrap().label, "OpenRouter — work");
+        assert_eq!(
+            parse_cache(&personal_bytes).unwrap().label,
+            "OpenRouter — home"
+        );
+    }
+
+    /// One account's dead key must not take the others down: the fan-out
+    /// runs one fetch per account against one cache per account, so a 401
+    /// stays inside the entry it belongs to (#221).
+    #[tokio::test]
+    async fn a_401_on_one_account_does_not_fail_the_other() {
+        let mut server = mockito::Server::new_async().await;
+        for path in ["/api/v1/credits", "/api/v1/key"] {
+            server
+                .mock("GET", path)
+                .match_header("authorization", "Bearer revoked-key")
+                .with_status(401)
+                .with_body(r#"{"error":"unauthorized"}"#)
+                .create_async()
+                .await;
+        }
+        server
+            .mock("GET", "/api/v1/credits")
+            .match_header("authorization", "Bearer live-key")
+            .with_status(200)
+            .with_body(r#"{"data":{"total_credits":30.0,"total_usage":6.0}}"#)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/api/v1/key")
+            .match_header("authorization", "Bearer live-key")
+            .with_status(200)
+            .with_body(
+                r#"{"data":{"label":"live","limit":null,"limit_remaining":null,
+                "usage":6.0,"usage_daily":2.0,"usage_weekly":4.0,"usage_monthly":6.0,
+                "is_free_tier":false}}"#,
+            )
+            .create_async()
+            .await;
+
+        let td = tempfile::TempDir::new().unwrap();
+        let endpoints = Endpoints {
+            credits: format!("{}/api/v1/credits", server.url()),
+            key: format!("{}/api/v1/key", server.url()),
+        };
+        let client = reqwest::Client::new();
+
+        let revoked_cache = Cache::at(td.path().join("openrouter").join("revoked"));
+        revoked_cache.ensure_dir().unwrap();
+        let revoked = fetch_snapshot(
+            &client,
+            "revoked-key",
+            &revoked_cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await;
+        assert!(
+            matches!(revoked, Err(AppError::Http { status: 401, .. })),
+            "expected the revoked account to fail with its own 401, got {revoked:?}"
+        );
+
+        let live_cache = Cache::at(td.path().join("openrouter").join("live"));
+        live_cache.ensure_dir().unwrap();
+        let live = fetch_snapshot(
+            &client,
+            "live-key",
+            &live_cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+        assert_eq!(live.snapshot.label, "OpenRouter — live");
+        assert!((live.snapshot.balance() - 24.0).abs() < 1e-9);
+        assert!(
+            live_cache.maybe_payload().unwrap().is_some(),
+            "the healthy account's cache must still be written"
+        );
+    }
+
     #[tokio::test]
     async fn http_error_falls_back_to_cache_when_present() {
         let mut server = mockito::Server::new_async().await;

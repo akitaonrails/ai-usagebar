@@ -11,6 +11,13 @@ Each release is also published at
 
 ### Added
 
+- **OpenRouter across multiple workspaces (#221).** The existing
+  `[[openrouter.accounts]]` entries (v1.3.0) are now documented for the
+  reporter's setup — one entry per workspace key, so each workspace gets its
+  own tab, report entry, and cache. The docs state the split's limit honestly:
+  keys created inside one OpenRouter workspace share that workspace's billing
+  account, so entries separate login sessions (workspaces), not keys within a
+  single bill.
 - **Grok Bot on Windows.** `[grokbot]` read the desktop app's session only on
   Linux and macOS and failed closed elsewhere. On Windows it now reads
   `%APPDATA%\Grok Bot\sand-secrets.json`, whose tokens are Chromium's Windows

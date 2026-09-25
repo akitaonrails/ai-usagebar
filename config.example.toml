@@ -210,6 +210,8 @@ api_key_env = "OPENROUTER_API_KEY"
 # display_limit here — see the "Account-balance vendors" note below.
 # headline = "percent"           # "percent" | "amount"
 # Named keys appear as separate TUI/report entries and use isolated caches.
+# One entry per workspace is the pattern; keys inside one workspace share its
+# billing account, so the split is per login session, not per key within a bill.
 # The default key above stays visible unless this is false. It is always kept
 # when no named accounts exist.
 # show_default_account = false
