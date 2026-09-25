@@ -588,6 +588,11 @@ pub fn sweep_old(install_dir: &Path, os: &str) -> usize {
 /// same release is not offered again until a newer one appears.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateState {
+    /// The version the tray handed to Scoop and has not seen running yet. The next start clears it
+    /// when that version arrived, and reports it when Scoop did not deliver it; background checks
+    /// in Automatic mode never hand it off again.
+    #[serde(default)]
+    pub handed_off: Option<String>,
     #[serde(default)]
     pub last_check_ms: i64,
     #[serde(default)]
@@ -1297,6 +1302,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nested").join("update.json");
         let state = UpdateState {
+            handed_off: None,
             last_check_ms: 1_757_246_400_000,
             snoozed_version: Some("1.11.0".to_string()),
         };
@@ -1321,6 +1327,7 @@ mod tests {
         assert_eq!(
             UpdateState::load_at(&partial),
             UpdateState {
+                handed_off: None,
                 last_check_ms: 5,
                 snoozed_version: None,
             }

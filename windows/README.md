@@ -24,11 +24,10 @@ scoop install ai-usagebar
 
 Or grab `ai-usagebar-windows-x86_64.zip` from the latest
 [GitHub release](https://github.com/akitaonrails/ai-usagebar/releases) and
-unzip it anywhere. Update ownership differs between the two paths: **Scoop
-owns updates for Scoop installs** (`scoop update ai-usagebar`): the tray
-sees Scoop's `install.json` beside it and offers the release page instead of
-replacing files in Scoop's folder. The tray's built-in updater (below,
-**Settings → Updates**) applies to standalone ZIP installs.
+unzip it anywhere. Update ownership differs between the two paths: a Scoop
+install is updated by Scoop, and **Install Update** runs `scoop update` for
+you (see **Settings → Updates** below), while the tray's built-in updater
+replaces the files of a standalone ZIP install.
 
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](../screenshots/windows-tray-dashboard.png)
 
@@ -115,11 +114,19 @@ it says when the last one ran. Once a release is known the same button reads
 **Update** and installs it. The mode is the `updates` key of the `[tray]`
 section in `config.toml`, next to the shortcut and the poll interval.
 
+On a Scoop install, **Install Update** runs `scoop update ai-usagebar` for you;
+Automatic hands off the same way. The tray quits while Scoop replaces it,
+usually 10–60 seconds, and Scoop relaunches it through `current`. Scoop's
+transcript is `%LOCALAPPDATA%\ai-usagebar\updates\scoop.log`. If Scoop does not
+deliver the requested version, the tray reports that log path, and Automatic
+does not retry it in the background. A global Scoop install without the
+`scoop.ps1` shim keeps the release-page fallback.
+
 ![Settings screen — General (Launch at Login, Refresh Every, Global Shortcut), Appearance (Theme, Density, Time Format), Usage Display (Show Usage As, Reset Times, Always Show Pacing) and Updates (mode picker, Check for Updates with "Up to date · checked 33m ago" and a Check Now button)](../screenshots/windows-tray-settings.png)
 
-The download is verified against the release's `.sha256` sidecar, which
-proves the file arrived intact — integrity, not authenticity: anyone who can
-publish a release can publish a matching sidecar. Installing swaps the
+For a standalone ZIP install, the download is verified against the release's
+`.sha256` sidecar, which proves the file arrived intact — integrity, not
+authenticity: anyone who can publish a release can publish a matching sidecar. Installing swaps the
 running executable for the new one and leaves the previous build as
 `ai-usagebar-tray.exe.old`, which the next start removes. Debug builds
 (`cargo build` without `--release`) check but refuse to install. The release
