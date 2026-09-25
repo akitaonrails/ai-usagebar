@@ -48,7 +48,7 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
             .is_ok_and(|path| crate::openai::creds::read_from(&path).is_ok()),
         VendorId::Copilot => copilot_present(),
         VendorId::Zai => key_present(config, vendor),
-        VendorId::Openrouter => config.openrouter.resolve_api_key(None).is_ok(),
+        VendorId::Openrouter => key_present(config, vendor),
         VendorId::Deepseek => key_present(config, vendor),
         VendorId::Kimi => crate::kimi::resolve_auth(&config.kimi).is_ok(),
         VendorId::Kilo => key_present(config, vendor),
@@ -105,13 +105,26 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
 /// A key vendor: the configured env var (`api_key_env`, defaulting to
 /// `VendorId::api_key_env`) or the inline `api_key`, exactly as the fetch
 /// resolves them. `Config::api_key_env_for` / `inline_api_key` are the shared
-/// per-vendor lookup, so a new key vendor needs no arm of its own here.
+/// per-vendor lookup, so a new key vendor needs no arm of its own here. A
+/// named `[[<vendor>.accounts]]` key counts too: those accounts get tabs of
+/// their own, so a config with only named keys can still fetch.
 fn key_present(config: &Config, vendor: VendorId) -> bool {
     crate::config::optional_api_key(
         config.api_key_env_for(vendor),
         config.inline_api_key(vendor),
     )
     .is_some()
+        || config
+            .api_key_accounts(vendor)
+            .unwrap_or(&[])
+            .iter()
+            .any(|account| {
+                crate::config::optional_api_key(
+                    account.api_key_env.as_deref().unwrap_or(""),
+                    account.api_key.as_deref(),
+                )
+                .is_some()
+            })
 }
 
 /// The default Claude account exactly as the fetch resolves it: an explicit
@@ -540,6 +553,24 @@ mod tests {
         });
 
         assert!(plan.enable.is_empty());
+    }
+
+    #[test]
+    fn a_named_api_key_account_alone_counts_as_a_credential() {
+        // Empty `api_key_env`s keep the probe off the real environment.
+        let mut config = Config::default();
+        config.deepseek.api_key_env.clear();
+        assert!(!key_present(&config, VendorId::Deepseek));
+
+        config.deepseek.accounts.push(crate::config::ApiKeyAccount {
+            label: "work".into(),
+            api_key_env: None,
+            api_key: Some("work-key".into()),
+        });
+        assert!(key_present(&config, VendorId::Deepseek));
+        // Another vendor's array is not this vendor's credential.
+        config.kilo.api_key_env.clear();
+        assert!(!key_present(&config, VendorId::Kilo));
     }
 
     #[test]

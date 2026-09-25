@@ -2,6 +2,8 @@
 
 ai-usagebar can report several OpenRouter keys without running separate config
 or cache roots. The existing `[openrouter]` key remains the default account.
+The same `[[<vendor>.accounts]]` array works for the other API-key providers;
+the [API-key account guide](api-key-accounts.md) covers them.
 
 ## Add named accounts
 

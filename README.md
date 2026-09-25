@@ -902,6 +902,14 @@ bill. See the
 [OpenRouter account guide](docs/openrouter-accounts.md) for the config and
 Waybar examples.
 
+### Multiple keys for other API-key providers
+
+Z.AI, DeepSeek, Kilo, Novita, Moonshot, Grok, MiniMax, and OrcaRouter take the
+same array: one `[[<vendor>.accounts]]` entry per extra key, selected with
+`--vendor <vendor> --account <label>`. Region, team, organization, and display
+settings stay per provider. See the
+[API-key account guide](docs/api-key-accounts.md).
+
 ## Hyprland: float the TUI window
 
 By default Hyprland tiles the TUI. To make `ai-usagebar-tui` open as a centered floating window, the same way Omarchy floats its own settings TUIs (Wi-Fi/`impala`, audio/`wiremix`, Bluetooth/`bluetui`), add this to `~/.config/hypr/hyprland.conf` or any sourced `.conf`, such as `looknfeel.conf`:

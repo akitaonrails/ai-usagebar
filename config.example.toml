@@ -219,6 +219,11 @@ api_key_env = "OPENROUTER_API_KEY"
 # label = "work"
 # api_key_env = "OPENROUTER_WORK_API_KEY"
 # api_key = "sk-or-v1-..."  # optional fallback; chmod 600 when inline
+#
+# The same array works for [zai], [deepseek], [kilo], [novita], [moonshot],
+# [grok], [minimax], and [orcarouter] — e.g. [[deepseek.accounts]] — with the
+# same show_default_account switch. Region/team/organization/display settings
+# stay per provider. See docs/api-key-accounts.md.
 
 [deepseek]
 # Disabled by default — enable once you've set a key (env var or inline).

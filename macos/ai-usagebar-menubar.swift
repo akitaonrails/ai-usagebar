@@ -1077,12 +1077,31 @@ func claudeAccountLabels() -> [String] {
     return mergedAccountLabels(explicit: explicit, discovered: discovered)
 }
 
-/// Explicit `[[openrouter.accounts]]` labels from the active config.
-func openRouterAccountLabels() -> [String] {
+/// The API-key vendors whose config takes a `[[<vendor>.accounts]]` array —
+/// Rust's `Config::API_KEY_ACCOUNT_VENDORS`, by slug.
+let API_KEY_ACCOUNT_VENDORS = [
+    "zai", "openrouter", "deepseek", "kilo", "novita", "moonshot", "grok", "minimax", "orcarouter",
+]
+
+/// Explicit `[[<vendor>.accounts]]` labels for one API-key vendor.
+func apiKeyAccountLabels(_ vendor: String) -> [String] {
     guard let text = try? String(contentsOfFile: configPathTOML(), encoding: .utf8) else {
         return []
     }
-    return accountLabels(inTOML: text, vendor: "openrouter")
+    return accountLabels(inTOML: text, vendor: vendor)
+}
+
+/// Every API-key vendor's named labels, keyed by slug (vendors without any omitted).
+func apiKeyAccountLabelsByVendor() -> [String: [String]] {
+    guard let text = try? String(contentsOfFile: configPathTOML(), encoding: .utf8) else {
+        return [:]
+    }
+    var out: [String: [String]] = [:]
+    for vendor in API_KEY_ACCOUNT_VENDORS {
+        let labels = accountLabels(inTOML: text, vendor: vendor)
+        if !labels.isEmpty { out[vendor] = labels }
+    }
+    return out
 }
 
 /// Explicit `[[openai.accounts]]` labels; Rust resolves each auth file.
@@ -1095,14 +1114,13 @@ func codexAccountLabels() -> [String] {
 
 /// Preferences include enabled providers even before they have credentials.
 func preferenceVendorIds(catalog: [VendorCatalogEntry], claude: [String],
-                         openRouter: [String], codex: [String]) -> [String] {
+                         apiKeyAccounts: [String: [String]], codex: [String]) -> [String] {
     catalog.filter { $0.enabled }.flatMap { vendor -> [String] in
         let labels: [String]
         switch vendor.id {
         case "anthropic": labels = claude
-        case "openrouter": labels = openRouter
         case "openai": labels = codex
-        default: labels = []
+        default: labels = apiKeyAccounts[vendor.id] ?? []
         }
         return [vendor.id] + labels.map { vendor.id + "@" + $0 }
     }
@@ -1118,7 +1136,6 @@ func showDefaultAccount(configValue: String?, hasAccounts: Bool) -> Bool {
 
 /// Pseudo-id mapping: `<vendor>@<label>` selects a named account.
 let CLAUDE_ACCOUNT_ID_PREFIX = "anthropic@"
-let OPENROUTER_ACCOUNT_ID_PREFIX = "openrouter@"
 // A Claude account whose usage comes from the Desktop app's own token (a saved
 // ~/.claude-acc/profiles/<label>), fetched with the widget's `--desktop` flag.
 // Distinct prefix so `vendorArgs` knows to pass it; every other helper treats it
@@ -1154,7 +1171,7 @@ func vendorArgs(for id: String) -> [String] {
 
 /// One selectable entry: a base vendor or a named account.
 struct MenuEntry {
-    let id: String    // "cursor", "anthropic@<label>", or "openrouter@<label>"
+    let id: String    // "cursor", or "<vendor>@<label>" for a named account
     let name: String  // display: "Cursor" or "Vendor · <label>"
 }
 
@@ -1165,10 +1182,8 @@ func claudeAccountMenuEntries(_ accounts: [UsageAccount]) -> [MenuEntry] {
     }
 }
 
-func openRouterAccountMenuEntries(_ labels: [String]) -> [MenuEntry] {
-    labels.map {
-        MenuEntry(id: OPENROUTER_ACCOUNT_ID_PREFIX + $0, name: "OpenRouter · \($0)")
-    }
+func apiKeyAccountMenuEntries(vendor: VendorCatalogEntry, labels: [String]) -> [MenuEntry] {
+    labels.map { MenuEntry(id: vendor.id + "@" + $0, name: "\(vendor.name) · \($0)") }
 }
 
 /// Apply `[ui] overview_vendors` with the same semantics as the TUI: preserve
@@ -1188,13 +1203,14 @@ func filterOverviewEntries(_ entries: [MenuEntry], requested: [String]?) -> [Men
 }
 
 /// The selectable entries, in menu order: every enabled+configured vendor,
-/// with Claude, Codex and OpenRouter expanded into named accounts. Claude and
-/// OpenRouter honor `show_default_account`. `active` stays listed even when
+/// with Claude, Codex and the API-key vendors expanded into named accounts.
+/// Claude and the API-key vendors honor `show_default_account`. `active` stays listed even when
 /// unconfigured — same rule the per-vendor list always had.
 func vendorEntries(active: String,
                    usageAccounts: [UsageAccount]? = nil,
                    catalog: [VendorCatalogEntry] = vendorCatalog,
-                   codexLabels: () -> [String] = codexAccountLabels) -> [MenuEntry] {
+                   codexLabels: () -> [String] = codexAccountLabels,
+                   apiKeyLabels: (String) -> [String] = apiKeyAccountLabels) -> [MenuEntry] {
     var out: [MenuEntry] = []
     for v in catalog where v.enabled {
         if v.id == "anthropic" {
@@ -1221,15 +1237,15 @@ func vendorEntries(active: String,
             out.append(contentsOf: codexLabels().map {
                 MenuEntry(id: "openai@" + $0, name: "\(v.name) · \($0)")
             })
-        } else if v.id == "openrouter" {
-            let labels = openRouterAccountLabels()
+        } else if API_KEY_ACCOUNT_VENDORS.contains(v.id) {
+            let labels = apiKeyLabels(v.id)
             let showDefault = showDefaultAccount(
-                configValue: configValueTOML("openrouter", "show_default_account"),
+                configValue: configValueTOML(v.id, "show_default_account"),
                 hasAccounts: !labels.isEmpty)
             if showDefault && (v.id == active || v.configured) {
                 out.append(MenuEntry(id: v.id, name: v.name))
             }
-            out.append(contentsOf: openRouterAccountMenuEntries(labels))
+            out.append(contentsOf: apiKeyAccountMenuEntries(vendor: v, labels: labels))
         } else if v.id == active || v.configured {
             out.append(MenuEntry(id: v.id, name: v.name))
         }
@@ -1621,12 +1637,13 @@ struct SettingsView: View {
 
     // Only vendors the Rust catalog marks enabled appear in the selector —
     // whatever `vendors --json` reports, so a provider added in Rust (and its
-    // opt-in or enabled default) reaches here with no menubar change. Claude
-    // and Codex/OpenRouter accounts use `vendor@<label>` pseudo-ids, same as the
-    // "Switch provider" submenu.
+    // opt-in or enabled default) reaches here with no menubar change. Claude,
+    // Codex and API-key vendor accounts use `vendor@<label>` pseudo-ids, same
+    // as the "Switch provider" submenu.
     private var vendors: [String] {
         preferenceVendorIds(catalog: vendorCatalog, claude: claudeAccountLabels(),
-                            openRouter: openRouterAccountLabels(), codex: codexAccountLabels())
+                            apiKeyAccounts: apiKeyAccountLabelsByVendor(),
+                            codex: codexAccountLabels())
     }
 
     var body: some View {

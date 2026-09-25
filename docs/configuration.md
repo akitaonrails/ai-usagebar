@@ -225,7 +225,10 @@ enabled = false            # disabled by default; enable after `bl auth login --
 
 For more than one OpenRouter key, see the
 [OpenRouter account guide](openrouter-accounts.md). The existing singular
-`[openrouter]` key remains the default account and needs no migration.
+`[openrouter]` key remains the default account and needs no migration. Z.AI,
+DeepSeek, Kilo, Novita, Moonshot, Grok, MiniMax, and OrcaRouter take the same
+`[[<vendor>.accounts]]` array and `show_default_account` switch — see the
+[API-key account guide](api-key-accounts.md).
 
 ### Notifications
 
