@@ -10,6 +10,7 @@
 /** @typedef {import("./lib/types").RowPrefs} RowPrefs */
 /** @typedef {import("./lib/types").ExplainedError} ExplainedError */
 /** @typedef {import("./lib/types").Pace} Pace */
+/** @typedef {import("./lib/types").ResetItem} ResetItem */
 /** @typedef {import("./lib/types").UpdateInfo} UpdateInfo */
 /** @typedef {import("./lib/types").UpdateMode} UpdateMode */
 /** @typedef {import("./lib/types").TimeFormat} TimeFormat */
@@ -215,6 +216,7 @@ function normalizeUpdate(raw) {
   const url = clean(raw.url, 400);
   return {
     error: clean(raw.error, 300),
+    installable: raw.installable === true,
     state: UPDATE_STATES.indexOf(state) < 0 ? "available" : state,
     url: url.startsWith(UPDATE_URL_PREFIX) ? url : "",
     version: clean(raw.version, 32),
@@ -471,6 +473,7 @@ export function formatResetCreditDate(value, opts) {
   return day + (locale === "pt-BR" ? " às " : " at ") + time;
 }
 
+/** @returns {{ items: ResetItem[], hidden: number }} */
 export function resetCreditDetails(row, nowMs, opts) {
   if (!row || row.kind !== "resetCredits") return { items: [], hidden: 0 };
   const available = Math.max(0, Math.floor(finiteNumber(row.available)));
@@ -488,6 +491,7 @@ export function resetCreditDetails(row, nowMs, opts) {
     items.push({
       date: formatResetCreditDate(credit.expiresAt, opts),
       remaining: Number.isNaN(atMs) ? "—" : atMs <= nowMs ? opts && opts.locale === "pt-BR" ? "expirado" : "expired" : formatDuration(atMs - nowMs, opts && opts.locale),
+      severity: Number.isNaN(atMs) ? "" : expirySeverity(atMs, nowMs),
       title: String(credit.title || ""),
     });
   }
@@ -520,7 +524,7 @@ export function resetAlternate(row, mode, nowMs, opts) {
 // Burn-rate pacing, ported from OpenUsage's Pace.swift. Projects the row's
 // usage at its current rate to the end of the reset window. Null when there is
 // no signal: no window length, no parseable reset, the window already reset,
-// nothing spent yet, or too early in the window (under 1% of it, at least a
+// nothing spent yet, or too early in the window (see paceMinElapsedMs; under 1% of it, at least a
 // minute) for the projection to be stable.
 /** @returns {Pace|null} */
 export function pace(row, nowMs) {
@@ -532,7 +536,7 @@ export function pace(row, nowMs) {
   if (Number.isNaN(resetMs) || resetMs <= now) return null;
   const windowMs = window * 1000;
   const elapsed = windowMs - (resetMs - now);
-  if (elapsed < Math.max(60_000, window * 10)) return null;
+  if (elapsed < paceMinElapsedMs(window)) return null;
   const used = finiteNumber(row.usedPercent);
   if (used <= 0) return null;
   const rate = used / elapsed; // percent per millisecond
@@ -614,6 +618,43 @@ export function paceText(pace, nowMs, opts) {
   return (pt ? "Limite em " : "Limit in ") + formatDuration(pace.runsOutMs - now, opts && opts.locale);
 }
 
+const PACE_MIN_WAIT_MS = 60_000;
+const PACE_MAX_WAIT_MS = 3_600_000;
+
+// How much of a window must pass before its pace is projected: 1% of it, at
+// least a minute and at most an hour. Earlier than that a few requests swing
+// the projection wildly; the hour cap keeps a weekly or monthly window from
+// waiting 1h 41m or 7h 12m for its first estimate.
+function paceMinElapsedMs(windowSecs) {
+  return Math.min(PACE_MAX_WAIT_MS, Math.max(PACE_MIN_WAIT_MS, windowSecs * 10));
+}
+
+// Milliseconds until pace() has a projection for this row, or 0 when it has
+// one already or never will (no window, no reset, nothing spent). The meter
+// shows "Estimating…" meanwhile instead of an empty note.
+export function paceWarmupMs(row, nowMs) {
+  if (!row || typeof row !== "object") return 0;
+  const window = windowSeconds(row.window);
+  if (window === 0 || !(finiteNumber(row.usedPercent) > 0)) return 0;
+  const now = Number(nowMs) || 0;
+  const resetMs = Date.parse(String(row.resetAt || ""));
+  if (Number.isNaN(resetMs) || resetMs <= now) return 0;
+  const elapsed = window * 1000 - (resetMs - now);
+  return Math.max(0, paceMinElapsedMs(window) - elapsed);
+}
+
+// The warm-up note and its hover explanation, or "" once there is a pace.
+export function paceWarmupText(row, nowMs) {
+  return paceWarmupMs(row, nowMs) > 0 ? "Estimating…" : "";
+}
+
+export function paceWarmupHint(row) {
+  const window = windowSeconds(row && row.window);
+  if (window === 0) return "";
+  const first = formatDuration(paceMinElapsedMs(window)).replace(/ 0m$/, "");
+  return "The pace shows after the first " + first + " of each window.";
+}
+
 // Ahead-of-pace rows stay quiet unless the layout asks for pacing everywhere.
 export function paceVisible(pace, layout) {
   return !!pace && !!(layout && layout.alwaysShowPace || pace.state !== "ahead");
@@ -662,7 +703,6 @@ export function projectCards(payload, nowMs) {
       if (section.type === "metric") {
         const left = Math.max(0, 100 - section.percent);
         const hostLabel = metricLabel(entry.id, section.label);
-        const keyed = group ? hostLabel + " (" + group + ")" : hostLabel;
         const row = {
           kind: "metric",
           label: prettyMetricLabel(entry.id, hostLabel, group),
@@ -676,7 +716,7 @@ export function projectCards(payload, nowMs) {
           resetAt: section.resetAt || "",
           window: section.window || 0,
         };
-        row.key = "metric:" + keyed;
+        row.key = metricRowKey(entry.id, section.label, group);
         rows.push(row);
       } else if (section.type === "text" && (section.label || section.value)) {
         const row = { kind: "text", label: section.label, value: section.value };
@@ -732,6 +772,14 @@ function resetCreditsRow(credits) {
 // "<Window> Build credits"). The card title already says SuperGrok, so the
 // row keeps only the window. Product slices (Grok Build, Grok Chat, …) keep
 // their full labels.
+// The key a starred metric is stored under. The tray host derives the same key
+// from the report to paint the menu-bar bars (src/tray/strip.rs metric_key), so
+// both follow tests/fixtures/strip_metric_keys.json.
+export function metricRowKey(entryId, label, group) {
+  const name = metricLabel(entryId, label);
+  return "metric:" + (group ? name + " (" + group + ")" : name);
+}
+
 function metricLabel(entryId, label) {
   if (vendorSlug(entryId) !== "supergrok") return label;
   return String(label || "")
@@ -1530,11 +1578,63 @@ export function updateStatusLabel(payload, nowMs, locale) {
   }
 }
 
-// The dashboard shows an update banner while the host has one in hand.
-// A check in flight is Settings feedback, not something to install.
+// What the dashboard banner and the update dialog offer for the host's update
+// state: one table, so the two never disagree about what a click does. A
+// release the host cannot install here (no build for this OS, read-only
+// install directory) links its release page instead of a dead Install.
+/** @returns {import("./lib/types").UpdateAction} */
+export function updateAction(update, repository) {
+  switch (update && update.state) {
+    case "checking":
+      return { busy: true, cmd: "", label: "Checking…", url: "" };
+    case "downloading":
+      return { busy: true, cmd: "", label: "Downloading…", url: "" };
+    case "installing":
+      return { busy: true, cmd: "", label: "Installing…", url: "" };
+    case "failed":
+      // The host reinstalls what it found, or checks again when it found nothing.
+      return { busy: false, cmd: "install-update", label: "Try Again", url: "" };
+    case "available":
+      if (update.installable) return { busy: false, cmd: "install-update", label: "Install Update", url: "" };
+      return { busy: false, cmd: "open-url", label: "View Release", url: update.url || releasesPage(repository) };
+    default:
+      return { busy: false, cmd: "check-update", label: "Check Now", url: "" };
+  }
+}
+
+function releasesPage(repository) {
+  return repository ? repository + "/releases/latest" : "";
+}
+
+// The sentence under an update's title, in the banner and the dialog.
+export function updateMessage(update) {
+  if (!update) return "";
+  const version = update.version ? "v" + String(update.version).replace(/^v/i, "") : "the new version";
+  switch (update.state) {
+    case "checking":
+      return "Looking for a newer release…";
+    case "downloading":
+      return "Downloading " + version + "…";
+    case "installing":
+      return "Installing " + version + ". AI Usage restarts by itself.";
+    case "failed": {
+      // With a version the install failed; without one, the check itself did.
+      const what = update.version ? "Couldn't update" : "Couldn't check";
+      return update.error ? what + ": " + update.error : what + ".";
+    }
+    default:
+      return update.installable
+        ? "AI Usage " + version + " is ready to install."
+        : "AI Usage " + version + " is out. It can't install itself here, so get it from the release page.";
+  }
+}
+
+// The dashboard shows an update banner while the host has a release in hand.
+// A check in flight, or a check that failed before finding one, belongs to the
+// update dialog: neither is something to install.
 export function updateBannerPending(payload) {
   const update = payload && payload.update;
-  return !!update && update.state !== "checking";
+  return !!update && update.state !== "checking" && !!update.version;
 }
 
 export function updateModeLabel(mode) {

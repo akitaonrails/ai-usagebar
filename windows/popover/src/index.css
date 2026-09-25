@@ -14,9 +14,11 @@
 :root {
   color-scheme: light;
 
-  /* Surfaces: textBackgroundColor + .fill.quaternary composited on top. */
+  /* Surfaces. Cards are filled groups without an outline; give --card-border a color
+     to draw one. */
   --surface: #ffffff;
   --card: #f2f2f2;
+  --card-border: transparent;
   --fill-quaternary: rgba(0, 0, 0, 0.05);
   --fill-tertiary: rgba(0, 0, 0, 0.09);
   --separator: rgba(0, 0, 0, 0.1);
@@ -39,29 +41,130 @@
   --control-fill: rgba(0, 0, 0, 0.06);
   --control-fill-hover: rgba(0, 0, 0, 0.1);
   --bar-glass: rgba(255, 255, 255, 0.82);
+  /* Highlighted row in a menu, select list or popover list (shadcn `accent`). */
+  --menu-hover: rgba(0, 0, 0, 0.06);
+  /* What every other clickable thing shows under the pointer: the same highlight. */
+  --hover-fill: var(--menu-hover);
+  /* Scrim behind a modal dialog. */
+  --overlay: rgba(0, 0, 0, 0.25);
   --lift-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.12);
+  --menu-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --hint-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  /* Hover hints: dark gray with white text on the light theme, softer than black. */
+  --hint-bg: #4a4a4a;
+  --hint-fg: #ffffff;
+  --knob-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 
-  --sz-header: 13px;
-  --sz-icon: 14px;
+  /* Type scale. `body` is the window default: menu items, the Options capsule, titles. */
   --sz-badge: 10px;
-  --sz-label: 12px;
-  --sz-demand: 11px;
   --sz-support: 11px;
-  --meter-h: 4px;
+  --sz-demand: 11px;
+  --sz-label: 12px;
+  --sz-header: 13px;
+  --sz-body: 13px;
+  --sz-icon: 14px;
+  /* Every button, chip and picker label: one size so controls read as a set. */
+  --sz-control: 12px;
+  /* Line height of wrapped secondary notes (hints, card messages, the footer). */
+  --leading-note: 1.35;
+
+  /* Icon glyphs, by role. */
+  --icon-mark: 10px; /* inline status mark after a title, link arrows */
+  --icon-note: 11px; /* glyph inside an 11px note ("Limit reached") */
+  --icon-dismiss: 12px; /* ✕ on a notice card, warning-strip mark */
+  --icon-inline: 13px; /* disclosure chevrons (Options capsule, pickers), open-in-new */
+  --icon-row: 14px; /* row chevrons, stars, grips, header actions */
+  --icon-menu: 15px; /* menu items, cross-link rows, top-bar Reset */
+  --icon-card: 16px; /* notice-card lead icon, top-bar Back */
+
+  /* Spacing scale. Components reach for the role tokens below; the scale is what they are
+     made of, and what a one-off spacing uses. */
+  --space-px: 1px;
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 8px;
+  --space-lg: 10px;
+  --space-xl: 12px;
+  --space-2xl: 16px;
+  --space-3xl: 24px;
+
+  /* Gaps by role. */
+  --gap-tight: var(--space-2xs); /* lines that belong together: a value and its note */
+  --gap-inline: var(--space-xs); /* an icon and its text, a label and its hint */
+  --gap-stack: var(--space-xs); /* a title over its message, a message over its action */
+  --gap-item: var(--space-sm); /* items sharing a line: a label and its note */
+  --gap-controls: var(--space-md); /* neighboring buttons; a row's left and right text */
+  /* Icon column to text column in list rows and notice cards. */
+  --row-gap: var(--space-lg);
+
   /* One inset for the popover: sides, top/bottom, and the gap between cards. */
-  --panel-pad: 8px;
+  --panel-pad: var(--space-md);
+  /* Inset of a card's rows; section titles take the same inset so they line up. */
   --card-pad: var(--panel-pad);
   --section-gap: var(--panel-pad);
   --pad-bar-row: var(--panel-pad);
-  --pad-text-row: 6px;
+  --pad-text-row: var(--space-sm);
+  --pad-control: var(--space-sm);
+  /* OpenUsage density values that sit between the scale's steps. */
   --pad-text-row-condensed: 1px;
   --row-inner: 3px;
   --header-card-gap: 2px;
   --card-gutter: 3px;
-  --pad-control: 6px;
+  /* Floating menus and popover lists (Options, row menu, banked resets). */
+  --menu-pad: 5px;
+  --menu-item-px: var(--space-md);
+  --menu-item-py: 5px;
+  --menu-min-w: 184px;
+  --popover-w: 232px;
+  /* Inset of the hover fill around a text button; cancelled by a negative margin. */
+  --hover-pad-x: var(--space-xs);
+  --hover-pad-y: var(--space-2xs);
+  /* How far a clickable row's fill reaches past the card's edge: none while cards have
+     padding (the fill runs edge to edge), the hover inset when they have none. */
+  --hover-bleed: max(0px, calc(var(--hover-pad-x) - var(--card-pad)));
+  --hover-row-radius: 0px;
+  /* Small filled action buttons (.action-btn), chips and pickers. */
+  --control-px: var(--space-lg);
+  /* A control set inside a text row, in the row's value size (compact chip). */
+  --control-h-sm: 18px;
+  --control-px-sm: var(--space-sm);
+  /* Top-bar icon buttons and the Options capsule: the same height as every control. */
+  --chrome-btn: var(--control-h);
+  /* Hover hints (ui/tooltip). */
+  --hint-pad: var(--space-sm) var(--space-md);
+  --hint-max-w: 200px;
+
+  /* Named sizes. */
+  --meter-h: 4px;
+  --tick-w: 2px; /* pace tick on a meter */
+  --tick-overhang: 2px; /* how far it sticks out above and below the meter */
+  --dot: 8px; /* radio mark in a menu */
+  --dot-sm: 6px; /* status dot beside small text: footer version, banked-resets chip */
+  --row-icon-box: 18px; /* lead icon slot in a list row (cross-links, stars, notice cards) */
+  --dismiss-box: 16px; /* the ✕ on a notice card */
+  --header-action: 20px; /* provider header shortcuts (Customize, Reset) */
+  --grip-w: 16px;
+  --grip-h: 22px;
+  --recorder-min-w: 64px;
+  --drop-zone-h: 30px;
+  --app-mark: 44px; /* About's app tile */
+  --app-mark-icon: 28px;
+  /* macOS `.switch` in `.controlSize(.small)`: 28×16 track, 12 px knob. */
+  --switch-w: 28px;
+  --switch-h: 16px;
+  --switch-knob: 12px;
+  --hairline: 1px;
+  --focus-ring: 2px;
+  --glass-blur: 20px;
+  --screen-slide: 24px; /* how far a screen slides in */
 
   /* Fixed geometry. */
   --card-radius: 10px;
+  --menu-radius: var(--card-radius);
+  /* Same continuous-style clip as the Windows DWM / macOS NSWindow host. */
+  --window-radius: 13px;
+  --radius-full: 999px;
 }
 
 .dark {
@@ -83,7 +186,14 @@
   --control-fill: rgba(255, 255, 255, 0.08);
   --control-fill-hover: rgba(255, 255, 255, 0.14);
   --bar-glass: rgba(30, 30, 30, 0.82);
+  --menu-hover: rgba(255, 255, 255, 0.1);
+  --overlay: rgba(0, 0, 0, 0.5);
   --lift-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --menu-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+  --hint-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  /* A card's tone, one step lighter: the hint lifts off the panel and still reads over a card. */
+  --hint-bg: #383838;
+  --hint-fg: var(--label-1);
 }
 
 /* Map the shadcn utility names the ui/ components rely on. */
@@ -100,7 +210,7 @@
   --color-secondary-foreground: var(--label-1);
   --color-muted: var(--fill-quaternary);
   --color-muted-foreground: var(--label-2);
-  --color-accent: var(--fill-quaternary);
+  --color-accent: var(--menu-hover);
   --color-accent-foreground: var(--label-1);
   --color-destructive: var(--red);
   --color-border: var(--separator);
@@ -113,6 +223,7 @@
   --color-meter-yellow: var(--yellow);
   --color-meter-red: var(--red);
   --color-notice: var(--orange);
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: var(--card-radius);
@@ -125,8 +236,7 @@ body,
 #root {
   height: 100%;
   overflow: hidden;
-  /* Same 13pt continuous-style clip as the Windows DWM / macOS NSWindow host. */
-  border-radius: 13px;
+  border-radius: var(--window-radius);
 }
 
 body {
@@ -135,7 +245,7 @@ body {
   background: var(--surface);
   color: var(--label-1);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-size: var(--sz-body);
   line-height: 1.25;
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -551,23 +661,27 @@ body:has(.mac-panel) {
   height: 0;
 }
 
-/* Grouped card surface (Theme.cardSurface): borderless, 12pt continuous corners. */
+/* Grouped card: the window color with a hairline, so light is white and dark is dark. */
 .card-surface {
   background: var(--card);
   border-radius: var(--card-radius);
+  box-shadow: inset 0 0 0 var(--hairline) var(--card-border);
 }
 
-/* Lifted drag preview: same surface + hairline + shadow (liftedRowSurface). */
+/* Lifted drag preview: the card on a shadow. With no card inset the preview borrows the
+   hover bleed and cancels it with a negative margin, so the rows do not move when lifted. */
 .lifted-surface {
   background: var(--card);
   border-radius: var(--card-radius);
-  box-shadow: inset 0 0 0 0.5px var(--separator), var(--lift-shadow);
+  box-shadow: inset 0 0 0 var(--hairline) var(--card-border), var(--lift-shadow);
+  padding-inline: var(--hover-bleed);
+  margin-inline: calc(var(--hover-bleed) * -1);
 }
 
 /* Section header text (.caption.weight(.semibold), secondary). */
 .section-title {
-  padding: 0 var(--panel-pad);
-  font-size: 10px;
+  padding: 0 var(--card-pad);
+  font-size: var(--sz-badge);
   font-weight: 600;
   color: var(--label-2);
 }
@@ -576,7 +690,7 @@ body:has(.mac-panel) {
 .meter {
   position: relative;
   height: var(--meter-h);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--fill-quaternary);
   overflow: hidden;
 }
@@ -610,10 +724,10 @@ body:has(.mac-panel) {
 
 .meter-tick {
   position: absolute;
-  top: -2px;
-  bottom: -2px;
-  width: 2px;
-  border-radius: 1px;
+  top: calc(var(--tick-overhang) * -1);
+  bottom: calc(var(--tick-overhang) * -1);
+  width: var(--tick-w);
+  border-radius: calc(var(--tick-w) / 2);
   background: var(--label-1);
   opacity: 0.55;
   transform: translateX(-50%);
@@ -623,8 +737,8 @@ body:has(.mac-panel) {
 /* Reorder grip (line.3.horizontal, 12pt semibold, tertiary, 16×22). */
 .grip {
   display: inline-flex;
-  width: 16px;
-  height: 22px;
+  width: var(--grip-w);
+  height: var(--grip-h);
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
@@ -640,11 +754,11 @@ body:has(.mac-panel) {
   cursor: grabbing;
 }
 
-/* Icon chrome buttons (28pt), same radius as the other controls. */
+/* Icon chrome buttons, same radius as the other controls. */
 .circle-btn {
   display: inline-grid;
-  width: 28px;
-  height: 28px;
+  width: var(--chrome-btn);
+  height: var(--chrome-btn);
   place-items: center;
   border: 0;
   border-radius: var(--radius-sm);
@@ -658,6 +772,14 @@ body:has(.mac-panel) {
   background: var(--control-fill-hover);
 }
 
+/* Reset armed: the next click confirms. Plain CSS like the rule above, which a Tailwind
+   utility on the element could never beat. */
+.circle-btn[data-armed],
+.circle-btn[data-armed]:hover {
+  background: var(--red);
+  color: #ffffff;
+}
+
 .circle-btn:active {
   opacity: 0.7;
 }
@@ -665,17 +787,16 @@ body:has(.mac-panel) {
 /* Options control — same radius as Chip link / other buttons. */
 .capsule-btn {
   display: inline-flex;
-  height: 28px;
+  height: var(--chrome-btn);
   align-items: center;
-  gap: 5px;
-  padding: 0 12px 0 14px;
+  gap: var(--gap-inline);
+  padding: 0 var(--control-px);
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--control-fill);
   color: var(--label-1);
   font: inherit;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--sz-control);
   cursor: default;
 }
 
@@ -689,16 +810,16 @@ body:has(.mac-panel) {
 .recorder {
   display: inline-flex;
   height: var(--control-h);
-  min-width: 64px;
+  min-width: var(--recorder-min-w);
   align-items: center;
   justify-content: center;
-  padding: 0 10px;
+  padding: 0 var(--control-px);
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--control-fill);
   color: var(--label-1);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--sz-control);
   font-variant-numeric: tabular-nums;
   cursor: default;
   white-space: nowrap;
@@ -714,19 +835,19 @@ body:has(.mac-panel) {
 
 .recorder[data-recording] {
   color: var(--label-2);
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: var(--focus-ring) solid var(--accent);
+  outline-offset: var(--space-px);
 }
 
 .recorder[aria-invalid] {
-  box-shadow: inset 0 0 0 1px var(--red);
+  box-shadow: inset 0 0 0 var(--hairline) var(--red);
 }
 
 /* Pinned top bar / footer: content scrolls underneath (barGlass). */
 .bar-glass {
   background: var(--bar-glass);
-  -webkit-backdrop-filter: blur(20px) saturate(1.4);
-  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
 }
 
 /* Provider-header shortcuts (Customize / Reset). Plain CSS on purpose: Tailwind
@@ -734,12 +855,12 @@ body:has(.mac-panel) {
    report, so the variants never applied here. */
 .header-action {
   display: inline-grid;
-  width: 20px;
-  height: 20px;
+  width: var(--header-action);
+  height: var(--header-action);
   flex-shrink: 0;
   place-items: center;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--label-2);
   cursor: default;
@@ -788,25 +909,40 @@ body:has(.mac-panel) {
   text-align: inherit;
 }
 
-/* Settings (i) hint. Sits on top of a card, so it uses the window surface
-   plus a shadow — the card gray disappears into the row behind it. */
-[data-slot="tooltip-content"].setting-hint {
-  max-width: 200px;
+/* Small filled action (Check Now, Install Update, a card's Retry). Plain CSS for the same
+   hover reason as .header-action. */
+.action-btn {
+  display: inline-flex;
+  height: var(--control-h);
+  flex-shrink: 0;
+  align-items: center;
+  padding: 0 var(--control-px);
   border: 0;
   border-radius: var(--radius-sm);
-  background: var(--surface);
-  padding: 6px 8px;
+  background: var(--control-fill);
   color: var(--label-1);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  font-size: var(--sz-badge);
-  font-weight: 400;
-  line-height: 1.35;
-  text-align: left;
+  font: inherit;
+  font-size: var(--sz-control);
+  cursor: default;
 }
 
-[data-slot="tooltip-content"].setting-hint svg {
-  background: var(--surface);
-  fill: var(--surface);
+.action-btn:hover {
+  background: var(--control-fill-hover);
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+}
+
+/* The one default action of a dialog (macOS alert's blue button). */
+.action-btn[data-variant="primary"] {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.action-btn[data-variant="primary"]:hover {
+  background: var(--accent);
+  filter: brightness(1.08);
 }
 
 /* Nav row between Customize and Settings: same card as the grouped list above it.
@@ -814,7 +950,6 @@ body:has(.mac-panel) {
 .cross-link {
   appearance: none;
   border: 0;
-  margin: 0;
   font: inherit;
   color: inherit;
   cursor: default;
@@ -831,7 +966,7 @@ body:has(.mac-panel) {
 
 @keyframes screen-slide {
   from {
-    transform: translateX(24px);
+    transform: translateX(var(--screen-slide));
     opacity: 0;
   }
   to {
@@ -842,7 +977,7 @@ body:has(.mac-panel) {
 
 @keyframes screen-slide-back {
   from {
-    transform: translateX(-24px);
+    transform: translateX(calc(var(--screen-slide) * -1));
     opacity: 0;
   }
   to {
@@ -861,12 +996,54 @@ body:has(.mac-panel) {
 
 /* Dashed empty drop target ("Drag metrics here"). */
 .drop-zone {
-  height: 30px;
-  margin: 8px;
-  border: 1px dashed var(--label-3);
-  border-radius: 8px;
+  height: var(--drop-zone-h);
+  margin: var(--panel-pad);
+  border: var(--hairline) dashed var(--label-3);
+  border-radius: var(--radius-md);
   display: grid;
   place-items: center;
-  font-size: 10px;
+  font-size: var(--sz-badge);
   color: var(--label-3);
+}
+
+/* Hover feedback for clickable things without chrome of their own. Last in the file on purpose:
+   these are states layered on components and must win over the resets above (.plain-btn)
+   that zero margins and padding.
+   - hover-fill: auto-sized text buttons. The fill gets a small inset that a negative margin
+     cancels, so nothing moves.
+   - hover-icon: fixed-size icon buttons; the box itself is the fill.
+   - hover-row: rows and cards clickable end to end. */
+.hover-fill {
+  border-radius: var(--radius-xs);
+  padding: var(--hover-pad-y) var(--hover-pad-x);
+  margin: calc(var(--hover-pad-y) * -1) calc(var(--hover-pad-x) * -1);
+}
+
+.hover-icon {
+  border-radius: var(--radius-xs);
+}
+
+/* Full-width clickable rows: the fill runs the card edge to edge (past it only by the bleed,
+   cancelled by a negative margin) while the text keeps the card inset like every other row.
+   A card holding such rows clips them, so the first and last take its rounded corners. */
+.hover-row {
+  width: calc(100% + 2 * var(--hover-bleed));
+  margin-inline: calc(var(--hover-bleed) * -1);
+  padding-inline: calc(var(--card-pad) + var(--hover-bleed));
+  border-radius: var(--hover-row-radius);
+}
+
+.card-surface:has(> .hover-row) {
+  overflow: hidden;
+}
+
+.hover-fill:hover,
+.hover-icon:hover,
+.hover-row:hover {
+  background: var(--hover-fill);
+}
+
+/* A whole card that is one button: the fill lays over the card color instead of replacing it. */
+.hover-card:hover {
+  background-image: linear-gradient(var(--hover-fill), var(--hover-fill));
 }

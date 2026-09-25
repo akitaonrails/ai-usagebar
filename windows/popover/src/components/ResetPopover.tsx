@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
-import { Popover, PopoverArrow, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Hint } from "@/components/Hint";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import type { ResetItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import type { TimeFormat } from "@/lib/types";
@@ -12,26 +14,50 @@ export interface ResetEvent {
 
 interface ResetPopoverProps {
   children: ReactNode;
-  events: ResetEvent[];
-  nowMs: number;
-  timeFormat?: TimeFormat;
+  hidden: number;
+  items: ResetItem[];
 }
 
 /**
- * Click-opened timeline of upcoming resets, matching OpenUsage's
- * RateLimitResetsDetail: numbered dots on a rail, exact time, countdown.
+ * Click-opened list of banked rate-limit resets: a numbered dot colored by how soon each one
+ * expires, the date, and the countdown. Same surface and row rhythm as the Options menu.
  */
-export function ResetPopover({ children, events, nowMs, timeFormat }: ResetPopoverProps) {
-  const sorted = events
-    .filter((event) => Number.isFinite(event.atMs))
-    .slice()
-    .sort((a, b) => a.atMs - b.atMs);
+export function ResetPopover({ children, hidden, items }: ResetPopoverProps) {
   return (
     <Popover>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent onOpenAutoFocus={(event) => event.preventDefault()}>
-        <ResetTimeline events={sorted} nowMs={nowMs} timeFormat={timeFormat} />
-        <PopoverArrow />
+      <PopoverContent
+        align="end"
+        className="text-[length:var(--sz-body)]"
+        collisionPadding={12}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        {items.length === 0 ? (
+          <div className="px-[var(--menu-item-px)] py-[var(--menu-item-py)] text-label-2">You have no rate limit resets</div>
+        ) : (
+          <ol className="m-0 list-none p-0">
+            {items.map((item, index) => (
+              <Hint key={`${item.date}-${index}`} align="start" content={item.title}>
+                <li className="flex items-center gap-[var(--gap-controls)] px-[var(--menu-item-px)] py-[var(--menu-item-py)]">
+                  <span
+                    className={cn(
+                      "grid size-[var(--icon-card)] shrink-0 place-items-center rounded-full text-[length:var(--sz-badge)] font-medium tabular-nums",
+                      item.severity === "red" && "bg-[var(--red)] text-white",
+                      item.severity === "yellow" && "bg-[var(--yellow)] text-black",
+                      item.severity === "blue" && "bg-[var(--blue)] text-white",
+                      item.severity === "" && "bg-[var(--control-fill)] text-label-2",
+                    )}
+                  >
+                    {index + 1}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{item.date}</span>
+                  <span className="shrink-0 tabular-nums text-label-2">{item.remaining}</span>
+                </li>
+              </Hint>
+            ))}
+          </ol>
+        )}
+        {hidden > 0 ? <div className="px-[var(--menu-item-px)] py-[var(--menu-item-py)] text-right text-label-2">+{hidden} more</div> : null}
       </PopoverContent>
     </Popover>
   );

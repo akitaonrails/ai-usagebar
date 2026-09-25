@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Footer, TopBar } from "@/components/Chrome";
 import type { RowAction } from "@/components/RowMenu";
 import type { RowLists } from "@/components/dnd";
+import { UpdateDialog } from "@/components/UpdateDialog";
 import type { Layout, Screen } from "@/lib/types";
 import { LanguageProvider, translate } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -64,6 +65,10 @@ export default function App() {
   // Customize list, or the dashboard header's Customize shortcut.
   const [providerFrom, setProviderFrom] = useState<Screen>("customize");
   const [aboutFrom, setAboutFrom] = useState<Screen>("dashboard");
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  // When the user last asked for a check (for the no-answer timeout, on this clock) and the
+  // host's last check stamp at that moment (the answer is any newer stamp, on the host's clock).
+  const [updateCheck, setUpdateCheck] = useState({ at: 0, baseline: 0 });
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [locked, setLocked] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
@@ -108,11 +113,22 @@ export default function App() {
     else go("dashboard");
   }
 
-  function openAbout(check: boolean) {
+  function openAbout() {
     setOptionsOpen(false);
     if (screen !== "about") setAboutFrom(screen);
-    if (check) sendCommand("check-update");
     go("about");
+  }
+
+  /** Check in place: the dialog opens over whatever screen is showing. */
+  function checkForUpdates() {
+    setOptionsOpen(false);
+    requestCheck();
+    setUpdateDialogOpen(true);
+  }
+
+  function requestCheck() {
+    setUpdateCheck({ at: Date.now(), baseline: payload.updateCheckedAt });
+    sendCommand("check-update");
   }
 
   useEffect(() => {
@@ -154,6 +170,7 @@ export default function App() {
       // menus closed (OpenUsage "Closing").
       setOptionsOpen(false);
       setRowMenuOpen(false);
+      setUpdateDialogOpen(false);
       setResetArmed(false);
       setScreen("dashboard");
       if (scrollRef.current) scrollRef.current.scrollTop = 0;
@@ -210,7 +227,8 @@ export default function App() {
   }, [screen, payload, layout, popoverVisible]);
 
   function onKeyDown(event: KeyboardEvent) {
-    if (locked || event.defaultPrevented || optionsOpen || rowMenuOpen) return;
+    // An open menu or dialog owns Escape/Enter: Escape closes it, not the screen or the popover.
+    if (locked || event.defaultPrevented || optionsOpen || rowMenuOpen || updateDialogOpen) return;
     // The shortcut recorder owns every key while it records (Escape cancels it, not the screen).
     if (document.activeElement?.closest("[data-recording]")) return;
     // Controls own Enter/Escape: switches, pickers, menus, sortable handles.
@@ -332,7 +350,7 @@ export default function App() {
     <div
       ref={shellRef}
       className={cn(
-        "flex h-full flex-col overflow-hidden rounded-[13px] bg-background text-foreground",
+        "flex h-full flex-col overflow-hidden rounded-[var(--window-radius)] bg-background text-foreground",
         payload.os === "macos" && "mac-panel",
       )}
     >
@@ -431,7 +449,7 @@ export default function App() {
               }}
             />
           ) : null}
-          {screen === "about" ? <About nowMs={nowMs} payload={payload} /> : null}
+          {screen === "about" ? <About payload={payload} /> : null}
           {screen === "settings" ? (
             <Settings
               tab={settingsTab}
@@ -443,6 +461,7 @@ export default function App() {
               onAlwaysShowPace={(alwaysShowPace) => commit({ ...layout, alwaysShowPace })}
               onUsageGoal={(usageGoal) => commit({ ...layout, usageGoal })}
               onLanguage={(language) => commit({ ...layout, language })}
+              onCheckUpdates={checkForUpdates}
               onOpenCustomize={() => go("customize")}
               onOpenProvider={(id) => openProvider(id, "settings")}
               onReorderProviders={(ids) => commit({ ...layout, cardOrder: mergeVisibleOrder(layout.cardOrder, ids) })}
@@ -463,13 +482,12 @@ export default function App() {
         </div>
       </div>
       <Footer
-        locked={locked}
         nowMs={nowMs}
         optionsOpen={optionsOpen}
         payload={payload}
-        updatePending={payload.update !== null}
-        onCheckUpdates={() => openAbout(true)}
-        onOpenAbout={() => openAbout(false)}
+        updatePending={Boolean(payload.update?.version)}
+        onCheckUpdates={checkForUpdates}
+        onOpenAbout={openAbout}
         onOpenCustomize={() => {
           setOptionsOpen(false);
           go("customize");
@@ -479,6 +497,15 @@ export default function App() {
           go("settings");
         }}
         onOptionsOpenChange={setOptionsOpen}
+      />
+      <UpdateDialog
+        checkBaseline={updateCheck.baseline}
+        checkRequestedAt={updateCheck.at}
+        nowMs={nowMs}
+        open={updateDialogOpen}
+        payload={payload}
+        onCheck={requestCheck}
+        onOpenChange={setUpdateDialogOpen}
       />
     </div>
     </LanguageProvider>

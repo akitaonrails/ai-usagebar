@@ -5,10 +5,9 @@ import { ScreenCrossLinkRow } from "@/components/Chrome";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Card, Language, Layout, Payload } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
-import { useBusyLabel } from "@/lib/useBusyLabel";
+import { Hint } from "@/components/Hint";
 import { sendCommand, updateModeLabel, updateStatusLabel } from "../model.js";
 import { Customize } from "./Customize";
 
@@ -30,6 +29,7 @@ interface SettingsProps {
   onAlwaysShowPace: (on: boolean) => void;
   onUsageGoal: (on: boolean) => void;
   onLanguage: (language: Language) => void;
+  onCheckUpdates: () => void;
   onOpenCustomize: () => void;
   onOpenProvider: (id: string) => void;
   onReorderProviders: (ids: string[]) => void;
@@ -53,6 +53,7 @@ export function Settings({
   onAlwaysShowPace,
   onUsageGoal,
   onLanguage,
+  onCheckUpdates,
   onOpenCustomize,
   onOpenProvider,
   onReorderProviders,
@@ -67,7 +68,6 @@ export function Settings({
   onTimeFormat,
 }: SettingsProps) {
   const { language, t } = useI18n();
-  const [busy, startBusy] = useBusyLabel();
   const [thresholdDraft, setThresholdDraft] = useState(String(payload.notificationsThreshold));
   useEffect(() => setThresholdDraft(String(payload.notificationsThreshold)), [payload.notificationsThreshold]);
 
@@ -80,9 +80,6 @@ export function Settings({
     }
   }
 
-  const hostButton = updateButtonFor(payload.update);
-  const updateButton = busy ? { ...hostButton, disabled: true, label: t(busy) } : { ...hostButton, label: t(hostButton.label) };
-  // The button already says what is happening; the line keeps the last known state.
   const updateStatus = updateStatusLabel(payload, nowMs, language);
   const providerOptions: Array<[string, string]> = [
     ["highest", t("Highest consumption")],
@@ -93,11 +90,6 @@ export function Settings({
   const focusedProvider = providerOptions.some(([id]) => id === payload.menuBarProvider)
     ? payload.menuBarProvider
     : "highest";
-
-  function onUpdateClick() {
-    startBusy(hostButton.cmd === "check-update" ? "Checking…" : "Updating…");
-    sendCommand(hostButton.cmd);
-  }
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, current: SettingsTab) {
     const index = SETTINGS_TABS.findIndex(([name]) => name === current);
@@ -184,7 +176,7 @@ export function Settings({
           />
         </SettingRow>
         {payload.shortcutError ? (
-          <div className="-mt-1 px-3 pb-[var(--pad-control)] text-[length:var(--sz-badge)] text-meter-red">
+          <div className="-mt-[var(--gap-stack)] px-[var(--card-pad)] pb-[var(--pad-control)] text-[length:var(--sz-badge)] text-meter-red">
             {payload.shortcutError}
           </div>
         ) : null}
@@ -341,7 +333,6 @@ export function Settings({
       </Section>
       </div>
       ) : null}
-      {payload.os === "macos" ? null : (
       <Section title={t("Updates")}>
         <SettingRow hint={t("Automatic installs a release when it is found. Notify shows a banner. Off stops the hourly check.")} label={t("Updates")}>
           <Picker
@@ -354,24 +345,18 @@ export function Settings({
             onChange={(mode) => sendCommand("set-updates", { mode })}
           />
         </SettingRow>
-        <div className="flex items-start gap-[10px] px-3 py-[var(--pad-control)]">
+        <div className="flex items-start gap-[var(--row-gap)] px-[var(--card-pad)] py-[var(--pad-control)]">
           <div className="flex min-w-0 flex-1 flex-col">
             <span>{t("Check for Updates")}</span>
-            <span className="text-[length:var(--sz-badge)] leading-[1.35] break-words text-label-2 [overflow-wrap:anywhere]">
+            <span className="text-[length:var(--sz-badge)] leading-[var(--leading-note)] break-words text-label-2 [overflow-wrap:anywhere]">
               {updateStatus}
             </span>
           </div>
-          <button
-            type="button"
-            className="h-6 shrink-0 rounded-[6px] bg-[var(--control-fill)] px-2.5 text-[length:var(--sz-support)] hover:bg-[var(--control-fill-hover)] disabled:opacity-60"
-            disabled={updateButton.disabled}
-            onClick={onUpdateClick}
-          >
-            {updateButton.label}
+          <button type="button" className="action-btn" onClick={onCheckUpdates}>
+            {t("Check Now")}
           </button>
         </div>
       </Section>
-      )}
       {payload.os === "macos" ? null : <ScreenCrossLinkRow
         icon={<MdiTune />}
         subtitle={t("Choose what's visible and where")}
@@ -404,12 +389,12 @@ interface SettingRowProps {
 
 function SettingRow({ children, hint, label }: SettingRowProps) {
   return (
-    <div className="flex items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)]">
-      <span className="flex min-w-0 items-center gap-1">
+    <div className="flex items-center gap-[var(--row-gap)] px-[var(--card-pad)] py-[var(--pad-control)]">
+      <span className="flex min-w-0 items-center gap-[var(--gap-inline)]">
         <span className="truncate">{label}</span>
         {hint ? <SettingHint label={label} text={hint} /> : null}
       </span>
-      <span className="min-w-2 flex-1" />
+      <span className="min-w-[var(--gap-controls)] flex-1" />
       {children}
     </div>
   );
@@ -418,27 +403,15 @@ function SettingRow({ children, hint, label }: SettingRowProps) {
 function SettingHint({ label, text }: { label: string; text: string }) {
   const { t } = useI18n();
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label={`${t("About")} ${label}`}
-          className="grid size-3.5 shrink-0 place-items-center border-0 bg-transparent p-0 text-label-3"
-        >
-          <MdiInformationOutline className="size-3.5" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent
-        align="start"
-        arrowClassName="bg-[var(--surface)] fill-[var(--surface)]"
-        className="setting-hint"
-        collisionPadding={12}
-        side="top"
-        sideOffset={6}
+    <Hint align="start" content={text}>
+      <button
+        type="button"
+        aria-label={`${t("About")} ${label}`}
+        className="grid size-[var(--row-icon-box)] shrink-0 place-items-center text-label-3"
       >
-        {text}
-      </TooltipContent>
-    </Tooltip>
+        <MdiInformationOutline className="size-[var(--icon-row)]" />
+      </button>
+    </Hint>
   );
 }
 
@@ -459,46 +432,16 @@ function Picker<T extends string>({ options, value, onChange }: PickerProps<T>) 
 
   return (
     <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger
-        size="sm"
-        className="h-[var(--control-h)] gap-1 rounded-[var(--radius-sm)] border-0 bg-[var(--control-fill)] px-2 py-0 text-[12px] shadow-none hover:bg-[var(--control-fill-hover)] focus-visible:ring-0 data-[size=sm]:h-[var(--control-h)] [&_svg]:size-3"
-      >
+      <SelectTrigger>
         <SelectValue />
       </SelectTrigger>
-      <SelectContent className="rounded-[var(--radius-sm)] border-0" position="popper" align="end">
+      <SelectContent position="popper" align="end">
         {options.map(([optionValue, label]) => (
-          <SelectItem key={optionValue} className="py-1 text-[12px]" value={optionValue}>
+          <SelectItem key={optionValue} value={optionValue}>
             {label}
           </SelectItem>
         ))}
       </SelectContent>
     </Select>
   );
-}
-
-interface UpdateButton {
-  cmd: string;
-  disabled: boolean;
-  label: string;
-}
-
-/**
- * "Check Now" only while nothing is known; once a release is found the same
- * button installs it, so the row never asks the user to check again for an
- * answer it already has.
- */
-function updateButtonFor(update: Payload["update"]): UpdateButton {
-  switch (update?.state) {
-    case "checking":
-      return { cmd: "check-update", disabled: true, label: "Checking…" };
-    case "available":
-      return { cmd: "install-update", disabled: false, label: "Update" };
-    case "downloading":
-    case "installing":
-      return { cmd: "install-update", disabled: true, label: "Updating…" };
-    case "failed":
-      return { cmd: "install-update", disabled: false, label: "Try Again" };
-    default:
-      return { cmd: "check-update", disabled: false, label: "Check Now" };
-  }
 }

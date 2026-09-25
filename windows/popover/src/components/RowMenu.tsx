@@ -26,10 +26,6 @@ interface RowMenuProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Same item chrome as the footer Options menu (Chrome.MenuItem). */
-const ITEM_CLASS =
-  "gap-2 rounded-[var(--radius-sm)] px-2 py-[5px] text-[13px] focus:bg-[var(--card)] focus:text-label-1 [&_svg]:size-[15px] [&_svg]:text-label-2 focus:[&_svg]:text-label-2";
-
 /**
  * Right-click menu for one dashboard row: hide it, move it between Always Visible and On Demand,
  * or jump to the provider-level actions. The row itself is never the Radix trigger — a left click
@@ -66,32 +62,32 @@ export function RowMenu({ children, inAlways, providerTitle, starred, onAction, 
           <span aria-hidden="true" className="pointer-events-none absolute inset-0" tabIndex={-1} />
         </DropdownMenuTrigger>
       </div>
-      <DropdownMenuContent align="end" sideOffset={2} className="min-w-[184px] rounded-[10px] p-[5px] shadow-lg">
-        <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("hide")}>
+      <DropdownMenuContent align="end" sideOffset={2}>
+        <DropdownMenuItem onSelect={() => onAction("hide")}>
           <MdiEyeOff />
           <span className="flex-1">{t("Hide row")}</span>
         </DropdownMenuItem>
-        <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("star")}>
+        <DropdownMenuItem onSelect={() => onAction("star")}>
           {starred ? <MdiStar /> : <MdiStarOutline />}
           <span className="flex-1">{t(starred ? "Unstar from menu bar" : "Star for menu bar")}</span>
         </DropdownMenuItem>
         {inAlways ? (
-          <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("demand")}>
+          <DropdownMenuItem onSelect={() => onAction("demand")}>
             <MdiPinOff />
             <span className="flex-1">{t("Show on demand")}</span>
           </DropdownMenuItem>
         ) : (
-          <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("always")}>
+          <DropdownMenuItem onSelect={() => onAction("always")}>
             <MdiPin />
             <span className="flex-1">{t("Always show")}</span>
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
-        <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("refresh")}>
+        <DropdownMenuItem onSelect={() => onAction("refresh")}>
           <MdiRefresh />
           <span className="flex-1">{t("Refresh")} {providerTitle}</span>
         </DropdownMenuItem>
-        <DropdownMenuItem className={ITEM_CLASS} onSelect={() => onAction("customize")}>
+        <DropdownMenuItem onSelect={() => onAction("customize")}>
           <MdiTune />
           <span className="flex-1">{t("Customize")} {providerTitle}</span>
         </DropdownMenuItem>

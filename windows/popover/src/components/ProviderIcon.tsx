@@ -47,7 +47,7 @@ interface ProviderIconProps {
 }
 
 /** ProviderIcon: the provider's mark filled with the gray icon tint, or two-letter initials. */
-export function ProviderIcon({ className, size = 16, slug, title }: ProviderIconProps) {
+export function ProviderIcon({ className, size = "var(--icon-card)", slug, title }: ProviderIconProps) {
   const Mark = MARKS[slug];
   const length = typeof size === "number" ? `${size}px` : size;
 
@@ -61,7 +61,7 @@ export function ProviderIcon({ className, size = 16, slug, title }: ProviderIcon
     <span
       aria-hidden
       className={cn(
-        "grid shrink-0 place-items-center rounded-[4px] bg-[var(--fill-quaternary)] font-bold text-[var(--label-2)]",
+        "grid shrink-0 place-items-center rounded-[var(--radius-xs)] bg-[var(--fill-quaternary)] font-bold text-[var(--label-2)]",
         className,
       )}
       style={{ fontSize: `calc(${length} * 0.5)`, height: length, width: length }}

@@ -31,6 +31,9 @@ export default defineConfig({
     emptyOutDir: true,
     cssCodeSplit: false,
     assetsInlineLimit: 4096,
+    // One file on purpose: the tray embeds it with include_str! and serves it from memory, so the
+    // 500 kB network-download warning does not apply.
+    chunkSizeWarningLimit: 1024,
     rollupOptions: {
       output: {
         codeSplitting: false,

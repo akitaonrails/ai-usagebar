@@ -62,12 +62,31 @@ pub struct AccountSwitchFact {
 pub struct UpdateFact {
     /// Human-readable reason when `state` is "failed", or empty.
     pub error: String,
+    /// The release ships this OS/arch and the install directory is writable;
+    /// otherwise the popover links the release page instead of installing.
+    pub installable: bool,
     /// "checking" | "available" | "downloading" | "installing" | "failed".
     pub state: String,
     /// Release page for the human; never opened by the host itself.
     pub url: String,
     /// Bare "X.Y.Z".
     pub version: String,
+}
+
+/// Host facts are owned jointly: the event-loop thread edits the shortcut, the
+/// worker edits the update state, and every report snapshots the whole thing.
+pub type SharedFacts = std::sync::Arc<std::sync::Mutex<HostFacts>>;
+
+/// Only the hosts read the whole record; the update worker edits in place.
+#[cfg(any(windows, target_os = "macos"))]
+pub fn facts_snapshot(facts: &SharedFacts) -> HostFacts {
+    facts.lock().map(|f| f.clone()).unwrap_or_default()
+}
+
+pub fn with_facts(facts: &SharedFacts, edit: impl FnOnce(&mut HostFacts)) {
+    if let Ok(mut guard) = facts.lock() {
+        edit(&mut guard);
+    }
 }
 
 impl HostFacts {
@@ -111,32 +130,6 @@ fn repository_page() -> String {
     }
 }
 
-/// Map a manual release check onto the fact the popover already renders.
-/// `Ok(None)` is "up to date" and clears any previous fact.
-///
-/// macOS-only: the macOS host's manual check maps through here, while the
-/// Windows host builds its facts inline around its pending/snooze state.
-#[cfg(target_os = "macos")]
-pub fn fact_after_check(
-    outcome: Result<Option<crate::update::Release>, String>,
-) -> Option<UpdateFact> {
-    match outcome {
-        Ok(Some(release)) => Some(UpdateFact {
-            error: String::new(),
-            state: "available".into(),
-            url: release.html_url,
-            version: release.version,
-        }),
-        Ok(None) => None,
-        Err(error) => Some(UpdateFact {
-            error,
-            state: "failed".into(),
-            url: String::new(),
-            version: String::new(),
-        }),
-    }
-}
-
 fn host_os() -> &'static str {
     if cfg!(target_os = "macos") {
         "macos"
@@ -163,6 +156,7 @@ pub fn wrap_report(
             "url": sanitize_untrusted_field(&u.url),
             "state": u.state,
             "error": sanitize_untrusted_field(&u.error),
+            "installable": u.installable,
         })
     });
     let accounts: serde_json::Map<String, Value> = facts
@@ -454,6 +448,7 @@ mod tests {
         host.update_checked_at = 42;
         host.update = Some(UpdateFact {
             error: String::new(),
+            installable: true,
             state: "available".into(),
             url: "https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.11.0".into(),
             version: "1.11.0".into(),
@@ -471,25 +466,7 @@ mod tests {
         assert_eq!(payload["update"]["version"], "1.11.0");
         assert_eq!(payload["update"]["state"], "available");
         assert_eq!(payload["update"]["error"], "");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn fact_after_check_maps_newer_current_and_failure() {
-        use crate::update::Release;
-
-        let newer = super::fact_after_check(Ok(Some(Release {
-            assets: Vec::new(),
-            html_url: "https://github.com/akitaonrails/ai-usagebar/releases/tag/v9.0.0".into(),
-            version: "9.0.0".into(),
-        })))
-        .expect("a newer release is a fact");
-        assert_eq!(newer.state, "available");
-        assert_eq!(newer.version, "9.0.0");
-        assert!(super::fact_after_check(Ok(None)).is_none());
-        let failed = super::fact_after_check(Err("offline".into())).expect("a failure is a fact");
-        assert_eq!(failed.state, "failed");
-        assert_eq!(failed.error, "offline");
+        assert_eq!(payload["update"]["installable"], true);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   accountSwitchFor,
   formatDuration,
@@ -58,6 +59,10 @@ import {
   shortcutFromKeyEvent,
   defaultStars,
   toggleStar,
+  metricRowKey,
+  paceWarmupMs,
+  paceWarmupText,
+  paceWarmupHint,
   isStarred,
   seedStars,
   stripCommand,
@@ -69,6 +74,8 @@ import {
   updateStatusLabel,
   updateBannerPending,
   updateModeLabel,
+  updateAction,
+  updateMessage,
 } from './src/model.js';
 import { measurePanelHeight } from './src/panel-size.js';
 
@@ -339,6 +346,10 @@ assert.deepEqual(resetDetails.items.map((item) => item.date), [
   'Date unavailable',
 ]);
 assert.deepEqual(resetDetails.items.map((item) => item.remaining), ['5d 13h', '19d 18h', '—']);
+// Dots are colored by how soon each credit expires, never by position; an
+// unknown date gets the neutral dot.
+assert.deepEqual(resetDetails.items.map((item) => item.severity), ['yellow', 'blue', '']);
+
 assert.equal(resetDetails.hidden, 0);
 assert.equal(
   formatResetCreditDate('2026-09-20T23:58:00Z', { locale: 'en-US', timeZone: 'UTC', timeFormat: '12' }),
@@ -603,6 +614,7 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(full.updates, 'auto');
   assert.deepEqual(full.update, {
     error: '',
+    installable: false,
     state: 'downloading',
     url: 'https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.12.0',
     version: 'v1.12.0',
@@ -850,7 +862,37 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(updateBannerPending(withUpdate('available')), true);
   assert.equal(updateBannerPending(withUpdate('failed')), true);
   assert.equal(updateBannerPending(withUpdate('checking')), false);
+  assert.equal(updateBannerPending(withUpdate('failed', { version: '' })), false, 'a failed check is not an update');
   assert.equal(updateBannerPending(null), false);
+
+  // One action table for the banner and the dialog.
+  const repo = 'https://github.com/akitaonrails/ai-usagebar';
+  const release = 'https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.11.0';
+  assert.equal(updateAction(null, repo).cmd, 'check-update');
+  assert.equal(updateAction(withUpdate('checking').update, repo).busy, true);
+  assert.equal(updateAction(withUpdate('downloading').update, repo).label, 'Downloading…');
+  assert.deepEqual(updateAction(withUpdate('available', { installable: true }).update, repo), {
+    busy: false,
+    cmd: 'install-update',
+    label: 'Install Update',
+    url: '',
+  });
+  // Not installable here: never a dead Install, always the release page.
+  assert.deepEqual(updateAction(withUpdate('available', { url: release }).update, repo), {
+    busy: false,
+    cmd: 'open-url',
+    label: 'View Release',
+    url: release,
+  });
+  assert.equal(updateAction(withUpdate('available').update, repo).url, repo + '/releases/latest');
+  assert.equal(updateAction(withUpdate('failed').update, repo).cmd, 'install-update');
+  assert.equal(updateMessage(withUpdate('available', { installable: true }).update), 'AI Usage v1.11.0 is ready to install.');
+  assert.match(updateMessage(withUpdate('available').update), /release page/);
+  assert.equal(updateMessage(withUpdate('failed', { error: 'offline' }).update), "Couldn't update: offline");
+  assert.equal(updateMessage(withUpdate('failed', { error: 'HTTP 503', version: '' }).update), "Couldn't check: HTTP 503");
+  assert.equal(updateMessage(null), '');
+  assert.equal(parseHostPayload({ update: { state: 'available', installable: 'yes' } }).update.installable, false);
+  assert.equal(parseHostPayload({ update: { state: 'available', installable: true } }).update.installable, true);
 
   assert.equal(updateModeLabel('auto'), 'Automatic');
   assert.equal(updateModeLabel('notify'), 'Notify me');
@@ -1440,6 +1482,43 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.equal(control.active, true);
   // Two labels that share the cut id are ambiguous, so neither card offers one.
   assert.equal(accountSwitchFor(cardId.replace('openai', 'anthropic'), payload.accounts), null);
+}
+
+// Early in a window there is no pace yet: the meter says "Estimating…". The wait
+// is 1% of the window, capped at an hour so long windows do not sit for hours.
+{
+  const now = Date.parse('2026-09-23T15:00:00Z');
+  const week = 604800;
+  const at = (window, elapsedSecs, used = 1) => ({
+    usedPercent: used,
+    resetAt: new Date(now + (window - elapsedSecs) * 1000).toISOString(),
+    window,
+  });
+  const young = at(week, 1800); // 30m into a week
+  assert.equal(pace(young, now), null);
+  assert.equal(paceWarmupMs(young, now), 1800_000);
+  assert.equal(paceWarmupText(young, now), 'Estimating…');
+  assert.equal(paceWarmupHint(young), 'The pace shows after the first 1h of each window.');
+  // A week or a month waits an hour, not 1h 41m or 7h 12m.
+  assert.notEqual(pace(at(week, 3600), now), null);
+  assert.notEqual(pace(at(2592000, 3600), now), null);
+  // A 5h session keeps its 3 minutes.
+  assert.equal(pace(at(18000, 170), now), null);
+  assert.equal(paceWarmupHint(at(18000, 170)), 'The pace shows after the first 3m of each window.');
+  // Nothing spent, no window, or already projecting: no warm-up note.
+  assert.equal(paceWarmupText({ ...young, usedPercent: 0 }, now), '');
+  assert.equal(paceWarmupText({ ...young, window: 0 }, now), '');
+  assert.equal(paceWarmupText(at(week, 7200), now), '');
+}
+
+// Star keys are a contract with the tray host (src/tray/strip.rs metric_key),
+// which reads the same fixture: a rule changed here alone fails its test there.
+{
+  const fixture = JSON.parse(readFileSync(new URL('../../tests/fixtures/strip_metric_keys.json', import.meta.url), 'utf8'));
+  assert.ok(fixture.cases.length > 0);
+  for (const c of fixture.cases) {
+    assert.equal(metricRowKey(c.id, c.label, c.group || ''), c.key, JSON.stringify(c));
+  }
 }
 
 console.log('ok');

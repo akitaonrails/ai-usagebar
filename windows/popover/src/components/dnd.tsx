@@ -75,7 +75,7 @@ export function SortableColumn({
     <SortableContext items={items} strategy={verticalListSortingStrategy}>
       <div
         ref={setNodeRef}
-        className={cn(className, isOver && "ring-2 ring-ring/35", items.length === 0 && "min-h-10")}
+        className={cn(className, isOver && "ring-[length:var(--focus-ring)] ring-ring/35", items.length === 0 && "min-h-[calc(var(--drop-zone-h)+2*var(--panel-pad))]")}
       >
         {children}
       </div>

@@ -111,7 +111,7 @@ export function ProviderDetail({ card, layout, starError, onReorderRows, onToggl
           onToggleStar={onToggleStar}
         />
         {starError ? (
-          <div className="px-1 text-[length:var(--sz-badge)] text-meter-red">{t(starError)}</div>
+          <div className="px-[var(--space-xs)] text-[length:var(--sz-badge)] text-meter-red">{t(starError)}</div>
         ) : null}
       </div>
       <DragOverlay dropAnimation={null}>
@@ -191,7 +191,7 @@ function MetricTuneRow({ enabled, handle, row, starred, onStar, onToggle }: Metr
   const { metricLabel, t } = useI18n();
   const title = metricLabel(String(row.label || row.kind));
   return (
-    <div data-row-key={rowKey(row)} className="flex items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)]">
+    <div data-row-key={rowKey(row)} className="flex items-center gap-[var(--row-gap)] px-[var(--card-pad)] py-[var(--pad-control)]">
       <DragHandle attributes={handle?.attributes} listeners={handle?.listeners} />
       <span className="min-w-0 flex-1 truncate">{title}</span>
       {onStar ? (
@@ -199,10 +199,10 @@ function MetricTuneRow({ enabled, handle, row, starred, onStar, onToggle }: Metr
           type="button"
           aria-label={starred ? `${t("Unstar")} ${title}` : `${t("Star")} ${title} ${t("for menu bar")}`}
           aria-pressed={starred === true}
-          className="inline-flex size-[18px] items-center justify-center text-label-2 hover:text-foreground"
+          className="hover-icon inline-flex size-[var(--row-icon-box)] items-center justify-center text-label-2 hover:text-foreground"
           onClick={onStar}
         >
-          {starred ? <MdiStar className="size-[14px] text-primary" /> : <MdiStarOutline className="size-[14px]" />}
+          {starred ? <MdiStar className="size-[var(--icon-row)] text-primary" /> : <MdiStarOutline className="size-[var(--icon-row)]" />}
         </button>
       ) : null}
       <Switch checked={enabled} aria-label={`${t("Show")} ${title}`} onCheckedChange={(on) => onToggle?.(on === true)} />

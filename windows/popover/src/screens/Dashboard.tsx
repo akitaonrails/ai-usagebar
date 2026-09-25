@@ -7,6 +7,7 @@ import { SortableItem, VerticalDnd } from "@/components/dnd";
 import type { Card, Layout, Payload } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
 import { accountSwitchFor, explainError, updateBannerPending } from "../model.js";
+import { Hint } from "@/components/Hint";
 
 interface DashboardProps {
   cards: Card[];
@@ -49,9 +50,11 @@ export function Dashboard({
   const { t } = useI18n();
   if (payload.hostError) {
     return (
-      <div className="card-surface py-[var(--card-gutter)]" title={payload.hostError}>
-        <ErrorRow explained={explainError(payload.hostError)} />
-      </div>
+      <Hint align="start" content={payload.hostError}>
+        <div className="card-surface py-[var(--card-gutter)]">
+          <ErrorRow explained={explainError(payload.hostError)} />
+        </div>
+      </Hint>
     );
   }
   const welcome = hint ? (
@@ -69,7 +72,7 @@ export function Dashboard({
   const banner =
     payload.update && updateBannerPending(payload) ? (
       <div className="mb-[var(--section-gap)]">
-        <UpdateBanner update={payload.update} />
+        <UpdateBanner repository={payload.repository} update={payload.update} />
       </div>
     ) : null;
   if (visible.length === 0) {
@@ -77,7 +80,7 @@ export function Dashboard({
       <>
         {welcome}
         {banner}
-        <p className="m-0 px-4 py-6 text-center text-[11px] text-label-2">
+        <p className="m-0 px-[var(--space-2xl)] py-[var(--space-3xl)] text-center text-[length:var(--sz-support)] text-label-2">
           {cards.length
             ? t("Turn on Customize to choose what to show.")
             : t("No providers enabled. Open the TUI and turn one on in Settings.")}

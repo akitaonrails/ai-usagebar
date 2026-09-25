@@ -27,26 +27,35 @@ function TooltipTrigger({
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
 }
 
+/** Gap between a hint and its trigger, in px (Radix positions in JS, so not a CSS token). */
+const HINT_OFFSET = 2
+
+/**
+ * The app's hover hint: --hint-bg / --hint-fg (near-black on the light theme, the window
+ * surface on the dark one) with a soft shadow. No arrow; it sits just above its trigger.
+ */
 function TooltipContent({
-  arrowClassName,
   className,
-  sideOffset = 0,
+  collisionPadding = 12,
+  side = "top",
+  sideOffset = HINT_OFFSET,
   children,
   ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Content> & { arrowClassName?: string }) {
+}: React.ComponentProps<typeof TooltipPrimitive.Content>) {
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
+        collisionPadding={collisionPadding}
+        side={side}
         sideOffset={sideOffset}
         className={cn(
-          "z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-in rounded-md border border-border bg-popover px-3 py-1.5 text-xs text-balance text-popover-foreground shadow-md fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "z-50 w-fit max-w-[var(--hint-max-w)] origin-(--radix-tooltip-content-transform-origin) rounded-[var(--radius-sm)] bg-[var(--hint-bg)] p-[var(--hint-pad)] text-left text-[length:var(--sz-support)] leading-[var(--leading-note)] font-normal text-[var(--hint-fg)] shadow-[var(--hint-shadow)]",
           className
         )}
         {...props}
       >
         {children}
-        <TooltipPrimitive.Arrow className={cn("z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px] bg-popover fill-popover", arrowClassName)} />
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>
   )

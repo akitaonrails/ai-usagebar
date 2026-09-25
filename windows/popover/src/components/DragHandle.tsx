@@ -15,7 +15,7 @@ export function DragHandle({ attributes, className, label = "Reorder", listeners
   const { t } = useI18n();
   return (
     <button type="button" aria-label={t(label)} className={cn("grip", className)} {...attributes} {...listeners}>
-      <MdiMenu className="size-3.5" />
+      <MdiMenu className="size-[var(--icon-row)]" />
     </button>
   );
 }
