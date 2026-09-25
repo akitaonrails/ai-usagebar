@@ -11,6 +11,11 @@ Each release is also published at
 
 ### Added
 
+- **Linux Mint Cinnamon tray frontend.** An experimental GTK dashboard reads
+  the existing `usage --json` report, shows provider quota groups with the
+  icon marks already shipped for Omarchy, color-coded pacing bars, a flame
+  warning when projected usage exceeds the limit, and concise disconnected
+  cards. It opens from the native status icon.
 - **Grok Bot on Windows.** `[grokbot]` read the desktop app's session only on
   Linux and macOS and failed closed elsewhere. On Windows it now reads
   `%APPDATA%\Grok Bot\sand-secrets.json`, whose tokens are Chromium's Windows

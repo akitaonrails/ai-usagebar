@@ -23,7 +23,8 @@ codebase.
 - An optional Claude Code context view reads recent local session usage without
   scanning entire histories.
 - Native integrations are available for Omarchy, GNOME Shell, KDE Plasma 6,
-  and a macOS/Windows system-tray popover (`ai-usagebar-tray`).
+  and a macOS/Windows system-tray popover (`ai-usagebar-tray`). An experimental
+  GTK tray frontend for Linux Mint is in [`linux-mint/`](linux-mint/README.md).
 - One bar item can cycle through enabled providers. `[ui] primary` controls the
   initial provider in both the widget and TUI.
 - Atomic caches and file locking prevent duplicate requests from multi-monitor
@@ -730,13 +731,14 @@ The plugin depends only on the `ai-usagebar` executable. It runs the fixed
 only after a right-click. It installs no service, asks for no elevated
 privileges, and does not overwrite user configuration.
 
-### GNOME, KDE, macOS and Windows
+### Desktop integrations
 
 | Integration | Supported providers | Notes |
 |---|---|---|
 | [macOS menu bar](macos/README.md) | Whatever `usage --json` reports | `ai-usagebar-tray`: WKWebView popover + each ready provider's name and usage with a chart glyph. |
 | [GNOME Shell](gnome-extension/README.md) | Claude, Codex, Z.AI, OpenRouter, DeepSeek, Google Antigravity | Antigravity's two quota pools appear as grouped rows. |
 | [KDE Plasma 6](kde-plasmoid/README.md) | Whatever `usage --json` reports | Provider tabs in the popup; vendor is per applet instance. |
+| [Linux Mint / Cinnamon](linux-mint/README.md) | Whatever `usage --json` reports | Experimental GTK dashboard with provider icons; left-click the status icon. |
 | [Windows tray](windows/README.md) | Whatever `usage --json` reports | NotifyIcon + WebView2 popover; left-click the tray icon. |
 
 Cursor is not available in the GNOME extension yet. On GNOME, use

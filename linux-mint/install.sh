@@ -18,6 +18,10 @@ if [[ ! -x "$user_home/.local/bin/ai-usagebar" ]]; then
 fi
 
 install -Dm755 "$source_dir/ai-usagebar-tray" "$user_home/.local/bin/ai-usagebar-tray"
+install -Dm644 "$source_dir/tray_model.py" "$user_home/.local/bin/tray_model.py"
+for icon in "$source_dir"/../omarchy/icons/*.svg; do
+  install -Dm644 "$icon" "$user_home/.local/share/ai-usagebar/tray/icons/$(basename "$icon")"
+done
 install -d "$user_home/.local/share/applications" "$user_home/.config/autostart"
 sed "s|@BINDIR@|$user_home/.local/bin|g" "$source_dir/ai-usagebar.desktop" > "$user_home/.local/share/applications/ai-usagebar.desktop"
 sed "s|@BINDIR@|$user_home/.local/bin|g" "$source_dir/ai-usagebar-tray.desktop" > "$user_home/.config/autostart/ai-usagebar-tray.desktop"
