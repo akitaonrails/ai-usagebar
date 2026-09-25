@@ -106,7 +106,7 @@ pub fn installable(release: &Release) -> bool {
 /// [`self_update_blocker`] for the running process.
 fn blocker() -> Option<&'static str> {
     let exe = std::env::current_exe().ok()?;
-    self_update_blocker(&exe, is_link(&exe))
+    self_update_blocker(&exe, is_link(&exe), Path::is_file)
 }
 
 fn is_link(path: &Path) -> bool {
