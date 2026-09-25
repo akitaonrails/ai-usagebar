@@ -99,6 +99,16 @@ Each release is also published at
   re-sign-in for nothing. The message now says the plan has no quota to
   report and names the `[antigravity]` toggle, and only a 403 without that
   reason keeps the session wording. (#256)
+- **A Scoop install of the Windows tray no longer updates itself behind
+  Scoop's back.** The built-in updater only knew Homebrew, Nix and cargo
+  builds, so under Scoop "Install Update" (or Automatic, silently) wrote the
+  new exes into Scoop's version folder: `scoop list` kept the old version, the
+  next `scoop update` fetched the running version again and `scoop reset`
+  handed back the new one. A tray running from
+  `<scoop>\apps\<app>\<version or current>\`, with Scoop's `install.json`
+  beside it, now offers the release page like a Homebrew install does, and
+  Scoop owns the update (`scoop update ai-usagebar`), as the README already
+  said.
 - **The Windows tray popover no longer runs under the taskbar.** A tall popover
   was sized and kept on screen against the whole monitor, so on a 1440 px
   display with a 48 px taskbar its bottom went behind it. It now uses the
