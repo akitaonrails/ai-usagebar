@@ -656,6 +656,10 @@ impl SuperGrokPeriod {
 pub struct GrokbotSnapshot {
     /// `grokPlanLabel`, falling back to `cursorPlanName`, then "Grok Bot".
     pub plan: String,
+    /// The subscription that bills the pool, from `billingBrand` and the plan
+    /// reported for it ("Cursor Ultra"). `None` for a brand not recognized yet,
+    /// which is left unnamed rather than guessed.
+    pub billed_by: Option<String>,
     /// `hasNonZeroIncludedLimit`. When false the account carries no included
     /// allowance at all — a distinct "no included allowance" state, never a
     /// fabricated 0% meter.
@@ -678,6 +682,13 @@ pub struct GrokbotSnapshot {
 }
 
 impl GrokbotSnapshot {
+    /// The plan a frontend shows: the subscription that bills the pool
+    /// ("Cursor Ultra") over the app's own label, which reads "Grok Bot Plan"
+    /// on every account.
+    pub fn display_plan(&self) -> &str {
+        self.billed_by.as_deref().unwrap_or(&self.plan)
+    }
+
     /// At 100% of the included pool, `hasAvailableUsage` can still be true
     /// because on-demand keeps serving — say so, but only when the account
     /// actually has on-demand switched on.

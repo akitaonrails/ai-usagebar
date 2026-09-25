@@ -20,6 +20,12 @@
 //! also stores `cursor-accounts` as a JSON *string* wrapping the object Linux
 //! writes as an object; [`parse`] accepts both.
 //!
+//! On Windows the file sits in `%APPDATA%\Grok Bot`, the blobs are Chromium's
+//! Windows `v10` (AES-256-GCM), and the key is `os_crypt.encrypted_key` in the
+//! `Local State` file beside it, unprotected by DPAPI for the signed-in user
+//! ([`crate::safe_storage::windows_key`]). `cursor-accounts` is a JSON string
+//! there too.
+//!
 //! Error messages are fixed strings: every input here is a credential and
 //! must never end up in a tooltip or a log line.
 
@@ -43,8 +49,36 @@ const MACOS_SERVICE: &str = "Grok Bot Safe Storage";
 #[cfg(target_os = "macos")]
 const MACOS_ACCOUNT: &str = "Grok Bot Key";
 
-/// The app's Cursor OAuth session, decrypted.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The key that opens the app's token blobs: Chromium's Linux/macOS OSCrypt
+/// (AES-128-CBC) or its Windows one (AES-256-GCM). Its `Debug` names only the
+/// scheme.
+#[derive(Clone, PartialEq, Eq)]
+pub enum OsCryptKey {
+    Cbc([u8; 16]),
+    Gcm([u8; crate::safe_storage::WINDOWS_KEY_LEN]),
+}
+
+impl std::fmt::Debug for OsCryptKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Cbc(_) => "OsCryptKey::Cbc(..)",
+            Self::Gcm(_) => "OsCryptKey::Gcm(..)",
+        })
+    }
+}
+
+impl OsCryptKey {
+    fn decrypt(&self, blob: &str) -> Result<Vec<u8>> {
+        match self {
+            Self::Cbc(key) => crate::safe_storage::decrypt(key, blob),
+            Self::Gcm(key) => crate::safe_storage::decrypt_windows(key, blob),
+        }
+    }
+}
+
+/// The app's Cursor OAuth session, decrypted. Its `Debug` keeps the
+/// fingerprint and hides both tokens.
+#[derive(Clone, PartialEq, Eq)]
 pub struct GrokbotCredentials {
     pub access_token: String,
     pub refresh_token: String,
@@ -53,6 +87,16 @@ pub struct GrokbotCredentials {
     /// re-login never gets the previous session's cache — the same treatment
     /// kiro/minimax give their account keys.
     pub fingerprint: String,
+}
+
+impl std::fmt::Debug for GrokbotCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GrokbotCredentials")
+            .field("access_token", &"<redacted>")
+            .field("refresh_token", &"<redacted>")
+            .field("fingerprint", &self.fingerprint)
+            .finish()
+    }
 }
 
 pub fn fingerprint_of(secret: &str) -> String {
@@ -75,15 +119,39 @@ pub fn key_for(secret: Option<&str>) -> [u8; 16] {
 /// Linux: Secret Service secret when one is stored, else `"peanuts"`.
 /// macOS: the Keychain item; a missing item is an error, not peanuts.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub fn oscrypt_key() -> Result<[u8; 16]> {
+pub fn oscrypt_key() -> Result<OsCryptKey> {
     #[cfg(target_os = "linux")]
     {
-        Ok(key_for(lookup_secret().as_deref()))
+        Ok(OsCryptKey::Cbc(key_for(lookup_secret().as_deref())))
     }
     #[cfg(target_os = "macos")]
     {
-        macos_oscrypt_key()
+        macos_oscrypt_key().map(OsCryptKey::Cbc)
     }
+}
+
+/// The `Local State` file Chromium keeps beside `sand-secrets.json`.
+pub const LOCAL_STATE_FILE_NAME: &str = "Local State";
+
+/// Windows: the DPAPI-protected key in the `Local State` beside the credential
+/// file. Any failure is a credentials error with a fixed message.
+#[cfg(windows)]
+pub fn windows_oscrypt_key(secrets_path: &Path) -> Result<OsCryptKey> {
+    let local_state = secrets_path.with_file_name(LOCAL_STATE_FILE_NAME);
+    if !local_state.is_file() {
+        return Err(AppError::Credentials(format!(
+            "Grok Bot: no Local State at {} — install the Grok Bot desktop app and sign in to it",
+            crate::display::sanitize_untrusted_path(&local_state)
+        )));
+    }
+    crate::safe_storage::windows_key(&local_state)
+        .map(OsCryptKey::Gcm)
+        .map_err(|_| {
+            AppError::Credentials(
+                "Grok Bot: the desktop app's encryption key could not be read for this Windows user; sign in to the Grok Bot desktop app again"
+                    .into(),
+            )
+        })
 }
 
 /// `secret-tool lookup application "Grok Bot"`, read-only. A missing binary,
@@ -157,15 +225,10 @@ fn lookup_macos_secret() -> Option<String> {
 }
 
 /// Read and decrypt the credential file at `path`.
-pub fn read_at(path: &Path, key: &[u8; 16]) -> Result<GrokbotCredentials> {
+pub fn read_at(path: &Path, key: &OsCryptKey) -> Result<GrokbotCredentials> {
     let raw = std::fs::read(path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            // Name the fix, and the file actually checked (a configured
-            // `secrets_path` makes the default advice useless otherwise).
-            AppError::Credentials(format!(
-                "Grok Bot: no credential file at {} — install the Grok Bot desktop app and sign in to it",
-                crate::display::sanitize_untrusted_path(path)
-            ))
+            missing_file_error(path)
         } else {
             AppError::io_at(path, e)
         }
@@ -173,7 +236,16 @@ pub fn read_at(path: &Path, key: &[u8; 16]) -> Result<GrokbotCredentials> {
     parse(&raw, key)
 }
 
-fn parse(raw: &[u8], key: &[u8; 16]) -> Result<GrokbotCredentials> {
+/// No credential file at `path`. Names the fix, and the file actually checked
+/// (a configured `secrets_path` makes the default advice useless otherwise).
+pub fn missing_file_error(path: &Path) -> AppError {
+    AppError::Credentials(format!(
+        "Grok Bot: no credential file at {} — install the Grok Bot desktop app and sign in to it",
+        crate::display::sanitize_untrusted_path(path)
+    ))
+}
+
+fn parse(raw: &[u8], key: &OsCryptKey) -> Result<GrokbotCredentials> {
     let malformed = || {
         AppError::Credentials(
             "Grok Bot: sand-secrets.json does not hold an active signed-in account; sign in to the Grok Bot desktop app again"
@@ -215,7 +287,7 @@ fn cursor_accounts_object(root: &serde_json::Value) -> Option<serde_json::Value>
 
 /// Decrypt one OSCrypt `v10` blob field into a UTF-8 token. The field name is
 /// safe to name in an error; the blob and its plaintext never are.
-fn decrypt_field(key: &[u8; 16], field: Option<&serde_json::Value>) -> Result<String> {
+fn decrypt_field(key: &OsCryptKey, field: Option<&serde_json::Value>) -> Result<String> {
     let blob = field
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.trim().is_empty())
@@ -225,7 +297,7 @@ fn decrypt_field(key: &[u8; 16], field: Option<&serde_json::Value>) -> Result<St
                     .into(),
             )
         })?;
-    let bytes = crate::safe_storage::decrypt(key, blob).map_err(|_| {
+    let bytes = key.decrypt(blob).map_err(|_| {
         AppError::Credentials(
             "Grok Bot: a stored token could not be decrypted; sign in to the Grok Bot desktop app again"
                 .into(),
@@ -281,7 +353,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let path = seed_secrets(&td, "at-test", "rt-test");
 
-        let creds = read_at(&path, &test_key()).unwrap();
+        let creds = read_at(&path, &OsCryptKey::Cbc(test_key())).unwrap();
 
         assert_eq!(creds.access_token, "at-test");
         assert_eq!(creds.refresh_token, "rt-test");
@@ -312,7 +384,7 @@ mod tests {
         });
         std::fs::write(&path, doc.to_string()).unwrap();
 
-        let creds = read_at(&path, &key).unwrap();
+        let creds = read_at(&path, &OsCryptKey::Cbc(key)).unwrap();
         assert_eq!(creds.access_token, "at-two");
         assert_eq!(creds.refresh_token, "rt-two");
     }
@@ -321,7 +393,7 @@ mod tests {
     fn a_missing_file_names_the_fix_and_the_path_checked() {
         let td = TempDir::new().unwrap();
         let missing = td.path().join("absent").join("sand-secrets.json");
-        let err = read_at(&missing, &test_key()).unwrap_err();
+        let err = read_at(&missing, &OsCryptKey::Cbc(test_key())).unwrap_err();
         let message = err.to_string();
         assert!(matches!(err, AppError::Credentials(_)), "{err:?}");
         assert!(
@@ -352,7 +424,7 @@ mod tests {
         ] {
             let path = td.path().join(format!("{name}.json"));
             std::fs::write(&path, contents).unwrap();
-            let err = read_at(&path, &test_key()).unwrap_err();
+            let err = read_at(&path, &OsCryptKey::Cbc(test_key())).unwrap_err();
             assert!(matches!(err, AppError::Credentials(_)), "{name}: {err:?}");
             // Fixed strings only: nothing from the file leaks into the error.
             assert!(!err.to_string().contains("\"other\""), "{name}: {err}");
@@ -364,7 +436,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let path = seed_secrets(&td, "at-test", "rt-test");
         let wrong_key = crate::safe_storage::derive_key_linux(b"somebody-elses-secret");
-        let err = read_at(&path, &wrong_key).unwrap_err();
+        let err = read_at(&path, &OsCryptKey::Cbc(wrong_key)).unwrap_err();
         assert!(matches!(err, AppError::Credentials(_)), "{err:?}");
         let message = err.to_string();
         assert!(message.contains("could not be decrypted"), "{message}");
@@ -407,7 +479,7 @@ mod tests {
         let doc = serde_json::json!({ "cursor-accounts": inner.to_string() });
         std::fs::write(&path, doc.to_string()).unwrap();
 
-        let creds = read_at(&path, &key).unwrap();
+        let creds = read_at(&path, &OsCryptKey::Cbc(key)).unwrap();
         assert_eq!(creds.access_token, "at-mac");
         assert_eq!(creds.refresh_token, "rt-mac");
     }
@@ -429,8 +501,84 @@ mod tests {
             }
         });
         std::fs::write(&path, doc.to_string()).unwrap();
-        let creds = read_at(&path, &key).unwrap();
+        let creds = read_at(&path, &OsCryptKey::Cbc(key)).unwrap();
         assert_eq!(creds.access_token, "at-macos");
         assert_eq!(creds.refresh_token, "rt-macos");
+    }
+
+    const WINDOWS_KEY: [u8; 32] = [9; 32];
+
+    /// Seed a `sand-secrets.json` the way the Windows app writes it:
+    /// `cursor-accounts` as a JSON string, blobs as AES-256-GCM `v10` values.
+    fn seed_windows_secrets(dir: &TempDir) -> std::path::PathBuf {
+        let seal = |nonce: u8, text: &str| {
+            crate::safe_storage::encrypt_windows(&WINDOWS_KEY, [nonce; 12], text.as_bytes())
+        };
+        let inner = serde_json::json!({
+            "active": "acct-1",
+            "accounts": {
+                "acct-1": {
+                    "cursor-access-token": seal(1, "at-windows"),
+                    "cursor-account-profile": {},
+                    "cursor-refresh-token": seal(2, "rt-windows"),
+                }
+            }
+        });
+        let path = dir.path().join("sand-secrets.json");
+        let doc = serde_json::json!({
+            "cursor-machine-id": "machine",
+            "cursor-accounts": inner.to_string(),
+        });
+        std::fs::write(&path, doc.to_string()).unwrap();
+        path
+    }
+
+    #[test]
+    fn windows_gcm_blobs_decrypt_with_the_windows_key() {
+        let td = TempDir::new().unwrap();
+        let path = seed_windows_secrets(&td);
+        let creds = read_at(&path, &OsCryptKey::Gcm(WINDOWS_KEY)).unwrap();
+        assert_eq!(creds.access_token, "at-windows");
+        assert_eq!(creds.refresh_token, "rt-windows");
+        assert_eq!(creds.fingerprint, fingerprint_of("rt-windows"));
+    }
+
+    #[test]
+    fn a_windows_store_under_the_wrong_key_is_a_credential_error_without_the_blob() {
+        let td = TempDir::new().unwrap();
+        let path = seed_windows_secrets(&td);
+        for key in [OsCryptKey::Gcm([1; 32]), OsCryptKey::Cbc(test_key())] {
+            let err = read_at(&path, &key).unwrap_err();
+            assert!(matches!(err, AppError::Credentials(_)), "{err:?}");
+            let message = err.to_string();
+            assert!(message.contains("could not be decrypted"), "{message}");
+            assert!(!message.contains("at-windows"), "{message}");
+        }
+    }
+
+    #[test]
+    fn debug_output_never_shows_a_key_or_a_token() {
+        let td = TempDir::new().unwrap();
+        let creds = read_at(&seed_windows_secrets(&td), &OsCryptKey::Gcm(WINDOWS_KEY)).unwrap();
+        let shown = format!("{creds:?} {:?}", OsCryptKey::Gcm(WINDOWS_KEY));
+        assert!(!shown.contains("at-windows"), "{shown}");
+        assert!(!shown.contains("rt-windows"), "{shown}");
+        assert!(!shown.contains("[9, 9"), "{shown}");
+        assert!(shown.contains(&creds.fingerprint), "{shown}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_missing_local_state_names_the_fix_and_the_path_checked() {
+        let td = TempDir::new().unwrap();
+        let path = seed_windows_secrets(&td);
+        let err = windows_oscrypt_key(&path).unwrap_err();
+        assert!(matches!(err, AppError::Credentials(_)), "{err:?}");
+        let message = err.to_string();
+        assert!(message.contains("Local State"), "{message}");
+        assert!(
+            message.contains("install the Grok Bot desktop app"),
+            "{message}"
+        );
     }
 }

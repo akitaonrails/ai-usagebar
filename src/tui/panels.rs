@@ -326,7 +326,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             } else {
                 vec![("—".into(), PaceSeverity::Low)]
             };
-            (s.plan.clone(), cells)
+            (s.display_plan().to_string(), cells)
         }
         VendorSnapshot::ModelStudio(s) => {
             // Absent windows drop their cell — no-data is not 0%.
@@ -1745,7 +1745,7 @@ fn kimi_sections(s: &crate::usage::KimiSnapshot, now: DateTime<Utc>, tol: u32) -
 /// a text row, never a 0% meter.
 fn grokbot_sections(s: &crate::usage::GrokbotSnapshot, now: DateTime<Utc>) -> SectionBuilder {
     let mut v = SectionBuilder::new(vec![Section::Title {
-        left: s.plan.clone(),
+        left: s.display_plan().to_string(),
         right: None,
     }]);
     v.push(Section::Spacer);
@@ -3153,6 +3153,7 @@ mod tests {
     fn grokbot_snap() -> crate::usage::GrokbotSnapshot {
         crate::usage::GrokbotSnapshot {
             plan: "Grok Bot Plan".into(),
+            billed_by: None,
             has_included_allowance: true,
             weekly_pct: 42,
             has_available_usage: true,
@@ -3207,6 +3208,26 @@ mod tests {
         let (_, cells) = compact_cells(&VendorSnapshot::Grokbot(grokbot_snap()));
         assert_eq!(cells.len(), 1);
         assert!(cells[0].0.contains("42%"), "{cells:?}");
+    }
+
+    #[test]
+    fn grokbot_names_the_subscription_that_bills_it_over_the_generic_plan() {
+        // "Grok Bot Plan" is the app's label on every account; the billing
+        // product says where the pool comes from.
+        let (plan, _) = compact_cells(&VendorSnapshot::Grokbot(grokbot_snap()));
+        assert_eq!(plan, "Grok Bot Plan");
+        let billed = crate::usage::GrokbotSnapshot {
+            billed_by: Some("Cursor Ultra".into()),
+            ..grokbot_snap()
+        };
+        let (plan, _) = compact_cells(&VendorSnapshot::Grokbot(billed.clone()));
+        assert_eq!(plan, "Cursor Ultra");
+        // The report's plan is the title section, which the popover shows.
+        let sections = sections_for(&ready(VendorSnapshot::Grokbot(billed)), now(), 5);
+        assert!(matches!(
+            sections.first(),
+            Some(Section::Title { left, .. }) if left == "Cursor Ultra"
+        ));
     }
 
     #[test]

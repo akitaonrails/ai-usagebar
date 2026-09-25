@@ -10,12 +10,13 @@
 //! (`secret-tool lookup application "Grok Bot"`, `"peanuts"` fallback). On
 //! macOS it is `~/Library/Application Support/Grok Bot/sand-secrets.json`
 //! and the key is the login Keychain item `Grok Bot Safe Storage` /
-//! `Grok Bot Key` (1003 rounds, same scheme as Claude Desktop). `fetch.rs`
-//! refreshes the session through Cursor's public OAuth client and persists
-//! rotations only in ai-usagebar's own vendor cache.
+//! `Grok Bot Key` (1003 rounds, same scheme as Claude Desktop). On Windows it
+//! is `%APPDATA%\Grok Bot\sand-secrets.json`, the blobs are AES-256-GCM, and
+//! the key is the DPAPI-protected `os_crypt.encrypted_key` in the `Local State`
+//! file beside it. `fetch.rs` refreshes the session through Cursor's public
+//! OAuth client and persists rotations only in ai-usagebar's own vendor cache.
 //!
-//! Windows fails closed with a `Credentials` error: the app's DPAPI store
-//! has not been captured.
+//! Any other platform fails closed with a `Credentials` error.
 
 pub mod creds;
 pub mod fetch;
@@ -25,11 +26,10 @@ pub mod vendor;
 use std::path::{Path, PathBuf};
 
 use crate::config::GrokbotConfig;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-use crate::error::AppError;
-use crate::error::Result;
+use crate::error::{AppError, Result};
 
-/// The app's XDG config subdirectory name — note the space.
+/// The app's config subdirectory name (XDG, Application Support or
+/// `%APPDATA%`) — note the space.
 pub const APP_CONFIG_DIR: &str = "Grok Bot";
 /// The app's credential file inside that directory.
 pub const SECRETS_FILE_NAME: &str = "sand-secrets.json";
@@ -50,28 +50,54 @@ pub fn secrets_path_in(cfg: &GrokbotConfig, home: &Path) -> PathBuf {
     })
 }
 
-/// The credential file path against the real home directory.
+/// The Windows credential file path with `%APPDATA%` (Roaming) injected — the
+/// test seam, so no test resolves the real one.
+pub fn windows_secrets_path_in(cfg: &GrokbotConfig, app_data: &Path) -> PathBuf {
+    cfg.secrets_path
+        .clone()
+        .unwrap_or_else(|| app_data.join(APP_CONFIG_DIR).join(SECRETS_FILE_NAME))
+}
+
+/// The credential file path against the real home directory (`%APPDATA%` on
+/// Windows).
 pub fn secrets_path(cfg: &GrokbotConfig) -> Result<PathBuf> {
+    if cfg!(windows) {
+        let base = directories::BaseDirs::new().ok_or_else(|| {
+            AppError::Other("could not resolve the platform config directory".into())
+        })?;
+        return Ok(windows_secrets_path_in(cfg, base.config_dir()));
+    }
     Ok(secrets_path_in(cfg, &crate::cache::home_dir()?))
 }
 
 /// Resolve the desktop app's stored OAuth session.
 ///
 /// Linux and macOS: decrypt `sand-secrets.json` with the platform OSCrypt
-/// key. Elsewhere this fails closed with a `Credentials` error that says so,
-/// rather than pretending the file was missing.
+/// key. Windows: the same file, keyed by the DPAPI-protected key in the
+/// `Local State` beside it. Elsewhere this fails closed with a `Credentials`
+/// error that says so, rather than pretending the file was missing.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn resolve_credentials(cfg: &GrokbotConfig) -> Result<creds::GrokbotCredentials> {
     let path = secrets_path(cfg)?;
     creds::read_at(&path, &creds::oscrypt_key()?)
 }
 
-/// Windows (and anywhere else) has no supported credential store to read.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+pub fn resolve_credentials(cfg: &GrokbotConfig) -> Result<creds::GrokbotCredentials> {
+    let path = secrets_path(cfg)?;
+    // A missing credential file is the fix to report, ahead of its key.
+    if !path.is_file() {
+        return Err(creds::missing_file_error(&path));
+    }
+    creds::read_at(&path, &creds::windows_oscrypt_key(&path)?)
+}
+
+/// Anywhere else there is no supported credential store to read.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn resolve_credentials(_cfg: &GrokbotConfig) -> Result<creds::GrokbotCredentials> {
     Err(AppError::Credentials(
-        "Grok Bot usage is supported on Linux and macOS — the desktop app's credential \
-         store is not read on this platform"
+        "Grok Bot usage is supported on Linux, macOS and Windows — the desktop app's \
+         credential store is not read on this platform"
             .into(),
     ))
 }
@@ -114,7 +140,40 @@ mod tests {
         );
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[test]
+    fn the_windows_default_path_lives_under_appdata() {
+        let cfg = GrokbotConfig::default();
+        assert_eq!(
+            windows_secrets_path_in(&cfg, Path::new("C:/Users/u/AppData/Roaming")),
+            Path::new("C:/Users/u/AppData/Roaming")
+                .join("Grok Bot")
+                .join("sand-secrets.json")
+        );
+        let configured = GrokbotConfig {
+            enabled: true,
+            secrets_path: Some(PathBuf::from("D:/elsewhere/secrets.json")),
+        };
+        assert_eq!(
+            windows_secrets_path_in(&configured, Path::new("C:/ignored")),
+            PathBuf::from("D:/elsewhere/secrets.json")
+        );
+    }
+
+    /// Windows reports a missing credential file as such, not as a missing key.
+    #[cfg(windows)]
+    #[test]
+    fn a_missing_windows_credential_file_names_the_file() {
+        let td = tempfile::TempDir::new().unwrap();
+        let cfg = GrokbotConfig {
+            enabled: true,
+            secrets_path: Some(td.path().join("sand-secrets.json")),
+        };
+        let err = resolve_credentials(&cfg).unwrap_err();
+        assert!(matches!(err, AppError::Credentials(_)), "{err:?}");
+        assert!(err.to_string().contains("sand-secrets.json"), "{err}");
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     #[test]
     fn unsupported_platforms_fail_closed_with_a_credentials_error() {
         let err = resolve_credentials(&GrokbotConfig::default()).unwrap_err();

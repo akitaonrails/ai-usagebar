@@ -208,6 +208,7 @@ mod tests {
     fn sample_snap() -> GrokbotSnapshot {
         GrokbotSnapshot {
             plan: "Grok Bot Plan".into(),
+            billed_by: None,
             has_included_allowance: true,
             weekly_pct: 42,
             has_available_usage: true,

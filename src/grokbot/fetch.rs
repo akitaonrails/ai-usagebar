@@ -178,6 +178,12 @@ fn parse_cache_at(bytes: &[u8], fingerprint: &str) -> Result<GrokbotSnapshot> {
     };
     Ok(GrokbotSnapshot {
         plan,
+        // Absent in caches written before the field existed.
+        billed_by: v["billed_by"]
+            .as_str()
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && name.chars().count() <= 64)
+            .map(str::to_string),
         has_included_allowance,
         weekly_pct,
         has_available_usage: v["has_available_usage"].as_bool().unwrap_or(false),
@@ -202,6 +208,7 @@ fn snap_to_json(snap: &GrokbotSnapshot, fingerprint: &str) -> serde_json::Value 
     serde_json::json!({
         "account": fingerprint,
         "plan": snap.plan,
+        "billed_by": snap.billed_by,
         "has_included_allowance": snap.has_included_allowance,
         "weekly_pct": snap.weekly_pct,
         "has_available_usage": snap.has_available_usage,
@@ -854,6 +861,7 @@ mod tests {
     fn a_snapshot_survives_the_cache_round_trip() {
         let snap = GrokbotSnapshot {
             plan: "Grok Bot Plan".into(),
+            billed_by: Some("Cursor Ultra".into()),
             has_included_allowance: true,
             weekly_pct: 42,
             has_available_usage: true,
@@ -868,6 +876,11 @@ mod tests {
         };
         let bytes = serde_json::to_vec(&snap_to_json(&snap, "fp")).unwrap();
         assert_eq!(parse_cache_at(&bytes, "fp").unwrap(), snap);
+        // A cache written before `billed_by` existed still parses, unnamed.
+        let mut older = snap_to_json(&snap, "fp");
+        older.as_object_mut().unwrap().remove("billed_by");
+        let parsed = parse_cache_at(older.to_string().as_bytes(), "fp").unwrap();
+        assert_eq!(parsed.billed_by, None);
     }
 
     #[test]
