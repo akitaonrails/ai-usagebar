@@ -9,4 +9,4 @@ pub mod oauth;
 pub mod types;
 pub mod vendor;
 
-pub use fetch::{FetchOutcome, fetch_snapshot};
+pub use fetch::{FetchOutcome, fetch_snapshot, fetch_snapshot_routed};

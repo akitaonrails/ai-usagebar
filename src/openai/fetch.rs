@@ -2,12 +2,12 @@
 //!
 //! Mirrors `anthropic::fetch::fetch_snapshot` but for the Codex OAuth flow.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::Utc;
 
-use crate::cache::{Cache, acquire_lock_async};
+use crate::cache::{Cache, LockGuard, acquire_lock_async};
 use crate::error::{AppError, Result};
 use crate::usage::OpenAiSnapshot;
 
@@ -21,6 +21,9 @@ const REFRESH_TIMEOUT: Duration = Duration::from_secs(25);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(45);
 /// A switch holds the credentials lock for a few file writes only.
 const CREDENTIALS_LOCK_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often a route that moved under the lock is followed. Each move means a
+/// switch landed between two looks, so a second one is already rare.
+const ROUTE_ATTEMPTS: usize = 3;
 
 #[derive(Debug, Clone)]
 pub struct Endpoints {
@@ -48,18 +51,26 @@ pub async fn fetch_snapshot(
     endpoints: &Endpoints,
     cache_ttl: Duration,
 ) -> Result<FetchOutcome> {
+    let route = || Ok(creds_path.to_path_buf());
+    fetch_snapshot_routed(client, route, cache, endpoints, cache_ttl).await
+}
+
+/// [`fetch_snapshot`] for a login `account switch --codex` can move: `route`
+/// names the file to read, and is asked again once that file's lock is held.
+/// A path chosen before the lock can name the default slot after a switch
+/// installed another account there, and that account's usage would then land
+/// in this one's cache.
+pub async fn fetch_snapshot_routed(
+    client: &reqwest::Client,
+    route: impl Fn() -> Result<PathBuf>,
+    cache: &Cache,
+    endpoints: &Endpoints,
+    cache_ttl: Duration,
+) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
     let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
-    // `account switch --codex` moves these files under the same lock, so a
-    // refresh can never write one account's tokens over another's. Only an
-    // existing directory is locked: creating one is not a fetch's business.
-    let credentials_lock = super::account::lock_path(creds_path);
-    let _credentials_lock = match credentials_lock.parent() {
-        Some(dir) if dir.is_dir() => {
-            Some(acquire_lock_async(&credentials_lock, CREDENTIALS_LOCK_TIMEOUT).await?)
-        }
-        _ => None,
-    };
+    let (creds_path, _credentials_lock) = lock_route(&route).await?;
+    let creds_path = creds_path.as_path();
 
     let mut auth = creds::read_from(creds_path)?;
     let plan_hint = auth.tokens.plan_type_from_id_token();
@@ -168,6 +179,38 @@ pub async fn fetch_snapshot(
             AppError::Transport("openai: usage request timed out".into()),
         ),
     }
+}
+
+/// Lock the credential file `route` names and confirm, under that lock, that
+/// it still names the same one. A switch holds every directory it touches, the
+/// default slot's included, so an answer given under the lock stays true until
+/// the read-refresh-write below is done.
+async fn lock_route(route: &impl Fn() -> Result<PathBuf>) -> Result<(PathBuf, Option<LockGuard>)> {
+    let mut path = route()?;
+    for _ in 0..ROUTE_ATTEMPTS {
+        let lock = lock_credentials(&path).await?;
+        let settled = route()?;
+        if settled == path {
+            return Ok((path, lock));
+        }
+        path = settled;
+    }
+    Err(AppError::Transport(
+        "openai: the Codex login kept moving between accounts".into(),
+    ))
+}
+
+/// `account switch --codex` moves these files under the same lock, so a
+/// refresh can never write one account's tokens over another's. Only an
+/// existing directory is locked: creating one is not a fetch's business.
+async fn lock_credentials(creds_path: &Path) -> Result<Option<LockGuard>> {
+    let lock = super::account::lock_path(creds_path);
+    Ok(match lock.parent() {
+        Some(dir) if dir.is_dir() => {
+            Some(acquire_lock_async(&lock, CREDENTIALS_LOCK_TIMEOUT).await?)
+        }
+        _ => None,
+    })
 }
 
 fn reuse(
@@ -321,6 +364,7 @@ mod tests {
     use super::*;
     use base64::Engine;
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::{NamedTempFile, TempDir};
 
     fn fake_jwt(claims: serde_json::Value) -> String {
@@ -692,5 +736,104 @@ mod tests {
         assert!(out.stale);
         assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 50);
         assert_eq!(out.last_error.as_ref().map(|(c, _)| *c), Some(500));
+    }
+
+    /// Future-dated credentials at `path` whose access token is `token`.
+    fn write_creds(path: &Path, token: &str) {
+        let exp = Utc::now().timestamp() + 3600;
+        let jwt = fake_jwt(serde_json::json!({
+            "exp": exp,
+            "https://api.openai.com/auth": {"chatgpt_plan_type": "plus"}
+        }));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!(
+                r#"{{"tokens":{{"access_token":"{token}","refresh_token":"RT",
+                    "id_token":"{jwt}","account_id":"acc"}}}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_route_that_moves_under_the_lock_is_followed() {
+        let mut server = mockito::Server::new_async().await;
+        let usage = server
+            .mock("GET", "/backend-api/wham/usage")
+            .match_header("authorization", "Bearer AT-B")
+            .with_status(200)
+            .with_body(
+                r#"{"plan_type":"plus","rate_limit":{
+                "primary_window":{"used_percent":7,"limit_window_seconds":18000,"reset_at":1779597324},
+                "secondary_window":null
+            }}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let (td, cache) = cache_fixture();
+        let a = td.path().join("a").join("auth.json");
+        let b = td.path().join("b").join("auth.json");
+        write_creds(&a, "AT-A");
+        write_creds(&b, "AT-B");
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        // The first look names A; by the time A's lock is held, a switch has
+        // moved this account's login to B.
+        let looks = AtomicUsize::new(0);
+        let route = || {
+            Ok(if looks.fetch_add(1, Ordering::SeqCst) == 0 {
+                a.clone()
+            } else {
+                b.clone()
+            })
+        };
+        let out = fetch_snapshot_routed(
+            &reqwest::Client::new(),
+            route,
+            &cache,
+            &endpoints,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        usage.assert_async().await;
+        assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 7);
+        assert_eq!(looks.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn a_route_that_never_settles_is_transient() {
+        let mut server = mockito::Server::new_async().await;
+        let usage = server
+            .mock("GET", "/backend-api/wham/usage")
+            .expect(0)
+            .create_async()
+            .await;
+        let (td, cache) = cache_fixture();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let looks = AtomicUsize::new(0);
+        let route = || {
+            let look = looks.fetch_add(1, Ordering::SeqCst);
+            Ok(td.path().join(format!("auth-{look}.json")))
+        };
+        let error = fetch_snapshot_routed(
+            &reqwest::Client::new(),
+            route,
+            &cache,
+            &endpoints,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
+        usage.assert_async().await;
+        assert!(error.is_transient(), "{error}");
+        assert_eq!(looks.load(Ordering::SeqCst), ROUTE_ATTEMPTS + 1);
     }
 }

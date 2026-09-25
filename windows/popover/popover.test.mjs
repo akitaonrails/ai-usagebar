@@ -1420,4 +1420,26 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.deepEqual(parseHostPayload(JSON.stringify({ entries: [] })).accounts, {});
 }
 
+// Every card that renders keeps its switch control: as many accounts as there
+// are cards, and a label longer than a card id matched through the id's cut.
+{
+  const many = Array.from({ length: 63 }, (_, i) => `acct${i}`);
+  const long = 'x'.repeat(200);
+  const payload = parseHostPayload(JSON.stringify({
+    entries: [{ id: `openai@${long}` }],
+    accounts: {
+      openai: { active: long, labels: [...many, long] },
+      anthropic: { active: '', labels: [`${long}-a`, `${long}-b`] },
+    },
+  }));
+  assert.equal(accountSwitchFor('openai@acct62', payload.accounts).label, 'acct62');
+  const cardId = payload.entries[0].id;
+  assert.notEqual(cardId, `openai@${long}`);
+  const control = accountSwitchFor(cardId, payload.accounts);
+  assert.equal(control.label, long);
+  assert.equal(control.active, true);
+  // Two labels that share the cut id are ambiguous, so neither card offers one.
+  assert.equal(accountSwitchFor(cardId.replace('openai', 'anthropic'), payload.accounts), null);
+}
+
 console.log('ok');
