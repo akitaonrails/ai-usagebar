@@ -225,7 +225,7 @@ fn ratio(payload: &Value, field: &str) -> Result<Option<f64>> {
             if !raw.is_finite() {
                 return Err(drift(field, "is not a finite number"));
             }
-            if raw < 0.0 || raw > 1.0 {
+            if !(0.0..=1.0).contains(&raw) {
                 return Err(drift(field, "is outside [0,1]"));
             }
             Ok(Some(raw))
