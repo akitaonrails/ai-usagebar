@@ -258,8 +258,8 @@ body {
 }
 
 /* Native: the host's own look over its native material (NSGlassEffectView on macOS, DWM Acrylic
-   on Windows 11) behind a transparent WebView. This base is the macOS Liquid Glass look; Windows
-   overrides it with Fluent further down. Shapes follow the shadcn base-luma
+   on Windows 11) behind a transparent WebView. This base is the shared glass look; each host
+   refines it further down, macOS after the macOS 26 UI kit and Windows after Fluent. Shapes follow the shadcn base-luma
    preset (b5Kc86HqK): capsule controls and menu rows, rounded cards and menus, a 40×20 switch
    with a 24×16 capsule knob. Surfaces stay thin so the material, not a wash, sets the tone.
    Tokens sit on `body` so the Radix portals (menus, pickers, tooltips) inherit them too. */
@@ -534,6 +534,174 @@ body:has(.native-panel) [data-slot="switch"][data-state="unchecked"] {
   color: var(--label-2);
   font-size: 10px;
   white-space: nowrap;
+}
+
+/* Native on macOS: macOS 26 (Tahoe) controls over the AppKit glass, after Apple's macOS 26 UI kit.
+   Controls are 24pt with a 6pt radius and a 5% fill, 13pt medium text; the segmented control fills
+   the selected segment with the controls tint and separates idle ones with a 14pt hairline; the
+   small switch is 44×20 with a 26×16 capsule knob; menus are 13pt-radius glass with 24pt rows and
+   an accent-filled highlight; group boxes (cards) are a 3% fill at 12pt; tooltips are nearly square
+   Thick material with 11pt medium text. The kit ships light values only: dark ones are macOS's own
+   dark equivalents. The window's glass and corners stay the host's (NSGlassEffectView). */
+body:has(.native-panel[data-os="macos"]) {
+  --accent: #0d6fff;
+  --label-1: rgba(0, 0, 0, 0.85);
+  --label-2: rgba(0, 0, 0, 0.5);
+  --label-3: rgba(0, 0, 0, 0.25);
+  --card: rgba(0, 0, 0, 0.03);
+  --card-border: transparent;
+  --separator: rgba(0, 0, 0, 0.1);
+  --control-fill: rgba(0, 0, 0, 0.05);
+  --control-fill-hover: rgba(0, 0, 0, 0.09);
+  --segment-separator: rgba(0, 0, 0, 0.15);
+  --field-fill: #ffffff;
+  --field-ring: rgba(0, 0, 0, 0.08);
+  --menu: rgba(245, 245, 245, 0.94);
+  --menu-highlight: #0088ff;
+  --menu-shadow: 0 0 2px rgba(0, 0, 0, 0.1), 0 0 25px rgba(0, 0, 0, 0.16);
+  --menu-radius: 13px;
+  --card-radius: 12px;
+  --radius-sm: 6px;
+  --sz-control: 13px;
+  --hint-radius: 1px;
+  --hint-pad: 3px 6px 2px;
+  --hint-bg: rgba(246, 246, 246, 0.72);
+  --hint-fg: #4d4d4d;
+  --hint-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --switch-w: 44px;
+  --switch-h: 20px;
+  --switch-knob: 16px;
+  --switch-knob-w: 26px;
+  --switch-knob-inset: 1px;
+  --switch-off: rgba(0, 0, 0, 0.05);
+  --knob-shadow: 0 0 1px rgba(0, 0, 0, 0.05), 0 0 4px rgba(0, 0, 0, 0.05), 0 0 44px rgba(0, 0, 0, 0.1);
+}
+
+.dark body:has(.native-panel[data-os="macos"]) {
+  --label-1: rgba(255, 255, 255, 0.85);
+  --label-2: rgba(255, 255, 255, 0.55);
+  --label-3: rgba(255, 255, 255, 0.25);
+  --card: rgba(255, 255, 255, 0.04);
+  --separator: rgba(255, 255, 255, 0.1);
+  --control-fill: rgba(255, 255, 255, 0.1);
+  --control-fill-hover: rgba(255, 255, 255, 0.15);
+  --segment-separator: rgba(255, 255, 255, 0.15);
+  --field-fill: rgba(255, 255, 255, 0.06);
+  --field-ring: rgba(255, 255, 255, 0.12);
+  --menu: rgba(40, 40, 40, 0.94);
+  --menu-shadow: 0 0 2px rgba(0, 0, 0, 0.3), 0 0 25px rgba(0, 0, 0, 0.4);
+  --hint-bg: rgba(40, 40, 40, 0.72);
+  --hint-fg: rgba(255, 255, 255, 0.75);
+  --hint-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --switch-off: rgba(255, 255, 255, 0.1);
+}
+
+/* Controls: medium weight, as every macOS 26 control label. */
+body:has(.native-panel[data-os="macos"]) :is([data-slot="chip"], [data-slot="select-trigger"], .capsule-btn, .action-btn) {
+  font-weight: 500;
+}
+
+/* Text fields: an opaque field inside a hairline ring. */
+body:has(.native-panel[data-os="macos"]) :is(.recorder, .threshold-input) {
+  background: var(--field-fill);
+  box-shadow: 0 0 0 1px var(--field-ring);
+}
+
+/* Menus and pickers: rows inset in the glass, the highlighted one filled with the menu tint. */
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-content"], [data-slot="select-content"]) {
+  padding: 5px;
+}
+
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"]) {
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"])[data-highlighted],
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"])[data-highlighted] * {
+  background-color: var(--menu-highlight);
+  color: #ffffff;
+}
+
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"])[data-highlighted] * {
+  background-color: transparent;
+}
+
+body:has(.native-panel[data-os="macos"]) [data-slot="tooltip-content"] {
+  font-weight: 500;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+/* Tabs as a segmented control: one 24pt track, the selected segment filled with the controls tint
+   and white text, idle segments split by a hairline that disappears beside the selection. */
+.native-panel[data-os="macos"] .native-tabs {
+  gap: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--control-fill);
+}
+
+.native-panel[data-os="macos"] .native-tab {
+  position: relative;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--label-1);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Settings has five segments in 350pt: 12pt labels and 8pt margins fit them, and a segment that
+   still does not fit shrinks with an ellipsis, as NSSegmentedControl does. */
+.native-panel[data-os="macos"] .settings-tabs .native-tab {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.native-panel[data-os="macos"] .native-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.native-panel[data-os="macos"] .native-tab + .native-tab::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 0;
+  width: 1px;
+  background: var(--segment-separator);
+}
+
+.native-panel[data-os="macos"] :is(.native-tab[aria-selected="true"], .native-tab[data-active="true"])::before,
+.native-panel[data-os="macos"] :is(.native-tab[aria-selected="true"], .native-tab[data-active="true"]) + .native-tab::before {
+  display: none;
+}
+
+.native-panel[data-os="macos"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover,
+.dark .native-panel[data-os="macos"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover {
+  background: var(--control-fill);
+  box-shadow: none;
+}
+
+.native-panel[data-os="macos"] .native-tab[aria-selected="true"],
+.native-panel[data-os="macos"] .native-tab[data-active="true"],
+.dark .native-panel[data-os="macos"] .native-tab[aria-selected="true"],
+.dark .native-panel[data-os="macos"] .native-tab[data-active="true"] {
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.native-panel[data-os="macos"] .native-tab[data-active="true"] :is(svg, .native-tab-value) {
+  color: #ffffff;
 }
 
 /* Native on Windows: Windows 11 Fluent over DWM Acrylic, the transient-window material of the

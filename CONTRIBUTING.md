@@ -84,8 +84,9 @@ another's, UI changes follow one rule: **add, don't replace.**
   style (tokens on `body:has(.<style>-panel)`, rules under `.<style>-panel` in
   `windows/popover/src/index.css`) and reuse the shared components; do not
   fork `ProviderSection`, the Settings rows or the menus.
-- Native follows the host: its base is the macOS look, and each OS overrides
-  tokens under `.native-panel[data-os="<os>"]` (Windows uses Fluent). Making
+- Native follows the host: a shared glass base, refined per OS under
+  `.native-panel[data-os="<os>"]` (macOS after Apple's macOS 26 UI kit,
+  Windows after Fluent). Making
   Native match another system — a GTK or Omarchy theme, should a Linux host
   ever share this popover — is adding that OS's tokens, not a new style.
 - A style changes presentation only. Features, data and settings live in the

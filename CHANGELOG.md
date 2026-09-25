@@ -84,10 +84,12 @@ Each release is also published at
   Português. Strings are Paraglide JS messages now, so a missing translation
   fails the build instead of falling back to English.
 - **Native lets the system material show**: thin surfaces with one margin on
-  every edge. On macOS: capsule controls and tabs, a frosted active tab and a
-  capsule switch. On Windows: Fluent's 4 px controls with their hairline
-  border, 8 px cards, WinUI toggles and an accent bar under the selected tab.
-  Settings uses tabs only in Native.
+  every edge. On macOS it follows the macOS 26 UI kit: 24 pt controls with a
+  6 pt radius, tabs as a segmented control, the small switch with its capsule
+  knob, menus with an accent-filled highlight, group boxes for cards and
+  square tooltips. On Windows it follows Fluent: 4 px controls with their
+  hairline border, 8 px cards, WinUI toggles and Fluent 2 tabs. Settings uses
+  tabs only in Native.
 
 ### Fixed
 
