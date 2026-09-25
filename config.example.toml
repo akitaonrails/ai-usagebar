@@ -71,12 +71,10 @@
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"
-# macOS menu bar: provider names + quota headlines by default.
-# menu_bar_style = "provider"  # "bars" restores the chart-only icon
-# menu_bar_provider = "highest" # highest consumption, or a provider id such as "openai"
-# menu_bar_show_all = true     # show every ready provider at once (default)
-# menu_bar_hide_value = false  # show only provider names
-# menu_bar_window = "auto"     # auto | session | weekly | monthly
+# macOS menu bar: "bars" (default) draws the usage chart; "provider" draws each
+# provider's logo followed by its value. Both show the metrics starred in each
+# provider (up to two). Settings → Menu Bar → Menu Bar Shows sets it.
+# menu_bar_style = "bars"
 
 # Quota-threshold desktop notifications, fired after a fresh fetch when a
 # window crosses the threshold (Linux notify-send or macOS Notification Center;
