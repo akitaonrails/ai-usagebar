@@ -58,7 +58,7 @@ desktop-test:
 	node kde-plasmoid/plasmoid-logic.test.mjs
 	node windows/popover/popover.test.mjs
 
-# The MacDashboard SSR contract test (mac-dashboard.test.mjs) runs under
+# The popover SSR contract tests (popover.test.mjs + native-dashboard.test.mjs) run under
 # vite's ssrLoadModule, so it needs the popover's node_modules — desktop-test
 # deliberately stays bare-node because the Windows CI job has no npm install.
 popover-ssr-test:
