@@ -19,12 +19,24 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::config::Config;
+use crate::context::{ContextScan, ContextSession, ContextUsage};
 use crate::tui::app::{TabId, TabSource, TabState, refresh_one, tabs_with_desktop};
+use crate::tui::context::format_tokens;
 use crate::tui::panels::{Section, sections_with_metadata_for};
 
 /// Matches the widget's `--pace-tolerance` default; only affects the pacing
 /// note appended to a metric's detail line.
 const PACE_TOLERANCE: u32 = 5;
+
+/// Sub-group heading the Claude entry's session rows carry (#255). Frontends
+/// that honour `group` draw them compactly beneath this heading, exactly like
+/// SuperGrok's product slices under `"Breakdown"` (#213).
+const SESSIONS_GROUP: &str = "Sessions";
+
+/// At most this many recent sessions become report rows. The context module
+/// already bounds its scan; this tighter cap keeps one provider's card
+/// readable and leaves room under the popover's per-entry section limit.
+const MAX_SESSION_ROWS: usize = 8;
 
 /// Version of the tolerant, machine-readable `usage --json` contract.
 /// Increment only when an incompatible change cannot be represented by adding
@@ -174,6 +186,10 @@ async fn collect_entries_for(
     for tab in tabs {
         entries.push(entry_for(client, config, tab).await);
     }
+    // #255: the opt-in context monitor's sessions ride on the Claude entry,
+    // best-effort — a missing transcript root or unreadable tail adds nothing
+    // rather than failing the report.
+    attach_context_sessions(config, &mut entries).await;
     entries
 }
 
@@ -293,6 +309,149 @@ fn reset_credits_for(state: &TabState) -> Option<crate::usage::ResetCredits> {
         _ => return None,
     };
     (!credits.is_empty()).then(|| credits.clone())
+}
+
+/// #255: surface the opt-in context monitor's recent Claude Code sessions on
+/// the report's Claude entry, as grouped sub-rows under `"Sessions"`.
+///
+/// Sessions are machine-local CLI state, not an account's quota, so they land
+/// on the first ready Claude entry exactly once (never per account), and only
+/// when `[context] enabled` — users who never opted in see no change. A scan
+/// that found nothing, or failed, adds no rows and never fails the report.
+async fn attach_context_sessions(config: &Config, entries: &mut [Entry]) {
+    // Check before scanning: a disabled monitor must not so much as stat the
+    // transcript directory, matching the TUI's own gating.
+    if !config.context.enabled {
+        return;
+    }
+    let sections = session_sections_for(config, scan_context(config).await.as_ref());
+    if sections.is_empty() {
+        return;
+    }
+    attach_session_sections(entries, sections);
+}
+
+/// Run the bounded transcript scan off the async executor, mirroring the TUI
+/// host's own context scan. Any failure — including the join — means "no
+/// sessions to show", not an error for the report to carry.
+async fn scan_context(config: &Config) -> Option<ContextScan> {
+    let context_config = config.context.clone();
+    tokio::task::spawn_blocking(move || {
+        let path = match context_config.projects_path.as_deref() {
+            Some(path) => std::borrow::Cow::Borrowed(path),
+            None => std::borrow::Cow::Owned(crate::context::default_projects_path()?),
+        };
+        crate::context::scan_dir(&path, &context_config)
+    })
+    .await
+    .ok()?
+    .ok()
+}
+
+/// The gating the async path defers to: disabled config or a failed scan
+/// yields no rows, so the opt-in behaviour is testable without a filesystem.
+fn session_sections_for(config: &Config, scan: Option<&ContextScan>) -> Vec<ReportSection> {
+    if !config.context.enabled {
+        return Vec::new();
+    }
+    scan.map(context_session_sections).unwrap_or_default()
+}
+
+/// Extend the first ready Claude entry with `sections`. Entries for other
+/// vendors — and a Claude entry that errored, whose sections the text report
+/// deliberately does not print — are untouched.
+fn attach_session_sections(entries: &mut [Entry], sections: Vec<ReportSection>) {
+    let Some(entry) = entries
+        .iter_mut()
+        .find(|entry| is_claude_entry(entry) && entry.error.is_none())
+    else {
+        return;
+    };
+    entry.sections.extend(sections);
+}
+
+/// Entry ids are `anthropic` or `anthropic@<label>` (a `[[custom]]` provider
+/// is always `custom:<id>`, so the prefix cannot be spoofed by one).
+fn is_claude_entry(entry: &Entry) -> bool {
+    entry.id == "anthropic" || entry.id.starts_with("anthropic@")
+}
+
+/// Project a context scan into report rows: a spacer, then one grouped metric
+/// per recent session carrying its health on the existing severity colours,
+/// and an overflow note when the scan found more sessions than are shown.
+fn context_session_sections(scan: &ContextScan) -> Vec<ReportSection> {
+    if scan.sessions.is_empty() {
+        return Vec::new();
+    }
+    let shown = scan.sessions.len().min(MAX_SESSION_ROWS);
+    let mut sections = Vec::with_capacity(shown + 2);
+    sections.push(ReportSection::Spacer);
+    sections.extend(scan.sessions[..shown].iter().map(session_section));
+    if scan.sessions.len() > shown {
+        sections.push(ReportSection::Text {
+            label: String::new(),
+            value: format!("… and {} more sessions", scan.sessions.len() - shown),
+        });
+    }
+    sections
+}
+
+fn session_section(session: &ContextSession) -> ReportSection {
+    // Transcript titles are untrusted data; the context module already strips
+    // control characters, and the report sink strips the rest (bidi, size).
+    let label = crate::display::sanitize_untrusted_field(&session.display_name());
+    let model = session.model.as_deref().unwrap_or("unknown model");
+    let last_active = crate::format::local_time_hms(session.modified_at);
+    let (percent, value, detail) = match session.usage {
+        ContextUsage::Available {
+            input_tokens,
+            window_tokens: Some(window_tokens),
+            percent: Some(percent),
+        } => {
+            let pct = percent.min(100);
+            (
+                pct,
+                format!("{pct}%"),
+                format!(
+                    "{} / {} tokens · {model} · last active {last_active}",
+                    format_tokens(input_tokens),
+                    format_tokens(window_tokens)
+                ),
+            )
+        }
+        ContextUsage::Available { input_tokens, .. } => (
+            0,
+            format!("{} tokens", format_tokens(input_tokens)),
+            format!("window size is not configured · {model} · last active {last_active}"),
+        ),
+        ContextUsage::Compacted => (
+            0,
+            "compacted".into(),
+            format!(
+                "compacted · waiting for the next response · {model} · last active {last_active}"
+            ),
+        ),
+        ContextUsage::Unknown => (
+            0,
+            "unknown".into(),
+            format!("context usage unavailable · {model} · last active {last_active}"),
+        ),
+    };
+    ReportSection::Metric {
+        label,
+        percent,
+        value,
+        detail,
+        headline: "percent".into(),
+        // Same mapping the TUI's context detail uses, so a session at 90%
+        // reads as saturated in every surface that draws severity colours.
+        severity: crate::pango::severity_for(i32::from(percent))
+            .as_str()
+            .into(),
+        reset_at: None,
+        window_secs: None,
+        group: Some(SESSIONS_GROUP.into()),
+    }
 }
 
 /// Process status after a complete document has been printed.
@@ -891,6 +1050,265 @@ mod tests {
         // must not be handed a length to pace against.
         assert!(first["metrics"][0]["window_secs"].is_null());
         assert!(first["sections"][1].get("window_secs").is_none());
+    }
+
+    // --- #255: Claude CLI sessions as grouped report rows ----------------------
+    fn context_session(id: &str, usage: ContextUsage) -> ContextSession {
+        ContextSession {
+            session_id: id.into(),
+            title: Some(format!("title {id}")),
+            project: "project".into(),
+            model: Some("claude-test".into()),
+            modified_at: "2026-09-25T12:34:56Z".parse().unwrap(),
+            usage,
+        }
+    }
+
+    fn context_scan(sessions: Vec<ContextSession>) -> ContextScan {
+        let count = sessions.len();
+        ContextScan {
+            sessions,
+            discovered: count,
+            skipped: 0,
+            walk_capped: false,
+        }
+    }
+
+    fn enabled_context_config() -> Config {
+        Config {
+            context: crate::config::ContextConfig {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Sessions project as `"Sessions"`-grouped metric rows whose severity is
+    /// the existing percent mapping — a 90% context reads as saturated in the
+    /// same colours every quota row uses — while compacted/unknown sessions
+    /// keep the TUI overlay's honest non-numeric labels instead of a fabricated
+    /// percentage.
+    #[test]
+    fn sessions_project_as_grouped_rows_with_health() {
+        let modified_at: chrono::DateTime<Utc> = "2026-09-25T12:34:56Z".parse().unwrap();
+        let scan = context_scan(vec![
+            context_session(
+                "saturated",
+                ContextUsage::Available {
+                    input_tokens: 180_000,
+                    window_tokens: Some(200_000),
+                    percent: Some(90),
+                },
+            ),
+            context_session(
+                "open-window",
+                ContextUsage::Available {
+                    input_tokens: 45_120,
+                    window_tokens: None,
+                    percent: None,
+                },
+            ),
+            context_session("compacted", ContextUsage::Compacted),
+            context_session("unknown", ContextUsage::Unknown),
+        ]);
+
+        let sections = session_sections_for(&enabled_context_config(), Some(&scan));
+        assert!(matches!(sections.first(), Some(ReportSection::Spacer)));
+
+        let metric = |id: &str| {
+            sections
+                .iter()
+                .find(|section| {
+                    matches!(
+                        section,
+                        ReportSection::Metric { label, .. } if *label == format!("title {id}")
+                    )
+                })
+                .unwrap_or_else(|| panic!("no session row for {id}: {sections:?}"))
+        };
+
+        let ReportSection::Metric {
+            percent,
+            value,
+            detail,
+            severity,
+            group,
+            headline,
+            ..
+        } = metric("saturated")
+        else {
+            unreachable!();
+        };
+        assert_eq!(*percent, 90);
+        assert_eq!(value, "90%");
+        assert_eq!(*severity, "critical");
+        assert_eq!(group.as_deref(), Some("Sessions"));
+        assert_eq!(headline, "percent");
+        assert!(detail.contains("180,000 / 200,000 tokens"), "{detail}");
+        assert!(detail.contains("claude-test"), "{detail}");
+        assert!(
+            detail.contains(&crate::format::local_time_hms(modified_at)),
+            "{detail}"
+        );
+
+        let ReportSection::Metric { percent, value, .. } = metric("open-window") else {
+            unreachable!();
+        };
+        assert_eq!(*percent, 0);
+        assert_eq!(value, "45,120 tokens");
+
+        let ReportSection::Metric { value, .. } = metric("compacted") else {
+            unreachable!();
+        };
+        assert_eq!(value, "compacted");
+
+        let ReportSection::Metric { value, .. } = metric("unknown") else {
+            unreachable!();
+        };
+        assert_eq!(value, "unknown");
+    }
+
+    /// The row cap keeps one provider's card readable and says so: the scan is
+    /// bounded at 100 sessions, but only the first 8 become rows, with an
+    /// overflow note instead of a silent cut.
+    #[test]
+    fn session_rows_are_capped_with_an_overflow_note() {
+        let sessions: Vec<_> = (0..(MAX_SESSION_ROWS + 3))
+            .map(|i| {
+                context_session(
+                    &format!("s{i}"),
+                    ContextUsage::Available {
+                        input_tokens: 1,
+                        window_tokens: Some(100),
+                        percent: Some(1),
+                    },
+                )
+            })
+            .collect();
+        let scan = context_scan(sessions);
+
+        let sections = session_sections_for(&enabled_context_config(), Some(&scan));
+        let rows = sections
+            .iter()
+            .filter(|section| matches!(section, ReportSection::Metric { .. }))
+            .count();
+        assert_eq!(rows, MAX_SESSION_ROWS);
+        assert!(matches!(
+            sections.last(),
+            Some(ReportSection::Text { value, .. }) if value == "… and 3 more sessions"
+        ));
+    }
+
+    /// The monitor is opt-in: a disabled `[context]` never reads the
+    /// transcript directory and never adds a row, and an enabled-but-failed
+    /// scan adds nothing rather than failing the report.
+    #[test]
+    fn a_disabled_context_monitor_adds_no_session_rows() {
+        let scan = context_scan(vec![context_session("one", ContextUsage::Unknown)]);
+
+        let disabled = Config::default();
+        assert!(!disabled.context.enabled);
+        assert!(session_sections_for(&disabled, Some(&scan)).is_empty());
+
+        assert!(session_sections_for(&enabled_context_config(), None).is_empty());
+        assert!(
+            session_sections_for(&enabled_context_config(), Some(&context_scan(Vec::new())))
+                .is_empty()
+        );
+    }
+
+    /// Sessions are machine-local, so they land on the first *ready* Claude
+    /// entry exactly once — never on another vendor, never on every Claude
+    /// account, and never on an errored entry whose sections the text report
+    /// does not print.
+    #[test]
+    fn sessions_attach_to_the_first_ready_claude_entry_only() {
+        let mut failed = entry("anthropic", Vec::new());
+        failed.error = Some("not signed in".into());
+        let mut entries = vec![
+            entry("openai", vec![metric("Weekly", 5, "5%", "")]),
+            failed,
+            entry("anthropic@gmail", vec![metric("Weekly", 5, "5%", "")]),
+            entry("anthropic@work", vec![metric("Weekly", 5, "5%", "")]),
+        ];
+
+        let sections = session_sections_for(
+            &enabled_context_config(),
+            Some(&context_scan(vec![context_session(
+                "one",
+                ContextUsage::Unknown,
+            )])),
+        );
+        let before: Vec<usize> = entries.iter().map(|e| e.sections.len()).collect();
+        attach_session_sections(&mut entries, sections);
+
+        // The errored default entry is skipped; the first ready Claude entry
+        // (the gmail account) gains the rows, and every other entry is
+        // byte-for-byte where it was.
+        assert_eq!(entries[0].sections.len(), before[0]);
+        assert_eq!(entries[1].sections.len(), before[1]);
+        assert!(entries[2].sections.len() > before[2]);
+        assert_eq!(
+            entries[2].sections.len() - before[2],
+            2,
+            "spacer + one session row"
+        );
+        assert_eq!(entries[3].sections.len(), before[3]);
+        assert!(entries[2].sections.iter().any(|section| matches!(section,
+                ReportSection::Metric { label, group, .. }
+                    if label == "title one" && group.as_deref() == Some("Sessions"))));
+    }
+
+    /// The session rows reach both JSON views — the ordered `sections` and the
+    /// `metrics` convenience — carrying the `"Sessions"` group, so a frontend
+    /// that renders groups (#213/#230) draws them under one heading.
+    #[test]
+    fn json_carries_session_rows_in_both_views() {
+        let mut claude = entry("anthropic", vec![metric("Session (5h)", 29, "29%", "")]);
+        let sections = session_sections_for(
+            &enabled_context_config(),
+            Some(&context_scan(vec![context_session(
+                "one",
+                ContextUsage::Available {
+                    input_tokens: 180_000,
+                    window_tokens: Some(200_000),
+                    percent: Some(90),
+                },
+            )])),
+        );
+        claude.sections.extend(sections);
+        let entries = [claude];
+
+        // The human-readable report prints the same rows, so a CLI consumer
+        // sees the sessions too.
+        let text = render_text(&entries);
+        assert!(text.contains("title one"), "{text}");
+        assert!(text.contains("90%"), "{text}");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&entries, None)).unwrap();
+        let first = &value["entries"][0];
+        let session_section = first["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|section| section["group"] == "Sessions")
+            .expect("a session section");
+        assert_eq!(session_section["label"], "title one");
+        assert_eq!(session_section["percent"], 90);
+        assert_eq!(session_section["severity"], "critical");
+        assert!(session_section["reset_at"].is_null());
+        assert!(session_section.get("window_secs").is_none());
+
+        let session_metric = first["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|metric| metric["group"] == "Sessions")
+            .expect("a session metric");
+        assert_eq!(session_metric["label"], "title one");
+        assert_eq!(session_metric["severity"], "critical");
     }
 
     /// Grouped sub-rows (SuperGrok's product slices) carry their group in both

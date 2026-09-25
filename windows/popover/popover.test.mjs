@@ -1145,6 +1145,57 @@ assert.equal(quotaAlternate(null, 'left'), '');
   assert.equal(visibleRowsFor(projectCards(repeated, 0)[0], { collapsed: false }).length, 2);
 }
 
+// --- metric-level groups (#213's report field): SuperGrok slices, Claude CLI sessions -----
+
+{
+  // ARRANGE: a Claude entry carrying the #255 session rows — grouped by the
+  // report's own field, not a positional heading — plus one duplicate title.
+  const claude = parseHostPayload({
+    entries: [{ id: 'anthropic', display_name: 'Claude', sections: [
+      { type: 'metric', label: 'Session (5h)', percent: 29, severity: 'low', value: '29%' },
+      { type: 'spacer' },
+      { type: 'metric', label: 'ship the release', percent: 90, severity: 'critical',
+        value: '90%', group: 'Sessions' },
+      { type: 'metric', label: 'ship the release', percent: 0, severity: 'low',
+        value: 'compacted', group: 'Sessions' },
+      { type: 'text', label: '', value: '… and 4 more sessions' },
+    ] }],
+  });
+
+  // ASSERT: normalization keeps the field, and the rows group exactly as a
+  // positional heading would have — "(Sessions)" label suffix, group-aware
+  // keys, severity passthrough — with no heading row of its own. A repeated
+  // session title dedupes on the key (#2), the label untouched.
+  const normalized = claude.entries[0].sections.find((s) => s.group === 'Sessions');
+  assert.ok(normalized, 'metric group survives normalization');
+  const card = projectCards(claude, 0)[0];
+  assert.deepEqual(card.rows.map((r) => [r.label, r.key]), [
+    ['Session', 'metric:Session (5h)'],
+    ['ship the release (Sessions)', 'metric:ship the release (Sessions)'],
+    ['ship the release (Sessions)', 'metric:ship the release (Sessions) #2'],
+    ['', 'text:'],
+  ]);
+  assert.equal(card.rows[3].value, '… and 4 more sessions');
+  assert.equal(card.rows[1].severity, 'critical');
+  assert.equal(card.rows[1].usedPercent, 90);
+  assert.equal(card.rows[2].value, 'compacted');
+  assert.equal(new Set(card.rows.map(rowKey)).size, card.rows.length);
+  assert.equal(metricCount(card), 3);
+
+  // ASSERT: the field wins over a positional heading still in effect, so a
+  // producer cannot accidentally file a session under the previous group.
+  const superimposed = parseHostPayload({
+    entries: [{ id: 'supergrok', display_name: 'SuperGrok', sections: [
+      { type: 'text', label: 'Breakdown', value: '' },
+      { type: 'metric', label: 'Grok Build', percent: 94, severity: 'low', group: 'Breakdown' },
+    ] }],
+  });
+  const grok = projectCards(superimposed, 0)[0];
+  assert.deepEqual(grok.rows.map((r) => [r.label, r.key]), [
+    ['Grok Build (Breakdown)', 'metric:Grok Build (Breakdown)'],
+  ]);
+}
+
 // --- vendor warnings become card.warning, and errors carry an action ------------
 
 {

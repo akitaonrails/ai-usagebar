@@ -426,6 +426,37 @@ assert.deepEqual(JSON.parse(JSON.stringify(model.groupedSections([{type: 'spacer
 assert.equal(model.groupedSections(null).length, 0);
 assert.equal(model.groupedSections('not-sections').length, 0);
 
+// #255: the Claude entry's CLI-session rows arrive the same way — grouped
+// metrics — so the panel draws them under one "Sessions" heading beneath the
+// quota meters, with the health severity the report assigned.
+const claudeSections = model.parseReport(JSON.stringify({entries: [{
+  id: 'anthropic', error: null,
+  sections: [
+    {type: 'metric', label: 'Session (5h)', percent: 29, value: '29%', detail: '',
+     severity: 'low', reset_at: '2026-09-25T14:20:00Z', window_secs: 18000},
+    {type: 'metric', label: 'ship the release', percent: 90, value: '90%',
+     detail: '180,000 / 200,000 tokens · claude-test · last active 12:34:56',
+     severity: 'critical', group: 'Sessions'},
+    {type: 'metric', label: 'sketch ideas', percent: 0, value: 'compacted',
+     detail: 'compacted · waiting for the next response', severity: 'low', group: 'Sessions'},
+    {type: 'text', label: '', value: '… and 4 more sessions'}
+  ]
+}]})).entries[0].sections;
+assert.deepEqual(Array.from(model.groupedSections(claudeSections)).map(row => {
+  if (row.type === 'text' && row.value === '') return 'heading:' + row.label;
+  return row.type + ':' + row.label;
+}), [
+  'metric:Session (5h)',
+  'heading:Sessions',
+  'metric:ship the release',
+  'metric:sketch ideas',
+  'text:'                       // the overflow note is not a heading
+]);
+const sessionRow = model.groupedSections(claudeSections).find(row =>
+  row.type === 'metric' && row.group === 'Sessions');
+assert.equal(sessionRow.severity, 'critical');
+assert.equal(sessionRow.value, '90%');
+
 const balance = model.parseReport(JSON.stringify({entries: [{
   id: 'deepseek', error: null,
   sections: [{type: 'text', label: 'Balance', value: '$8.42'}]

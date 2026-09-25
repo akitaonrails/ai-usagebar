@@ -300,6 +300,9 @@ function normalizeSection(raw) {
       severity,
       resetAt: clean(raw.reset_at, 80),
       window: windowSeconds(raw.window_secs),
+      // The sub-group the report assigned this metric ("Breakdown" slices,
+      // Claude CLI "Sessions"); "" when it stands on its own.
+      group: clean(raw.group, 80),
     };
   }
   if (type === "text") {
@@ -710,9 +713,14 @@ export function projectCards(payload, nowMs, locale) {
       if (section.type === "metric") {
         const left = Math.max(0, 100 - section.percent);
         const hostLabel = metricLabel(entry.id, section.label);
+        // A metric can also name its group directly in the report (SuperGrok's
+        // product slices, the Claude entry's CLI sessions): that field wins
+        // over the positional heading in effect, so both mechanisms label and
+        // key the row identically.
+        const metricGroup = section.group || group;
         const row = {
           kind: "metric",
-          label: prettyMetricLabel(entry.id, hostLabel, group),
+          label: prettyMetricLabel(entry.id, hostLabel, metricGroup),
           leftPercent: left,
           usedPercent: section.percent,
           headline: section.headline === "value" && section.value ? "value" : "percent",
@@ -723,7 +731,7 @@ export function projectCards(payload, nowMs, locale) {
           resetAt: section.resetAt || "",
           window: section.window || 0,
         };
-        row.key = metricRowKey(entry.id, section.label, group);
+        row.key = metricRowKey(entry.id, section.label, metricGroup);
         rows.push(row);
       } else if (section.type === "text" && (section.label || section.value)) {
         const row = { kind: "text", label: section.label, value: section.value };

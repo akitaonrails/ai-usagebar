@@ -11,6 +11,20 @@ Each release is also published at
 
 ### Added
 
+- **Claude CLI sessions in the report and popover (#255).** When the opt-in
+  `[context]` monitor is enabled, the usage report's Claude entry gains a
+  `"Sessions"` group — up to eight recent Claude Code sessions, one row each,
+  with context health on the same severity colours as quota meters (a 90%
+  context reads as saturated), plus the model, token count and last-active
+  time; compacted or unreadable contexts keep an honest `compacted` /
+  `unknown` value instead of a fabricated percentage. The Windows and macOS
+  popover renders them as grouped rows on the Claude card, the Omarchy panel
+  under a "Sessions" heading, and `usage` prints them in the text report.
+  Sessions are machine-local, so they attach to the first ready Claude entry
+  exactly once, never per account; with `[context]` disabled nothing changes.
+  The reporter's suggested icon beside the options/refresh buttons is a
+  follow-up — the card section is the first slice. The TUI keeps its dedicated
+  `c` overlay.
 - **OpenRouter across multiple workspaces (#221).** The existing
   `[[openrouter.accounts]]` entries (v1.3.0) are now documented for the
   reporter's setup — one entry per workspace key, so each workspace gets its
@@ -57,6 +71,13 @@ Each release is also published at
 
 ### Changed
 
+- **Grouped rows on the Windows/macOS popover and menu bar now carry their
+  group in the row key.** A metric that names its group in the report
+  (SuperGrok's "Breakdown" slices, the new "Sessions" rows) used to be keyed
+  without it, so the popover and the menu-bar strip could disagree with the
+  Omarchy panel's rendering. Both now label and key such rows exactly as a
+  positional heading would; a SuperGrok slice starred in an older build needs
+  re-starring once.
 - **The Grok Bot card names the subscription that bills it** — "Cursor
   Ultra" — instead of the app's own "Grok Bot Plan", which reads the same on
   every account (the popover trimmed it to a bare "Plan"). It comes from the

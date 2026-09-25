@@ -146,6 +146,8 @@ export interface Card {
 
 export interface MetricSection {
   detail: string;
+  /** Sub-group heading this metric renders under ("" when it stands alone). */
+  group: string;
   headline: "percent" | "value";
   label: string;
   percent: number;

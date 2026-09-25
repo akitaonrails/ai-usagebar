@@ -287,11 +287,21 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             continue;
         }
         let raw_label = section.get("label").and_then(Value::as_str).unwrap_or("");
+        // A metric can name its own group in the report (SuperGrok's product
+        // slices, the Claude entry's CLI-session rows); that field wins over
+        // the positional heading in effect, mirroring the popover's
+        // `projectCards` so both derive the same starred-metric key.
+        let field_group = section.get("group").and_then(Value::as_str).unwrap_or("");
+        let effective_group: &str = if field_group.is_empty() {
+            group.as_str()
+        } else {
+            field_group
+        };
         let label = metric_label(id, raw_label);
-        let label = if group.is_empty() {
+        let label = if effective_group.is_empty() {
             label
         } else {
-            format!("{label} ({group})")
+            format!("{label} ({effective_group})")
         };
         let percent = section.get("percent").and_then(Value::as_f64);
         let value = section
@@ -301,7 +311,7 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             .map(str::to_string)
             .or_else(|| percent.map(|percent| format!("{}%", percent.round() as i64)))
             .unwrap_or_default();
-        let mut key = metric_key(id, raw_label, &group);
+        let mut key = metric_key(id, raw_label, effective_group);
         let count = seen.entry(key.clone()).or_insert(0);
         *count += 1;
         if *count > 1 {
@@ -675,6 +685,43 @@ mod tests {
         let content = content_from_payload(&payload, &Stars::new(), &[]);
         assert_eq!(content.groups[0].2[0].key, "metric:Gemini (Session)");
         assert_eq!(content.groups[0].2[1].key, "metric:Gemini (Weekly)");
+    }
+
+    /// A metric that names its own group (#213's report field — SuperGrok's
+    /// slices, #255's Claude CLI sessions) keys and labels exactly as the same
+    /// group arriving positionally would, so a star saved from the popover's
+    /// grouped row still paints the menu-bar bar.
+    #[test]
+    fn metric_level_groups_key_like_positional_ones() {
+        let payload = json!({
+            "entries": [{
+                "id": "anthropic",
+                "display_name": "Claude",
+                "status": "ready",
+                "sections": [
+                    {"type": "metric", "label": "Weekly (7d)", "percent": 32, "value": "32%"},
+                    {"type": "metric", "label": "ship the release", "percent": 91,
+                     "value": "91%", "group": "Sessions"},
+                    {"type": "metric", "label": "Grok Build", "percent": 94,
+                     "value": "94%", "group": "Breakdown"}
+                ]
+            }]
+        });
+        let mut stars = Stars::new();
+        stars.insert(
+            "anthropic".into(),
+            vec![
+                "metric:ship the release (Sessions)".into(),
+                "metric:Grok Build (Breakdown)".into(),
+            ],
+        );
+        let content = content_from_payload(&payload, &stars, &[]);
+        let bars = &content.groups[0].2;
+        assert_eq!(bars.len(), 2);
+        assert_eq!(bars[0].key, "metric:ship the release (Sessions)");
+        assert_eq!(bars[0].label, "ship the release (Sessions)");
+        assert_eq!(bars[1].key, "metric:Grok Build (Breakdown)");
+        assert_eq!(bars[1].label, "Grok Build (Breakdown)");
     }
 
     #[test]
