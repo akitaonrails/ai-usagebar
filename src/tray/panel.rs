@@ -2,8 +2,8 @@
 //! without compiling a WebView host.
 #![allow(dead_code)]
 
-/// Width of the macOS provider switcher in logical points.
-pub const WINDOW_WIDTH: f64 = 390.0;
+/// Classic width of the macOS provider switcher in logical points.
+pub const WINDOW_WIDTH: f64 = 320.0;
 /// Initial height only: the web content drives it afterwards via `resize`.
 pub const WINDOW_HEIGHT: f64 = 420.0;
 /// Smallest height a `resize` request can shrink the popover to.

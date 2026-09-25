@@ -18,6 +18,8 @@ pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30
 /// machinery. One struct so a new fact does not grow `wrap_report`'s arity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostFacts {
+    /// Windows system accent colors for the Fluent popover; absent on other hosts.
+    pub accent: Option<super::accent::Accent>,
     /// Seconds between full reports; `[tray] refresh_minutes` × 60.
     pub refresh_secs: u64,
     /// Canonical "Ctrl+Shift+U" spelling of the registered shortcut, or empty.
@@ -103,6 +105,7 @@ impl HostFacts {
 impl Default for HostFacts {
     fn default() -> Self {
         Self {
+            accent: None,
             refresh_secs: POLL_INTERVAL.as_secs(),
             shortcut: String::new(),
             shortcut_error: String::new(),
@@ -179,6 +182,12 @@ pub fn wrap_report(
             )
         })
         .collect();
+    let accent = facts.accent.as_ref().map(|accent| {
+        json!({
+            "light": accent.light,
+            "dark": accent.dark,
+        })
+    });
     let mut payload = json!({
         "version": facts.version,
         "generated_at": now_ms,
@@ -193,6 +202,7 @@ pub fn wrap_report(
         "update_checked_at": facts.update_checked_at,
         "repository": repository_page(),
         "accounts": accounts,
+        "accent": accent,
         "host_error": host_error.map(sanitize_untrusted_field),
         "primary": Value::Null,
         "entries": [],
@@ -418,6 +428,7 @@ mod tests {
         assert_eq!(payload["next_refresh_at"], 301_000);
         assert_eq!(payload["refresh_minutes"], 5);
         assert_eq!(payload["startup_enabled"], true);
+        assert_eq!(payload["accent"], Value::Null);
         let os = payload["os"].as_str().unwrap_or("");
         assert!(
             os == "macos" || os == "windows" || os == "linux",
@@ -437,6 +448,20 @@ mod tests {
         assert!(payload["host_error"].is_null());
         assert_eq!(payload["primary"], "anthropic");
         assert_eq!(payload["entries"][0]["short_name"], "cld");
+    }
+
+    #[test]
+    fn wrap_carries_fluent_accent_colors() {
+        let mut host = facts("1.10.0", false);
+        host.accent = Some(super::super::accent::Accent {
+            light: "#123456".into(),
+            dark: "#abcdef".into(),
+        });
+        let payload = wrap_report(&sample_report(), &host, 0, None);
+
+        // ASSERT: both validated host colors reach the JSON root unchanged.
+        assert_eq!(payload["accent"]["light"], "#123456");
+        assert_eq!(payload["accent"]["dark"], "#abcdef");
     }
 
     #[test]

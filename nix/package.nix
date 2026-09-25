@@ -38,6 +38,9 @@ rustPlatform.buildRustPackage {
       # .rgba files: the popover's TypeScript is built by `build.rs` on Windows
       # only, and pulling it in would rebuild this derivation on every UI edit.
       (lib.fileset.fileFilter (file: file.hasExt "rgba") ../windows)
+      # `src/tray/marks.rs` (menu-bar logos) is not gated either: it
+      # `include_bytes!`s the popover's provider SVGs. Only that folder.
+      (lib.fileset.fileFilter (file: file.hasExt "svg") ../windows/popover/src/icons/providers)
     ];
   };
 

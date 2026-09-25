@@ -111,17 +111,8 @@ pub struct TrayConfig {
     pub refresh_minutes: Option<u64>,
     /// What the tray does when a newer release is published.
     pub updates: Option<UpdateMode>,
-    /// macOS menu-bar presentation: `provider` (Omarchy-style) or `bars`.
+    /// macOS menu-bar presentation: `provider` (logos) or `bars` (default).
     pub menu_bar_style: Option<String>,
-    /// The last provider selected in the macOS menu bar. A missing entry falls
-    /// back for display without erasing this choice during a transient gap.
-    pub menu_bar_provider: Option<String>,
-    /// Show all ready providers in the macOS menu bar; defaults to true.
-    pub menu_bar_show_all: Option<bool>,
-    /// Hide headline values, leaving only provider codes.
-    pub menu_bar_hide_value: bool,
-    /// Which quota window the macOS menu bar displays.
-    pub menu_bar_window: Option<String>,
 }
 
 /// Poll intervals the tray offers, in minutes. The provider cache TTL is
@@ -151,10 +142,6 @@ impl Default for NotificationsConfig {
 }
 
 impl TrayConfig {
-    pub fn menu_bar_show_all(&self) -> bool {
-        self.menu_bar_show_all.unwrap_or(true)
-    }
-
     pub fn refresh_minutes(&self) -> u64 {
         self.refresh_minutes.unwrap_or(DEFAULT_TRAY_REFRESH_MINUTES)
     }
@@ -4892,6 +4879,15 @@ enabled = true
         assert_eq!(UpdateMode::parse(" Off "), Some(UpdateMode::Off));
         assert_eq!(UpdateMode::parse("weekly"), None);
         assert_eq!(UpdateMode::Auto.as_str(), "auto");
+    }
+
+    #[test]
+    fn tray_ignores_removed_menu_bar_keys_for_back_compatibility() {
+        let legacy = write_toml(
+            "[tray]\nmenu_bar_show_all = false\nmenu_bar_hide_value = true\nmenu_bar_names = \"short\"\nmenu_bar_provider = \"anthropic\"\nmenu_bar_window = \"weekly\"\n",
+        );
+        let config = Config::load_from(legacy.path()).unwrap();
+        assert_eq!(config.tray, TrayConfig::default());
     }
 
     #[test]

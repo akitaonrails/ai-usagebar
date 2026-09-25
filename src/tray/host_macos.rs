@@ -9,17 +9,22 @@ use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use fs2::FileExt;
-use objc2::Message;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, Bool};
+use objc2::runtime::{AnyClass, AnyObject, Bool};
+use objc2::{AnyThread, Message};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
-    NSApplication, NSAutoresizingMaskOptions, NSBezierPath, NSButton, NSColor, NSEvent,
-    NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSImageScaling, NSScreen, NSView,
-    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-    NSWindow, NSWindowOrderingMode,
+    NSApplication, NSAutoresizingMaskOptions, NSBezierPath, NSButton, NSColor,
+    NSCompositingOperation, NSEvent, NSFont, NSFontAttributeName, NSFontWeightSemibold,
+    NSForegroundColorAttributeName, NSGlassEffectView, NSGlassEffectViewStyle, NSImage,
+    NSImageScaling, NSScreen, NSStringDrawing, NSView, NSVisualEffectBlendingMode,
+    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
+    NSWindowOrderingMode,
 };
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize};
+use objc2_foundation::{
+    MainThreadMarker, NSAttributedStringKey, NSData, NSDictionary, NSPoint, NSRect, NSSize,
+    NSString,
+};
 use objc2_quartz_core::kCACornerCurveContinuous;
 use serde_json::{Value, json};
 use tao::dpi::LogicalSize;
@@ -36,7 +41,8 @@ use wry::{WebView, WebViewBuilder, WebViewBuilderExtDarwin};
 use super::browse;
 use super::hotkey::{self, HotkeyBinding};
 use super::icon::{Severity, tray_icon_rgba};
-use super::menu_bar::{self, UsageWindow};
+use super::marks;
+use super::menu_bar::{self, LogoSegment, StatusItemContent};
 use super::panel::{
     CLICK_LOCK_MS, CORNER_RADIUS, CocoaRect, FALLBACK_WORK_AREA_HEIGHT, PopoverPlacement,
     WINDOW_HEIGHT, WINDOW_WIDTH, clamp_popover_height, cocoa_popover_frame, menu_bar_bottom_y,
@@ -46,9 +52,10 @@ use super::payload::{
     wrap_report,
 };
 use super::strip::{
-    BARS_PIXEL_SIDE, BARS_POINT_SIDE, Stars, StripStyle, bar_fill, bars_layout, bars_rgba,
+    BARS_PIXEL_SIDE, BARS_POINT_SIDE, Stars, bar_fill, bars_layout, bars_rgba,
     content_from_payload, parse_strip_ipc,
 };
+use super::style::PopoverStyle;
 use super::updates::Updates;
 use super::{now_ms, startup, tui_launch, update_flow};
 use crate::config::{Config, UpdateMode};
@@ -93,6 +100,23 @@ enum Theme {
     Dark,
 }
 
+/// Cache key for the native provider-logo image; only visible strip inputs matter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LogoStripKey {
+    segments: Vec<LogoSegment>,
+    line_counts: Vec<usize>,
+}
+
+/// One premeasured provider segment captured by the AppKit drawing block.
+struct LogoStripItem {
+    mark: Option<Retained<NSImage>>,
+    fallback_name: Retained<NSString>,
+    values: Vec<Retained<NSString>>,
+    label_width: f64,
+    value_width: f64,
+    line_count: usize,
+}
+
 impl Theme {
     fn parse(name: &str) -> Option<Self> {
         match name {
@@ -120,17 +144,17 @@ struct TrayState {
     /// `inner_size / scale_factor`, which is wrong after a scale-factor change.
     popover_height: f64,
     theme: Theme,
+    /// Last style the page reported; the AppKit material view shows only for `Native`.
+    style: PopoverStyle,
+    /// The AppKit material behind WKWebView, hidden while the style is Classic.
+    native_background: Option<Retained<NSView>>,
     facts: SharedFacts,
     hotkey: Option<HotkeyBinding>,
-    strip_style: StripStyle,
     stars: Stars,
     strip_order: Vec<String>,
     strip_order_known: bool,
-    menu_bar_provider: String,
-    menu_bar_show_all: bool,
-    menu_bar_hide_value: bool,
-    menu_bar_window: UsageWindow,
     menu_bar_chart: bool,
+    menu_bar_logo_key: Option<LogoStripKey>,
     notifications_enabled: bool,
     notifications_threshold: u8,
 }
@@ -194,16 +218,13 @@ fn run_loop() -> Result<(), String> {
     let _ = cmd_tx.send(WorkerCmd::Refresh);
 
     let empty = wrap_report("{}", &facts_snapshot(&facts), now_ms(), None);
-    let menu_bar_window =
-        UsageWindow::parse(config.tray.menu_bar_window.as_deref().unwrap_or("auto"));
-    let menu_bar_chart = config.tray.menu_bar_style.as_deref() == Some("bars");
-    let menu_bar_show_all = config.tray.menu_bar_show_all();
+    let menu_bar_chart = config.tray.menu_bar_style.as_deref() != Some("provider");
     let tray = build_tray()?;
 
     let theme = Theme::Light;
     let webview = build_webview(&window, proxy.clone()).ok();
     round_corners(&window);
-    install_glass_background(&window);
+    let native_background = install_native_background(&window);
 
     let mut state = TrayState {
         window,
@@ -218,21 +239,15 @@ fn run_loop() -> Result<(), String> {
         last_anchor: None,
         popover_height: WINDOW_HEIGHT,
         theme,
+        style: PopoverStyle::Classic,
+        native_background,
         facts,
         hotkey: hotkey_binding,
-        strip_style: StripStyle::Bars,
         stars: Stars::new(),
         strip_order: Vec::new(),
         strip_order_known: false,
-        menu_bar_provider: config
-            .tray
-            .menu_bar_provider
-            .filter(|id| !id.is_empty())
-            .unwrap_or_else(|| menu_bar::HIGHEST_PROVIDER.into()),
-        menu_bar_show_all,
-        menu_bar_hide_value: config.tray.menu_bar_hide_value,
-        menu_bar_window,
         menu_bar_chart,
+        menu_bar_logo_key: None,
         notifications_enabled: config.notifications.enabled,
         notifications_threshold: config.notifications.threshold,
     };
@@ -542,55 +557,46 @@ fn apply_entry(state: &mut TrayState, entry: Value) {
 
 fn apply_strip_icon(state: &mut TrayState) {
     let content = content_from_payload(&state.payload, &state.stars, &state.strip_order);
-    let visible = state
-        .strip_order_known
-        .then_some(state.strip_order.as_slice());
-    let tooltip = menu_bar::tooltip(
-        &state.payload,
-        &state.menu_bar_provider,
-        state.menu_bar_show_all,
-        state.menu_bar_window,
-        visible,
-    );
+    let tooltip = menu_bar::tooltip(&content);
     let _ = state.tray.set_tooltip(Some(tooltip.as_str()));
-    match state.strip_style {
-        StripStyle::Bars => {
-            let fractions: Vec<f64> = content.bars.iter().map(|m| m.fraction).collect();
-            // Keep tray-icon's slot filled so the status item stays allocated,
-            // then replace the image with a 1×/2×/3× template that stays sharp
-            // on mixed-DPI monitors.
+    state.tray.set_title(Some(""));
+    let segments = menu_bar::logo_segments(&content, &state.payload);
+    let has_content = if state.menu_bar_chart {
+        !content.bars.is_empty()
+    } else {
+        !segments.is_empty()
+    };
+    match menu_bar::status_item_content(state.menu_bar_chart, has_content) {
+        StatusItemContent::AppIcon => {
+            state.menu_bar_logo_key = None;
+            set_static_status_icon(state);
+        }
+        StatusItemContent::Chart => {
+            state.menu_bar_logo_key = None;
+            let fractions: Vec<f64> = content.bars.iter().map(|metric| metric.fraction).collect();
             if let Ok(icon) = bars_icon(&fractions) {
                 let _ = state.tray.set_icon(Some(icon));
             }
             state.tray.set_icon_as_template(true);
-            if state.menu_bar_chart {
-                // tray-icon's macOS set_title(None) leaves the old title in
-                // NSStatusBarButton. An empty title actually clears it.
-                state.tray.set_title(Some(""));
-            } else {
-                let title = menu_bar::title(
-                    &state.payload,
-                    &state.menu_bar_provider,
-                    state.menu_bar_show_all,
-                    !state.menu_bar_hide_value,
-                    state.menu_bar_window,
-                    visible,
-                );
-                state.tray.set_title(Some(title.as_str()));
-            }
             if let Some(image) = template_bars_image(&fractions) {
-                set_status_button_image(&image);
+                set_status_button_image(Some(&image));
             }
         }
-        StripStyle::Text => {
-            if let Ok(icon) = static_icon() {
-                let _ = state.tray.set_icon(Some(icon));
+        StatusItemContent::Logos => {
+            let key = LogoStripKey {
+                line_counts: segments
+                    .iter()
+                    .map(|segment| segment.values.len())
+                    .collect(),
+                segments: segments.clone(),
+            };
+            if state.menu_bar_logo_key.as_ref() != Some(&key) {
+                let image = logo_strip_image(&segments);
+                let _ = state.tray.set_icon(None);
+                state.tray.set_icon_as_template(true);
+                set_status_button_image(Some(&image));
+                state.menu_bar_logo_key = Some(key);
             }
-            state.tray.set_icon_as_template(true);
-            let title = content.title_line();
-            state
-                .tray
-                .set_title((!title.is_empty()).then_some(title.as_str()));
         }
     }
 }
@@ -603,6 +609,15 @@ fn bars_icon(fractions: &[f64]) -> Result<Icon, tray_icon::BadIcon> {
 fn static_icon() -> Result<Icon, tray_icon::BadIcon> {
     let (rgba, size) = tray_icon_rgba(BARS_PIXEL_SIDE, Severity::Low);
     Icon::from_rgba(rgba, size, size)
+}
+
+fn set_static_status_icon(state: &mut TrayState) {
+    let _ = state.tray.set_icon(None);
+    set_status_button_image(None);
+    if let Ok(icon) = static_icon() {
+        let _ = state.tray.set_icon(Some(icon));
+    }
+    state.tray.set_icon_as_template(true);
 }
 
 enum ShortcutOutcome {
@@ -729,10 +744,6 @@ fn push_to_webview(state: &TrayState) {
 
 fn popover_payload(state: &TrayState) -> String {
     let mut payload = state.payload.clone();
-    payload["menu_bar_show_all"] = json!(state.menu_bar_show_all);
-    payload["menu_bar_hide_value"] = json!(state.menu_bar_hide_value);
-    payload["menu_bar_window"] = json!(state.menu_bar_window.as_str());
-    payload["menu_bar_provider"] = json!(state.menu_bar_provider);
     payload["menu_bar_chart"] = json!(state.menu_bar_chart);
     payload["notifications_enabled"] = json!(state.notifications_enabled);
     payload["notifications_threshold"] = json!(state.notifications_threshold);
@@ -755,7 +766,7 @@ fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
                     show_popover(state);
                 }
             }
-            MouseButton::Middle => next_menu_bar_provider(state),
+            MouseButton::Middle => {}
         }
     }
 }
@@ -764,33 +775,6 @@ fn persist_menu_bar_value(key: &str, value: toml_edit::Value) {
     if let Some(path) = config_path() {
         let _ = crate::config::set_tray_value(&path, key, Some(value));
     }
-}
-
-fn next_menu_bar_provider(state: &mut TrayState) {
-    let visible = state
-        .strip_order_known
-        .then_some(state.strip_order.as_slice());
-    if let Some(id) = menu_bar::next_id(
-        &state.payload,
-        &state.menu_bar_provider,
-        state.menu_bar_window,
-        visible,
-    ) {
-        state.menu_bar_provider = id.clone();
-        persist_menu_bar_value("menu_bar_provider", id.into());
-        // A cycle must visibly change the strip even when Show All was on.
-        if state.menu_bar_show_all {
-            state.menu_bar_show_all = false;
-            persist_menu_bar_value("menu_bar_show_all", false.into());
-        }
-        apply_strip_icon(state);
-    }
-}
-
-fn set_menu_bar_window(state: &mut TrayState, window: UsageWindow) {
-    state.menu_bar_window = window;
-    persist_menu_bar_value("menu_bar_window", window.as_str().into());
-    apply_strip_icon(state);
 }
 
 /// Start a switch the popover asked for. Only a vendor and label the host
@@ -902,58 +886,6 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
                 push_to_webview(state);
             }
         }
-        "next-menu-bar-provider" => {
-            next_menu_bar_provider(state);
-            push_to_webview(state);
-        }
-        "set-menu-bar-provider" => {
-            if let Some(id) = value.get("value").and_then(Value::as_str) {
-                let eligible = id == menu_bar::HIGHEST_PROVIDER
-                    || state
-                        .payload
-                        .get("entries")
-                        .and_then(Value::as_array)
-                        .is_some_and(|entries| {
-                            entries
-                                .iter()
-                                .any(|entry| entry.get("id").and_then(Value::as_str) == Some(id))
-                        })
-                        && (!state.strip_order_known
-                            || state.strip_order.iter().any(|shown| shown == id));
-                if eligible {
-                    state.menu_bar_provider = id.to_owned();
-                    persist_menu_bar_value("menu_bar_provider", id.into());
-                    if state.menu_bar_show_all {
-                        state.menu_bar_show_all = false;
-                        persist_menu_bar_value("menu_bar_show_all", false.into());
-                    }
-                    apply_strip_icon(state);
-                    push_to_webview(state);
-                }
-            }
-        }
-        "set-menu-bar-show-all" => {
-            if let Some(enabled) = value.get("value").and_then(Value::as_bool) {
-                state.menu_bar_show_all = enabled;
-                persist_menu_bar_value("menu_bar_show_all", enabled.into());
-                apply_strip_icon(state);
-                push_to_webview(state);
-            }
-        }
-        "set-menu-bar-hide-value" => {
-            if let Some(enabled) = value.get("value").and_then(Value::as_bool) {
-                state.menu_bar_hide_value = enabled;
-                persist_menu_bar_value("menu_bar_hide_value", enabled.into());
-                apply_strip_icon(state);
-                push_to_webview(state);
-            }
-        }
-        "set-menu-bar-window" => {
-            if let Some(window) = value.get("value").and_then(Value::as_str) {
-                set_menu_bar_window(state, UsageWindow::parse(window));
-                push_to_webview(state);
-            }
-        }
         "set-menu-bar-chart" => {
             if let Some(enabled) = value.get("value").and_then(Value::as_bool) {
                 state.menu_bar_chart = enabled;
@@ -966,8 +898,7 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             }
         }
         "strip" => {
-            let (style, stars, order) = parse_strip_ipc(&value);
-            state.strip_style = style;
+            let (_, stars, order) = parse_strip_ipc(&value);
             state.stars = stars;
             state.strip_order = order;
             state.strip_order_known = true;
@@ -1003,20 +934,35 @@ fn handle_resize(state: &mut TrayState, value: &Value) {
     {
         apply_theme(state, theme);
     }
-    let Some(requested) = value.get("height").and_then(Value::as_f64) else {
-        return;
-    };
-    if !requested.is_finite() || requested <= 0.0 {
-        return;
+    let mut resize = false;
+    if let Some(style) = value
+        .get("style")
+        .and_then(Value::as_str)
+        .and_then(PopoverStyle::parse)
+        && state.style != style
+    {
+        state.style = style;
+        resize = true;
+        if let Some(background) = &state.native_background {
+            background.setHidden(style != PopoverStyle::Native);
+        }
     }
-    let visible_h = anchor_visible_height(state.last_anchor);
-    let target = clamp_popover_height(requested, visible_h);
-    state.popover_height = target;
-    state
-        .window
-        .set_inner_size(LogicalSize::new(WINDOW_WIDTH, target));
-    if state.popover_open {
-        position_popover(state);
+    if let Some(requested) = value.get("height").and_then(Value::as_f64)
+        && requested.is_finite()
+        && requested > 0.0
+    {
+        let visible_h = anchor_visible_height(state.last_anchor);
+        state.popover_height = clamp_popover_height(requested, visible_h);
+        resize = true;
+    }
+    if resize {
+        state.window.set_inner_size(LogicalSize::new(
+            state.style.window_width(WINDOW_WIDTH),
+            state.popover_height,
+        ));
+        if state.popover_open {
+            position_popover(state);
+        }
     }
 }
 
@@ -1132,7 +1078,7 @@ fn position_popover(state: &TrayState) {
         visible,
         below_y,
         icon_x,
-        popover_w: WINDOW_WIDTH,
+        popover_w: state.style.window_width(WINDOW_WIDTH),
         popover_h: height,
     });
     apply_cocoa_frame(&state.window, frame);
@@ -1276,29 +1222,27 @@ fn round_corners(window: &Window) {
     }
 }
 
-/// Put AppKit's material behind WKWebView. On systems with Liquid Glass, use
-/// NSGlassEffectView; older macOS versions use the semantic popover material.
-fn install_glass_background(window: &Window) {
+/// Create the hidden AppKit material view behind WKWebView. On systems with
+/// Liquid Glass, use NSGlassEffectView; older macOS versions use the semantic
+/// popover material.
+fn install_native_background(window: &Window) -> Option<Retained<NSView>> {
     let ptr = window.ns_window() as *mut NSWindow;
-    let Some(mtm) = MainThreadMarker::new() else {
-        return;
-    };
-    let Some(ns_window) = (unsafe { ptr.as_ref() }) else {
-        return;
-    };
-    let Some(content) = ns_window.contentView() else {
-        return;
-    };
+    let mtm = MainThreadMarker::new()?;
+    // SAFETY: tao returns the live NSWindow owned by this Window.
+    let ns_window = unsafe { ptr.as_ref() }?;
+    let content = ns_window.contentView()?;
     let sizing =
         NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable;
 
     if AnyClass::get(c"NSGlassEffectView").is_some() {
-        let glass = NSGlassEffectView::new(mtm);
-        glass.setStyle(NSGlassEffectViewStyle::Regular);
-        glass.setFrame(content.bounds());
-        glass.setAutoresizingMask(sizing);
-        round_view(&glass);
-        content.addSubview_positioned_relativeTo(&glass, NSWindowOrderingMode::Below, None);
+        let effect_view = NSGlassEffectView::new(mtm);
+        effect_view.setStyle(NSGlassEffectViewStyle::Regular);
+        effect_view.setFrame(content.bounds());
+        effect_view.setAutoresizingMask(sizing);
+        effect_view.setHidden(true);
+        round_view(&effect_view);
+        content.addSubview_positioned_relativeTo(&effect_view, NSWindowOrderingMode::Below, None);
+        Some(effect_view.into_super())
     } else {
         let material = NSVisualEffectView::new(mtm);
         material.setMaterial(NSVisualEffectMaterial::Popover);
@@ -1306,8 +1250,10 @@ fn install_glass_background(window: &Window) {
         material.setState(NSVisualEffectState::Active);
         material.setFrame(content.bounds());
         material.setAutoresizingMask(sizing);
+        material.setHidden(true);
         round_view(&material);
         content.addSubview_positioned_relativeTo(&material, NSWindowOrderingMode::Below, None);
+        Some(material.into_super())
     }
 }
 
@@ -1371,6 +1317,205 @@ fn apply_contents_scale(view: &NSView, scale: f64) {
         layer.setNeedsDisplay();
     }
     view.setNeedsDisplay(true);
+}
+
+/// Logical height of the combined provider-logo strip.
+const LOGO_STRIP_HEIGHT: f64 = 18.0;
+/// Provider marks occupy a square that preserves their original aspect ratio.
+const LOGO_MARK_BOX: f64 = 16.0;
+/// A single value uses the larger menu-bar text size.
+const LOGO_SINGLE_VALUE_FONT_SIZE: f64 = 12.0;
+/// Two values use a compact, tightly stacked text size.
+const LOGO_STACKED_VALUE_FONT_SIZE: f64 = 9.0;
+/// Two 9 pt values overlap by 2 pt, matching OpenUsage's tight stack.
+const LOGO_STACKED_LINE_STEP: f64 = 7.0;
+
+/// Build one AppKit template image for provider marks and their starred values.
+fn logo_strip_image(segments: &[LogoSegment]) -> Retained<NSImage> {
+    debug_assert!(!segments.is_empty());
+    // SAFETY: AppKit exposes this immutable font-weight constant for the life of the process.
+    let semibold = unsafe { NSFontWeightSemibold };
+    let label_font = NSFont::systemFontOfSize_weight(LOGO_SINGLE_VALUE_FONT_SIZE, semibold);
+    let single_value_font =
+        NSFont::monospacedDigitSystemFontOfSize_weight(LOGO_SINGLE_VALUE_FONT_SIZE, semibold);
+    let stacked_value_font =
+        NSFont::monospacedDigitSystemFontOfSize_weight(LOGO_STACKED_VALUE_FONT_SIZE, semibold);
+    let label_attributes = font_attributes(&label_font);
+    let single_value_attributes = font_attributes(&single_value_font);
+    let stacked_value_attributes = font_attributes(&stacked_value_font);
+
+    let items: Vec<LogoStripItem> = segments
+        .iter()
+        .map(|segment| {
+            let mark = marks::mark_svg(&segment.slug).and_then(svg_image);
+            let fallback_name = NSString::from_str(segment.short_name.as_deref().unwrap_or(""));
+            let label_width = if mark.is_some() {
+                LOGO_MARK_BOX
+            } else {
+                text_width(&fallback_name, &label_attributes)
+            };
+            let values: Vec<Retained<NSString>> = segment
+                .values
+                .iter()
+                .take(2)
+                .map(|value| NSString::from_str(value))
+                .collect();
+            let line_count = values.len();
+            let value_attributes = if line_count > 1 {
+                &stacked_value_attributes
+            } else {
+                &single_value_attributes
+            };
+            let value_width = values
+                .iter()
+                .map(|value| text_width(value, value_attributes))
+                .fold(0.0_f64, f64::max);
+            LogoStripItem {
+                mark,
+                fallback_name,
+                values,
+                label_width,
+                value_width,
+                line_count,
+            }
+        })
+        .collect();
+
+    let item_gap = 11.0;
+    let width = items
+        .iter()
+        .map(|item| {
+            item.label_width
+                + if item.label_width > 0.0 {
+                    4.0 + item.value_width
+                } else {
+                    item.value_width
+                }
+        })
+        .sum::<f64>()
+        + item_gap * items.len().saturating_sub(1) as f64;
+    let block = RcBlock::new(move |dst: NSRect| {
+        let mut x = dst.origin.x;
+        let fallback_y = dst.origin.y + (LOGO_STRIP_HEIGHT - LOGO_SINGLE_VALUE_FONT_SIZE) / 2.0;
+        for (index, item) in items.iter().enumerate() {
+            if let Some(mark) = &item.mark {
+                draw_fitted_mark(
+                    mark,
+                    x,
+                    dst.origin.y + (LOGO_STRIP_HEIGHT - LOGO_MARK_BOX) / 2.0,
+                );
+            } else {
+                draw_status_text(&item.fallback_name, x, fallback_y, &label_attributes);
+            }
+            x += item.label_width;
+            if item.label_width > 0.0 {
+                x += 4.0;
+            }
+            let stacked = item.line_count > 1;
+            let value_attributes = if stacked {
+                &stacked_value_attributes
+            } else {
+                &single_value_attributes
+            };
+            let font_size = if stacked {
+                LOGO_STACKED_VALUE_FONT_SIZE
+            } else {
+                LOGO_SINGLE_VALUE_FONT_SIZE
+            };
+            let line_step = if stacked {
+                LOGO_STACKED_LINE_STEP
+            } else {
+                font_size
+            };
+            let text_height = font_size + line_step * item.line_count.saturating_sub(1) as f64;
+            let text_y = dst.origin.y + (LOGO_STRIP_HEIGHT - text_height) / 2.0;
+            for (line, value) in item.values.iter().enumerate() {
+                draw_status_text(value, x, text_y + line as f64 * line_step, value_attributes);
+            }
+            x += item.value_width;
+            if index + 1 < items.len() {
+                x += item_gap;
+            }
+        }
+        Bool::from(true)
+    });
+    let image = NSImage::imageWithSize_flipped_drawingHandler(
+        NSSize::new(width.max(1.0), LOGO_STRIP_HEIGHT),
+        true,
+        &block,
+    );
+    image.setTemplate(true);
+    image
+}
+
+/// Decode one embedded SVG, returning `None` when AppKit cannot load it.
+fn svg_image(svg: &'static [u8]) -> Option<Retained<NSImage>> {
+    let data = NSData::with_bytes(svg);
+    let image = NSImage::initWithData(NSImage::alloc(), &data)?;
+    let size = image.size();
+    if !size.width.is_finite()
+        || !size.height.is_finite()
+        || size.width <= 0.0
+        || size.height <= 0.0
+    {
+        return None;
+    }
+    Some(image)
+}
+
+/// Build the correctly typed AppKit font attribute dictionary.
+fn font_attributes(font: &NSFont) -> Retained<NSDictionary<NSAttributedStringKey, AnyObject>> {
+    let font_object: &AnyObject = font.as_ref();
+    let black = NSColor::colorWithWhite_alpha(0.0, 1.0);
+    let color_object: &AnyObject = black.as_ref();
+    // SAFETY: AppKit exports both attribute keys as process-lifetime NSString constants.
+    let (font_key, foreground_key) =
+        unsafe { (NSFontAttributeName, NSForegroundColorAttributeName) };
+    NSDictionary::from_slices(&[font_key, foreground_key], &[font_object, color_object])
+}
+
+/// Measure text using the same font attributes that draw it.
+fn text_width(text: &NSString, attributes: &NSDictionary<NSAttributedStringKey, AnyObject>) -> f64 {
+    // SAFETY: `attributes` has the NSFontAttributeName key and NSFont value
+    // built by `font_attributes` immediately before measuring and drawing.
+    unsafe { text.sizeWithAttributes(Some(attributes)).width.ceil() }
+}
+
+/// Draw text with the same font attributes used to calculate its width.
+fn draw_status_text(
+    text: &NSString,
+    x: f64,
+    y: f64,
+    attributes: &NSDictionary<NSAttributedStringKey, AnyObject>,
+) {
+    // SAFETY: `attributes` has the NSFontAttributeName key and NSFont value
+    // built by `font_attributes`; the drawing point is within the image strip.
+    unsafe { text.drawAtPoint_withAttributes(NSPoint::new(x, y), Some(attributes)) };
+}
+
+/// Draw an SVG mark into the 16-point box without distorting its aspect ratio.
+fn draw_fitted_mark(image: &NSImage, x: f64, y: f64) {
+    let source_size = image.size();
+    let scale = (LOGO_MARK_BOX / source_size.width).min(LOGO_MARK_BOX / source_size.height);
+    let width = source_size.width * scale;
+    let height = source_size.height * scale;
+    let source = NSRect {
+        origin: NSPoint::new(0.0, 0.0),
+        size: source_size,
+    };
+    let destination = NSRect {
+        origin: NSPoint::new(
+            x + (LOGO_MARK_BOX - width) / 2.0,
+            y + (LOGO_MARK_BOX - height) / 2.0,
+        ),
+        size: NSSize::new(width, height),
+    };
+    image.drawInRect_fromRect_operation_fraction(
+        destination,
+        source,
+        NSCompositingOperation::SourceOver,
+        1.0,
+    );
 }
 
 fn template_bars_image(fractions: &[f64]) -> Option<Retained<NSImage>> {
@@ -1449,7 +1594,7 @@ fn fill_round_rect(x: f64, y: f64, w: f64, h: f64, radius: f64, alpha: f64) {
     NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, radius, radius).fill();
 }
 
-fn set_status_button_image(image: &NSImage) {
+fn set_status_button_image(image: Option<&NSImage>) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
@@ -1457,7 +1602,7 @@ fn set_status_button_image(image: &NSImage) {
         return;
     };
     button.setImageScaling(NSImageScaling::ScaleNone);
-    button.setImage(Some(image));
+    button.setImage(image);
 }
 
 fn find_status_bar_button(mtm: MainThreadMarker) -> Option<Retained<NSButton>> {

@@ -21,10 +21,13 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND,
 };
 use windows_sys::Win32::Graphics::Dwm::{
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmExtendFrameIntoClientArea,
+    DwmSetWindowAttribute,
 };
 use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
 use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
+use windows_sys::Win32::UI::Controls::MARGINS;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
@@ -40,6 +43,7 @@ use super::payload::{
     HostFacts, SharedFacts, facts_snapshot, host_payload, with_facts, worst_severity, wrap_report,
 };
 use super::placement::{self, Area, Insets};
+use super::style::PopoverStyle;
 use super::updates::Updates;
 use super::{now_ms, startup, taskbar_theme, tui_launch, update_flow};
 use crate::config::{Config, UpdateMode};
@@ -178,6 +182,14 @@ struct TrayState {
     last_tray_rect: Option<Rect>,
     /// Last theme the page reported, so a rebuilt webview starts matching.
     theme: Theme,
+    /// Last style requested by the page; this also controls layout width.
+    style: PopoverStyle,
+    /// Whether DWM accepted the backdrop for the current Native style.
+    backdrop_active: bool,
+    /// DWM refused the system backdrop (Windows 10): Native stays solid, untried again.
+    backdrop_refused: bool,
+    /// Last valid CSS/logical height reported by the page.
+    popover_height: f64,
     /// Tray glyph color for the current taskbar.
     ink: Ink,
     facts: SharedFacts,
@@ -214,10 +226,17 @@ fn run_loop() -> Result<(), String> {
         }));
     }
 
+    // Transparent from creation, because tao cannot switch it later, and with no redirection
+    // surface at all: a GDI child of the WebView2 (WRY_WEBVIEW / Chrome_WidgetWin_0) paints that
+    // surface opaque white under the transparent page, hiding the Native style's Acrylic. Only
+    // the WebView2's DirectComposition content reaches the DWM; Classic stays solid because the
+    // page paints its own surface over the whole client area.
     let window = WindowBuilder::new()
         .with_title("AI Usage")
         .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
         .with_visible(false)
+        .with_transparent(true)
+        .with_no_redirection_bitmap(true)
         .with_decorations(false)
         .with_always_on_top(true)
         .with_resizable(false)
@@ -271,7 +290,7 @@ fn run_loop() -> Result<(), String> {
     }
 
     let theme = Theme::Light;
-    let webview = build_webview(&window, proxy.clone(), theme).ok();
+    let webview = build_webview(&window, proxy.clone()).ok();
     if webview.is_none() {
         let _ = tray.set_tooltip(Some(WEBVIEW2_MISSING));
     }
@@ -292,6 +311,10 @@ fn run_loop() -> Result<(), String> {
         popover_session: Arc::new(AtomicU64::new(0)),
         last_tray_rect: None,
         theme,
+        style: PopoverStyle::Classic,
+        backdrop_active: false,
+        backdrop_refused: false,
+        popover_height: WINDOW_HEIGHT,
         ink,
         facts,
         hotkey: hotkey_binding,
@@ -468,6 +491,7 @@ fn run_detection(force: bool) {
 /// filled in as the host learns them.
 fn host_facts(config: &Config) -> HostFacts {
     let mut facts = HostFacts::new(env!("CARGO_PKG_VERSION"), startup::is_enabled());
+    facts.accent = super::accent::read_accent();
     facts.updates = config.tray.updates().as_str().into();
     facts.refresh_secs = config.tray.refresh_minutes() * 60;
     facts
@@ -475,6 +499,7 @@ fn host_facts(config: &Config) -> HostFacts {
 
 async fn push_report(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
     let mut snapshot = facts_snapshot(facts);
+    snapshot.accent = super::accent::read_accent();
     snapshot.startup_enabled = startup::is_enabled();
     let now = now_ms();
     let payload = match crate::report::collect_json().await {
@@ -815,8 +840,8 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
     }
 }
 
-/// `{"cmd":"resize","height":<logical px>,"theme":"light"|"dark"}`.
-/// `theme` is optional; a missing or malformed `height` is ignored.
+/// `{"cmd":"resize","height":<logical px>,"theme":"light"|"dark","style":"classic"|"native"}`.
+/// `theme` and `style` are optional; a missing or malformed `height` is ignored.
 fn handle_resize(state: &mut TrayState, value: &Value) {
     if let Some(theme) = value
         .get("theme")
@@ -825,18 +850,31 @@ fn handle_resize(state: &mut TrayState, value: &Value) {
     {
         apply_theme(state, theme);
     }
-    let Some(requested) = value.get("height").and_then(Value::as_f64) else {
-        return;
-    };
-    if !requested.is_finite() || requested <= 0.0 {
-        return;
+    let mut resize = false;
+    if let Some(style) = value
+        .get("style")
+        .and_then(Value::as_str)
+        .and_then(PopoverStyle::parse)
+        && state.style != style
+    {
+        apply_popover_style(state, style);
+        resize = true;
     }
-    let target = clamp_popover_height(requested, work_area_height(&state.window));
-    state
-        .window
-        .set_inner_size(LogicalSize::new(WINDOW_WIDTH, target));
-    if state.popover_open {
-        position_window(&state.window, state.last_tray_rect);
+    if let Some(requested) = value.get("height").and_then(Value::as_f64)
+        && requested.is_finite()
+        && requested > 0.0
+    {
+        state.popover_height = clamp_popover_height(requested, work_area_height(&state.window));
+        resize = true;
+    }
+    if resize {
+        state.window.set_inner_size(LogicalSize::new(
+            state.style.window_width(WINDOW_WIDTH),
+            state.popover_height,
+        ));
+        if state.popover_open {
+            position_window(&state.window, state.last_tray_rect);
+        }
     }
 }
 
@@ -845,8 +883,98 @@ fn apply_theme(state: &mut TrayState, theme: Theme) {
         return;
     }
     state.theme = theme;
-    if let Some(webview) = state.webview.as_ref() {
+    if state.backdrop_active {
+        set_immersive_dark_mode(&state.window, theme);
+    } else if state.backdrop_refused
+        && let Some(webview) = state.webview.as_ref()
+    {
         let _ = webview.set_background_color(theme.background());
+    }
+}
+
+/// Native puts DWM's Acrylic behind the transparent window and WebView2;
+/// Classic's solid surface is the page's own CSS. The WebView2 is never made
+/// opaque while Native can still be translucent: once its controller paints an
+/// opaque background it never returns to transparent, and Native would show a
+/// white panel. Only a Windows that refuses the backdrop (before 11 22H2) gets
+/// the themed background natively, for good.
+fn apply_popover_style(state: &mut TrayState, style: PopoverStyle) {
+    if state.style == style {
+        return;
+    }
+
+    match style {
+        PopoverStyle::Classic => {
+            set_system_backdrop(&state.window, DWMSBT_NONE);
+            extend_frame(&state.window, 0);
+            state.style = PopoverStyle::Classic;
+            state.backdrop_active = false;
+        }
+        PopoverStyle::Native => {
+            if state.backdrop_refused {
+                state.style = PopoverStyle::Native;
+                return;
+            }
+            if !set_system_backdrop(&state.window, DWMSBT_TRANSIENTWINDOW) {
+                state.backdrop_refused = true;
+                if let Some(webview) = state.webview.as_ref() {
+                    let _ = webview.set_background_color(state.theme.background());
+                }
+                state.style = PopoverStyle::Native;
+                return;
+            }
+            extend_frame(&state.window, -1);
+            set_immersive_dark_mode(&state.window, state.theme);
+            state.style = PopoverStyle::Native;
+            state.backdrop_active = true;
+        }
+    }
+}
+
+/// Whether DWM accepted `backdrop`; Windows before 11 22H2 rejects the attribute.
+fn set_system_backdrop(window: &Window, backdrop: i32) -> bool {
+    let hwnd = window.hwnd() as HWND;
+    // SAFETY: hwnd is the live popover window; `backdrop` outlives the call
+    // and its size is passed as `cbattribute`.
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE as u32,
+            std::ptr::from_ref(&backdrop).cast(),
+            std::mem::size_of_val(&backdrop) as u32,
+        ) >= 0
+    }
+}
+
+/// Tint the Acrylic backdrop for the page's theme.
+fn set_immersive_dark_mode(window: &Window, theme: Theme) {
+    let hwnd = window.hwnd() as HWND;
+    let dark = if theme == Theme::Dark { 1 } else { 0 };
+    // SAFETY: hwnd is the live popover window; `dark` outlives the call and
+    // its size is passed as `cbattribute`.
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+            std::ptr::from_ref(&dark).cast(),
+            std::mem::size_of_val(&dark) as u32,
+        );
+    }
+}
+
+/// `-1` lets the backdrop fill the whole client area; `0` hands it back.
+fn extend_frame(window: &Window, margin: i32) {
+    let hwnd = window.hwnd() as HWND;
+    let margins = MARGINS {
+        cxLeftWidth: margin,
+        cxRightWidth: margin,
+        cyBottomHeight: margin,
+        cyTopHeight: margin,
+    };
+    // SAFETY: hwnd is the live popover window and `margins` remains valid for
+    // the duration of the call.
+    unsafe {
+        let _ = DwmExtendFrameIntoClientArea(hwnd, std::ptr::from_ref(&margins));
     }
 }
 
@@ -1231,11 +1359,10 @@ fn refresh_icon(state: &mut TrayState) {
     }
 }
 
-fn build_webview(
-    window: &Window,
-    proxy: EventLoopProxy<UserEvent>,
-    theme: Theme,
-) -> Result<WebView, String> {
+fn build_webview(window: &Window, proxy: EventLoopProxy<UserEvent>) -> Result<WebView, String> {
+    // Transparent at creation and left that way (see `apply_popover_style`): WebView2 takes the
+    // controller's default background from its creation options, and an opaque one never goes
+    // back to transparent. Classic's page paints its own solid surface over the viewport.
     WebViewBuilder::new()
         .with_custom_protocol("aiub".into(), move |_id, request| {
             protocol_response(request)
@@ -1245,7 +1372,7 @@ fn build_webview(
             let body = request.body().clone();
             let _ = proxy.send_event(UserEvent::Ipc(body));
         })
-        .with_background_color(theme.background())
+        .with_transparent(true)
         .build(window)
         .map_err(|error| error.to_string())
 }

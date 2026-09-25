@@ -245,7 +245,10 @@ pub fn content_from_payload(payload: &Value, stars: &Stars, order: &[String]) ->
         }
         let mut picked = Vec::new();
         for key in wanted {
-            if let Some(metric) = metrics.iter().find(|m| m.key == key) {
+            if let Some(metric) = metrics
+                .iter()
+                .find(|m| m.key == key && !m.value.trim().is_empty())
+            {
                 picked.push(metric.clone());
             }
         }
@@ -290,15 +293,14 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
         } else {
             format!("{label} ({group})")
         };
-        let percent = section
-            .get("percent")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+        let percent = section.get("percent").and_then(Value::as_f64);
         let value = section
             .get("value")
             .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| format!("{}%", percent.round() as i64));
+            .or_else(|| percent.map(|percent| format!("{}%", percent.round() as i64)))
+            .unwrap_or_default();
         let mut key = metric_key(id, raw_label, &group);
         let count = seen.entry(key.clone()).or_insert(0);
         *count += 1;
@@ -311,7 +313,7 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             key,
             label,
             value,
-            fraction: (percent / 100.0).clamp(0.0, 1.0),
+            fraction: (percent.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0),
             bounded: true,
         });
     }

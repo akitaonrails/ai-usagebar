@@ -109,14 +109,18 @@ objc2-app-kit = { version = "0.3.2", features = [
     "NSEvent",
     "NSGraphics",
     "NSGlassEffectView",
+    "NSAttributedString",
     "NSImage",
     "NSImageRep",
+    "NSFont",
+    "NSFontDescriptor",
     "NSResponder",
     "NSScreen",
     "NSStatusBarButton",
     "NSView",
     "NSVisualEffectView",
     "NSWindow",
+    "NSStringDrawing",
     "block2",
 ] }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"] }
@@ -141,6 +145,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",
     "Win32_System_Threading",
+    "Win32_UI_Controls",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }

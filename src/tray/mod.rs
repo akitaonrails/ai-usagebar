@@ -4,9 +4,11 @@
 //! NotifyIcon/NSStatusItem + WebView event loop is Windows/macOS-only and
 //! never pulled into the AUR/Linux graph.
 
+mod accent;
 mod browse;
 pub mod hotkey;
 mod icon;
+mod marks;
 #[cfg(any(target_os = "macos", test))]
 mod menu_bar;
 mod panel;
@@ -42,6 +44,10 @@ mod placement;
 // everywhere like `placement`; only the Windows host calls them.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod blur;
+// Popover style parsing compiles everywhere so Linux CI runs its unit tests;
+// the native tray hosts use it on Windows and macOS.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+mod style;
 
 pub use browse::http_url;
 pub use icon::{Severity, tray_icon_rgba};
