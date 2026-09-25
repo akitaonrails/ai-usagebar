@@ -58,7 +58,7 @@ use super::strip::{
 };
 use super::style::PopoverStyle;
 use super::updates::Updates;
-use super::{now_ms, startup, tui_launch, update_flow};
+use super::{RELAUNCH_ENV, now_ms, startup, tui_launch, update_flow};
 use crate::config::{Config, UpdateMode};
 use crate::update::{current_os, sweep_old};
 
@@ -66,9 +66,6 @@ const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/index.h
 const POPOVER_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.css"));
 const POPOVER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.js"));
 
-/// Set on the process an update relaunches, so it waits for the old one to
-/// release the single-instance lock instead of quitting at once.
-const RELAUNCH_ENV: &str = "AIUB_TRAY_RELAUNCH";
 /// How long a relaunched process keeps retrying the lock.
 const RELAUNCH_WAIT: Duration = Duration::from_secs(10);
 
@@ -82,8 +79,9 @@ enum UserEvent {
     FocusPopover,
     Hotkey,
     Facts,
-    /// A verified update is in place; start it and quit.
-    Restart(PathBuf),
+    /// An update is ready: start the verified exe and quit, or, with `None`, just quit because
+    /// Scoop's script installs the update and starts the new tray itself.
+    Restart(Option<PathBuf>),
 }
 
 enum WorkerCmd {
@@ -298,7 +296,9 @@ fn run_loop() -> Result<(), String> {
             Event::UserEvent(UserEvent::Facts) => apply_facts(&mut state),
             Event::UserEvent(UserEvent::Hotkey) => toggle_popover_from_keyboard(&mut state),
             Event::UserEvent(UserEvent::Restart(exe)) => {
-                relaunch(&exe);
+                if let Some(exe) = exe {
+                    relaunch(&exe);
+                }
                 *control_flow = ControlFlow::Exit;
             }
             Event::UserEvent(UserEvent::FocusPopover) => {

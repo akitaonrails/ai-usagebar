@@ -43,7 +43,7 @@ use super::payload::{
 use super::placement::{self, Area, Insets};
 use super::style::PopoverStyle;
 use super::updates::Updates;
-use super::{now_ms, profile, startup, taskbar_theme, tui_launch, update_flow};
+use super::{RELAUNCH_ENV, now_ms, profile, startup, taskbar_theme, tui_launch, update_flow};
 use crate::config::{Config, UpdateMode};
 use crate::update::{current_os, sweep_old};
 
@@ -78,9 +78,6 @@ const CLICK_LOCK_MS: u64 = 400;
 /// How often the outside-press watch looks at the mouse while the popover has no focus.
 const PRESS_POLL: Duration = Duration::from_millis(30);
 
-/// Set on the process an update relaunches, so it waits for the old one to
-/// release the single-instance mutex instead of quitting at once.
-const RELAUNCH_ENV: &str = "AIUB_TRAY_RELAUNCH";
 /// How long a relaunched process keeps retrying the mutex.
 const RELAUNCH_WAIT: Duration = Duration::from_secs(10);
 
@@ -106,8 +103,9 @@ enum UserEvent {
     },
     /// The global shortcut fired.
     Hotkey,
-    /// A verified update is in place; start it and quit.
-    Restart(PathBuf),
+    /// An update is ready: start the verified exe and quit, or, with `None`, just quit because
+    /// Scoop's script installs the update and starts the new tray itself.
+    Restart(Option<PathBuf>),
     /// Windows switched between light and dark; recolor the tray glyph.
     TaskbarTheme,
 }
@@ -361,7 +359,9 @@ fn run_loop() -> Result<(), String> {
                 }
             }
             Event::UserEvent(UserEvent::Restart(exe)) => {
-                relaunch(&exe);
+                if let Some(exe) = exe {
+                    relaunch(&exe);
+                }
                 *control_flow = ControlFlow::Exit;
             }
             Event::UserEvent(UserEvent::OutsidePress { session, x, y }) => {

@@ -17,7 +17,11 @@ mod tests {
     /// opening a browser) are exempt by name.
     #[test]
     fn report_time_child_processes_never_open_a_console_window() {
-        for file in ["src/supergrok/acp.rs", "src/copilot/credentials.rs"] {
+        for file in [
+            "src/supergrok/acp.rs",
+            "src/copilot/credentials.rs",
+            "src/tray/scoop.rs",
+        ] {
             let text = std::fs::read_to_string(file).unwrap();
             assert!(
                 text.contains("creation_flags(crate::process::CREATE_NO_WINDOW)"),

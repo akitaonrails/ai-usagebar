@@ -35,6 +35,9 @@ mod tui_launch;
 // or Cocoa API. Like the rest of this module it compiles everywhere so Linux
 // CI runs its tests, though only the tray hosts call it.
 mod update_flow;
+// Scoop handoff and PowerShell command generation compile everywhere so Linux CI runs their
+// pure tests, though only the Windows tray host calls them.
+mod scoop;
 mod updates;
 // Where the Windows popover sits on screen. Pure geometry, compiled everywhere so its tests
 // run on every CI job; only the Windows host calls it.
@@ -58,6 +61,9 @@ pub use payload::{POLL_INTERVAL, host_payload, worst_severity, wrap_report};
 pub use strip::{
     BARS_PIXEL_SIDE, StripContent, StripStyle, bars_rgba, content_from_payload, parse_strip_ipc,
 };
+
+/// Set on a process relaunched after an update so it waits for the old tray to exit.
+pub(crate) const RELAUNCH_ENV: &str = "AIUB_TRAY_RELAUNCH";
 
 /// Wall-clock milliseconds, the unit every host fact and payload stamp uses.
 pub(crate) fn now_ms() -> i64 {

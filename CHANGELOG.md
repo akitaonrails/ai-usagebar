@@ -9,6 +9,19 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Scoop installs update through Scoop.** Since 1.25.0 a Scoop-installed
+  Windows tray only offers the release page; now Install Update (and
+  Automatic) hands off to `scoop update <app>`, quits while Scoop replaces
+  the tray (usually 10–60 seconds) and comes back by itself through Scoop's
+  `current` folder. Success is Scoop's `current\manifest.json` reaching the
+  new version, not an exit code. The Scoop transcript is at
+  `%LOCALAPPDATA%\ai-usagebar\updates\scoop.log`; if Scoop does not deliver
+  the requested version, the tray reports that log path, and Automatic does
+  not retry it in the background. A global Scoop install without the
+  `scoop.ps1` shim keeps the release page.
+
 ## [1.25.0] — 2026-09-25
 
 ### Added
