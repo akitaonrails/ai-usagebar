@@ -250,7 +250,7 @@ fn run_loop() -> Result<(), String> {
     // item still offers Refresh and a clean Quit. Normal operation never
     // attaches one (see `build_tray`).
     let fallback_menu = if menu_bar::fallback_menu_attached(webview.is_some()) {
-        attach_fallback_menu(&tray)
+        Some(attach_fallback_menu(&tray))
     } else {
         None
     };
