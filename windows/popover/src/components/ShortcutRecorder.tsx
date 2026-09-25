@@ -1,6 +1,6 @@
 import { useState, type KeyboardEvent } from "react";
 import MdiCloseCircle from "~icons/mdi/close-circle";
-import { useI18n } from "@/lib/i18n";
+import { m } from "@/paraglide/messages.js";
 import { shortcutFromKeyEvent } from "../model.js";
 import { Hint } from "@/components/Hint";
 
@@ -17,7 +17,6 @@ interface ShortcutRecorderProps {
  * to keep Escape / Enter from navigating.
  */
 export function ShortcutRecorder({ error, value, onChange }: ShortcutRecorderProps) {
-  const { t } = useI18n();
   const [recording, setRecording] = useState(false);
 
   function onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -36,11 +35,11 @@ export function ShortcutRecorder({ error, value, onChange }: ShortcutRecorderPro
 
   return (
     <span className="flex shrink-0 items-center gap-[var(--gap-item)]">
-      <Hint align="end" content={recording ? t("Press the new shortcut, Escape to cancel") : t("Click to record a shortcut")}>
+      <Hint align="end" content={recording ? m.shortcut_recording_hint() : m.click_to_record_a_shortcut()}>
         <button
           type="button"
           aria-invalid={error ? true : undefined}
-          aria-label={recording ? t("Press keys") : value ? `${t("Global Shortcut")} ${value}` : t("Set global shortcut")}
+          aria-label={recording ? m.press_keys() : value ? `${m.global_shortcut()} ${value}` : m.set_global_shortcut()}
           className="recorder"
           data-empty={value ? undefined : "true"}
           data-recording={recording ? "true" : undefined}
@@ -48,14 +47,14 @@ export function ShortcutRecorder({ error, value, onChange }: ShortcutRecorderPro
           onClick={() => setRecording(true)}
           onKeyDown={onKeyDown}
         >
-          {recording ? t("Press keys…") : value || t("None")}
+          {recording ? m.press_keys_ellipsis() : value || m.none()}
         </button>
       </Hint>
       {value && !recording ? (
-        <Hint align="end" content={t("Clear shortcut")}>
+        <Hint align="end" content={m.clear_shortcut()}>
           <button
             type="button"
-            aria-label={t("Clear shortcut")}
+            aria-label={m.clear_shortcut()}
             className="plain-btn hover-fill grid place-items-center text-label-3"
             onClick={() => onChange("")}
           >

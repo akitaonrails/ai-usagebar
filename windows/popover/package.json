@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node popover.test.mjs && node mac-dashboard.test.mjs"
+    "i18n": "paraglide-js compile --project ./project.inlang --outdir ./src/paraglide --strategy globalVariable baseLocale --output-structure locale-modules --no-emit-git-ignore && node -e \"require('node:fs').rmSync('src/paraglide/README.md', { force: true })\"",
+    "test": "node popover.test.mjs && node native-dashboard.test.mjs && node i18n.test.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -23,6 +24,8 @@
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.129",
     "@iconify-json/mdi": "^1.2.3",
+    "@inlang/paraglide-js": "^2.25.4",
+    "@inlang/plugin-message-format": "^4.4.4",
     "@svgr/core": "^8.1.0",
     "@svgr/plugin-jsx": "^8.1.0",
     "@tailwindcss/vite": "^4.3.3",

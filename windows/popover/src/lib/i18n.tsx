@@ -1,218 +1,50 @@
 import { createContext, useContext, type ReactNode } from "react";
+import { m } from "@/paraglide/messages.js";
+import { getLocale, setLocale } from "@/paraglide/runtime.js";
 
 export type Language = "en" | "pt-BR";
 
-const portuguese: Record<string, string> = {
-  "About": "Sobre",
-  "available": "disponíveis",
-  "available singular": "disponível",
-  "available reset": "redefinição disponível",
-  "available resets": "redefinições disponíveis",
-  "Always Show Pacing": "Sempre mostrar ritmo",
-  "Always Visible": "Sempre visível",
-  "Always show": "Sempre mostrar",
-  "Appearance": "Aparência",
-  "Activity": "Atividade",
-  "API Keys": "Chaves de API",
-  "Auto": "Automático",
-  "Automatic": "Automático",
-  "Back": "Voltar",
-  "Balance": "Saldo",
-  "Can't reach the server": "Não foi possível acessar o servidor",
-  "Cached": "Em cache",
-  "Chart Icon Only": "Somente ícone do gráfico",
-  "Check for Updates": "Verificar atualizações",
-  "Check for Updates…": "Verificar atualizações…",
-  "Check Now": "Verificar agora",
-  "Check now": "Verificar agora",
-  "Checking…": "Verificando…",
-  "Choose what's visible and where": "Escolha o que mostrar e onde",
-  "Clear shortcut": "Limpar atalho",
-  "Credits": "Créditos",
-  "Extra Usage": "Uso adicional",
-  "Click again to confirm": "Clique novamente para confirmar",
-  "Click to record a shortcut": "Clique para gravar um atalho",
-  "Couldn't load usage": "Não foi possível carregar o uso",
-  "Couldn't update": "Não foi possível atualizar",
-  "Couldn't read local files": "Não foi possível ler os arquivos locais",
-  "Couldn't read usage data": "Não foi possível ler os dados de uso",
-  "Customize": "Personalizar",
-  "Customize Providers": "Personalizar provedores",
-  "Current usage": "Uso atual",
-  "Dark": "Escuro",
-  "Date unavailable": "Data indisponível",
-  "Dashboard": "Painel",
-  "Detect Providers": "Detectar provedores",
-  "Development build": "Versão de desenvolvimento",
-  "Dismiss": "Dispensar",
-  "Downloading…": "Baixando…",
-  "Drag metrics here": "Arraste métricas para cá",
-  "Exact time": "Hora exata",
-  "Focused Provider": "Provedor em foco",
-  "General": "Geral",
-  "Global Shortcut": "Atalho global",
-  "Hide Usage Value": "Ocultar valor de uso",
-  "Hide row": "Ocultar linha",
-  "Highest": "Maior uso",
-  "Highest consumption": "Maior consumo",
-  "Install": "Instalar",
-  "Install Update": "Instalar atualização",
-  "Installing…": "Instalando…",
-  "Language": "Idioma",
-  "Launch at Login": "Iniciar ao entrar",
-  "Light": "Claro",
-  "Limit reached": "Limite atingido",
-  "Menu Bar": "Barra de menus",
-  "Menu": "Barra",
-  "more": "mais",
-  "Monthly": "Mensal",
-  "monthly": "mensal",
-  "MCP tools": "Ferramentas MCP",
-  "Next Provider": "Próximo provedor",
-  "No providers detected": "Nenhum provedor detectado",
-  "No API key": "Sem chave de API",
-  "No providers enabled": "Nenhum provedor ativado",
-  "No providers shown": "Nenhum provedor visível",
-  "No usage or balance data yet.": "Ainda não há dados de uso ou saldo.",
-  "None": "Nenhum",
-  "Not checked yet": "Ainda não verificado",
-  "Notify me": "Avisar",
-  "Notifications": "Notificações",
-  "Quota alerts": "Alertas de limite",
-  "Alert threshold": "Limite para alerta",
-  "Notify when a fresh usage reading reaches this percentage.": "Avisar quando uma leitura nova atingir esta porcentagem de uso.",
-  "System notifications for quota limits and expiring reset credits.": "Notificações do sistema para limites de uso e créditos prestes a expirar.",
-  "Off": "Desativado",
-  "On": "Ativado",
-  "On Demand": "Sob demanda",
-  "Open": "Abrir",
-  "Providers": "Provedores",
-  "Preferences": "Preferências",
-  "Alerts": "Alertas",
-  "Open Customize": "Abrir Personalizar",
-  "Open TUI": "Abrir TUI",
-  "Open TUI for details.": "Abra o TUI para ver detalhes.",
-  "Open TUI → Settings to turn one on.": "Abra TUI → Configurações para ativar um.",
-  "Open TUI → Settings to add one.": "Abra TUI → Configurações para adicionar uma.",
-  "Open TUI → Settings to sign in.": "Abra TUI → Configurações para entrar.",
-  "Options": "Opções",
-  "Press keys": "Pressione as teclas",
-  "Press keys…": "Pressione as teclas…",
-  "Press the new shortcut, Escape to cancel": "Pressione o novo atalho; Esc para cancelar",
-  "Quit": "Sair",
-  "Rate Limit Resets": "Redefinições de limite",
-  "Refresh": "Atualizar",
-  "Check your connection, then Refresh.": "Verifique a conexão e atualize novamente.",
-  "Try Refresh in a bit.": "Tente atualizar novamente daqui a pouco.",
-  "Try Refresh. If it keeps happening, Open TUI.": "Tente atualizar. Se persistir, abra o TUI.",
-  "Reset": "Redefinir",
-  "Refresh Every": "Atualizar a cada",
-  "Refresh now": "Atualizar agora",
-  "Refresh to check your installed providers.": "Atualize para verificar os provedores instalados.",
-  "Remind me later": "Lembrar mais tarde",
-  "Reorder": "Reordenar",
-  "Reset All Customization": "Redefinir toda a personalização",
-  "Reset Times": "Horários de redefinição",
-  "Resets": "Redefinições",
-  "Session": "Sessão",
-  "Sign-in expired": "Sessão expirada",
-  "Settings": "Configurações",
-  "Show All Providers": "Mostrar todos os provedores",
-  "Show": "Mostrar",
-  "Show Usage As": "Mostrar uso como",
-  "Show less": "Mostrar menos",
-  "Show more": "Mostrar mais",
-  "Show on demand": "Mostrar sob demanda",
-  "show expiry dates": "mostrar datas de expiração",
-  "Source on GitHub": "Código no GitHub",
-  "stale": "desatualizado",
-  "Status": "Status",
-  "Start at Login": "Iniciar ao entrar",
-  "Startup, appearance and more": "Inicialização, aparência e mais",
-  "System": "Sistema",
-  "Theme": "Tema",
-  "Provider is unavailable": "Provedor indisponível",
-  "Time Format": "Formato de hora",
-  "Try Again": "Tentar novamente",
-  "Try again": "Tentar novamente",
-  "Turn on a provider in Customize.": "Ative um provedor em Personalizar.",
-  "Turn on Customize to choose what to show.": "Abra Personalizar para escolher o que mostrar.",
-  "Update": "Atualizar",
-  "Update available": "Atualização disponível",
-  "Updates": "Atualizações",
-  "Updating…": "Atualizando…",
-  "Usage & Balance": "Uso e saldo",
-  "USAGE & BALANCE": "USO E SALDO",
-  "Usage Display": "Exibição do uso",
-  "Usage goal": "Meta de uso",
-  "Goal now": "Meta agora",
-  "Estimated goal now": "Meta estimada agora",
-  "Show a goal based on time elapsed in each usage window. Monthly goals may be estimated.": "Mostra a meta pelo tempo decorrido desde o início de cada janela. Metas mensais podem ser estimadas.",
-  "Usage Window": "Período de uso",
-  "Usage": "Uso",
-  "Usage and balance": "Uso e saldo",
-  "Usage unavailable": "Uso indisponível",
-  "Up to 2 stars per provider": "Até 2 métricas destacadas por provedor",
-  "Unstar": "Remover estrela de",
-  "Star": "Destacar",
-  "for menu bar": "na barra de menus",
-  "used": "usado",
-  "Used": "Usado",
-  "Updated just now": "Atualizado agora",
-  "View release": "Ver versão",
-  "Waiting for update": "Aguardando atualização",
-  "Weekly": "Semanal",
-  "Version": "Versão",
-  "Set global shortcut": "Definir atalho global",
-  "Star for menu bar": "Destacar na barra de menus",
-  "Unstar from menu bar": "Remover destaque da barra de menus",
-  "Welcome to AI Usage": "Boas-vindas ao AI Usage",
-  "You have no rate limit resets": "Não há redefinições de limite",
-  "1 minute": "1 minuto",
-  "5 minutes": "5 minutos",
-  "10 minutes": "10 minutos",
-  "5-hour": "5 horas",
-  "12-hour": "12 horas",
-  "24-hour": "24 horas",
-  "Countdown": "Contagem regressiva",
-  "Left": "Restante",
-  "We turned on the providers that have credentials on this PC. Add or hide providers any time.": "Ativamos os provedores com credenciais neste computador. Você pode adicionar ou ocultar provedores quando quiser.",
-  "No providers enabled. Open the TUI and turn one on in Settings.": "Nenhum provedor ativado. Abra o TUI e ative um em Configurações.",
-  "How often the tray fetches a fresh reading from each provider.": "Frequência com que a barra consulta cada provedor.",
-  "Show or hide this popover from any app.": "Mostre ou oculte este painel de qualquer aplicativo.",
-  "Auto follows the system clock. 12-hour and 24-hour pin exact reset times.": "Automático segue o relógio do sistema. Os formatos de 12 e 24 horas definem como exibir os horários de redefinição.",
-  "Used fills the bar with what is spent. Left fills it with what remains.": "Usado preenche a barra com o consumo. Restante preenche com o saldo disponível.",
-  "Countdown reads “Resets in 6d”. Exact time reads the clock, like “today at 6:38 PM”.": "Contagem regressiva mostra o tempo restante. Hora exata mostra o horário da redefinição.",
-  "Show the pace note on every metric. Off, only rows near their limit show it.": "Mostra o ritmo em todas as métricas. Desativado, aparece apenas perto do limite.",
-  "Automatic installs a release when it is found. Notify shows a banner. Off stops the hourly check.": "Automático instala versões encontradas. Avisar mostra um alerta. Desativado interrompe a verificação periódica.",
+// Labels that reach the page as data rather than as a message: metric names from the Rust
+// report, the provider links and the star-limit error from `model.js`.
+const metricMessages: Record<string, (locale: Language) => string> = {
+  "Activity": (locale: Language) => m["activity"]({}, { locale }),
+  "API Keys": (locale: Language) => m["api_keys"]({}, { locale }),
+  "Balance": (locale: Language) => m["balance"]({}, { locale }),
+  "Credits": (locale: Language) => m["credits"]({}, { locale }),
+  "Dashboard": (locale: Language) => m["dashboard"]({}, { locale }),
+  "Monthly": (locale: Language) => m["monthly"]({}, { locale }),
+  "Rate Limit Resets": (locale: Language) => m["rate_limit_resets"]({}, { locale }),
+  "Session": (locale: Language) => m["session"]({}, { locale }),
+  "Status": (locale: Language) => m["status"]({}, { locale }),
+  "Up to 2 stars per provider": (locale: Language) => m["up_to_2_stars_per_provider"]({}, { locale }),
+  "Usage": (locale: Language) => m["usage"]({}, { locale }),
+  "Weekly": (locale: Language) => m["weekly"]({}, { locale }),
 };
 
-export function translate(language: Language, english: string): string {
-  return language === "pt-BR" ? portuguese[english] || english : english;
+const LanguageContext = createContext<Language>("en");
+
+export function LanguageProvider({ children, language }: { children: ReactNode; language: Language }) {
+  if (getLocale() !== language) setLocale(language, { reload: false });
+  return <LanguageContext.Provider value={language}>{children}</LanguageContext.Provider>;
 }
 
 export function translateMetricLabel(language: Language, label: string): string {
   if (language !== "pt-BR") return label;
   const parts = /^(.+?) \((.+)\)$/.exec(label);
   if (parts) return `${translateMetricLabel(language, parts[1])} (${translateMetricLabel(language, parts[2])})`;
-  return translate(language, label);
+  return metricMessages[label]?.(language) ?? label;
 }
 
 export function translateUsage(language: Language, value: string): string {
   if (language !== "pt-BR") return value;
+  const options = { locale: language };
   return value
-    .replace(/\b(\d+)% left\b/g, "$1% restantes")
-    .replace(/\b(\d+)% used\b/g, "$1% usados")
-    .replace(/\bLimit reached\b/g, "Limite atingido");
-}
-
-const LanguageContext = createContext<Language>("en");
-
-export function LanguageProvider({ children, language }: { children: ReactNode; language: Language }) {
-  return <LanguageContext.Provider value={language}>{children}</LanguageContext.Provider>;
+    .replace(/\b(\d+)% left\b/g, (_, percent: string) => m.percent_left({ percent }, options))
+    .replace(/\b(\d+)% used\b/g, (_, percent: string) => m.percent_used({ percent }, options))
+    .replace(/\bLimit reached\b/g, m.limit_reached({}, options));
 }
 
 export function useI18n() {
   const language = useContext(LanguageContext);
-  return { language, t: (english: string) => translate(language, english), metricLabel: (label: string) => translateMetricLabel(language, label) };
+  return { language, metricLabel: (label: string) => translateMetricLabel(language, label) };
 }

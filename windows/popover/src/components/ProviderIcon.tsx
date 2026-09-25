@@ -35,6 +35,8 @@ const MARKS: Record<string, Mark> = {
   openai: OpenaiMark,
   opencode_go: OpencodeGoMark,
   openrouter: OpenrouterMark,
+  // SuperGrok is xAI's Grok plan: same mark (the menu bar's `tray/marks.rs` agrees).
+  supergrok: GrokMark,
   zai: ZaiMark,
 };
 

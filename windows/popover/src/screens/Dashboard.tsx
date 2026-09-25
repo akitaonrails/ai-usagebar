@@ -5,6 +5,7 @@ import type { RowAction } from "@/components/RowMenu";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { SortableItem, VerticalDnd } from "@/components/dnd";
 import type { Card, Layout, Payload } from "@/lib/types";
+import { m } from "@/paraglide/messages.js";
 import { useI18n } from "@/lib/i18n";
 import { accountSwitchFor, explainError, updateBannerPending } from "../model.js";
 import { Hint } from "@/components/Hint";
@@ -28,6 +29,41 @@ interface DashboardProps {
   onToggleShowAs: () => void;
 }
 
+interface DashboardBannersProps {
+  compact?: boolean;
+  hint: boolean;
+  payload: Payload;
+  onDismissHint: () => void;
+  onOpenCustomize: () => void;
+}
+
+/** The shared update and first-run banners shown above either dashboard layout. */
+export function DashboardBanners({ compact, hint, payload, onDismissHint, onOpenCustomize }: DashboardBannersProps) {
+  if (payload.hostError) return null;
+  const spacing = compact ? undefined : "mb-[var(--section-gap)]";
+  return (
+    <>
+      {hint ? (
+        <div className={spacing}>
+          <HintCard
+            buttonTitle={m.open_customize()}
+            icon={<MdiTune />}
+            message={m.welcome_hint()}
+            title={m.welcome_to_ai_usage()}
+            onAction={onOpenCustomize}
+            onDismiss={onDismissHint}
+          />
+        </div>
+      ) : null}
+      {payload.update && updateBannerPending(payload) ? (
+        <div className={spacing}>
+          <UpdateBanner repository={payload.repository} update={payload.update} />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 /** DashboardContentView: provider sections stacked with the section gap. */
 export function Dashboard({
   cards,
@@ -47,43 +83,24 @@ export function Dashboard({
   onToggleCollapse,
   onToggleShowAs,
 }: DashboardProps) {
-  const { t } = useI18n();
+  const { language } = useI18n();
   if (payload.hostError) {
     return (
       <Hint align="start" content={payload.hostError}>
         <div className="card-surface py-[var(--card-gutter)]">
-          <ErrorRow explained={explainError(payload.hostError)} />
+          <ErrorRow explained={explainError(payload.hostError, undefined, language)} />
         </div>
       </Hint>
     );
   }
-  const welcome = hint ? (
-    <div className="mb-[var(--section-gap)]">
-      <HintCard
-        buttonTitle={t("Open Customize")}
-        icon={<MdiTune />}
-        message={t("We turned on the providers that have credentials on this PC. Add or hide providers any time.")}
-        title={t("Welcome to AI Usage")}
-        onAction={onOpenCustomize}
-        onDismiss={onDismissHint}
-      />
-    </div>
-  ) : null;
-  const banner =
-    payload.update && updateBannerPending(payload) ? (
-      <div className="mb-[var(--section-gap)]">
-        <UpdateBanner repository={payload.repository} update={payload.update} />
-      </div>
-    ) : null;
   if (visible.length === 0) {
     return (
       <>
-        {welcome}
-        {banner}
+        <DashboardBanners hint={hint} payload={payload} onDismissHint={onDismissHint} onOpenCustomize={onOpenCustomize} />
         <p className="m-0 px-[var(--space-2xl)] py-[var(--space-3xl)] text-center text-[length:var(--sz-support)] text-label-2">
           {cards.length
-            ? t("Turn on Customize to choose what to show.")
-            : t("No providers enabled. Open the TUI and turn one on in Settings.")}
+            ? m.customize_prompt_hint()
+            : m.no_providers_enabled_hint()}
         </p>
       </>
     );
@@ -91,8 +108,7 @@ export function Dashboard({
   const ids = visible.map((card) => card.id);
   return (
     <>
-    {welcome}
-    {banner}
+    <DashboardBanners hint={hint} payload={payload} onDismissHint={onDismissHint} onOpenCustomize={onOpenCustomize} />
     <VerticalDnd
       items={ids}
       onReorder={onReorder}

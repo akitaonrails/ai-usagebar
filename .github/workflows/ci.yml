@@ -59,7 +59,7 @@ jobs:
       - name: Test desktop integration models
         run: make desktop-test
 
-      # The MacDashboard SSR contract test needs vite, so it runs here (npm is
+      # The NativeDashboard SSR contract test needs vite, so it runs here (npm is
       # guaranteed on ubuntu) rather than in the bare-node desktop-test gate.
       - name: Test the popover SSR screens
         run: make popover-ssr-test

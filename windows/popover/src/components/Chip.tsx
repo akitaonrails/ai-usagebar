@@ -28,7 +28,7 @@ const Chip = React.forwardRef<
   React.ComponentProps<"button"> & VariantProps<typeof chipVariants>
 >(function Chip({ className, variant, type = "button", ...props }, ref) {
   return (
-    <button ref={ref} type={type} className={cn(chipVariants({ variant }), className)} {...props} />
+    <button ref={ref} type={type} data-slot="chip" className={cn(chipVariants({ variant }), className)} {...props} />
   );
 });
 

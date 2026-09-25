@@ -3,9 +3,11 @@ import MdiCogOutline from "~icons/mdi/cog-outline";
 import { ScreenCrossLinkRow } from "@/components/Chrome";
 import { DragHandle } from "@/components/DragHandle";
 import { ProviderIcon } from "@/components/ProviderIcon";
+import { TruncatedText } from "@/components/TruncatedText";
 import { SortableItem, VerticalDnd } from "@/components/dnd";
 import { Switch } from "@/components/ui/switch";
 import type { Card, Layout } from "@/lib/types";
+import { m } from "@/paraglide/messages.js";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { metricCount, orderedCards, providerIconId } from "../model.js";
@@ -22,7 +24,6 @@ interface CustomizeProps {
 
 /** CustomizeProviderListView (L1): one grouped card of provider rows, then the Settings cross-link. */
 export function Customize({ cards, layout, onOpen, onOpenSettings, onReorder, onToggle, embedded = false }: CustomizeProps) {
-  const { t } = useI18n();
   const ordered = orderedCards(cards, layout);
   const ids = ordered.map((card) => card.id);
   return (
@@ -61,8 +62,8 @@ export function Customize({ cards, layout, onOpen, onOpenSettings, onReorder, on
       </VerticalDnd>
       {embedded ? null : <ScreenCrossLinkRow
         icon={<MdiCogOutline />}
-        subtitle={t("Startup, appearance and more")}
-        title={t("Settings")}
+        subtitle={m.startup_appearance_and_more()}
+        title={m.settings()}
         onClick={onOpenSettings}
       />}
     </div>
@@ -79,7 +80,7 @@ interface ProviderListRowProps {
 
 /** ProviderListRow: grip, mark, name + "N metrics", switch, chevron. Disabled rows fade to 55%. */
 function ProviderListRow({ card, enabled, handle, onOpen, onToggle }: ProviderListRowProps) {
-  const { language, t } = useI18n();
+  const { language } = useI18n();
   const count = metricCount(card);
   return (
     <div
@@ -90,14 +91,14 @@ function ProviderListRow({ card, enabled, handle, onOpen, onToggle }: ProviderLi
       <button type="button" className="plain-btn hover-fill flex min-w-0 flex-1 items-center gap-[var(--row-gap)]" onClick={onOpen}>
         <ProviderIcon className="text-label-2" size="var(--row-icon-box)" slug={providerIconId(card.id)} title={card.title} />
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-[length:var(--sz-header)] font-semibold">{card.title}</span>
+          <TruncatedText className="text-[length:var(--sz-header)] font-semibold">{card.title}</TruncatedText>
           <span className="text-[length:var(--sz-badge)] text-label-2">
-            {count} {language === "pt-BR" ? (count === 1 ? "métrica" : "métricas") : (count === 1 ? "metric" : "metrics")}
+            {count} {count === 1 ? m.metric_singular({}, { locale: language }) : m.metric_plural({}, { locale: language })}
           </span>
         </span>
       </button>
-      <Switch checked={enabled} aria-label={`${t("Show")} ${card.title}`} onCheckedChange={(on) => onToggle?.(on === true)} />
-      <button type="button" aria-label={`${t("Open")} ${card.title}`} className="plain-btn hover-icon grid size-[var(--row-icon-box)] place-items-center" onClick={onOpen}>
+      <Switch checked={enabled} aria-label={`${m.show()} ${card.title}`} onCheckedChange={(on) => onToggle?.(on === true)} />
+      <button type="button" aria-label={`${m.open()} ${card.title}`} className="plain-btn hover-icon grid size-[var(--row-icon-box)] place-items-center" onClick={onOpen}>
         <MdiChevronRight className="size-[var(--icon-row)] text-label-3" />
       </button>
     </div>
