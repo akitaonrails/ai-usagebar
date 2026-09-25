@@ -530,8 +530,9 @@ export function resetAlternate(row, mode, nowMs, opts) {
 // Burn-rate pacing, ported from OpenUsage's Pace.swift. Projects the row's
 // usage at its current rate to the end of the reset window. Null when there is
 // no signal: no window length, no parseable reset, the window already reset,
-// nothing spent yet, or too early in the window (see paceMinElapsedMs; under 1% of it, at least a
-// minute) for the projection to be stable.
+// nothing spent yet, too early in the window (see paceMinElapsedMs; under 1% of it, at least a
+// minute) for the projection to be stable, or the meter already spent: a row at 100% reads
+// "Limit reached" and has no pace to keep, so it gets no tick.
 /** @returns {Pace|null} */
 export function pace(row, nowMs) {
   if (!row || typeof row !== "object") return null;
@@ -544,7 +545,7 @@ export function pace(row, nowMs) {
   const elapsed = windowMs - (resetMs - now);
   if (elapsed < paceMinElapsedMs(window)) return null;
   const used = finiteNumber(row.usedPercent);
-  if (used <= 0) return null;
+  if (used <= 0 || used >= 100) return null;
   const rate = used / elapsed; // percent per millisecond
   // Multiply before dividing so a whole-percent meter at a clean fraction of the
   // window lands exactly on the 90 / 100 thresholds instead of a hair past them.

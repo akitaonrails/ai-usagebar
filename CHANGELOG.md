@@ -11,6 +11,13 @@ Each release is also published at
 
 ### Added
 
+- **OpenRouter across multiple workspaces (#221).** The existing
+  `[[openrouter.accounts]]` entries (v1.3.0) are now documented for the
+  reporter's setup — one entry per workspace key, so each workspace gets its
+  own tab, report entry, and cache. The docs state the split's limit honestly:
+  keys created inside one OpenRouter workspace share that workspace's billing
+  account, so entries separate login sessions (workspaces), not keys within a
+  single bill.
 - **Grok Bot on Windows.** `[grokbot]` read the desktop app's session only on
   Linux and macOS and failed closed elsewhere. On Windows it now reads
   `%APPDATA%\Grok Bot\sand-secrets.json`, whose tokens are Chromium's Windows
@@ -98,12 +105,32 @@ Each release is also published at
   people who never used it. It now starts off and can be enabled explicitly or
   by local credential detection. Existing explicit `[commandcode] enabled = true`
   settings remain respected; switch that setting off to hide it.
+- **The Windows tray popover keeps its layout when the exe moves.** WebView2
+  kept the popover's profile next to the exe (`<exe dir>\ai-usagebar-tray.exe.WebView2`),
+  so running the tray from another folder, or a Scoop update into a new
+  version folder, started from an empty profile and lost the Customize
+  layout, theme, style and dismissed hints; under Program Files the folder is
+  not writable at all. The profile now lives in
+  `%LOCALAPPDATA%\ai-usagebar\popover`, beside `detect.json`. The first run
+  copies the `Local Storage` of the profile beside the exe (the layout, a few
+  KB) into it and leaves the old folder alone. If the folder cannot be created the popover
+  falls back to the old location and still opens.
 - **Antigravity says what a free plan means.** Accounts whose plan does not
   include Antigravity get 403 `SUBSCRIPTION_REQUIRED` from the cloud quota
   fallback; the widget called that a rejected session, sending the user to
   re-sign-in for nothing. The message now says the plan has no quota to
   report and names the `[antigravity]` toggle, and only a 403 without that
   reason keeps the session wording. (#256)
+- **A Scoop install of the Windows tray no longer updates itself behind
+  Scoop's back.** The built-in updater only knew Homebrew, Nix and cargo
+  builds, so under Scoop "Install Update" (or Automatic, silently) wrote the
+  new exes into Scoop's version folder: `scoop list` kept the old version, the
+  next `scoop update` fetched the running version again and `scoop reset`
+  handed back the new one. A tray running from
+  `<scoop>\apps\<app>\<version or current>\`, with Scoop's `install.json`
+  beside it, now offers the release page like a Homebrew install does, and
+  Scoop owns the update (`scoop update ai-usagebar`), as the README already
+  said.
 - **The Windows tray popover no longer runs under the taskbar.** A tall popover
   was sized and kept on screen against the whole monitor, so on a 1440 px
   display with a 48 px taskbar its bottom went behind it. It now uses the
@@ -112,6 +139,14 @@ Each release is also published at
   centered on the icon on the side away from the taskbar, so a taskbar docked
   at the top, left or right works the same; it used to hang a margin above the
   icon, twice as far from a bottom taskbar as the global shortcut put it.
+- **A Codex credit balance sent as a numeric string reads as dollars.** The
+  usage endpoint sometimes sends the balance as a bare string (`"0"` on a Pro
+  account with no extra-usage credits) instead of a number, and only numbers
+  were formatted, so the Credits block, the Waybar tooltip,
+  `{oai_credit_balance}`, `usage --json` and the tray popover showed
+  "balance: 0". A string that is only a finite number is now formatted like a
+  number (`$0.00`, a negative as `-$1.00`); anything else, such as an already
+  formatted `$2.50`, passes through unchanged.
 - **A click outside the Windows tray popover closes it right after opening.**
   The popover took focus 400 ms after the tray click and ignored blurs for 400
   ms more, so a click elsewhere in that time left it open until it was clicked
@@ -166,6 +201,11 @@ Each release is also published at
 - **Buttons, chips and pickers share one height and label size**, the Options
   button included; the banked-resets count is a chip like Status and
   Dashboard.
+- **No pace tick on a spent meter.** A tray popover row at 100% reads "Limit
+  reached", yet it still got a behind verdict, so the even-pace tick sat on
+  the full bar as if there were room left, and Always Show Pacing counted it
+  as visible. A spent row now has no pace at all, as in OpenUsage; a row one
+  percent short of the limit keeps its tick.
 
 
 ## [1.24.0] — 2026-09-24

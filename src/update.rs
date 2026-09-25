@@ -275,12 +275,21 @@ pub fn current_arch() -> &'static str {
 ///
 /// `exe` is the path it was started from and `exe_is_link` whether that path is
 /// a symbolic link. A package manager links its binaries into place (Homebrew's
-/// `bin`), keeps them in its own tree (`Cellar`, `/nix/store`), and a source
-/// build lives in cargo's `target` directory: replacing any of those would
-/// fight the tool that owns the file, so the popover offers the release page.
-pub fn self_update_blocker(exe: &Path, exe_is_link: bool) -> Option<&'static str> {
+/// `bin`), keeps them in its own tree (`Cellar`, `/nix/store`, Scoop's `apps`),
+/// and a source build lives in cargo's `target` directory: replacing any of
+/// those would fight the tool that owns the file, so the popover offers the
+/// release page. `exists` answers whether a file is there; only the Scoop check
+/// needs it (see [`scoop_managed`]).
+pub fn self_update_blocker(
+    exe: &Path,
+    exe_is_link: bool,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<&'static str> {
     if exe_is_link {
         return Some("installed through a link; update it with the tool that installed it");
+    }
+    if scoop_managed(exe, exists) {
+        return Some("managed by Scoop; update it with scoop update");
     }
     let names: Vec<String> = exe
         .components()
@@ -308,6 +317,23 @@ pub fn self_update_blocker(exe: &Path, exe_is_link: bool) -> Option<&'static str
         return Some("a cargo build; rebuild it from source");
     }
     None
+}
+
+/// Whether `exe` is a Scoop install: `<scoop root>\apps\<app>\<version or current>\<exe>`,
+/// with the `install.json` Scoop writes beside every version it installs. Replacing the exe
+/// there leaves Scoop's records on the old version (`scoop list`, `scoop status`, the next
+/// `scoop update` and `scoop reset` all go wrong), so Scoop has to own the update. The app
+/// name is not checked: a fork's bucket can install the tray as `ai-usagebar-dev`.
+pub fn scoop_managed(exe: &Path, exists: impl Fn(&Path) -> bool) -> bool {
+    let Some(version_dir) = exe.parent() else {
+        return false;
+    };
+    let under_apps = version_dir
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .is_some_and(|name| name.eq_ignore_ascii_case("apps"));
+    under_apps && exists(&version_dir.join("install.json"))
 }
 
 /// The OS segment of an asset name. `"unknown"` selects nothing, like an
@@ -840,11 +866,16 @@ mod tests {
     #[test]
     fn self_update_stays_out_of_package_managers_and_source_trees() {
         use std::path::Path;
-        let may = |p: &str| self_update_blocker(Path::new(p), false);
+        let may = |p: &str| self_update_blocker(Path::new(p), false, |_| false);
         assert_eq!(may("/Users/a/.local/bin/ai-usagebar-tray"), None);
         assert_eq!(may("/Applications/AI Usage/ai-usagebar-tray"), None);
         assert!(
-            self_update_blocker(Path::new("/opt/homebrew/bin/ai-usagebar-tray"), true).is_some()
+            self_update_blocker(
+                Path::new("/opt/homebrew/bin/ai-usagebar-tray"),
+                true,
+                |_| false
+            )
+            .is_some()
         );
         assert!(may("/opt/homebrew/Cellar/ai-usagebar/1.21.1/bin/ai-usagebar-tray").is_some());
         assert!(may("/nix/store/0abc-ai-usagebar-1.21.1/bin/ai-usagebar-tray").is_some());
@@ -860,6 +891,65 @@ mod tests {
             may("/Users/a/target-practice/release/ai-usagebar-tray"),
             None
         );
+    }
+
+    #[test]
+    fn a_scoop_install_is_left_to_scoop() {
+        use std::path::Path;
+        // Scoop writes install.json beside each version it installs; the probe stands in for it.
+        let scoop = |p: &Path| p.ends_with("install.json");
+        let user = "C:/Users/a/scoop/apps/ai-usagebar/current/ai-usagebar-tray.exe";
+        let version = "C:/Users/a/scoop/apps/ai-usagebar/1.24.0/ai-usagebar-tray.exe";
+        let global = "C:/ProgramData/scoop/apps/ai-usagebar/current/ai-usagebar-tray.exe";
+        let fork = "D:/tools/scoop/apps/ai-usagebar-dev/current/ai-usagebar-tray.exe";
+        for exe in [user, version, global, fork] {
+            assert!(scoop_managed(Path::new(exe), scoop), "{exe}");
+            assert_eq!(
+                self_update_blocker(Path::new(exe), false, scoop),
+                Some("managed by Scoop; update it with scoop update"),
+                "{exe}"
+            );
+        }
+        // The folder name is compared the way Windows compares it.
+        assert!(scoop_managed(
+            Path::new("C:/Users/a/scoop/Apps/ai-usagebar/current/ai-usagebar-tray.exe"),
+            scoop
+        ));
+    }
+
+    #[test]
+    fn a_folder_that_only_looks_like_scoop_still_updates_itself() {
+        use std::path::Path;
+        let exe = Path::new("D:/apps/ai-usagebar/1.24.0/ai-usagebar-tray.exe");
+        // No install.json beside the exe: an unzipped release under a folder named "apps".
+        assert!(!scoop_managed(exe, |_| false));
+        assert_eq!(self_update_blocker(exe, false, |_| false), None);
+        // install.json alone is not enough without Scoop's apps\<app>\<version> layout.
+        let has_manifest = |p: &Path| p.ends_with("install.json");
+        for exe in [
+            "C:/Users/a/AI Usage/ai-usagebar-tray.exe",
+            "C:/Users/a/scoop/ai-usagebar/current/ai-usagebar-tray.exe",
+            "ai-usagebar-tray.exe",
+        ] {
+            assert!(!scoop_managed(Path::new(exe), has_manifest), "{exe}");
+        }
+    }
+
+    #[test]
+    fn scoop_is_detected_from_the_install_json_on_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let version_dir = tmp
+            .path()
+            .join("scoop")
+            .join("apps")
+            .join("ai-usagebar")
+            .join("1.24.0");
+        std::fs::create_dir_all(&version_dir).unwrap();
+        let exe = version_dir.join("ai-usagebar-tray.exe");
+        let on_disk = |p: &std::path::Path| p.is_file();
+        assert!(!scoop_managed(&exe, on_disk));
+        std::fs::write(version_dir.join("install.json"), b"{}").unwrap();
+        assert!(scoop_managed(&exe, on_disk));
     }
 
     #[test]
