@@ -22,12 +22,10 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Graphics::Dwm::{
     DWMSBT_NONE, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmExtendFrameIntoClientArea,
-    DwmSetWindowAttribute,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
 use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
-use windows_sys::Win32::UI::Controls::MARGINS;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
@@ -906,7 +904,6 @@ fn apply_popover_style(state: &mut TrayState, style: PopoverStyle) {
     match style {
         PopoverStyle::Classic => {
             set_system_backdrop(&state.window, DWMSBT_NONE);
-            extend_frame(&state.window, 0);
             state.style = PopoverStyle::Classic;
             state.backdrop_active = false;
         }
@@ -923,7 +920,6 @@ fn apply_popover_style(state: &mut TrayState, style: PopoverStyle) {
                 state.style = PopoverStyle::Native;
                 return;
             }
-            extend_frame(&state.window, -1);
             set_immersive_dark_mode(&state.window, state.theme);
             state.style = PopoverStyle::Native;
             state.backdrop_active = true;
@@ -959,22 +955,6 @@ fn set_immersive_dark_mode(window: &Window, theme: Theme) {
             std::ptr::from_ref(&dark).cast(),
             std::mem::size_of_val(&dark) as u32,
         );
-    }
-}
-
-/// `-1` lets the backdrop fill the whole client area; `0` hands it back.
-fn extend_frame(window: &Window, margin: i32) {
-    let hwnd = window.hwnd() as HWND;
-    let margins = MARGINS {
-        cxLeftWidth: margin,
-        cxRightWidth: margin,
-        cyBottomHeight: margin,
-        cyTopHeight: margin,
-    };
-    // SAFETY: hwnd is the live popover window and `margins` remains valid for
-    // the duration of the call.
-    unsafe {
-        let _ = DwmExtendFrameIntoClientArea(hwnd, std::ptr::from_ref(&margins));
     }
 }
 
