@@ -1,0 +1,22 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=AI Usage Bar
+Comment=Monitor status of Claude, ChatGPT, Google Gemini/Antigravity and other AI plans
+GenericName=AI Usage Monitor
+Exec=ai-usagebar-tray --window
+Icon=ai-usagebar
+Terminal=false
+Categories=Utility;
+StartupNotify=true
+StartupWMClass=ai-usagebar-tray
+Keywords=AI;Usage;Claude;Gemini;OpenAI;Antigravity;Tray;
+Actions=TUI;Tray;
+
+[Desktop Action TUI]
+Name=Abrir no Terminal (TUI)
+Exec=x-terminal-emulator -e ai-usagebar-tui
+
+[Desktop Action Tray]
+Name=Iniciar na Bandeja (Tray)
+Exec=ai-usagebar-tray
