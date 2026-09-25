@@ -5,7 +5,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use fs2::FileExt;
@@ -42,19 +42,27 @@ use super::panel::{
     WINDOW_HEIGHT, WINDOW_WIDTH, clamp_popover_height, cocoa_popover_frame, menu_bar_bottom_y,
 };
 use super::payload::{
-    AccountSwitchFact, HostFacts, UpdateFact, fact_after_check, host_payload, wrap_report,
+    AccountSwitchFact, HostFacts, SharedFacts, facts_snapshot, host_payload, with_facts,
+    wrap_report,
 };
 use super::strip::{
     BARS_PIXEL_SIDE, BARS_POINT_SIDE, Stars, StripStyle, bar_fill, bars_layout, bars_rgba,
     content_from_payload, parse_strip_ipc,
 };
-use super::update_flow;
-use super::{startup, tui_launch};
-use crate::config::Config;
+use super::updates::Updates;
+use super::{now_ms, startup, tui_launch, update_flow};
+use crate::config::{Config, UpdateMode};
+use crate::update::{current_os, sweep_old};
 
 const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/index.html"));
 const POPOVER_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.css"));
 const POPOVER_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/popover.js"));
+
+/// Set on the process an update relaunches, so it waits for the old one to
+/// release the single-instance lock instead of quitting at once.
+const RELAUNCH_ENV: &str = "AIUB_TRAY_RELAUNCH";
+/// How long a relaunched process keeps retrying the lock.
+const RELAUNCH_WAIT: Duration = Duration::from_secs(10);
 
 enum UserEvent {
     Tray(TrayIconEvent),
@@ -64,26 +72,19 @@ enum UserEvent {
     FocusPopover,
     Hotkey,
     Facts,
+    /// A verified update is in place; start it and quit.
+    Restart(PathBuf),
 }
 
 enum WorkerCmd {
     Refresh,
     RefreshEntry(String),
     Detect,
-    CheckUpdate,
+    CheckUpdate { manual: bool },
+    InstallUpdate,
+    SnoozeUpdate,
+    SetUpdates(UpdateMode),
     Shutdown,
-}
-
-type SharedFacts = Arc<Mutex<HostFacts>>;
-
-fn facts_snapshot(facts: &SharedFacts) -> HostFacts {
-    facts.lock().map(|f| f.clone()).unwrap_or_default()
-}
-
-fn with_facts(facts: &SharedFacts, edit: impl FnOnce(&mut HostFacts)) {
-    if let Ok(mut guard) = facts.lock() {
-        edit(&mut guard);
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -135,7 +136,8 @@ struct TrayState {
 }
 
 pub fn run() -> i32 {
-    let Some(_lock) = SingleInstance::acquire() else {
+    let relaunched = std::env::var_os(RELAUNCH_ENV).is_some();
+    let Some(_lock) = SingleInstance::acquire_waiting(relaunched) else {
         return 0;
     };
     if let Err(error) = run_loop() {
@@ -182,6 +184,10 @@ fn run_loop() -> Result<(), String> {
     if let Some(configured) = config.tray.shortcut.as_deref() {
         let outcome = bind_shortcut(hotkey_binding.as_mut(), configured);
         with_facts(&facts, |f| apply_shortcut_outcome(f, outcome));
+    }
+    // Leftovers from the swap that put this binary in place.
+    if let Ok(dir) = update_flow::install_dir() {
+        let _ = sweep_old(&dir, current_os());
     }
     let (cmd_tx, cmd_rx) = mpsc::channel();
     spawn_worker(proxy.clone(), cmd_rx, facts.clone());
@@ -241,6 +247,10 @@ fn run_loop() -> Result<(), String> {
             Event::UserEvent(UserEvent::Entry(entry)) => apply_entry(&mut state, entry),
             Event::UserEvent(UserEvent::Facts) => apply_facts(&mut state),
             Event::UserEvent(UserEvent::Hotkey) => toggle_popover_from_keyboard(&mut state),
+            Event::UserEvent(UserEvent::Restart(exe)) => {
+                relaunch(&exe);
+                *control_flow = ControlFlow::Exit;
+            }
             Event::UserEvent(UserEvent::FocusPopover) => {
                 if state.popover_open {
                     guard_blur(&mut state);
@@ -282,8 +292,24 @@ fn spawn_worker(
                 return;
             };
             run_detection(false);
+            let mut updates = {
+                let announce = proxy.clone();
+                let restart = proxy.clone();
+                Updates::new(
+                    facts.clone(),
+                    Box::new(move || {
+                        let _ = announce.send_event(UserEvent::Facts);
+                    }),
+                    Box::new(move |exe| {
+                        let _ = restart.send_event(UserEvent::Restart(exe));
+                    }),
+                )
+            };
             loop {
                 rt.block_on(push_report(&proxy, &facts));
+                if updates.due() {
+                    rt.block_on(updates.check(false));
+                }
                 let deadline =
                     Instant::now() + Duration::from_secs(facts_snapshot(&facts).refresh_secs);
                 loop {
@@ -297,9 +323,12 @@ fn spawn_worker(
                         Ok(WorkerCmd::RefreshEntry(id)) => {
                             rt.block_on(push_entry(&proxy, &id));
                         }
-                        Ok(WorkerCmd::CheckUpdate) => {
-                            rt.block_on(check_release(&proxy, &facts));
+                        Ok(WorkerCmd::CheckUpdate { manual }) => {
+                            rt.block_on(updates.check(manual));
                         }
+                        Ok(WorkerCmd::InstallUpdate) => rt.block_on(updates.install_or_check()),
+                        Ok(WorkerCmd::SnoozeUpdate) => updates.snooze(),
+                        Ok(WorkerCmd::SetUpdates(mode)) => rt.block_on(updates.set_mode(mode)),
                         Ok(WorkerCmd::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                             return;
                         }
@@ -318,6 +347,7 @@ fn run_detection(force: bool) {
 
 fn host_facts(config: &Config) -> HostFacts {
     let mut facts = HostFacts::new(env!("CARGO_PKG_VERSION"), startup::is_enabled());
+    facts.updates = config.tray.updates().as_str().into();
     facts.refresh_secs = config.tray.refresh_minutes() * 60;
     facts.accounts = account_facts(config);
     facts
@@ -430,31 +460,6 @@ async fn push_report(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
         Err(error) => wrap_report("{}", &snapshot, now, Some(&error)),
     };
     let _ = proxy.send_event(UserEvent::Report(payload));
-}
-
-/// Manual GitHub release check. No install on macOS — the About screen opens
-/// the release page when a newer tag exists.
-async fn check_release(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
-    with_facts(facts, |f| {
-        f.update = Some(UpdateFact {
-            error: String::new(),
-            state: "checking".into(),
-            url: String::new(),
-            version: String::new(),
-        });
-    });
-    let _ = proxy.send_event(UserEvent::Facts);
-    let outcome = match update_flow::http_client() {
-        Ok(client) => update_flow::check(&client, env!("CARGO_PKG_VERSION")).await,
-        Err(error) => Err(error),
-    };
-    let checked_at = now_ms();
-    let fact = fact_after_check(outcome);
-    with_facts(facts, |f| {
-        f.update_checked_at = checked_at;
-        f.update = fact;
-    });
-    let _ = proxy.send_event(UserEvent::Facts);
 }
 
 async fn push_entry(proxy: &EventLoopProxy<UserEvent>, id: &str) {
@@ -673,6 +678,28 @@ fn set_shortcut(state: &mut TrayState, value: &str) {
     }
     with_facts(&state.facts, |f| apply_shortcut_outcome(f, outcome));
     apply_facts(state);
+}
+
+fn set_updates(state: &mut TrayState, mode_text: &str) {
+    let Some(mode) = UpdateMode::parse(mode_text) else {
+        return;
+    };
+    if let Some(path) = config_path() {
+        let _ = crate::config::set_tray_value(&path, "updates", Some(mode.as_str().into()));
+    }
+    let _ = state.worker.send(WorkerCmd::SetUpdates(mode));
+}
+
+/// Start the freshly swapped binary and let it wait for our lock
+/// (`RELAUNCH_ENV`). Its own process group is what lets it outlive us: when a
+/// LaunchAgent job's process exits, launchd kills the rest of the job's
+/// process group, and "Start at Login" runs the tray as exactly such a job.
+fn relaunch(exe: &std::path::Path) {
+    use std::os::unix::process::CommandExt;
+    let _ = std::process::Command::new(exe)
+        .env(RELAUNCH_ENV, "1")
+        .process_group(0)
+        .spawn();
 }
 
 fn set_refresh(state: &mut TrayState, minutes: u64) {
@@ -951,8 +978,18 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
                 browse::open(url);
             }
         }
+        "set-updates" => {
+            let mode = value.get("mode").and_then(Value::as_str).unwrap_or("");
+            set_updates(state, mode);
+        }
         "check-update" => {
-            let _ = state.worker.send(WorkerCmd::CheckUpdate);
+            let _ = state.worker.send(WorkerCmd::CheckUpdate { manual: true });
+        }
+        "install-update" => {
+            let _ = state.worker.send(WorkerCmd::InstallUpdate);
+        }
+        "snooze-update" => {
+            let _ = state.worker.send(WorkerCmd::SnoozeUpdate);
         }
         _ => {}
     }
@@ -1159,13 +1196,6 @@ fn protocol_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> 
         .header("Access-Control-Allow-Origin", "*")
         .body(Cow::Borrowed(body))
         .unwrap_or_else(|_| Response::new(Cow::Borrowed(body)))
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 fn cocoa_mouse() -> (f64, f64) {
@@ -1461,6 +1491,21 @@ struct SingleInstance {
 }
 
 impl SingleInstance {
+    /// A relaunch after an update races the old process's exit; keep
+    /// retrying for a bounded time instead of silently quitting.
+    fn acquire_waiting(wait: bool) -> Option<Self> {
+        let deadline = Instant::now() + RELAUNCH_WAIT;
+        loop {
+            if let Some(instance) = Self::acquire() {
+                return Some(instance);
+            }
+            if !wait || Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     fn acquire() -> Option<Self> {
         let dir = crate::cache::xdg_cache_dir().ok()?.join("ai-usagebar");
         std::fs::create_dir_all(&dir).ok()?;

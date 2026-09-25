@@ -56,6 +56,20 @@ pgrep -lf ai-usagebar-tray
 
 **Update**
 
+A tray you copied somewhere of your own (such as `~/.local/bin`) updates
+itself: it checks GitHub once an hour, and Options → Check for Updates asks
+right away. When a release ships a macOS binary for your Mac, Install
+downloads it, verifies its SHA-256, swaps it in place and restarts the tray;
+nothing is compiled. The CLI and TUI beside the tray are replaced too, but only
+if they are already there as plain files. Settings → Updates chooses
+Automatic, Notify me or Off.
+
+The tray leaves itself alone, and offers the release page instead, when
+another tool owns the file — a Homebrew or Nix install, a link into place, or
+a copy running straight from cargo's `target/` directory — when it may not
+write its directory, and when a release has no macOS binary. Run from the
+source tree, it follows the tree; rebuild:
+
 ```bash
 git pull
 cargo build --release --bin ai-usagebar-tray

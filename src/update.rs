@@ -1,12 +1,14 @@
-//! Self-update support for the Windows tray: release discovery, asset
-//! selection, checksum verification, and the in-place binary swap.
+//! Self-update support for the Windows and macOS trays: release discovery,
+//! asset selection, checksum verification, and the in-place binary swap.
 //!
 //! Linux installs get new versions from the AUR, Nix, or cargo-binstall; a
-//! Windows install is a zip the user unpacked by hand, so nothing would ever
-//! tell it a newer release exists. The tray host polls GitHub's *latest*
-//! release once per [`CHECK_INTERVAL`], downloads the per-binary `.exe`
-//! assets the release workflow publishes, checks each against its `.sha256`
-//! sidecar, and swaps the verified files into the install directory.
+//! Windows install is a zip the user unpacked by hand, and a macOS one is a
+//! binary copied somewhere on `PATH`, so nothing would ever tell either that a
+//! newer release exists. The tray host polls GitHub's *latest* release once
+//! per [`CHECK_INTERVAL`], downloads the per-binary assets the release
+//! workflow publishes for its OS and architecture, checks each against its
+//! `.sha256` sidecar, and swaps the verified files into the install directory.
+//! No compiler is involved on the user's machine.
 //!
 //! Everything in this module is pure or takes an explicit path, so the whole
 //! flow is unit-tested against a temp directory and never touches the network
@@ -23,7 +25,10 @@
 //! - [`stage_swap`] / [`sweep_old`]: Windows refuses to overwrite a running
 //!   executable but happily lets it be *renamed*, so the live exe becomes
 //!   `<name>.old`, the staged file takes its place, and the next start
-//!   sweeps the `.old` files once no process holds them any more.
+//!   sweeps the `.old` files once no process holds them any more. macOS
+//!   takes the same path: a rename gives the new binary its own inode, where
+//!   overwriting the running one in place would get it killed by the kernel's
+//!   code-signing check.
 
 use std::fs;
 use std::io::Read;
@@ -40,10 +45,41 @@ use crate::error::Result;
 /// updates from its own releases without touching code.
 pub const SOURCE_REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 
+/// Build-time override for simulating an update on one machine:
+/// `AIUB_UPDATE_FEED=http://127.0.0.1:8765/latest.json cargo build ...`
+/// makes that binary ask the given URL instead of GitHub and accept plain-HTTP
+/// loopback downloads. The release workflow never sets it, so a shipped tray
+/// has no runtime switch that could point it elsewhere.
+pub const LOCAL_FEED: Option<&str> = option_env!("AIUB_UPDATE_FEED");
+
 /// GitHub's "latest" is the newest non-draft, non-prerelease release, which
 /// is exactly the set the tray may install. Polled once per interval.
 pub fn latest_release_url() -> Option<String> {
+    if let Some(feed) = LOCAL_FEED {
+        return Some(feed.to_string());
+    }
     latest_release_url_for(SOURCE_REPOSITORY)
+}
+
+/// Where a download may come from: HTTPS, or loopback HTTP in a build made
+/// with [`LOCAL_FEED`].
+pub fn download_url_allowed(url: &str) -> bool {
+    download_url_allowed_with(url, LOCAL_FEED.is_some())
+}
+
+fn download_url_allowed_with(url: &str, local_feed: bool) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    // Parsed, not prefix-matched: `http://127.0.0.1:1@evil.com/` starts with the
+    // loopback prefix but its host is evil.com.
+    local_feed
+        && reqwest::Url::parse(url).is_ok_and(|parsed| {
+            parsed.scheme() == "http"
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+                && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost"))
+        })
 }
 
 /// `https://github.com/<owner>/<name>[.git][/]` → the releases/latest API URL.
@@ -78,8 +114,8 @@ pub const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 /// of ours and is refused before a single byte is downloaded.
 pub const MAX_ASSET_BYTES: u64 = 50 * 1024 * 1024;
 
-/// The three Windows binaries, tray first: it is the one that must update
-/// (it runs the updater), the other two are optional extras.
+/// The three binaries, tray first: it is the one that must update (it runs
+/// the updater), the other two are optional extras.
 pub const BINARIES: [&str; 3] = ["ai-usagebar-tray", "ai-usagebar", "ai-usagebar-tui"];
 
 /// Longest `html_url` or asset name accepted from the release JSON. Real
@@ -173,7 +209,7 @@ pub fn parse_release(json: &str) -> std::result::Result<Release, String> {
         .into_iter()
         .filter(|asset| asset_name_is_safe(&asset.name))
         .filter(|asset| {
-            asset.browser_download_url.starts_with("https://")
+            download_url_allowed(&asset.browser_download_url)
                 && asset.browser_download_url.len() <= MAX_FIELD_LEN
         })
         .map(|asset| Asset {
@@ -235,10 +271,72 @@ pub fn current_arch() -> &'static str {
     }
 }
 
-/// `{binary}-windows-{arch}.exe` — the bare-exe asset naming in
-/// `.github/workflows/release.yml`. Its sidecar is this plus `.sha256`.
-pub fn asset_name(binary: &str, arch: &str) -> String {
-    format!("{binary}-windows-{arch}.exe")
+/// Why the running tray must not replace itself, or `None` when it may.
+///
+/// `exe` is the path it was started from and `exe_is_link` whether that path is
+/// a symbolic link. A package manager links its binaries into place (Homebrew's
+/// `bin`), keeps them in its own tree (`Cellar`, `/nix/store`), and a source
+/// build lives in cargo's `target` directory: replacing any of those would
+/// fight the tool that owns the file, so the popover offers the release page.
+pub fn self_update_blocker(exe: &Path, exe_is_link: bool) -> Option<&'static str> {
+    if exe_is_link {
+        return Some("installed through a link; update it with the tool that installed it");
+    }
+    let names: Vec<String> = exe
+        .components()
+        .filter_map(|part| match part {
+            std::path::Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if names.iter().any(|name| name == "Cellar") {
+        return Some("managed by Homebrew; update it with brew");
+    }
+    if exe.starts_with("/nix/store") {
+        return Some("managed by Nix; update it through your flake or channel");
+    }
+    // `target/{debug,release}/exe` or `target/<triple>/{debug,release}/exe`.
+    let dirs = &names[..names.len().saturating_sub(1)];
+    if let Some(profile_at) = dirs.iter().rposition(|d| d == "debug" || d == "release")
+        && profile_at + 1 == dirs.len()
+        && dirs[..profile_at]
+            .iter()
+            .rev()
+            .take(2)
+            .any(|d| d == "target")
+    {
+        return Some("a cargo build; rebuild it from source");
+    }
+    None
+}
+
+/// The OS segment of an asset name. `"unknown"` selects nothing, like an
+/// unknown architecture.
+pub fn current_os() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "unknown"
+    }
+}
+
+/// `{binary}-windows-{arch}.exe` / `{binary}-macos-{arch}` — the bare-binary
+/// asset naming in `.github/workflows/release.yml`. Its sidecar is this plus
+/// `.sha256`.
+pub fn asset_name(binary: &str, os: &str, arch: &str) -> String {
+    format!("{binary}-{os}-{arch}{}", exe_suffix(os))
+}
+
+/// The file name a binary has once installed: `ai-usagebar-tray.exe` on
+/// Windows, `ai-usagebar-tray` elsewhere.
+pub fn installed_name(binary: &str, os: &str) -> String {
+    format!("{binary}{}", exe_suffix(os))
+}
+
+fn exe_suffix(os: &str) -> &'static str {
+    if os == "windows" { ".exe" } else { "" }
 }
 
 /// Pair each binary with its exe and sidecar, tray first.
@@ -251,13 +349,14 @@ pub fn asset_name(binary: &str, arch: &str) -> String {
 /// leave a version mix on disk.
 pub fn select_downloads(
     release: &Release,
+    os: &str,
     arch: &str,
 ) -> std::result::Result<Vec<Download>, String> {
     let find = |name: &str| release.assets.iter().find(|asset| asset.name == name);
     let mut downloads = Vec::with_capacity(BINARIES.len());
     for binary in BINARIES {
         let required = binary == BINARIES[0];
-        let exe_name = asset_name(binary, arch);
+        let exe_name = asset_name(binary, os, arch);
         let sidecar_name = format!("{exe_name}.sha256");
         let (exe, sha256) = match (find(&exe_name), find(&sidecar_name)) {
             (Some(exe), Some(sha256)) => (exe, sha256),
@@ -445,18 +544,16 @@ fn rollback(done: &[Swapped]) {
     }
 }
 
-/// Delete the `*.exe.old` files a previous [`stage_swap`] left behind and
-/// return how many went. A file still held by a process that has not exited
-/// yet stays for the next sweep; nothing else in the directory is touched.
-pub fn sweep_old(install_dir: &Path) -> usize {
-    let Ok(entries) = fs::read_dir(install_dir) else {
-        return 0;
-    };
-    entries
-        .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".exe.old"))
-        .filter(|entry| entry.path().is_file())
-        .filter(|entry| fs::remove_file(entry.path()).is_ok())
+/// Delete the `<binary>.old` files a previous [`stage_swap`] left behind for
+/// `os` and return how many went. A file still held by a process that has not
+/// exited yet stays for the next sweep; nothing else in the directory is
+/// touched.
+pub fn sweep_old(install_dir: &Path, os: &str) -> usize {
+    BINARIES
+        .iter()
+        .map(|binary| install_dir.join(format!("{}.old", installed_name(binary, os))))
+        .filter(|path| path.is_file())
+        .filter(|path| fs::remove_file(path).is_ok())
         .count()
 }
 
@@ -597,7 +694,7 @@ mod tests {
     }
 
     fn pair(binary: &str, size: u64) -> [Asset; 2] {
-        let exe = asset_name(binary, "x86_64");
+        let exe = asset_name(binary, "windows", "x86_64");
         [asset(&exe, size), asset(&format!("{exe}.sha256"), 100)]
     }
 
@@ -704,20 +801,99 @@ mod tests {
     #[test]
     fn asset_name_follows_the_release_workflow() {
         assert_eq!(
-            asset_name("ai-usagebar-tray", "x86_64"),
+            asset_name("ai-usagebar-tray", "windows", "x86_64"),
             "ai-usagebar-tray-windows-x86_64.exe"
         );
+        assert_eq!(
+            asset_name("ai-usagebar-tray", "macos", "aarch64"),
+            "ai-usagebar-tray-macos-aarch64"
+        );
+        assert_eq!(
+            installed_name("ai-usagebar-tui", "windows"),
+            "ai-usagebar-tui.exe"
+        );
+        assert_eq!(
+            installed_name("ai-usagebar-tui", "macos"),
+            "ai-usagebar-tui"
+        );
         assert!(["x86_64", "aarch64", "unknown"].contains(&current_arch()));
+        assert!(["windows", "macos", "unknown"].contains(&current_os()));
+    }
+
+    #[test]
+    fn select_downloads_picks_the_assets_for_the_requested_os() {
+        let mut assets = full_release().assets;
+        for binary in BINARIES {
+            let name = asset_name(binary, "macos", "aarch64");
+            assets.push(asset(&name, 4_000_000));
+            assets.push(asset(&format!("{name}.sha256"), 100));
+        }
+        let release = release_with(assets);
+        let mac = select_downloads(&release, "macos", "aarch64").unwrap();
+        assert_eq!(mac[0].exe.name, "ai-usagebar-tray-macos-aarch64");
+        let windows = select_downloads(&release, "windows", "x86_64").unwrap();
+        assert_eq!(windows[0].exe.name, "ai-usagebar-tray-windows-x86_64.exe");
+        // A Windows-only release offers nothing to a Mac.
+        assert!(select_downloads(&full_release(), "macos", "aarch64").is_err());
+    }
+
+    #[test]
+    fn self_update_stays_out_of_package_managers_and_source_trees() {
+        use std::path::Path;
+        let may = |p: &str| self_update_blocker(Path::new(p), false);
+        assert_eq!(may("/Users/a/.local/bin/ai-usagebar-tray"), None);
+        assert_eq!(may("/Applications/AI Usage/ai-usagebar-tray"), None);
+        assert!(
+            self_update_blocker(Path::new("/opt/homebrew/bin/ai-usagebar-tray"), true).is_some()
+        );
+        assert!(may("/opt/homebrew/Cellar/ai-usagebar/1.21.1/bin/ai-usagebar-tray").is_some());
+        assert!(may("/nix/store/0abc-ai-usagebar-1.21.1/bin/ai-usagebar-tray").is_some());
+        assert!(may("/Users/a/src/ai-usagebar/target/release/ai-usagebar-tray").is_some());
+        assert!(may("/Users/a/src/ai-usagebar/target/debug/ai-usagebar-tray").is_some());
+        assert!(
+            may("/Users/a/src/ai-usagebar/target/aarch64-apple-darwin/release/ai-usagebar-tray")
+                .is_some()
+        );
+        // A folder merely named "release" is not a cargo profile directory.
+        assert_eq!(may("/Users/a/release/ai-usagebar-tray"), None);
+        assert_eq!(
+            may("/Users/a/target-practice/release/ai-usagebar-tray"),
+            None
+        );
+    }
+
+    #[test]
+    fn loopback_http_is_a_download_source_only_for_a_local_feed_build() {
+        assert!(download_url_allowed_with("https://github.com/x", false));
+        assert!(!download_url_allowed_with("http://127.0.0.1:8765/a", false));
+        assert!(download_url_allowed_with("http://127.0.0.1:8765/a", true));
+        assert!(download_url_allowed_with("http://localhost:8765/a", true));
+        assert!(!download_url_allowed_with("http://example.com/a", true));
+        assert!(!download_url_allowed_with(
+            "http://127.0.0.1.evil.com/a",
+            true
+        ));
+        assert!(!download_url_allowed_with(
+            "http://127.0.0.1:1@evil.com/a",
+            true
+        ));
+        assert!(!download_url_allowed_with(
+            "http://user:pw@127.0.0.1:8765/a",
+            true
+        ));
     }
 
     #[test]
     fn select_downloads_pairs_all_three_binaries_tray_first() {
-        let downloads = select_downloads(&full_release(), "x86_64").unwrap();
+        let downloads = select_downloads(&full_release(), "windows", "x86_64").unwrap();
 
         let binaries: Vec<&str> = downloads.iter().map(|d| d.binary).collect();
         assert_eq!(binaries, BINARIES.to_vec());
         for download in &downloads {
-            assert_eq!(download.exe.name, asset_name(download.binary, "x86_64"));
+            assert_eq!(
+                download.exe.name,
+                asset_name(download.binary, "windows", "x86_64")
+            );
             assert_eq!(
                 download.sha256.name,
                 format!("{}.sha256", download.exe.name)
@@ -729,7 +905,7 @@ mod tests {
     fn select_downloads_requires_the_tray_pair() {
         let mut assets: Vec<Asset> = pair("ai-usagebar", 5_000_000).to_vec();
         assets.extend(pair("ai-usagebar-tui", 5_000_000));
-        let error = select_downloads(&release_with(assets), "x86_64").unwrap_err();
+        let error = select_downloads(&release_with(assets), "windows", "x86_64").unwrap_err();
         assert!(
             error.contains("ai-usagebar-tray-windows-x86_64.exe"),
             "{error}"
@@ -737,10 +913,10 @@ mod tests {
 
         // Exe without its sidecar is just as missing.
         let [tray_exe, _] = pair("ai-usagebar-tray", 5_000_000);
-        assert!(select_downloads(&release_with(vec![tray_exe]), "x86_64").is_err());
+        assert!(select_downloads(&release_with(vec![tray_exe]), "windows", "x86_64").is_err());
 
         // Wrong arch: nothing matches.
-        assert!(select_downloads(&full_release(), "aarch64").is_err());
+        assert!(select_downloads(&full_release(), "windows", "aarch64").is_err());
     }
 
     #[test]
@@ -750,7 +926,7 @@ mod tests {
         let [cli_exe, _] = pair("ai-usagebar", 5_000_000);
         assets.push(cli_exe); // sidecar missing → skipped
 
-        let downloads = select_downloads(&release_with(assets), "x86_64").unwrap();
+        let downloads = select_downloads(&release_with(assets), "windows", "x86_64").unwrap();
 
         let binaries: Vec<&str> = downloads.iter().map(|d| d.binary).collect();
         assert_eq!(binaries, vec!["ai-usagebar-tray", "ai-usagebar-tui"]);
@@ -759,21 +935,22 @@ mod tests {
     #[test]
     fn select_downloads_rejects_empty_and_oversized_exes() {
         let mut assets: Vec<Asset> = pair("ai-usagebar-tray", MAX_ASSET_BYTES + 1).to_vec();
-        let error = select_downloads(&release_with(assets.clone()), "x86_64").unwrap_err();
+        let error =
+            select_downloads(&release_with(assets.clone()), "windows", "x86_64").unwrap_err();
         assert!(error.contains("over the"), "{error}");
 
         assets = pair("ai-usagebar-tray", 0).to_vec();
-        let error = select_downloads(&release_with(assets), "x86_64").unwrap_err();
+        let error = select_downloads(&release_with(assets), "windows", "x86_64").unwrap_err();
         assert!(error.contains("empty"), "{error}");
 
         // An optional exe with a bad size is a broken release, not a skip.
         let mut assets: Vec<Asset> = pair("ai-usagebar-tray", 5_000_000).to_vec();
         assets.extend(pair("ai-usagebar-tui", MAX_ASSET_BYTES + 1));
-        assert!(select_downloads(&release_with(assets), "x86_64").is_err());
+        assert!(select_downloads(&release_with(assets), "windows", "x86_64").is_err());
 
         // Exactly the limit is still allowed.
         let assets: Vec<Asset> = pair("ai-usagebar-tray", MAX_ASSET_BYTES).to_vec();
-        assert!(select_downloads(&release_with(assets), "x86_64").is_ok());
+        assert!(select_downloads(&release_with(assets), "windows", "x86_64").is_ok());
     }
 
     #[test]
@@ -980,7 +1157,7 @@ mod tests {
     }
 
     #[test]
-    fn sweep_old_removes_only_exe_old_files() {
+    fn sweep_old_removes_only_the_binaries_old_files() {
         let dir = TempDir::new().unwrap();
         for name in [
             "ai-usagebar-tray.exe.old",
@@ -993,7 +1170,7 @@ mod tests {
         }
         std::fs::create_dir(dir.path().join("dir.exe.old")).unwrap();
 
-        assert_eq!(sweep_old(dir.path()), 2);
+        assert_eq!(sweep_old(dir.path(), "windows"), 2);
 
         let mut remaining: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -1010,8 +1187,19 @@ mod tests {
             ]
         );
 
-        assert_eq!(sweep_old(dir.path()), 0, "nothing left to sweep");
-        assert_eq!(sweep_old(&dir.path().join("absent")), 0);
+        assert_eq!(sweep_old(dir.path(), "windows"), 0, "nothing left to sweep");
+        assert_eq!(sweep_old(&dir.path().join("absent"), "windows"), 0);
+    }
+
+    #[test]
+    fn sweep_old_on_macos_removes_the_suffixless_leftovers() {
+        let dir = TempDir::new().unwrap();
+        for name in ["ai-usagebar-tray.old", "ai-usagebar-tray", "notes.old"] {
+            std::fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        assert_eq!(sweep_old(dir.path(), "macos"), 1);
+        assert!(dir.path().join("ai-usagebar-tray").is_file());
+        assert!(dir.path().join("notes.old").is_file());
     }
 
     #[test]
