@@ -107,6 +107,21 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: ai-usagebar-windows-x86_64
             builder: cargo
+          # macOS: the tray plus CLI/TUI for both architectures, built on the
+          # Apple Silicon runner (x86_64 cross-compiles with the same Xcode).
+          # Like Windows, each binary is also published bare as
+          # `{bin}-macos-{arch}` with a `.sha256` sidecar — the names the
+          # tray's self-updater asks for (`update::asset_name`).
+          - os: macos-15
+            target: aarch64-apple-darwin
+            artifact: ai-usagebar-macos-aarch64
+            arch: aarch64
+            builder: cargo
+          - os: macos-15
+            target: x86_64-apple-darwin
+            artifact: ai-usagebar-macos-x86_64
+            arch: x86_64
+            builder: cargo
 
     runs-on: ${{ matrix.os }}
 
@@ -253,11 +268,64 @@ jobs:
           Write-Sidecar "$artifact.zip"
           Remove-Item -Recurse -Force $stage
 
+      # --- macOS ---------------------------------------------------------
+      # build.rs runs `npm run build` for the tray popover on macOS too.
+      - name: Set up Node (macOS; the tray popover is a Vite build)
+        if: runner.os == 'macOS'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/popover/package-lock.json
+
+      - name: Install popover dependencies (macOS)
+        if: runner.os == 'macOS'
+        working-directory: windows/popover
+        run: npm ci
+
+      - name: Test (macOS; native arch only)
+        if: runner.os == 'macOS' && matrix.arch == 'aarch64'
+        run: cargo test --release --target ${{ matrix.target }} --locked
+
+      - name: Build release binaries (macOS)
+        if: runner.os == 'macOS'
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: "Guard: tray must embed the dashboard, not the stub (macOS)"
+        if: runner.os == 'macOS'
+        run: |
+          exe=target/${{ matrix.target }}/release/ai-usagebar-tray
+          if grep -q 'popover dist missing' "$exe"; then
+            echo "::error::$exe embeds the placeholder popover — build.rs took the no-npm stub path (#229)"
+            exit 1
+          fi
+          echo "$exe embeds the real dashboard"
+
+      # A tarball for humans, plus the three bare binaries with `sha256sum`
+      # layout sidecars for the self-updater, same contract as Windows.
+      - name: Package tarball, bare binaries and SHA256 sidecars (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          bins=target/${{ matrix.target }}/release
+          sidecar() { echo "$(shasum -a 256 "$1" | awk '{print $1}')  $1" > "$1.sha256"; cat "$1.sha256"; }
+          STAGE=$(mktemp -d)
+          for bin in ai-usagebar-tray ai-usagebar ai-usagebar-tui; do
+            cp "$bins/$bin" "$STAGE/"
+            cp "$bins/$bin" "$bin-macos-${{ matrix.arch }}"
+            sidecar "$bin-macos-${{ matrix.arch }}"
+          done
+          cp LICENSE README.md config.example.toml "$STAGE/"
+          tar czf ${{ matrix.artifact }}.tar.gz -C "$STAGE" .
+          sidecar ${{ matrix.artifact }}.tar.gz
+          rm -rf "$STAGE"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}
           # Linux produces the tarball pair; Windows the zip, the bare exes
-          # and their sidecars. Missing globs are fine (one OS each).
+          # and their sidecars; macOS the tarball and the bare binaries.
+          # Missing globs are fine (one OS each).
           if-no-files-found: error
           path: |
             ${{ matrix.artifact }}.tar.gz
@@ -266,6 +334,10 @@ jobs:
             ${{ matrix.artifact }}.zip.sha256
             *-windows-x86_64.exe
             *-windows-x86_64.exe.sha256
+            *-macos-aarch64
+            *-macos-aarch64.sha256
+            *-macos-x86_64
+            *-macos-x86_64.sha256
 
   release:
     needs: [verify-version, build]
@@ -332,6 +404,17 @@ jobs:
             echo
             echo "Unzip ai-usagebar-windows-x86_64.zip anywhere and run ai-usagebar-tray.exe (the zip also carries ai-usagebar.exe and ai-usagebar-tui.exe). The bare *-windows-x86_64.exe assets are what the tray's self-updater downloads; they are not needed by hand."
             echo
+            echo "### macOS"
+            echo
+            echo '```bash'
+            echo "# Apple Silicon; use ai-usagebar-macos-x86_64.tar.gz on an Intel Mac"
+            echo "mkdir -p ~/.local/bin"
+            echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/ai-usagebar-macos-aarch64.tar.gz | tar xz -C ~/.local/bin ai-usagebar-tray ai-usagebar ai-usagebar-tui"
+            echo "~/.local/bin/ai-usagebar-tray"
+            echo '```'
+            echo
+            echo "The menu-bar tray updates itself from later releases (Settings → Updates). The bare *-macos-* assets are what it downloads; they are not needed by hand."
+            echo
             echo "## Checksums (SHA256)"
             echo '```'
             # Every sidecar: the Linux tarballs, the Windows zip, and the
@@ -355,11 +438,13 @@ jobs:
           # Replace any pre-existing assets so re-runs (workflow_dispatch on
           # an existing tag) overwrite cleanly.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.zip artifacts/*.exe artifacts/*.sha256 \
+            gh release upload "$TAG" artifacts/*.tar.gz artifacts/*.zip artifacts/*.exe \
+              artifacts/*-macos-aarch64 artifacts/*-macos-x86_64 artifacts/*.sha256 \
               --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file body.md
           else
-            gh release create "$TAG" artifacts/*.tar.gz artifacts/*.zip artifacts/*.exe artifacts/*.sha256 \
+            gh release create "$TAG" artifacts/*.tar.gz artifacts/*.zip artifacts/*.exe \
+              artifacts/*-macos-aarch64 artifacts/*-macos-x86_64 artifacts/*.sha256 \
               --repo "$GITHUB_REPOSITORY" \
               --title "$TAG" \
               --notes-file body.md \

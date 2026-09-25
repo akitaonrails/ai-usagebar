@@ -23,14 +23,25 @@ mod startup;
 #[path = "startup_macos.rs"]
 mod startup;
 #[cfg(windows)]
+mod taskbar_theme;
+#[cfg(windows)]
 mod tui_launch;
 #[cfg(target_os = "macos")]
 #[path = "tui_launch_macos.rs"]
 mod tui_launch;
 // Release check, download and verification: `reqwest` and paths, no Windows
-// API. It follows this module's rule — compile everywhere so Linux CI runs its
-// tests — even though only the Windows host calls it.
+// or Cocoa API. Like the rest of this module it compiles everywhere so Linux
+// CI runs its tests, though only the tray hosts call it.
 mod update_flow;
+mod updates;
+// Where the Windows popover sits on screen. Pure geometry, compiled everywhere so its tests
+// run on every CI job; only the Windows host calls it.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod placement;
+// When the Windows popover closes on a blur or a press outside it. Pure decisions, compiled
+// everywhere like `placement`; only the Windows host calls them.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod blur;
 
 pub use browse::http_url;
 pub use icon::{Severity, tray_icon_rgba};
@@ -38,6 +49,14 @@ pub use payload::{POLL_INTERVAL, host_payload, worst_severity, wrap_report};
 pub use strip::{
     BARS_PIXEL_SIDE, StripContent, StripStyle, bars_rgba, content_from_payload, parse_strip_ipc,
 };
+
+/// Wall-clock milliseconds, the unit every host fact and payload stamp uses.
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
 
 /// Process entry for `ai-usagebar-tray`.
 pub fn run() -> i32 {

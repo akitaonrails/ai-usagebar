@@ -14,6 +14,7 @@ import MdiRefresh from "~icons/mdi/refresh";
 import MdiUpdate from "~icons/mdi/update";
 import MdiRestore from "~icons/mdi/restore";
 import MdiTune from "~icons/mdi/tune-variant";
+import { Hint } from "@/components/Hint";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,7 +24,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { Payload } from "@/lib/types";
 import { useI18n } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 import { nextUpdateLabel, sendCommand } from "../model.js";
 
 interface TopBarProps {
@@ -38,21 +38,25 @@ interface TopBarProps {
 export function TopBar({ onBack, onReset, resetArmed, resetLabel, title }: TopBarProps) {
   const { t } = useI18n();
   return (
-    <div className="bar-glass grid shrink-0 grid-cols-[28px_1fr_28px] items-center p-[var(--panel-pad)]">
-      <button type="button" aria-label={t("Back")} className="circle-btn" title={t("Back")} onClick={onBack}>
-        <MdiChevronLeft className="size-4" />
-      </button>
-      <h1 className="m-0 truncate text-center text-[13px] font-semibold">{title}</h1>
-      {onReset ? (
-        <button
-          type="button"
-          aria-label={resetArmed ? t("Click again to confirm") : resetLabel}
-          className={cn("circle-btn", resetArmed && "bg-destructive text-white hover:bg-destructive")}
-          title={resetArmed ? t("Click again to confirm") : resetLabel}
-          onClick={onReset}
-        >
-          <MdiRestore className="size-[15px]" />
+    <div className="bar-glass grid shrink-0 grid-cols-[var(--chrome-btn)_1fr_var(--chrome-btn)] items-center p-[var(--panel-pad)]">
+      <Hint content={t("Back")}>
+        <button type="button" aria-label={t("Back")} className="circle-btn" onClick={onBack}>
+          <MdiChevronLeft className="size-[var(--icon-card)]" />
         </button>
+      </Hint>
+      <h1 className="m-0 truncate text-center text-[length:var(--sz-header)] font-semibold">{title}</h1>
+      {onReset ? (
+        <Hint align="end" content={resetArmed ? t("Click again to confirm") : resetLabel}>
+          <button
+            type="button"
+            aria-label={resetArmed ? t("Click again to confirm") : resetLabel}
+            className="circle-btn"
+            data-armed={resetArmed ? "" : undefined}
+            onClick={onReset}
+          >
+            <MdiRestore className="size-[var(--icon-menu)]" />
+          </button>
+        </Hint>
       ) : (
         <span />
       )}
@@ -61,7 +65,6 @@ export function TopBar({ onBack, onReset, resetArmed, resetLabel, title }: TopBa
 }
 
 interface FooterProps {
-  locked: boolean;
   nowMs: number;
   optionsOpen: boolean;
   payload: Payload;
@@ -78,7 +81,6 @@ interface FooterProps {
  * right. A blue dot after the version says a newer build is waiting (the banner may be snoozed).
  */
 export function Footer({
-  locked,
   nowMs,
   optionsOpen,
   payload,
@@ -92,39 +94,31 @@ export function Footer({
   const { language, t } = useI18n();
   const nextLabel = nextUpdateLabel(payload, nowMs, language);
   return (
-    <footer className="bar-glass flex shrink-0 items-center gap-2 p-[var(--panel-pad)]">
-      <div className="flex min-w-0 flex-col text-[10px] leading-[14px] text-label-2">
-        <span className="flex items-center gap-[5px]">
+    <footer className="bar-glass flex shrink-0 items-center gap-[var(--gap-controls)] p-[var(--panel-pad)]">
+      <div className="flex min-w-0 flex-col text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">
+        <span className="flex items-center gap-[var(--gap-inline)]">
           {payload.version ? `AI Usage ${payload.version}` : "AI Usage"}
           {updatePending ? (
-            <span
-              aria-label={t("Update available")}
-              className="inline-block size-[6px] shrink-0 rounded-full bg-meter-blue"
-              role="img"
-              title={t("Update available")}
-            />
+            <Hint align="start" content={t("Update available")}>
+              <span
+                aria-label={t("Update available")}
+                className="inline-block size-[var(--dot-sm)] shrink-0 rounded-full bg-meter-blue"
+                role="img"
+              />
+            </Hint>
           ) : null}
         </span>
-        {payload.os === "macos" ? null : (
-          <button
-            type="button"
-            className="plain-btn tabular-nums"
-            title={t("Refresh now")}
-            onClick={() => !locked && sendCommand("refresh")}
-          >
-            {nextLabel}
-          </button>
-        )}
+        {payload.os === "macos" ? null : <span className="tabular-nums">{nextLabel}</span>}
       </div>
-      <span className="min-w-2 flex-1" />
+      <span className="min-w-[var(--gap-controls)] flex-1" />
       <DropdownMenu modal={false} open={optionsOpen} onOpenChange={onOptionsOpenChange}>
         <DropdownMenuTrigger asChild>
           <button type="button" className="capsule-btn">
             {t("Options")}
-            <MdiChevronDown className="size-[13px]" />
+            <MdiChevronDown className="size-[var(--icon-inline)]" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" side="top" sideOffset={6} className="min-w-[184px] rounded-[10px] border-0 p-[5px] shadow-lg">
+        <DropdownMenuContent align="end" side="top" sideOffset={6}>
           {payload.os === "macos" ? null : <MenuItem icon={<MdiTune />} label={t("Customize")} onSelect={onOpenCustomize} />}
           <MenuItem icon={<MdiCogOutline />} label={t("Settings")} onSelect={onOpenSettings} />
           <DropdownMenuSeparator />
@@ -165,14 +159,7 @@ function startupIcon(os: string) {
 function MenuItem({ checked, destructive, icon, label, onSelect }: MenuItemProps) {
   const { t } = useI18n();
   return (
-    <DropdownMenuItem
-      className={cn(
-        "gap-2 rounded-[var(--radius-sm)] px-2 py-[5px] text-[13px] focus:bg-[var(--card)] focus:text-label-1 [&_svg]:size-[15px] [&_svg]:text-label-2 focus:[&_svg]:text-label-2",
-        destructive && "text-destructive",
-      )}
-      variant={destructive ? "destructive" : "default"}
-      onSelect={onSelect}
-    >
+    <DropdownMenuItem variant={destructive ? "destructive" : "default"} onSelect={onSelect}>
       {icon}
       <span className="flex-1">{label}</span>
       {checked ? <span aria-label={t("On")}>✓</span> : null}
@@ -192,15 +179,15 @@ export function ScreenCrossLinkRow({ icon, subtitle, title, onClick }: ScreenCro
   return (
     <button
       type="button"
-      className="card-surface cross-link flex w-full items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)] text-left"
+      className="card-surface cross-link hover-card flex w-full items-center gap-[var(--row-gap)] px-[var(--card-pad)] py-[var(--pad-control)] text-left"
       onClick={onClick}
     >
-      <span className="grid size-[18px] shrink-0 place-items-center text-label-2 [&_svg]:size-[15px]">{icon}</span>
+      <span className="grid size-[var(--row-icon-box)] shrink-0 place-items-center text-label-2 [&_svg]:size-[var(--icon-menu)]">{icon}</span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-[length:var(--sz-header)] font-semibold">{title}</span>
         <span className="truncate text-[length:var(--sz-badge)] text-label-2">{subtitle}</span>
       </span>
-      <MdiChevronRight className="size-3.5 shrink-0 text-label-3" />
+      <MdiChevronRight className="size-[var(--icon-row)] shrink-0 text-label-3" />
     </button>
   );
 }

@@ -1,21 +1,23 @@
-//! Release check, download, verification and binary swap for the Windows
-//! tray.
+//! Release check, download, verification and binary swap for the Windows and
+//! macOS trays.
 //!
 //! Compiled on every OS so Linux CI exercises the release-check logic; only
-//! the Windows host calls the install path, hence the `dead_code` allowance
-//! off Windows. Runs on the worker thread; the pure decisions (version compare,
-//! asset selection, sha256, the rename dance) live in `crate::update` so
-//! they are unit-tested on every OS. This file is only the glue around
-//! `reqwest` and the process's own paths.
+//! the tray hosts call it, hence the `dead_code` allowance elsewhere. Runs on
+//! the worker thread; the pure decisions (version compare, asset selection,
+//! sha256, the rename dance) live in `crate::update` so they are unit-tested
+//! on every OS. This file is only the glue around `reqwest` and the process's
+//! own paths.
 
-#![cfg_attr(not(windows), allow(dead_code))]
+#![cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::update::{
-    BINARIES, Download, MAX_ASSET_BYTES, Release, current_arch, is_newer, latest_release_url,
-    parse_release, parse_sha256_sidecar, select_downloads, stage_swap, staging_dir, verify_sha256,
+    BINARIES, Download, LOCAL_FEED, MAX_ASSET_BYTES, Release, current_arch, current_os,
+    download_url_allowed, installed_name, is_newer, latest_release_url, parse_release,
+    parse_sha256_sidecar, select_downloads, self_update_blocker, stage_swap, staging_dir,
+    verify_sha256,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -25,11 +27,15 @@ const MAX_SIDECAR_BYTES: usize = 4 * 1024;
 /// GitHub asks for a User-Agent; naming the version helps them and us.
 const USER_AGENT: &str = concat!("ai-usagebar-tray/", env!("CARGO_PKG_VERSION"));
 
+/// One client lives as long as the tray. It keeps no idle connections: checks are an hour or a
+/// click apart, and a pooled connection the server had already closed failed the next manual
+/// check with "error sending request" (the retry, on a fresh connection, worked).
 pub fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(DOWNLOAD_TIMEOUT)
         .connect_timeout(REQUEST_TIMEOUT)
+        .pool_max_idle_per_host(0)
         .build()
         .map_err(|e| format!("could not build the update HTTP client: {e}"))
 }
@@ -83,13 +89,55 @@ pub async fn check_at(
     }
 }
 
+/// Whether "Install" can work for `release` here: it ships this OS and
+/// architecture, this copy is not owned by a package manager or a cargo build
+/// ([`self_update_blocker`]), and the directory holding it is writable. A
+/// root-owned `/usr/local/bin` fails the last check; in every case the popover
+/// offers the release page instead of an install that cannot land.
+pub fn installable(release: &Release) -> bool {
+    if cfg!(debug_assertions) && LOCAL_FEED.is_none() {
+        return false;
+    }
+    select_downloads(release, current_os(), current_arch()).is_ok()
+        && blocker().is_none()
+        && install_dir().is_ok_and(|dir| dir_is_writable(&dir))
+}
+
+/// [`self_update_blocker`] for the running process.
+fn blocker() -> Option<&'static str> {
+    let exe = std::env::current_exe().ok()?;
+    self_update_blocker(&exe, is_link(&exe))
+}
+
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+/// A plain file, not a link to one: only those are ours to replace.
+fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_file())
+}
+
+fn dir_is_writable(dir: &Path) -> bool {
+    tempfile::NamedTempFile::new_in(dir).is_ok()
+}
+
 /// Download every asset the release ships for this machine, verify each
 /// against its sha256 sidecar, then swap the binaries beside the running
 /// exe. Returns the path of the new tray exe to relaunch.
+///
+/// Windows replaces all three binaries, as its zip installed all three. Off
+/// Windows the CLI and TUI are replaced only when they already sit beside the
+/// tray: a new executable in a `PATH` directory could shadow the copy the user
+/// installed elsewhere (`cargo install`, Homebrew).
 pub async fn install(client: &reqwest::Client, release: &Release) -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) && LOCAL_FEED.is_none() {
         return Err("This is a development build; rebuild from source to update.".into());
     }
+    if let Some(reason) = blocker() {
+        return Err(format!("This copy is {reason}."));
+    }
+    let os = current_os();
     let install_dir = install_dir()?;
     let cache_root = crate::cache::xdg_cache_dir()
         .map_err(|e| e.to_string())?
@@ -98,15 +146,34 @@ pub async fn install(client: &reqwest::Client, release: &Release) -> Result<Path
     std::fs::create_dir_all(&staging)
         .map_err(|e| format!("could not create {}: {e}", staging.display()))?;
 
-    let downloads = select_downloads(release, current_arch())?;
+    let downloads = select_downloads(release, os, current_arch())?;
     let mut staged = Vec::with_capacity(downloads.len());
     for download in &downloads {
+        let name = installed_name(download.binary, os);
+        let tray = download.binary == BINARIES[0];
+        if os != "windows" && !tray && !is_regular_file(&install_dir.join(&name)) {
+            continue;
+        }
         let path = fetch_and_verify(client, download, &staging).await?;
-        staged.push((format!("{}.exe", download.binary), path));
+        make_executable(&path)?;
+        staged.push((name, path));
     }
     stage_swap(&install_dir, &staged)?;
     let _ = std::fs::remove_dir_all(&staging);
-    Ok(install_dir.join(format!("{}.exe", BINARIES[0])))
+    Ok(install_dir.join(installed_name(BINARIES[0], os)))
+}
+
+/// The download lands as a plain 0600 file; the swapped binary must run.
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("could not mark {} executable: {e}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 async fn fetch_and_verify(
@@ -124,7 +191,7 @@ async fn fetch_and_verify(
 }
 
 async fn fetch_bytes(client: &reqwest::Client, url: &str, cap: u64) -> Result<Vec<u8>, String> {
-    if !url.starts_with("https://") {
+    if !download_url_allowed(url) {
         return Err("refusing a non-HTTPS download".into());
     }
     let response = client

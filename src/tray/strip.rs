@@ -299,7 +299,7 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| format!("{}%", percent.round() as i64));
-        let mut key = format!("metric:{label}");
+        let mut key = metric_key(id, raw_label, &group);
         let count = seen.entry(key.clone()).or_insert(0);
         *count += 1;
         if *count > 1 {
@@ -318,26 +318,45 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
     rows
 }
 
+/// The key a starred metric is stored under, as the popover derives it
+/// (`metricRowKey` in windows/popover/src/model.js). A mismatch drops a starred
+/// bar without a trace, so both sides test against
+/// tests/fixtures/strip_metric_keys.json.
+fn metric_key(entry_id: &str, raw_label: &str, group: &str) -> String {
+    let label = metric_label(entry_id, raw_label);
+    if group.is_empty() {
+        format!("metric:{label}")
+    } else {
+        format!("metric:{label} ({group})")
+    }
+}
+
+/// SuperGrok's overall meter arrives as "<Window> usage" (older builds: "<Window>
+/// Build credits"); the card title already names the product, so the key keeps
+/// only the window. Mirrors the popover's `metricLabel`.
 fn metric_label(entry_id: &str, label: &str) -> String {
     let slug = entry_id
         .split('@')
         .next()
         .unwrap_or(entry_id)
         .to_ascii_lowercase();
-    if slug == "supergrok" {
-        let trimmed = regex_strip_build_credits(label);
-        return trimmed;
+    if slug != "supergrok" {
+        return label.to_string();
     }
-    label.to_string()
+    let label = strip_trailing_word(label, "build credits");
+    strip_trailing_word(&label, "usage")
 }
 
-fn regex_strip_build_credits(label: &str) -> String {
-    const SUFFIX: &str = " build credits";
-    let lower = label.to_ascii_lowercase();
-    if let Some(idx) = lower.rfind(SUFFIX)
-        && idx + SUFFIX.len() == lower.len()
-    {
-        return label[..idx].to_string();
+/// `label` without a trailing `word` (ASCII case-insensitive) and the
+/// whitespace before it; the JS `/\s+word$/i`. Needs at least one space, so a
+/// label that merely ends in the letters is kept.
+fn strip_trailing_word(label: &str, word: &str) -> String {
+    if label.len() > word.len() && label.to_ascii_lowercase().ends_with(word) {
+        let head = &label[..label.len() - word.len()];
+        let trimmed = head.trim_end();
+        if trimmed.len() < head.len() {
+            return trimmed.to_string();
+        }
     }
     label.to_string()
 }
@@ -572,6 +591,44 @@ mod tests {
                 }
             ]
         })
+    }
+
+    /// The popover stores stars under these keys; a label rule changed on one
+    /// side only must fail here, not drop a starred bar from the menu bar.
+    #[test]
+    fn metric_keys_match_the_popover_fixture() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/strip_metric_keys.json"))
+                .expect("fixture is JSON");
+        let cases = fixture["cases"].as_array().expect("cases");
+        assert!(!cases.is_empty());
+        for case in cases {
+            let id = case["id"].as_str().unwrap();
+            let label = case["label"].as_str().unwrap();
+            let group = case["group"].as_str().unwrap_or("");
+            assert_eq!(
+                metric_key(id, label, group),
+                case["key"].as_str().unwrap(),
+                "{case}"
+            );
+        }
+    }
+
+    /// SuperGrok's meter was renamed "Weekly usage" while the host kept
+    /// stripping only "Build credits": a star saved as `metric:Weekly` stopped
+    /// painting its bar.
+    #[test]
+    fn a_starred_supergrok_meter_is_painted() {
+        let payload = serde_json::json!({ "entries": [
+            { "id": "supergrok", "status": "ready", "sections": [
+                { "type": "metric", "label": "Weekly usage", "percent": 3 }
+            ]}
+        ]});
+        let mut stars = Stars::new();
+        stars.insert("supergrok".into(), vec!["metric:Weekly".into()]);
+        let content = content_from_payload(&payload, &stars, &["supergrok".into()]);
+        assert_eq!(content.bars.len(), 1);
+        assert_eq!(content.bars[0].key, "metric:Weekly");
     }
 
     #[test]

@@ -84,11 +84,11 @@ function ProviderListRow({ card, enabled, handle, onOpen, onToggle }: ProviderLi
   return (
     <div
       data-card-id={card.id}
-      className={cn("flex items-center gap-[10px] px-[var(--pad-control)] py-[var(--pad-control)]", !enabled && "opacity-55")}
+      className={cn("flex items-center gap-[var(--row-gap)] px-[var(--card-pad)] py-[var(--pad-control)]", !enabled && "opacity-55")}
     >
       <DragHandle attributes={handle?.attributes} listeners={handle?.listeners} />
-      <button type="button" className="plain-btn flex min-w-0 flex-1 items-center gap-[10px]" onClick={onOpen}>
-        <ProviderIcon className="text-label-2" size={18} slug={providerIconId(card.id)} title={card.title} />
+      <button type="button" className="plain-btn hover-fill flex min-w-0 flex-1 items-center gap-[var(--row-gap)]" onClick={onOpen}>
+        <ProviderIcon className="text-label-2" size="var(--row-icon-box)" slug={providerIconId(card.id)} title={card.title} />
         <span className="flex min-w-0 flex-col">
           <span className="truncate text-[length:var(--sz-header)] font-semibold">{card.title}</span>
           <span className="text-[length:var(--sz-badge)] text-label-2">
@@ -97,8 +97,8 @@ function ProviderListRow({ card, enabled, handle, onOpen, onToggle }: ProviderLi
         </span>
       </button>
       <Switch checked={enabled} aria-label={`${t("Show")} ${card.title}`} onCheckedChange={(on) => onToggle?.(on === true)} />
-      <button type="button" aria-label={`${t("Open")} ${card.title}`} className="plain-btn grid size-4 place-items-center" onClick={onOpen}>
-        <MdiChevronRight className="size-3.5 text-label-3" />
+      <button type="button" aria-label={`${t("Open")} ${card.title}`} className="plain-btn hover-icon grid size-[var(--row-icon-box)] place-items-center" onClick={onOpen}>
+        <MdiChevronRight className="size-[var(--icon-row)] text-label-3" />
       </button>
     </div>
   );

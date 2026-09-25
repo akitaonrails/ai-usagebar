@@ -11,11 +11,10 @@ import MdiStarOutline from "~icons/mdi/star-outline";
 import MdiTune from "~icons/mdi/tune-variant";
 import MdiArrowTopRight from "~icons/mdi/arrow-top-right";
 import { Chip } from "@/components/Chip";
+import { Hint } from "@/components/Hint";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ResetPopover } from "@/components/ResetPopover";
 import { RowMenu, type RowAction } from "@/components/RowMenu";
-import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
   BlockRow,
   Card,
@@ -44,8 +43,11 @@ import {
   paceText,
   paceTickPercent,
   paceVisible,
+  paceWarmupHint,
+  paceWarmupText,
   prefsForCard,
   providerIconId,
+  resetAlternate,
   resetCreditDetails,
   resetText,
   rowKey,
@@ -143,6 +145,10 @@ export function ProviderSection({
     );
   }
 
+  // Collapsed, the expander closes the card: it takes over the card's bottom gutter so its hover
+  // fill reaches the rounded bottom edge instead of stopping short of it.
+  const expanderLast = showExpander && !expanded && !card.warning;
+
   return (
     <section
       data-card-id={card.id}
@@ -156,7 +162,13 @@ export function ProviderSection({
         onReset={onReset}
         onSwitchAccount={onSwitchAccount}
       />
-      <div className={cn("py-[var(--card-gutter)]", lifted ? "lifted-surface" : "card-surface")}>
+      <div
+        className={cn(
+          "pt-[var(--card-gutter)]",
+          !expanderLast && "pb-[var(--card-gutter)]",
+          lifted ? "lifted-surface" : "card-surface",
+        )}
+      >
         {card.errorTitle ? <ErrorRow explained={explainError(card.errorDetail, card.id)} /> : null}
         {alwaysRows.map((row, index) => renderRow(row, index, condensedAlways, false))}
         {showExpander ? (
@@ -164,10 +176,13 @@ export function ProviderSection({
             type="button"
             aria-expanded={expanded}
             aria-label={t(expanded ? "Show less" : "Show more")}
-            className="plain-btn flex w-full justify-center py-[5px] text-label-2"
+            className={cn(
+              "hover-row flex justify-center pt-[var(--space-2xs)] text-label-2",
+              expanderLast ? "pb-[calc(var(--space-2xs)+var(--card-gutter))]" : "pb-[var(--space-2xs)]",
+            )}
             onClick={onToggleCollapse}
           >
-            {expanded ? <MdiChevronUp className="size-3.5" /> : <MdiChevronDown className="size-3.5" />}
+            {expanded ? <MdiChevronUp className="size-[var(--icon-row)]" /> : <MdiChevronDown className="size-[var(--icon-row)]" />}
           </button>
         ) : null}
         {expanded ? demandRows.map((row, index) => renderRow(row, index, condensedDemand, true)) : null}
@@ -193,42 +208,18 @@ function ResetCreditsRow({ condensedTop, demand, layout, nowMs, row }: ResetCred
   return (
     <div
       className={cn(
-        "flex items-center gap-[10px] px-[var(--card-pad)] pb-[var(--pad-text-row)]",
+        "flex items-center gap-[var(--row-gap)] px-[var(--card-pad)] pb-[var(--pad-text-row)]",
         condensedTop ? "pt-[var(--pad-text-row-condensed)]" : "pt-[var(--pad-text-row)]",
       )}
     >
       <span className={cn("shrink-0 font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
-      <span className="min-w-3 flex-1" />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Badge asChild variant="secondary">
-            <button type="button" aria-label={`${row.available} ${noun}; ${t("show expiry dates")}`}>
-              <span aria-hidden="true" className="size-2 rounded-full bg-meter-yellow" />
-              <span className="tabular-nums">{row.available} {row.available === 1 ? t("available singular") : t("available")}</span>
-            </button>
-          </Badge>
-        </TooltipTrigger>
-        <TooltipContent
-          align="end"
-          collisionPadding={12}
-          side="top"
-          sideOffset={9}
-          className="flex w-[min(330px,calc(100vw-24px))] flex-col gap-3 rounded-xl p-4 text-[length:var(--sz-support)]"
-        >
-          {details.items.map((item: { date: string; remaining: string; title: string }, index: number) => (
-            <div key={`${item.date}-${index}`} className="flex items-center gap-3 tabular-nums" title={item.title || undefined}>
-              <Badge variant={index === 0 ? "warning" : "default"} className="size-6 rounded-full p-0 text-[11px]">
-                {index + 1}
-              </Badge>
-              <span className="min-w-0 flex-1 truncate font-medium">{item.date}</span>
-              <span className="shrink-0 text-label-2">{item.remaining}</span>
-            </div>
-          ))}
-          {details.hidden > 0 ? (
-            <div className="text-right text-label-2">+{details.hidden} {t("more")}</div>
-          ) : null}
-        </TooltipContent>
-      </Tooltip>
+      <span className="min-w-[var(--gap-controls)] flex-1" />
+      <ResetPopover hidden={details.hidden} items={details.items}>
+        <Chip aria-label={`${row.available} ${noun}; ${t("show expiry dates")}`} variant="compact">
+          <span aria-hidden="true" className="size-[var(--dot-sm)] rounded-full bg-meter-yellow" />
+          <span className="tabular-nums">{row.available} {row.available === 1 ? t("available singular") : t("available")}</span>
+        </Chip>
+      </ResetPopover>
     </div>
   );
 }
@@ -261,26 +252,26 @@ export function ProviderSectionHeader({
   const plan = displayPlan(card.title, card.plan);
   return (
     <header
-      className="group/header flex items-center gap-[5px] py-[2px] pr-1 pl-[2px]"
+      className="group/header flex items-center gap-[var(--gap-inline)] px-[var(--card-pad)] py-[var(--space-2xs)]"
       {...handle?.attributes}
       {...handle?.listeners}
     >
       <ProviderIcon className="text-label-2" size="var(--sz-icon)" slug={providerIconId(card.id)} title={card.title} />
-      <div className="flex min-w-0 items-baseline gap-[5px]">
+      <div className="flex min-w-0 items-baseline gap-[var(--gap-inline)]">
         <span className="min-w-0 truncate text-[length:var(--sz-header)] font-semibold">{card.title}</span>
         {plan ? <span className="shrink-0 text-[length:var(--sz-badge)] text-label-2">{plan}</span> : null}
         {card.stale ? <span className="text-[length:var(--sz-badge)] text-label-3">{t("stale")}</span> : null}
       </div>
       {card.errorTitle ? (
-        <MdiAlert className="size-2.5 shrink-0 text-meter-red" aria-label={card.errorTitle}>
+        <MdiAlert className="size-[var(--icon-mark)] shrink-0 text-meter-red" aria-label={card.errorTitle}>
           <title>{card.errorDetail}</title>
         </MdiAlert>
       ) : card.warning ? (
-        <MdiAlert className="size-2.5 shrink-0 text-notice" aria-label={card.warning.title}>
+        <MdiAlert className="size-[var(--icon-mark)] shrink-0 text-notice" aria-label={card.warning.title}>
           <title>{card.warning.raw}</title>
         </MdiAlert>
       ) : null}
-      <span className="min-w-2 flex-1" />
+      <span className="min-w-[var(--gap-controls)] flex-1" />
       {account ? <AccountControl account={account} title={card.title} onSwitch={onSwitchAccount} /> : null}
       {onCustomize ? (
         <HeaderAction icon={<MdiTune />} label={`${t("Customize")} ${card.title}`} onClick={onCustomize} />
@@ -344,17 +335,18 @@ interface HeaderActionProps {
 
 function HeaderAction({ className, icon, label, onClick }: HeaderActionProps) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      className={cn("header-action [&_svg]:size-[14px]", className)}
-      title={label}
-      onClick={onClick}
-      onKeyDown={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      {icon}
-    </button>
+    <Hint content={label}>
+      <button
+        type="button"
+        aria-label={label}
+        className={cn("header-action [&_svg]:size-[var(--icon-row)]", className)}
+        onClick={onClick}
+        onKeyDown={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {icon}
+      </button>
+    </Hint>
   );
 }
 
@@ -382,28 +374,42 @@ function MetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProp
   const headlineAlt = translateUsage(language, headlineAlternate(row, layout.showAs));
   const resetOpts = { timeFormat: layout.timeFormat, locale: language };
   const reset = resetText(row, layout.resetTimes, nowMs, resetOpts);
+  const resetHint = resetAlternate(row, layout.resetTimes, nowMs, resetOpts);
   const rowPace = pace(row, nowMs);
   const showPace = rowPace !== null && paceVisible(rowPace, layout);
   const paceNote = showPace && rowPace ? paceText(rowPace, nowMs, { resetTimes: layout.resetTimes, timeFormat: layout.timeFormat, locale: language }) : "";
+  // Too early in the window for a projection: say so instead of leaving the note empty, when
+  // the layout asks for pacing on every metric.
+  const warmup = rowPace === null && layout.alwaysShowPace ? paceWarmupText(row, nowMs) : "";
   const behind = rowPace?.state === "behind";
   const tick = paceTickPercent(rowPace, layout.showAs);
   return (
     <div className="flex flex-col gap-[var(--row-inner)] px-[var(--card-pad)] py-[var(--pad-bar-row)]">
-      <div className="flex items-center gap-[6px]">
+      <div className="flex items-center gap-[var(--gap-item)]">
         <span className={cn("truncate font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
         {spent ? (
-          <span className="ml-auto flex shrink-0 items-center gap-[3px] text-[length:var(--sz-support)] text-label-2">
-            <MdiFire className="size-[11px] text-meter-red" />
+          <span className="ml-auto flex shrink-0 items-center gap-[var(--gap-inline)] text-[length:var(--sz-support)] text-label-2">
+            <MdiFire className="size-[var(--icon-note)] text-meter-red" />
             {t("Limit reached")}
           </span>
         ) : showPace && rowPace && (paceNote !== "" || behind) ? (
-          <span
-            className="ml-auto flex shrink-0 items-center gap-[3px] text-[length:var(--sz-support)] text-label-2"
-            title={language === "pt-BR" ? `Neste ritmo, ${Math.round(rowPace.projectedPercent)}% da cota serão usados até a redefinição` : `On this pace, ${Math.round(rowPace.projectedPercent)}% of the quota is used by the reset`}
+          <Hint
+            align="end"
+            content={
+              language === "pt-BR"
+                ? `Neste ritmo, ${Math.round(rowPace.projectedPercent)}% da cota serão usados até a redefinição`
+                : `On this pace, ${Math.round(rowPace.projectedPercent)}% of the quota is used by the reset`
+            }
           >
-            {behind ? <MdiFire className="size-[11px] text-meter-red" /> : null}
-            {paceNote}
-          </span>
+            <span className="ml-auto flex shrink-0 items-center gap-[var(--gap-inline)] text-[length:var(--sz-support)] text-label-2">
+              {behind ? <MdiFire className="size-[var(--icon-note)] text-meter-red" /> : null}
+              {paceNote}
+            </span>
+          </Hint>
+        ) : warmup ? (
+          <Hint align="end" content={paceWarmupHint(row)}>
+            <span className="ml-auto shrink-0 text-[length:var(--sz-support)] text-label-2">{warmup}</span>
+          </Hint>
         ) : null}
       </div>
       <div className="meter-wrap">
@@ -423,26 +429,17 @@ function MetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProp
           />
         ) : null}
       </div>
-      <div className="flex items-baseline gap-2 text-[length:var(--sz-support)] tabular-nums">
-        <button
-          type="button"
-          className="plain-btn truncate"
-          title={headlineAlt || undefined}
-          onClick={onToggleShowAs}
-        >
-          {headline}
-        </button>
-        <span className="min-w-2 flex-1" />
+      <div className="flex items-baseline gap-[var(--gap-controls)] text-[length:var(--sz-support)] tabular-nums">
+        <Hint align="start" content={headlineAlt}>
+          <button type="button" className="plain-btn hover-fill truncate" onClick={onToggleShowAs}>
+            {headline}
+          </button>
+        </Hint>
+        <span className="min-w-[var(--gap-controls)] flex-1" />
         {reset ? (
-          <ResetPopover
-            events={resetEvents(row)}
-            nowMs={nowMs}
-            timeFormat={layout.timeFormat}
-          >
-            <button type="button" className="plain-btn truncate text-label-2">
-              {reset}
-            </button>
-          </ResetPopover>
+          <Hint align="end" content={resetHint}>
+            <span className="truncate text-label-2">{reset}</span>
+          </Hint>
         ) : null}
       </div>
     </div>
@@ -462,13 +459,13 @@ function TextRow({ condensedTop, demand, row }: TextRowProps) {
   return (
     <div
       className={cn(
-        "flex items-start gap-[10px] px-[var(--card-pad)] pb-[var(--pad-text-row)]",
+        "flex items-start gap-[var(--row-gap)] px-[var(--card-pad)] pb-[var(--pad-text-row)]",
         condensedTop ? "pt-[var(--pad-text-row-condensed)]" : "pt-[var(--pad-text-row)]",
       )}
     >
       <span className={cn("shrink-0 font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
-      <span className="min-w-3 flex-1" />
-      <span className="flex min-w-0 max-w-full flex-col items-end gap-[2px] text-right text-[length:var(--sz-support)] tabular-nums">
+      <span className="min-w-[var(--gap-controls)] flex-1" />
+      <span className="flex min-w-0 max-w-full flex-col items-end gap-[var(--gap-tight)] text-right text-[length:var(--sz-support)] tabular-nums">
         {lines.map((line, index) => (
           <span key={index} className="max-w-full break-words [overflow-wrap:anywhere]">
             {line}
@@ -490,15 +487,15 @@ interface ErrorRowProps {
 export function ErrorRow({ explained }: ErrorRowProps) {
   const { t } = useI18n();
   return (
-    <div className="flex flex-col gap-[3px] px-[var(--card-pad)] py-[var(--pad-text-row)]">
+    <div className="flex flex-col gap-[var(--gap-stack)] px-[var(--card-pad)] py-[var(--pad-text-row)]">
       <span className="text-[length:var(--sz-support)] font-semibold">{t(explained.title || "Couldn't update")}</span>
       {explained.hint ? (
-        <span className="text-[length:var(--sz-badge)] leading-[1.35] text-label-2">{t(explained.hint)}</span>
+        <span className="text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">{t(explained.hint)}</span>
       ) : null}
       {explained.action ? (
         <button
           type="button"
-          className="mt-1 h-6 w-fit rounded-[var(--radius-sm)] bg-[var(--control-fill)] px-2.5 text-[length:var(--sz-support)] hover:bg-[var(--control-fill-hover)]"
+          className="action-btn mt-[var(--gap-stack)] w-fit"
           onClick={() => sendCommand(explained.action?.cmd)}
         >
           {t(explained.action.label)}
@@ -511,20 +508,15 @@ export function ErrorRow({ explained }: ErrorRowProps) {
 function ProviderLinks({ links }: { links: Array<{ label: string; url: string }> }) {
   const { t } = useI18n();
   return (
-    <div className="flex gap-2 px-[var(--card-pad)] py-[var(--pad-text-row)]">
+    <div className="flex gap-[var(--gap-controls)] px-[var(--card-pad)] py-[var(--pad-text-row)]">
       {links.map((link) => (
         <Chip key={link.url} variant="link" onClick={() => sendCommand("open-url", { url: link.url })}>
           <span className="truncate">{t(link.label)}</span>
-          <MdiArrowTopRight className="size-2.5 shrink-0 text-label-2" />
+          <MdiArrowTopRight className="size-[var(--icon-mark)] shrink-0 text-label-2" />
         </Chip>
       ))}
     </div>
   );
-}
-
-function resetEvents(row: MetricRowData): Array<{ atMs: number }> {
-  const at = Date.parse(row.resetAt || "");
-  return Number.isFinite(at) ? [{ atMs: at }] : [];
 }
 
 interface WarningStripProps {
@@ -538,15 +530,14 @@ interface WarningStripProps {
 function WarningStrip({ warning }: WarningStripProps) {
   const { t } = useI18n();
   return (
-    <div
-      className="mt-[2px] flex items-start gap-[6px] border-t border-border px-[var(--card-pad)] pt-[7px] pb-[3px] text-[length:var(--sz-badge)] leading-[1.35] text-label-2"
-      title={warning.raw}
-    >
-      <MdiAlert className="mt-[1px] size-3 shrink-0 text-notice" />
-      <span>
-        {t(warning.title)}
-        {warning.hint ? ` · ${t(warning.hint)}` : ""}
-      </span>
-    </div>
+    <Hint align="start" content={warning.raw}>
+      <div className="mt-[var(--space-2xs)] flex items-start gap-[var(--gap-item)] border-t border-border px-[var(--card-pad)] pt-[var(--space-sm)] pb-[var(--space-2xs)] text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">
+        <MdiAlert className="mt-[var(--space-px)] size-[var(--icon-dismiss)] shrink-0 text-notice" />
+        <span>
+          {t(warning.title)}
+          {warning.hint ? ` · ${t(warning.hint)}` : ""}
+        </span>
+      </div>
+    </Hint>
   );
 }

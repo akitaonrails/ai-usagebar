@@ -84,6 +84,15 @@ export interface ResetCredits {
   credits: ResetCredit[];
 }
 
+/** One line of a reset timeline: a banked credit's expiry, or a metric's next reset. */
+export interface ResetItem {
+  date: string;
+  remaining: string;
+  /** How soon a banked credit expires; "" for a metric reset or an unknown date. */
+  severity: "" | "blue" | "red" | "yellow";
+  title: string;
+}
+
 export interface ResetCreditsRow extends ResetCredits {
   key?: string;
   kind: "resetCredits";
@@ -178,6 +187,8 @@ export type UpdateState = "available" | "checking" | "downloading" | "failed" | 
 
 export interface UpdateInfo {
   error: string;
+  /** The release ships this OS/arch and the install directory is writable. */
+  installable: boolean;
   state: UpdateState;
   /** Release page; only a `https://github.com/` URL is kept, else "". */
   url: string;
@@ -207,6 +218,14 @@ export interface CardAccount {
   busy: boolean;
   /** Why the last switch to this account failed, or "". */
   error: string;
+}
+
+/** What an update affordance does on click: a host command, or open `url`. */
+export interface UpdateAction {
+  busy: boolean;
+  cmd: "" | "check-update" | "install-update" | "open-url";
+  label: string;
+  url: string;
 }
 
 export interface Payload {

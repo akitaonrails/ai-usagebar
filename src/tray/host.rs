@@ -2,14 +2,16 @@
 
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tao::dpi::{LogicalSize, PhysicalPosition};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
-use tao::platform::windows::{WindowBuilderExtWindows, WindowExtWindows};
+use tao::monitor::MonitorHandle;
+use tao::platform::windows::{MonitorHandleExtWindows, WindowBuilderExtWindows, WindowExtWindows};
 use tao::window::{Window, WindowBuilder};
 use tray_icon::menu::{CheckMenuItem, ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{
@@ -21,21 +23,27 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
+use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
 use windows_sys::Win32::System::Threading::{CreateMutexW, GetCurrentProcessId};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowTextW,
-    GetWindowThreadProcessId, SM_CXSMICON, WindowFromPoint,
+    GetClassNameW, GetCursorPos, GetForegroundWindow, GetSystemMetrics, GetWindowRect,
+    GetWindowTextW, GetWindowThreadProcessId, SM_CXSMICON, WindowFromPoint,
 };
 use wry::http::{Request, Response, StatusCode, header::CONTENT_TYPE};
 use wry::{WebView, WebViewBuilder};
 
+use super::blur::{self, Blur, Foreground, PressHide, Verdict};
 use super::hotkey::{self, HotkeyBinding};
-use super::icon::{Severity, tray_icon_rgba};
-use super::payload::{HostFacts, UpdateFact, host_payload, worst_severity, wrap_report};
-use super::{startup, tui_launch, update_flow};
+use super::icon::{Ink, Severity, apply_ink, tray_icon_rgba};
+use super::payload::{
+    HostFacts, SharedFacts, facts_snapshot, host_payload, with_facts, worst_severity, wrap_report,
+};
+use super::placement::{self, Area, Insets};
+use super::updates::Updates;
+use super::{now_ms, startup, taskbar_theme, tui_launch, update_flow};
 use crate::config::{Config, UpdateMode};
-use crate::update::{CHECK_INTERVAL, Release, UpdateState, sweep_old};
+use crate::update::{current_os, sweep_old};
 
 // Emitted by `windows/popover` (`npm run build` / `build.rs` on Windows).
 const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/index.html"));
@@ -52,15 +60,21 @@ const WINDOW_HEIGHT: f64 = 420.0;
 /// Sized so the footer Options menu (nine rows, opens upward) fits without
 /// Radix scrolling the list on short screens like Customize / provider detail.
 const MIN_POPOVER_HEIGHT: f64 = 360.0;
-/// Breathing room kept between the popover and the monitor's edges.
-const WORK_AREA_MARGIN: f64 = 16.0;
+/// Height the popover leaves free in the work area: the margin on the edge away from the
+/// taskbar. The edge by the taskbar has none.
+const WORK_AREA_MARGIN: f64 = 8.0;
 /// Used when no monitor can be resolved at all.
 const FALLBACK_WORK_AREA_HEIGHT: f64 = 800.0;
+/// Gap between the popover and the tray icon or a work-area edge, in physical pixels. The edge
+/// by the taskbar gets none (see [`Insets::by_taskbar`]).
+const POPOVER_MARGIN: i32 = 8;
 /// WebView2 background per theme (opaque; WebView2 ignores translucency).
 const LIGHT_BACKGROUND: (u8, u8, u8, u8) = (255, 255, 255, 255);
 const DARK_BACKGROUND: (u8, u8, u8, u8) = (30, 30, 30, 255);
-/// Absorb the mouse-up that opened the popover so it cannot hit the ⋮.
+/// The page ignores clicks this long after opening, so a stray mouse-up cannot hit the ⋮.
 const CLICK_LOCK_MS: u64 = 400;
+/// How often the outside-press watch looks at the mouse while the popover has no focus.
+const PRESS_POLL: Duration = Duration::from_millis(30);
 
 /// Set on the process an update relaunches, so it waits for the old one to
 /// release the single-instance mutex instead of quitting at once.
@@ -81,11 +95,19 @@ enum UserEvent {
     Entry(Value),
     /// The shared facts changed (shortcut, update state); re-stamp the payload.
     Facts,
-    FocusPopover,
+    /// The mouse went down outside the open popover; the `session` it was seen in, so a
+    /// press from an earlier opening is ignored.
+    OutsidePress {
+        session: u64,
+        x: i32,
+        y: i32,
+    },
     /// The global shortcut fired.
     Hotkey,
     /// A verified update is in place; start it and quit.
     Restart(PathBuf),
+    /// Windows switched between light and dark; recolor the tray glyph.
+    TaskbarTheme,
 }
 
 enum WorkerCmd {
@@ -97,20 +119,6 @@ enum WorkerCmd {
     SnoozeUpdate,
     SetUpdates(UpdateMode),
     Shutdown,
-}
-
-/// Host facts are owned jointly: the event-loop thread edits the shortcut, the
-/// worker edits the update state, and every report snapshots the whole thing.
-type SharedFacts = Arc<Mutex<HostFacts>>;
-
-fn facts_snapshot(facts: &SharedFacts) -> HostFacts {
-    facts.lock().map(|f| f.clone()).unwrap_or_default()
-}
-
-fn with_facts(facts: &SharedFacts, edit: impl FnOnce(&mut HostFacts)) {
-    if let Ok(mut guard) = facts.lock() {
-        edit(&mut guard);
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -159,11 +167,19 @@ struct TrayState {
     /// produce and are ignored; a stale flag would swallow the user's first
     /// click outside, so this is a deadline rather than a boolean.
     blur_guard_until: Option<Instant>,
+    /// The last hide caused by a press outside, and when, so the tray icon's mouse-up that
+    /// follows a press on the icon closes the popover instead of reopening it.
+    last_press_hide: Option<(Instant, PressHide)>,
+    /// Bumped on every show and hide: the outside-press watch of an earlier opening sees it
+    /// change and stops.
+    popover_session: Arc<AtomicU64>,
     /// Tray rect from the last `show_popover`, reused when a `resize`
     /// re-anchors the visible popover above the NotifyIcon.
     last_tray_rect: Option<Rect>,
     /// Last theme the page reported, so a rebuilt webview starts matching.
     theme: Theme,
+    /// Tray glyph color for the current taskbar.
+    ink: Ink,
     facts: SharedFacts,
     /// `None` when the hotkey manager could not be created; the Settings
     /// row then reports every attempt as failed.
@@ -229,7 +245,7 @@ fn run_loop() -> Result<(), String> {
     }
     // Leftovers from the swap that put this exe in place.
     if let Ok(dir) = update_flow::install_dir() {
-        let _ = sweep_old(&dir);
+        let _ = sweep_old(&dir, current_os());
     }
 
     let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -239,7 +255,14 @@ fn run_loop() -> Result<(), String> {
     let empty = wrap_report("{}", &facts_snapshot(&facts), now_ms(), None);
     let menu = build_menu(startup::is_enabled());
     let context_menu = make_menu(&menu);
-    let tray = build_tray(&empty)?;
+    let ink = taskbar_theme::ink();
+    let tray = build_tray(&empty, ink)?;
+    {
+        let proxy = proxy.clone();
+        taskbar_theme::watch(move || {
+            let _ = proxy.send_event(UserEvent::TaskbarTheme);
+        });
+    }
     // SAFETY: the tray hwnd lives as long as `tray`. Attach so MenuEvent
     // still fires without letting tray-icon auto-popup on mouse-down
     // (Windows can emit a phantom right-down with a left click).
@@ -265,8 +288,11 @@ fn run_loop() -> Result<(), String> {
         js_ready: false,
         popover_open: false,
         blur_guard_until: None,
+        last_press_hide: None,
+        popover_session: Arc::new(AtomicU64::new(0)),
         last_tray_rect: None,
         theme,
+        ink,
         facts,
         hotkey: hotkey_binding,
     };
@@ -295,35 +321,46 @@ fn run_loop() -> Result<(), String> {
             Event::UserEvent(UserEvent::Hotkey) => {
                 toggle_popover_from_keyboard(&mut state);
             }
+            Event::UserEvent(UserEvent::TaskbarTheme) => {
+                let ink = taskbar_theme::ink();
+                if ink != state.ink {
+                    state.ink = ink;
+                    refresh_icon(&mut state);
+                }
+            }
             Event::UserEvent(UserEvent::Restart(exe)) => {
                 relaunch(&exe);
                 *control_flow = ControlFlow::Exit;
             }
-            Event::UserEvent(UserEvent::FocusPopover) => {
-                if state.popover_open {
-                    guard_blur(&mut state);
-                    state.window.set_focus();
+            Event::UserEvent(UserEvent::OutsidePress { session, x, y }) => {
+                if state.popover_open && session == state.popover_session.load(Ordering::SeqCst) {
+                    trace(&format!(
+                        "press outside → hide; foreground = {}",
+                        foreground_window_label()
+                    ));
+                    hide_popover(&mut state);
+                    state.last_press_hide = Some((Instant::now(), PressHide { x, y }));
                 }
             }
             Event::WindowEvent {
                 event: WindowEvent::Focused(false),
                 ..
             } => {
-                if blur_guarded(&state) {
-                    trace(&format!(
-                        "blur ignored (guarded); foreground = {}",
-                        foreground_window_label()
-                    ));
-                } else if state.popover_open {
-                    match blur_verdict() {
-                        BlurVerdict::Hide => {
+                if state.popover_open {
+                    let facts = blur_facts(blur_guarded(&state));
+                    match blur::verdict(facts) {
+                        Verdict::Hide => {
                             trace(&format!(
                                 "blur → hide; foreground = {}",
                                 foreground_window_label()
                             ));
                             hide_popover(&mut state);
+                            if facts.button_down {
+                                let (x, y) = cursor_position();
+                                state.last_press_hide = Some((Instant::now(), PressHide { x, y }));
+                            }
                         }
-                        BlurVerdict::Keep(reason) => {
+                        Verdict::Keep(reason) => {
                             trace(&format!(
                                 "blur kept open ({reason}); foreground = {}",
                                 foreground_window_label()
@@ -364,7 +401,19 @@ fn spawn_worker(
             // turn on the vendors whose credentials already exist locally, so the
             // very first report already carries them.
             run_detection(false);
-            let mut updates = Updates::new(facts.clone(), proxy.clone());
+            let mut updates = {
+                let announce = proxy.clone();
+                let restart = proxy.clone();
+                Updates::new(
+                    facts.clone(),
+                    Box::new(move || {
+                        let _ = announce.send_event(UserEvent::Facts);
+                    }),
+                    Box::new(move |exe| {
+                        let _ = restart.send_event(UserEvent::Restart(exe));
+                    }),
+                )
+            };
             loop {
                 rt.block_on(push_report(&proxy, &facts));
                 if updates.due() {
@@ -390,13 +439,7 @@ fn spawn_worker(
                         Ok(WorkerCmd::CheckUpdate { manual }) => {
                             rt.block_on(updates.check(manual));
                         }
-                        Ok(WorkerCmd::InstallUpdate) => {
-                            if updates.pending.is_some() {
-                                rt.block_on(updates.install());
-                            } else {
-                                rt.block_on(updates.check(true));
-                            }
-                        }
+                        Ok(WorkerCmd::InstallUpdate) => rt.block_on(updates.install_or_check()),
                         Ok(WorkerCmd::SnoozeUpdate) => updates.snooze(),
                         Ok(WorkerCmd::SetUpdates(mode)) => {
                             rt.block_on(updates.set_mode(mode));
@@ -409,188 +452,6 @@ fn spawn_worker(
             }
         })
         .ok();
-}
-
-/// Worker-side update machinery: the hourly check, the snooze file and the
-/// install. Every state change lands in the shared facts and is announced
-/// with `UserEvent::Facts` so the popover re-renders at once.
-struct Updates {
-    client: Option<reqwest::Client>,
-    facts: SharedFacts,
-    pending: Option<Release>,
-    proxy: EventLoopProxy<UserEvent>,
-    state: UpdateState,
-    state_path: Option<PathBuf>,
-}
-
-impl Updates {
-    fn new(facts: SharedFacts, proxy: EventLoopProxy<UserEvent>) -> Self {
-        let state_path = crate::update::default_state_path().ok();
-        let state = state_path
-            .as_deref()
-            .map(UpdateState::load_at)
-            .unwrap_or_default();
-        Self {
-            client: update_flow::http_client().ok(),
-            facts,
-            pending: None,
-            proxy,
-            state,
-            state_path,
-        }
-    }
-
-    fn mode(&self) -> UpdateMode {
-        self.facts
-            .lock()
-            .ok()
-            .and_then(|f| UpdateMode::parse(&f.updates))
-            .unwrap_or_default()
-    }
-
-    fn due(&self) -> bool {
-        if self.mode() == UpdateMode::Off {
-            return false;
-        }
-        let elapsed = now_ms().saturating_sub(self.state.last_check_ms);
-        elapsed >= CHECK_INTERVAL.as_millis() as i64
-    }
-
-    fn persist(&mut self) {
-        if let Some(path) = self.state_path.as_deref() {
-            let _ = self.state.save_at(path);
-        }
-    }
-
-    fn announce(&self) {
-        let _ = self.proxy.send_event(UserEvent::Facts);
-    }
-
-    async fn check(&mut self, manual: bool) {
-        if !manual && self.mode() == UpdateMode::Off {
-            return;
-        }
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        let now = now_ms();
-        self.state.last_check_ms = now;
-        self.persist();
-        if manual {
-            // Feedback before the network answers: the button reads "Checking…".
-            let pending = self.pending.as_ref();
-            with_facts(&self.facts, |f| {
-                f.update = Some(UpdateFact {
-                    error: String::new(),
-                    state: "checking".into(),
-                    url: pending.map(|r| r.html_url.clone()).unwrap_or_default(),
-                    version: pending.map(|r| r.version.clone()).unwrap_or_default(),
-                });
-            });
-            self.announce();
-        }
-        let outcome = update_flow::check(&client, env!("CARGO_PKG_VERSION")).await;
-        match outcome {
-            Ok(Some(release)) => {
-                let snoozed =
-                    !manual && self.state.snoozed_version.as_deref() == Some(&release.version);
-                let fact = UpdateFact {
-                    error: String::new(),
-                    state: "available".into(),
-                    url: release.html_url.clone(),
-                    version: release.version.clone(),
-                };
-                self.pending = Some(release);
-                with_facts(&self.facts, |f| {
-                    f.update_checked_at = now;
-                    f.update = if snoozed { None } else { Some(fact) };
-                });
-                self.announce();
-                if self.mode() == UpdateMode::Auto && !cfg!(debug_assertions) {
-                    self.install().await;
-                }
-            }
-            Ok(None) => {
-                self.pending = None;
-                with_facts(&self.facts, |f| {
-                    f.update_checked_at = now;
-                    f.update = None;
-                });
-                self.announce();
-            }
-            Err(error) => {
-                // A background check that fails (offline, rate limited) stays
-                // quiet; a manual one owes the user an answer.
-                with_facts(&self.facts, |f| {
-                    f.update_checked_at = now;
-                    if manual {
-                        f.update = Some(UpdateFact {
-                            error,
-                            state: "failed".into(),
-                            url: String::new(),
-                            version: String::new(),
-                        });
-                    }
-                });
-                self.announce();
-            }
-        }
-    }
-
-    /// Install the pending release. The caller decides what "nothing
-    /// pending" means (a failed check's Try Again re-checks instead).
-    async fn install(&mut self) {
-        let Some(release) = self.pending.clone() else {
-            return;
-        };
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        let set_state = |facts: &SharedFacts, state: &str, error: String| {
-            with_facts(facts, |f| {
-                f.update = Some(UpdateFact {
-                    error,
-                    state: state.into(),
-                    url: release.html_url.clone(),
-                    version: release.version.clone(),
-                });
-            });
-        };
-        set_state(&self.facts, "downloading", String::new());
-        self.announce();
-        match update_flow::install(&client, &release).await {
-            Ok(exe) => {
-                set_state(&self.facts, "installing", String::new());
-                self.announce();
-                let _ = self.proxy.send_event(UserEvent::Restart(exe));
-            }
-            Err(error) => {
-                set_state(&self.facts, "failed", error);
-                self.announce();
-            }
-        }
-    }
-
-    fn snooze(&mut self) {
-        if let Some(release) = self.pending.as_ref() {
-            self.state.snoozed_version = Some(release.version.clone());
-            self.persist();
-        }
-        with_facts(&self.facts, |f| f.update = None);
-        self.announce();
-    }
-
-    async fn set_mode(&mut self, mode: UpdateMode) {
-        with_facts(&self.facts, |f| f.updates = mode.as_str().into());
-        self.announce();
-        match mode {
-            UpdateMode::Auto if self.pending.is_some() && !cfg!(debug_assertions) => {
-                self.install().await;
-            }
-            UpdateMode::Auto | UpdateMode::Notify if self.due() => self.check(false).await,
-            _ => {}
-        }
-    }
 }
 
 /// Best-effort: detection never blocks or fails the report. `force` re-probes
@@ -648,16 +509,13 @@ fn apply_payload(state: &mut TrayState, payload: Value) {
         state.popover_open,
         state.window.is_focused()
     ));
-    let severity = worst_severity(&payload);
-    if let Ok(icon) = icon_from_severity(severity) {
-        let _ = state.tray.set_icon(Some(icon));
-    }
+    state.payload = payload;
+    refresh_icon(state);
     // No hover tip: the popover is the readout. The one exception names the
     // missing WebView2 runtime, because without it there is no popover.
     if state.webview.is_none() {
         let _ = state.tray.set_tooltip(Some(WEBVIEW2_MISSING));
     }
-    state.payload = payload;
     stamp_facts(state);
     if state.js_ready {
         push_to_webview(state);
@@ -711,24 +569,19 @@ fn apply_entry(state: &mut TrayState, entry: Value) {
         Some(slot) => *slot = entry,
         None => entries.push(entry),
     }
-    let severity = worst_severity(&state.payload);
-    if let Ok(icon) = icon_from_severity(severity) {
-        let _ = state.tray.set_icon(Some(icon));
-    }
+    refresh_icon(state);
     if state.js_ready {
         push_to_webview(state);
     }
 }
 
-/// Shortcut press: toggle, and focus at once (no tray mouse-up to absorb).
+/// Shortcut press: toggle.
 fn toggle_popover_from_keyboard(state: &mut TrayState) {
     if state.popover_open {
         hide_popover(state);
     } else {
         let rect = state.last_tray_rect;
         show_popover(state, rect);
-        guard_blur(state);
-        state.window.set_focus();
     }
 }
 
@@ -860,8 +713,12 @@ fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
             rect,
             ..
         } => {
+            let press = state.last_press_hide.take();
+            let elapsed_ms = press.map_or(u128::MAX, |(at, _)| at.elapsed().as_millis());
             if state.popover_open {
                 hide_popover(state);
+            } else if blur::is_toggle_close(press.map(|(_, p)| p), elapsed_ms, icon_area(rect)) {
+                trace("icon click after the press that closed the popover → stay closed");
             } else {
                 show_popover(state, Some(rect));
             }
@@ -1000,21 +857,49 @@ pub(crate) fn clamp_popover_height(requested: f64, work_area_height: f64) -> f64
     requested.round().clamp(MIN_POPOVER_HEIGHT, max)
 }
 
-/// Logical height of the monitor the popover sits on (primary as fallback).
+/// Logical inner height the popover may take on the monitor it sits on (primary as fallback):
+/// that monitor's work area, so it never runs under the taskbar, less the window frame.
 fn work_area_height(window: &Window) -> f64 {
-    window
+    let Some(monitor) = window
         .current_monitor()
         .or_else(|| window.primary_monitor())
-        .map(|monitor| {
-            let scale = monitor.scale_factor();
-            let scale = if scale.is_finite() && scale > 0.0 {
-                scale
-            } else {
-                1.0
-            };
-            f64::from(monitor.size().height) / scale
-        })
-        .unwrap_or(FALLBACK_WORK_AREA_HEIGHT)
+    else {
+        return FALLBACK_WORK_AREA_HEIGHT;
+    };
+    let (_, work) = monitor_areas(&monitor);
+    let frame = window.outer_size().height as i32 - window.inner_size().height as i32;
+    placement::max_inner_height(work, frame, monitor.scale_factor())
+}
+
+/// A monitor's full rectangle and its work area (`rcWork`: less the taskbar and docked app
+/// bars), in physical pixels. tao reports only the full rectangle; if the Win32 call fails the
+/// work area falls back to it.
+fn monitor_areas(monitor: &MonitorHandle) -> (Area, Area) {
+    let origin = monitor.position();
+    let size = monitor.size();
+    let full = Area {
+        x: origin.x,
+        y: origin.y,
+        width: size.width as i32,
+        height: size.height as i32,
+    };
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: the handle comes from a live tao MonitorHandle, and `info` is a properly sized
+    // MONITORINFO the call only writes into.
+    let ok = unsafe { GetMonitorInfoW(monitor.hmonitor() as _, &mut info) } != 0;
+    if !ok {
+        return (full, full);
+    }
+    let rect = |r: windows_sys::Win32::Foundation::RECT| Area {
+        x: r.left,
+        y: r.top,
+        width: r.right - r.left,
+        height: r.bottom - r.top,
+    };
+    (rect(info.rcMonitor), rect(info.rcWork))
 }
 
 /// Ask DWM for Windows 11 rounded corners. Windows 10 rejects the attribute;
@@ -1051,12 +936,12 @@ fn toggle_startup(state: &mut TrayState) {
 
 fn show_popover(state: &mut TrayState, tray_rect: Option<Rect>) {
     state.last_tray_rect = tray_rect;
+    state.last_press_hide = None;
     position_window(&state.window, tray_rect);
     guard_blur(state);
     state.window.set_visible(true);
-    // Do not focus yet: the tray mouse-up would land on the ⋮ in the footer
-    // (the popover sits directly above the NotifyIcon) and open the menu.
     state.popover_open = true;
+    // The page ignores clicks for a moment, so a stray mouse-up cannot hit the ⋮ in the footer.
     if let Some(webview) = state.webview.as_ref() {
         let _ = webview.evaluate_script(&format!(
             "window.__AIUB_LOCKCLICKS__ && window.__AIUB_LOCKCLICKS__({CLICK_LOCK_MS})"
@@ -1066,11 +951,77 @@ fn show_popover(state: &mut TrayState, tray_rect: Option<Rect>) {
     if state.js_ready {
         push_to_webview(state);
     }
+    // Focus now, while the click on the tray icon still lets this process take the
+    // foreground; focusing later failed once the user had clicked elsewhere.
+    state.window.set_focus();
+    let session = state.popover_session.fetch_add(1, Ordering::SeqCst) + 1;
+    watch_outside_press(state, session);
+}
+
+/// Closes the popover on a press outside it for as long as it is open. A blur alone is not
+/// enough: a popover Windows refused to focus has no focus to lose, and once focus moves into
+/// the WebView2 child the window's own blur has already fired (kept, as focus stayed here), so a
+/// later click elsewhere can bring no second one. Either way the popover stayed open.
+fn watch_outside_press(state: &TrayState, session: u64) {
+    let current = state.popover_session.clone();
     let proxy = state.proxy.clone();
+    let hwnd = state.window.hwnd();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(CLICK_LOCK_MS));
-        let _ = proxy.send_event(UserEvent::FocusPopover);
+        let mut was_down = mouse_button_down();
+        loop {
+            std::thread::sleep(PRESS_POLL);
+            if current.load(Ordering::SeqCst) != session {
+                return;
+            }
+            let down = mouse_button_down();
+            if down && !was_down {
+                let (x, y) = cursor_position();
+                if !window_contains(hwnd, x, y) {
+                    let _ = proxy.send_event(UserEvent::OutsidePress { session, x, y });
+                    return;
+                }
+            }
+            was_down = down;
+        }
     });
+}
+
+fn mouse_button_down() -> bool {
+    // SAFETY: GetAsyncKeyState has no preconditions.
+    unsafe {
+        (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000 != 0)
+            || (GetAsyncKeyState(VK_RBUTTON as i32) as u16 & 0x8000 != 0)
+    }
+}
+
+fn cursor_position() -> (i32, i32) {
+    let mut point = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
+    // SAFETY: `point` is a valid out-pointer for the call.
+    unsafe { GetCursorPos(&mut point) };
+    (point.x, point.y)
+}
+
+fn window_contains(hwnd: isize, x: i32, y: i32) -> bool {
+    let mut rect = windows_sys::Win32::Foundation::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: `hwnd` is the popover, alive while its session lasts; `rect` is a valid
+    // out-pointer. A failed call leaves an empty rect, which contains nothing.
+    unsafe { GetWindowRect(hwnd as HWND, &mut rect) };
+    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+}
+
+/// A tray icon rect in physical pixels, for the placement and toggle decisions.
+fn icon_area(rect: Rect) -> Area {
+    Area {
+        x: rect.position.x.round() as i32,
+        y: rect.position.y.round() as i32,
+        width: rect.size.width as i32,
+        height: rect.size.height as i32,
+    }
 }
 
 /// Opt-in diagnostics: set `AIUB_TRAY_TRACE=1` and every hide, blur and
@@ -1106,8 +1057,7 @@ fn foreground_window_label() -> String {
         let mut point = windows_sys::Win32::Foundation::POINT { x: 0, y: 0 };
         GetCursorPos(&mut point);
         let under = WindowFromPoint(point);
-        let buttons = (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000 != 0)
-            || (GetAsyncKeyState(VK_RBUTTON as i32) as u16 & 0x8000 != 0);
+        let buttons = mouse_button_down();
         format!(
             "{hwnd:?} {} '{}'; cursor ({}, {}) over {under:?} {}; button down = {buttons}",
             window_class(hwnd),
@@ -1119,43 +1069,41 @@ fn foreground_window_label() -> String {
     }
 }
 
-enum BlurVerdict {
-    Hide,
-    Keep(&'static str),
-}
-
 /// Windows shell surfaces that activate themselves now and then (a badge
-/// refresh, an overflow relayout) without the user touching them.
-const SHELL_CLASSES: [&str; 4] = [
+/// refresh, an overflow relayout) without the user touching them. The last one
+/// is the Windows 11 tray overflow flyout.
+const SHELL_CLASSES: [&str; 5] = [
     "Shell_TrayWnd",
     "Shell_SecondaryTrayWnd",
     "TrayNotifyWnd",
     "NotifyIconOverflowWindow",
+    "TopLevelWindowForOverflowXamlIsland",
 ];
 
-/// The popover is transient: it closes when the user goes somewhere else. A
-/// blur says only that *something* took the foreground, so look at what did.
-/// Our own windows (the WebView2 child, a context menu) and a taskbar that
-/// activated itself with no mouse button down are not "somewhere else".
-fn blur_verdict() -> BlurVerdict {
+/// What a blur looks like from here: who took the foreground and whether a
+/// mouse button is down. [`blur::verdict`] decides what it means.
+fn blur_facts(guarded: bool) -> Blur {
     // SAFETY: plain user32 queries with valid out-pointers.
-    unsafe {
+    let foreground = unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.is_null() {
-            return BlurVerdict::Hide;
+            Foreground::Nobody
+        } else {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid == GetCurrentProcessId() {
+                Foreground::Ours
+            } else if SHELL_CLASSES.contains(&window_class(hwnd).as_str()) {
+                Foreground::Shell
+            } else {
+                Foreground::Other
+            }
         }
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid == GetCurrentProcessId() {
-            return BlurVerdict::Keep("focus stayed in this process");
-        }
-        let class = window_class(hwnd);
-        let button_down = (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000 != 0)
-            || (GetAsyncKeyState(VK_RBUTTON as i32) as u16 & 0x8000 != 0);
-        if !button_down && SHELL_CLASSES.iter().any(|c| *c == class) {
-            return BlurVerdict::Keep("taskbar activated itself");
-        }
-        BlurVerdict::Hide
+    };
+    Blur {
+        button_down: mouse_button_down(),
+        foreground,
+        guarded,
     }
 }
 
@@ -1183,6 +1131,7 @@ fn blur_guarded(state: &TrayState) -> bool {
 fn hide_popover(state: &mut TrayState) {
     state.window.set_visible(false);
     state.popover_open = false;
+    state.popover_session.fetch_add(1, Ordering::SeqCst);
     // Closing resets navigation (OpenUsage: scroll to top, Customize / Settings
     // close) so the next open lands on the dashboard.
     if let Some(webview) = state.webview.as_ref() {
@@ -1193,67 +1142,34 @@ fn hide_popover(state: &mut TrayState) {
 
 fn position_window(window: &Window, tray_rect: Option<Rect>) {
     let size = window.outer_size();
-    let (x, y, hint_x, hint_y) = if let Some(rect) = tray_rect {
-        let tray_x = rect.position.x.round() as i32;
-        let tray_y = rect.position.y.round() as i32;
-        let tray_w = rect.size.width as i32;
-        let x = tray_x + tray_w / 2 - size.width as i32 / 2;
-        let y = tray_y - size.height as i32 - 8;
-        (
-            x,
-            y,
-            rect.position.x + f64::from(rect.size.width) / 2.0,
-            rect.position.y + f64::from(rect.size.height) / 2.0,
-        )
+    let (width, height) = (size.width as i32, size.height as i32);
+    let (x, y) = if let Some(rect) = tray_rect {
+        // Centered on the tray icon, on the side away from whichever edge the taskbar is on.
+        let icon = icon_area(rect);
+        let center_x = rect.position.x + f64::from(rect.size.width) / 2.0;
+        let center_y = rect.position.y + f64::from(rect.size.height) / 2.0;
+        match window
+            .monitor_from_point(center_x, center_y)
+            .or_else(|| window.primary_monitor())
+        {
+            Some(monitor) => {
+                let (full, work) = monitor_areas(&monitor);
+                placement::beside_icon(full, work, icon, width, height, POPOVER_MARGIN)
+            }
+            None => (
+                (icon.x + icon.width / 2 - width / 2).max(POPOVER_MARGIN),
+                (icon.y - height - POPOVER_MARGIN).max(POPOVER_MARGIN),
+            ),
+        }
     } else if let Some(monitor) = window.primary_monitor() {
-        let screen = monitor.size();
-        let origin = monitor.position();
-        (
-            origin.x + screen.width as i32 - size.width as i32 - 16,
-            origin.y + screen.height as i32 - size.height as i32 - 72,
-            f64::from(origin.x) + f64::from(screen.width) / 2.0,
-            f64::from(origin.y) + f64::from(screen.height) / 2.0,
-        )
+        // The global shortcut: no icon to hang from, so the corner by the taskbar.
+        let (full, work) = monitor_areas(&monitor);
+        let insets = Insets::by_taskbar(full, work, POPOVER_MARGIN);
+        placement::corner_near_taskbar(full, work, width, height, insets)
     } else {
-        (80, 80, 80.0, 80.0)
+        (80, 80)
     };
-    let (x, y) = clamp_to_monitor(
-        window,
-        x,
-        y,
-        size.width as i32,
-        size.height as i32,
-        hint_x,
-        hint_y,
-    );
     window.set_outer_position(PhysicalPosition::new(x, y));
-}
-
-fn clamp_to_monitor(
-    window: &Window,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    hint_x: f64,
-    hint_y: f64,
-) -> (i32, i32) {
-    let Some(monitor) = window
-        .monitor_from_point(hint_x, hint_y)
-        .or_else(|| window.primary_monitor())
-    else {
-        return (x.max(8), y.max(8));
-    };
-    let origin = monitor.position();
-    let screen = monitor.size();
-    let min_x = origin.x + 8;
-    let min_y = origin.y + 8;
-    let max_x = origin.x + screen.width as i32 - width - 8;
-    let max_y = origin.y + screen.height as i32 - height - 8;
-    (
-        x.clamp(min_x, max_x.max(min_x)),
-        y.clamp(min_y, max_y.max(min_y)),
-    )
 }
 
 fn build_menu(startup_enabled: bool) -> MenuItems {
@@ -1286,8 +1202,9 @@ fn make_menu(items: &MenuItems) -> Menu {
     menu
 }
 
-fn build_tray(payload: &Value) -> Result<TrayIcon, String> {
-    let icon = icon_from_severity(worst_severity(payload)).map_err(|error| error.to_string())?;
+fn build_tray(payload: &Value, ink: Ink) -> Result<TrayIcon, String> {
+    let icon =
+        icon_from_severity(worst_severity(payload), ink).map_err(|error| error.to_string())?;
     TrayIconBuilder::new()
         .with_icon(icon)
         .with_menu_on_left_click(false)
@@ -1297,13 +1214,21 @@ fn build_tray(payload: &Value) -> Result<TrayIcon, String> {
 
 /// The raster matching the shell's small-icon size for the current DPI
 /// (`SM_CXSMICON`: 16 px at 100 %, 24 px at 150 %), so Windows draws it
-/// without a second resample.
-fn icon_from_severity(severity: Severity) -> Result<Icon, tray_icon::BadIcon> {
+/// without a second resample, in the ink that reads on the taskbar.
+fn icon_from_severity(severity: Severity, ink: Ink) -> Result<Icon, tray_icon::BadIcon> {
     // SAFETY: GetSystemMetrics has no preconditions and touches no memory.
     let wanted = unsafe { GetSystemMetrics(SM_CXSMICON) };
     let wanted = u32::try_from(wanted).unwrap_or(16).max(16);
-    let (rgba, size) = tray_icon_rgba(wanted, severity);
+    let (mut rgba, size) = tray_icon_rgba(wanted, severity);
+    apply_ink(&mut rgba, ink);
     Icon::from_rgba(rgba, size, size)
+}
+
+/// Redraw the tray glyph for the current report and taskbar.
+fn refresh_icon(state: &mut TrayState) {
+    if let Ok(icon) = icon_from_severity(worst_severity(&state.payload), state.ink) {
+        let _ = state.tray.set_icon(Some(icon));
+    }
 }
 
 fn build_webview(
@@ -1343,13 +1268,6 @@ fn protocol_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> 
         .header("Access-Control-Allow-Origin", "*")
         .body(Cow::Borrowed(body))
         .unwrap_or_else(|_| Response::new(Cow::Borrowed(body)))
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 struct SingleInstance(HANDLE);

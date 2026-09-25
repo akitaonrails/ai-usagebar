@@ -208,10 +208,10 @@ fn eligible_entries<'a>(payload: &'a Value, visible: Option<&[String]>) -> Vec<&
 
 fn is_ready(entry: &Value) -> bool {
     entry.get("status").and_then(Value::as_str) != Some("error")
-        && !entry
+        && entry
             .get("error")
             .and_then(Value::as_str)
-            .is_some_and(|error| !error.is_empty())
+            .is_none_or(str::is_empty)
 }
 
 fn highest_percent(entry: &Value, window: UsageWindow) -> Option<f64> {

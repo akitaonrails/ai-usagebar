@@ -1,0 +1,14 @@
+{
+  "about": "Row keys for starred metrics. The popover (windows/popover/src/model.js metricRowKey) stores stars by these keys and the tray host (src/tray/strip.rs metric_key) looks them up again to paint the menu-bar bars; both test suites read this file, so a label rule changed on one side only fails a test instead of silently dropping a starred bar.",
+  "cases": [
+    { "id": "anthropic", "label": "Weekly (7d)", "key": "metric:Weekly (7d)" },
+    { "id": "openai", "label": "Codex weekly", "key": "metric:Codex weekly" },
+    { "id": "cursor", "label": "Cursor Models", "key": "metric:Cursor Models" },
+    { "id": "supergrok", "label": "Weekly usage", "key": "metric:Weekly" },
+    { "id": "supergrok", "label": "Weekly Build credits", "key": "metric:Weekly" },
+    { "id": "supergrok", "label": "Grok Build", "key": "metric:Grok Build" },
+    { "id": "supergrok@work", "label": "Weekly  Usage", "key": "metric:Weekly" },
+    { "id": "grokbot", "label": "Weekly usage", "key": "metric:Weekly usage" },
+    { "id": "antigravity", "label": "Gemini", "group": "Session", "key": "metric:Gemini (Session)" }
+  ]
+}

@@ -68,6 +68,9 @@ base64 = "0.23"
 # transform is cross-platform so it stays unit-testable on Linux CI.
 aes = "0.9"
 cbc = { version = "0.2", features = ["alloc"] }
+# Chromium's Windows OSCrypt: `v10` values are AES-256-GCM under a key the app
+# protects with DPAPI. Decrypt only, so no RNG (`getrandom`) is pulled in.
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 sha1 = { version = "0.11", default-features = false }
 sha2 = { version = "0.11", default-features = false }
@@ -129,9 +132,11 @@ security-framework = "3"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
     "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_LibraryLoader",
     "Win32_System_Registry",
