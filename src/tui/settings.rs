@@ -9,12 +9,15 @@
 //! a subscriber whose credential is the Kimi Code CLI login has nothing to paste
 //! and enables `[kimi]` in config.toml instead.
 //!
-//! Below the credentials sit the `[notifications]` fields: a toggle for the
+//! Below the credentials sits the Providers section (#244): one on/off switch
+//! per known vendor, writing `enabled = true/false` under its own config
+//! section. Below that are the `[notifications]` fields: a toggle for the
 //! quota-threshold alerts and their threshold in percent. Everything persists
 //! through `toml_edit` so the existing config keeps its comments,
 //! whitespace, and unrelated fields. Writing a key also flips that vendor's
 //! `enabled = true` (the opt-in vendors are disabled by default), so "paste the
-//! credential and save" is all it takes. Files with inline credentials are atomically written
+//! credential and save" is all it takes — an explicit off switch toggled in
+//! the same save wins. Files with inline credentials are atomically written
 //! and `chmod 600`ed.
 
 use std::collections::BTreeMap;
@@ -160,11 +163,19 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
     },
 ];
 
-/// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`].
+/// How many providers the on/off section lists: every known vendor, in
+/// `VendorId::all()` order (#244). A new vendor grows this automatically; a
+/// guard test pins the focus ring to the real enumeration.
+pub const PROVIDER_SWITCH_COUNT: usize = VendorId::all().len();
+
+/// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`];
+/// `Vendor(i)` indexes the provider on/off rows, parallel to
+/// `SettingsState::vendors` / `VendorId::all()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Primary,
     Key(usize),
+    Vendor(usize),
     NotifyEnabled,
     NotifyThreshold,
     Save,
@@ -175,7 +186,9 @@ impl Focus {
         match self {
             Focus::Primary => Focus::Key(0),
             Focus::Key(i) if i + 1 < KEY_VENDORS.len() => Focus::Key(i + 1),
-            Focus::Key(_) => Focus::NotifyEnabled,
+            Focus::Key(_) => Focus::Vendor(0),
+            Focus::Vendor(i) if i + 1 < PROVIDER_SWITCH_COUNT => Focus::Vendor(i + 1),
+            Focus::Vendor(_) => Focus::NotifyEnabled,
             Focus::NotifyEnabled => Focus::NotifyThreshold,
             Focus::NotifyThreshold => Focus::Save,
             Focus::Save => Focus::Primary,
@@ -186,9 +199,11 @@ impl Focus {
             Focus::Primary => Focus::Save,
             Focus::Key(0) => Focus::Primary,
             Focus::Key(i) => Focus::Key(i - 1),
-            Focus::Save => Focus::NotifyThreshold,
+            Focus::Vendor(0) => Focus::Key(KEY_VENDORS.len() - 1),
+            Focus::Vendor(i) => Focus::Vendor(i - 1),
+            Focus::NotifyEnabled => Focus::Vendor(PROVIDER_SWITCH_COUNT - 1),
             Focus::NotifyThreshold => Focus::NotifyEnabled,
-            Focus::NotifyEnabled => Focus::Key(KEY_VENDORS.len() - 1),
+            Focus::Save => Focus::NotifyThreshold,
         }
     }
 }
@@ -287,6 +302,15 @@ impl KeyInput {
     }
 }
 
+/// One provider's on/off switch (#244), parallel to `VendorId::all()`.
+/// `dirty` follows the same only-write-what-the-user-touched rule the
+/// notification fields use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderSwitch {
+    pub enabled: bool,
+    pub dirty: bool,
+}
+
 /// Mutable state of the overlay while open.
 #[derive(Debug, Clone)]
 pub struct SettingsState {
@@ -297,6 +321,9 @@ pub struct SettingsState {
     pub primary: VendorId,
     /// One input per [`KEY_VENDORS`] entry, same order.
     pub keys: Vec<KeyInput>,
+    /// One on/off switch per known vendor ([`VendorId::all()` order), so any
+    /// provider can be turned on or off from the overlay (#244).
+    pub vendors: Vec<ProviderSwitch>,
     /// `[notifications] enabled` toggle. Written back only once toggled.
     pub notify_enabled: bool,
     pub notify_enabled_dirty: bool,
@@ -304,6 +331,9 @@ pub struct SettingsState {
     pub notify_threshold: KeyInput,
     /// One-line status displayed in the footer ("saved …", "save failed …").
     pub status: String,
+    /// First body line scrolled into view. The overlay body outgrew every
+    /// terminal once every provider got a row, so rendering follows focus.
+    pub scroll: u16,
 }
 
 impl SettingsState {
@@ -367,10 +397,18 @@ impl SettingsState {
             primary_choices,
             primary,
             keys,
+            vendors: VendorId::all()
+                .iter()
+                .map(|id| ProviderSwitch {
+                    enabled: cfg.is_enabled(*id),
+                    dirty: false,
+                })
+                .collect(),
             notify_enabled: cfg.notifications.enabled,
             notify_enabled_dirty: false,
             notify_threshold: KeyInput::from_config(Some(&cfg.notifications.threshold.to_string())),
             status: String::new(),
+            scroll: 0,
         }
     }
 
@@ -466,6 +504,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
                 handle_input(input, code);
             }
         }
+        Focus::Vendor(i) => handle_provider_switch(state, i, code),
         Focus::NotifyEnabled => handle_notify_enabled(state, code),
         Focus::NotifyThreshold => handle_threshold_input(&mut state.notify_threshold, code),
         Focus::Save => {
@@ -523,6 +562,18 @@ fn handle_notify_enabled(state: &mut SettingsState, code: KeyCode) {
     if matches!(code, KeyCode::Left | KeyCode::Right | KeyCode::Char(' ')) {
         state.notify_enabled = !state.notify_enabled;
         state.notify_enabled_dirty = true;
+    }
+}
+
+/// One `[<vendor>] enabled` row (#244): Left/Right/Space flip the switch;
+/// any other key leaves it — and its dirty flag — alone, so an untouched
+/// overlay save never writes a section the config never had.
+fn handle_provider_switch(state: &mut SettingsState, index: usize, code: KeyCode) {
+    if matches!(code, KeyCode::Left | KeyCode::Right | KeyCode::Char(' '))
+        && let Some(switch) = state.vendors.get_mut(index)
+    {
+        switch.enabled = !switch.enabled;
+        switch.dirty = true;
     }
 }
 
@@ -591,6 +642,20 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
             continue;
         };
         update_key(&mut doc, kv, input)?;
+    }
+
+    // Provider on/off switches (#244): written after the credential fields so
+    // an explicit off wins over the enable-a-pasted-key-implied rule above,
+    // and each one goes through the same whitelisted setter the native
+    // settings bridge uses. Only toggled rows are written, so an untouched
+    // overlay save never creates a `[<vendor>]` section the config never had.
+    for (i, id) in VendorId::all().iter().enumerate() {
+        let Some(switch) = state.vendors.get(i) else {
+            continue;
+        };
+        if switch.dirty {
+            crate::config::set_vendor_enabled_in_doc(&mut doc, id.slug(), switch.enabled)?;
+        }
     }
 
     // [notifications]: each field is written only when the user touched it,
@@ -684,6 +749,9 @@ struct SettingsSnapshot {
     primary: String,
     primary_choices: Vec<PrimaryChoice>,
     keys: Vec<KeyStatus>,
+    /// Every known provider's on/off switch (#244) — enabled ones and
+    /// disabled ones, because turning a provider on is the point.
+    vendors: Vec<VendorStatus>,
 }
 
 #[derive(Debug, Serialize)]
@@ -704,9 +772,20 @@ struct KeyStatus {
     environment_configured: bool,
 }
 
+/// One provider row of the native settings form: its shared display name and
+/// whether config.toml currently enables it (#244).
+#[derive(Debug, Serialize)]
+struct VendorStatus {
+    id: String,
+    label: String,
+    enabled: bool,
+}
+
 /// Additive patch accepted on stdin by `ai-usagebar settings apply`.
 /// Missing keys remain byte-for-byte untouched. `clear` explicitly removes an
 /// inline key, matching the TUI overlay's existing empty-dirty-field behavior.
+/// `vendors` carries provider on/off toggles (#244); its slugs are validated
+/// against the built-in vendor list before anything is written.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplyRequest {
@@ -714,6 +793,8 @@ struct ApplyRequest {
     primary: Option<String>,
     #[serde(default)]
     keys: BTreeMap<String, KeyMutation>,
+    #[serde(default)]
+    vendors: BTreeMap<String, bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -758,11 +839,20 @@ fn snapshot_from_config_with(
             }
         })
         .collect();
+    let vendors = VendorId::all()
+        .iter()
+        .map(|id| VendorStatus {
+            id: id.slug().to_string(),
+            label: id.display_name().to_string(),
+            enabled: cfg.is_enabled(*id),
+        })
+        .collect();
     SettingsSnapshot {
         schema_version: SETTINGS_SCHEMA_VERSION,
         primary: state.primary.slug().to_string(),
         primary_choices,
         keys,
+        vendors,
     }
 }
 
@@ -785,7 +875,7 @@ fn settings_snapshot_json_with(
 }
 
 fn vendor_from_slug(slug: &str) -> Option<VendorId> {
-    VendorId::all().iter().copied().find(|id| id.slug() == slug)
+    VendorId::from_slug(slug)
 }
 
 fn state_from_apply_request(cfg: &Config, raw: &str) -> Result<SettingsState> {
@@ -842,6 +932,20 @@ fn state_from_apply_request(cfg: &Config, raw: &str) -> Result<SettingsState> {
         input.cursor = input.buf.chars().count();
         input.dirty = true;
         input.revealed = false;
+    }
+
+    // Provider on/off toggles (#244): the slug is the whitelist — anything
+    // that names no built-in vendor is refused, so a patch can never create
+    // or flip an arbitrary config section.
+    for (slug, enabled) in request.vendors {
+        let index = VendorId::all()
+            .iter()
+            .position(|id| id.slug() == slug)
+            .ok_or_else(|| AppError::Other(format!("unknown provider {slug:?}")))?;
+        state.vendors[index] = ProviderSwitch {
+            enabled,
+            dirty: true,
+        };
     }
     Ok(state)
 }
@@ -918,8 +1022,71 @@ pub fn run_cli(action: &crate::widget::cli::SettingsAction) -> i32 {
 
 // ─── Render ────────────────────────────────────────────────────────────────
 
+/// Line positions inside the rendered overlay body. `render` builds its lines
+/// in exactly this order and `focus_line` reads them back, so the two cannot
+/// drift apart silently — the guard tests pin them to each other.
+struct BodyLayout {
+    primary: usize,
+    first_key: usize,
+    first_vendor: usize,
+    notify_enabled: usize,
+    notify_threshold: usize,
+    save: usize,
+    /// Body line count without the optional status row.
+    rows: usize,
+}
+
+fn body_layout(keys: usize, vendors: usize) -> BodyLayout {
+    let first_key = 4;
+    let first_vendor = first_key + keys + 2;
+    let notify_enabled = first_vendor + vendors + 2;
+    BodyLayout {
+        primary: 1,
+        first_key,
+        first_vendor,
+        notify_enabled,
+        notify_threshold: notify_enabled + 1,
+        save: notify_enabled + 3,
+        rows: notify_enabled + 4,
+    }
+}
+
+/// The body line the focused control renders on.
+fn focus_line(state: &SettingsState) -> usize {
+    let layout = body_layout(KEY_VENDORS.len(), state.vendors.len());
+    match state.focus {
+        Focus::Primary => layout.primary,
+        Focus::Key(i) => layout.first_key + i,
+        Focus::Vendor(i) => layout.first_vendor + i,
+        Focus::NotifyEnabled => layout.notify_enabled,
+        Focus::NotifyThreshold => layout.notify_threshold,
+        Focus::Save => layout.save,
+    }
+}
+
+/// Scroll offset keeping `focused` on screen: unchanged while it is already
+/// visible, the smallest jump that reveals it when not, clamped to the
+/// scrollable range. Pure over its inputs.
+fn follow_focus_scroll(focused: usize, total: usize, viewport: u16, current: u16) -> u16 {
+    if viewport == 0 || total == 0 {
+        return 0;
+    }
+    let max_offset = (total as u16).saturating_sub(viewport);
+    let focused = focused.min(total - 1) as u16;
+    let wanted = if focused < current {
+        focused
+    } else if focused >= current.saturating_add(viewport) {
+        // Pin the newly focused line to the bottom edge so what follows it
+        // (another row, the Save button) still peeks into view.
+        (focused + 1).saturating_sub(viewport)
+    } else {
+        current
+    };
+    wanted.min(max_offset)
+}
+
 /// Render the modal overlay over `area`.
-pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
+pub fn render(f: &mut Frame, area: Rect, state: &mut SettingsState, theme: &Theme) {
     let modal = centered_rect(74, 88, area);
     f.render_widget(Clear, modal);
 
@@ -951,6 +1118,26 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
     }
     lines.push(Line::from(""));
 
+    // — Providers on/off (#244) —
+    lines.push(section_header(
+        "Providers",
+        "which vendors the report, bar and TUI fetch at all",
+        &bubble,
+    ));
+    for (i, id) in VendorId::all().iter().enumerate() {
+        let switch = state.vendors.get(i).copied().unwrap_or(ProviderSwitch {
+            enabled: false,
+            dirty: false,
+        });
+        lines.push(provider_row(
+            id,
+            switch,
+            state.focus == Focus::Vendor(i),
+            &bubble,
+        ));
+    }
+    lines.push(Line::from(""));
+
     // — Notifications —
     lines.push(section_header(
         "Notifications",
@@ -973,7 +1160,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
         ]));
     }
 
-    f.render_widget(Paragraph::new(lines), chunks[0]);
+    // The body long outgrew every terminal once each provider got a row, so
+    // the view follows the focus ring.
+    let layout = body_layout(KEY_VENDORS.len(), state.vendors.len());
+    let total = layout.rows + usize::from(!state.status.is_empty());
+    state.scroll = follow_focus_scroll(focus_line(state), total, chunks[0].height, state.scroll);
+    f.render_widget(Paragraph::new(lines).scroll((state.scroll, 0)), chunks[0]);
 
     // Context-aware hint footer.
     let hint = match state.focus {
@@ -987,6 +1179,12 @@ pub fn render(f: &mut Frame, area: Rect, state: &SettingsState, theme: &Theme) {
             ("↑↓/tab", "move"),
             ("type", "edit key"),
             ("^V", "reveal"),
+            ("^S", "save"),
+            ("esc", "close"),
+        ]),
+        Focus::Vendor(_) => bubble.help_line([
+            ("↑↓/tab", "move"),
+            ("←→/space", "toggle"),
             ("^S", "save"),
             ("esc", "close"),
         ]),
@@ -1106,6 +1304,37 @@ fn value_text(input: &KeyInput, focused: bool) -> String {
     let pos = input.cursor.min(chars.len());
     chars.insert(pos, '‸');
     chars.into_iter().collect()
+}
+
+/// One `[<vendor>] enabled` row (#244): the shared display name plus an
+/// on/off value styled like the notification toggle.
+fn provider_row(
+    id: &VendorId,
+    switch: ProviderSwitch,
+    focused: bool,
+    theme: &BubbleTheme,
+) -> Line<'static> {
+    let label = format!("{:<11}", id.display_name());
+    let value = if switch.enabled { "on" } else { "off" };
+    if focused {
+        Line::from(vec![
+            theme.span("   "),
+            Span::styled("▸ ", theme.accent.add_modifier(Modifier::BOLD)),
+            Span::styled(label, theme.title.add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" ◀ {value} ▶ "),
+                theme
+                    .selected
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            theme.span("     "),
+            Span::styled(label, theme.text),
+            Span::styled(format!("  {value}"), theme.muted),
+        ])
+    }
 }
 
 /// `[notifications] enabled` row — a plain on/off toggle styled like the
@@ -1257,10 +1486,18 @@ mod tests {
             primary_choices: VendorId::all().to_vec(),
             primary,
             keys: KEY_VENDORS.iter().map(|_| KeyInput::default()).collect(),
+            vendors: VendorId::all()
+                .iter()
+                .map(|id| ProviderSwitch {
+                    enabled: matches!(id.slug(), "anthropic" | "openai" | "zai" | "openrouter"),
+                    dirty: false,
+                })
+                .collect(),
             notify_enabled: true,
             notify_enabled_dirty: false,
             notify_threshold: KeyInput::from_config(Some("97")),
             status: String::new(),
+            scroll: 0,
         }
     }
 
@@ -1278,28 +1515,168 @@ mod tests {
     fn focus_cycles_through_primary_all_keys_notifications_and_save() {
         let mut f = Focus::Primary;
         let mut seen = vec![f];
-        // Full cycle = Primary + N key rows + both notification fields + Save.
-        for _ in 0..(KEY_VENDORS.len() + 4) {
+        // Full cycle = Primary + N key rows + every provider switch + both
+        // notification fields + Save.
+        for _ in 0..(KEY_VENDORS.len() + PROVIDER_SWITCH_COUNT + 4) {
             f = f.next();
             seen.push(f);
         }
-        // Primary, Key(0..n), NotifyEnabled, NotifyThreshold, Save, Primary.
+        // Primary, Key(0..n), Vendor(0..m), NotifyEnabled, NotifyThreshold,
+        // Save, Primary.
         assert_eq!(seen.first(), Some(&Focus::Primary));
         assert_eq!(seen.last(), Some(&Focus::Primary));
         assert!(seen.contains(&Focus::Key(0)));
         assert!(seen.contains(&Focus::Key(KEY_VENDORS.len() - 1)));
+        assert!(seen.contains(&Focus::Vendor(0)));
+        assert!(seen.contains(&Focus::Vendor(PROVIDER_SWITCH_COUNT - 1)));
         assert!(seen.contains(&Focus::NotifyEnabled));
         assert!(seen.contains(&Focus::NotifyThreshold));
         assert!(seen.contains(&Focus::Save));
-        // prev() is the inverse of next().
+        // prev() is the inverse of next() at every joint of the ring (#244
+        // inserted the provider rows between the credentials and alerts).
         assert_eq!(Focus::Primary.next().prev(), Focus::Primary);
         assert_eq!(Focus::Save.prev().next(), Focus::Save);
         assert_eq!(
+            Focus::Key(KEY_VENDORS.len() - 1).next(),
+            Focus::Vendor(0),
+            "the first provider row follows the last credential"
+        );
+        assert_eq!(Focus::Vendor(0).prev(), Focus::Key(KEY_VENDORS.len() - 1));
+        assert_eq!(
+            Focus::Vendor(PROVIDER_SWITCH_COUNT - 1).next(),
+            Focus::NotifyEnabled
+        );
+        assert_eq!(
             Focus::NotifyEnabled.prev(),
-            Focus::Key(KEY_VENDORS.len() - 1)
+            Focus::Vendor(PROVIDER_SWITCH_COUNT - 1)
         );
         assert_eq!(Focus::NotifyThreshold.next(), Focus::Save);
         assert_eq!(Focus::Primary.prev(), Focus::Save);
+    }
+
+    /// The focus ring must track the real vendor enumeration, not a stale
+    /// copy: a vendor added without this notice would make the last row
+    /// unreachable.
+    #[test]
+    fn provider_switch_count_matches_the_vendor_enumeration() {
+        assert_eq!(PROVIDER_SWITCH_COUNT, VendorId::all().len());
+    }
+
+    #[test]
+    fn from_config_prefills_provider_switches_from_enabled_vendors() {
+        let mut cfg = Config::default();
+        cfg.grok.enabled = true;
+        cfg.anthropic.enabled = false;
+        let s = SettingsState::from_config_with(&cfg, |_| false);
+        for (i, id) in VendorId::all().iter().enumerate() {
+            assert_eq!(
+                s.vendors[i],
+                ProviderSwitch {
+                    enabled: cfg.is_enabled(*id),
+                    dirty: false
+                },
+                "{}",
+                id.slug()
+            );
+        }
+        assert!(!s.vendors[vendor_index(VendorId::Anthropic)].enabled);
+        assert!(s.vendors[vendor_index(VendorId::Grok)].enabled);
+    }
+
+    fn vendor_index(id: VendorId) -> usize {
+        VendorId::all().iter().position(|v| *v == id).unwrap()
+    }
+
+    #[test]
+    fn provider_switch_flips_on_left_right_and_space() {
+        let mut s = blank_state(VendorId::Anthropic);
+        let grok = vendor_index(VendorId::Grok);
+        s.focus = Focus::Vendor(grok);
+        assert!(!s.vendors[grok].enabled);
+        handle_key(&mut s, KeyCode::Right, KeyModifiers::NONE);
+        assert_eq!(
+            s.vendors[grok],
+            ProviderSwitch {
+                enabled: true,
+                dirty: true
+            }
+        );
+        handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::NONE);
+        assert!(!s.vendors[grok].enabled);
+        handle_key(&mut s, KeyCode::Left, KeyModifiers::NONE);
+        assert!(s.vendors[grok].enabled);
+        // Any other key leaves the switch (and its dirty flag) alone.
+        handle_key(&mut s, KeyCode::Char('x'), KeyModifiers::NONE);
+        assert!(s.vendors[grok].enabled);
+        assert!(s.vendors[grok].dirty);
+        // A control chord never toggles.
+        handle_key(&mut s, KeyCode::Char(' '), KeyModifiers::CONTROL);
+        assert!(s.vendors[grok].enabled);
+        // Tab moves focus without touching the switch.
+        let before = s.vendors[grok];
+        handle_key(&mut s, KeyCode::Tab, KeyModifiers::NONE);
+        assert_ne!(s.focus, Focus::Vendor(grok));
+        assert_eq!(s.vendors[grok], before);
+    }
+
+    #[test]
+    fn save_writes_only_toggled_providers_and_round_trips() {
+        let (_dir, path) = temp_config(Some("# keep\n[anthropic]\nenabled = true\n"));
+        let mut s = blank_state(VendorId::Anthropic);
+        s.primary_choices = vec![VendorId::Anthropic];
+        // Turn Grok on and Anthropic off; leave every other switch untouched.
+        s.vendors[vendor_index(VendorId::Grok)].enabled = true;
+        s.vendors[vendor_index(VendorId::Grok)].dirty = true;
+        s.vendors[vendor_index(VendorId::Anthropic)].enabled = false;
+        s.vendors[vendor_index(VendorId::Anthropic)].dirty = true;
+        save_to_path(&s, &path).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.starts_with("# keep\n"), "{raw}");
+        assert!(raw.contains("[anthropic]\nenabled = false"), "{raw}");
+        assert!(raw.contains("[grok]\nenabled = true"), "{raw}");
+        // A vendor nobody touched keeps whatever the file had: no new
+        // `[zai] enabled = true` materializes, and a default-on vendor the
+        // file never mentioned stays unwritten.
+        assert!(!raw.contains("[zai]"), "{raw}");
+        assert!(!raw.contains("[openrouter]"), "{raw}");
+
+        let reloaded = Config::load_from(&path).unwrap();
+        assert!(reloaded.is_enabled(VendorId::Grok));
+        assert!(!reloaded.is_enabled(VendorId::Anthropic));
+        assert!(
+            reloaded.is_enabled(VendorId::Zai),
+            "untouched default stays on"
+        );
+    }
+
+    #[test]
+    fn an_untouched_overlay_save_writes_no_provider_sections() {
+        let (_dir, path) = temp_config(None);
+        let mut s = blank_state(VendorId::Anthropic);
+        s.primary_choices = vec![VendorId::Anthropic];
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("enabled ="), "{raw}");
+        assert!(!raw.contains("[grok]"), "{raw}");
+    }
+
+    /// The explicit switch is the user's word for it: pasting a credential
+    /// auto-enables its vendor, and an off toggled in the same save wins.
+    #[test]
+    fn an_explicit_provider_off_wins_over_a_pasted_credential() {
+        let (_dir, path) = temp_config(None);
+        let mut s = blank_state(VendorId::Zai);
+        s.primary_choices = vec![VendorId::Zai];
+        s.keys[key_index(VendorId::Zai)] = KeyInput::from_config(Some("sk-zai"));
+        s.keys[key_index(VendorId::Zai)].dirty = true;
+        s.vendors[vendor_index(VendorId::Zai)].enabled = false;
+        s.vendors[vendor_index(VendorId::Zai)].dirty = true;
+        save_to_path(&s, &path).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("api_key = \"sk-zai\""), "{raw}");
+        assert!(raw.contains("enabled = false"), "{raw}");
+        assert!(!Config::load_from(&path).unwrap().is_enabled(VendorId::Zai));
     }
 
     #[test]
@@ -2057,5 +2434,218 @@ enabled = true
             .unwrap_err()
             .to_string();
         assert!(error.contains("exceeds"));
+    }
+
+    // ─── Provider on/off switches (#244) ─────────────────────────────────────
+
+    #[test]
+    fn native_snapshot_lists_every_provider_with_its_enabled_state() {
+        let mut cfg = Config::default();
+        cfg.grok.enabled = true;
+        let raw = settings_snapshot_json_with(&cfg, |_| false).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+
+        let vendors = parsed["vendors"].as_array().unwrap();
+        assert_eq!(vendors.len(), VendorId::all().len());
+        let by_id = |slug: &str| {
+            vendors
+                .iter()
+                .find(|row| row["id"] == slug)
+                .unwrap_or_else(|| panic!("no {slug} row: {vendors:?}"))
+                .clone()
+        };
+        assert_eq!(by_id("anthropic")["enabled"], true);
+        assert_eq!(by_id("grok")["enabled"], true);
+        assert_eq!(by_id("kimi")["enabled"], false);
+        // Labels come from the shared display-name source, not a second table.
+        assert_eq!(by_id("anthropic")["label"], "Claude");
+        assert_eq!(by_id("opencode-go")["label"], "OpenCode Go");
+    }
+
+    #[test]
+    fn native_patch_toggles_providers_and_preserves_the_rest_of_the_file() {
+        let (_dir, path) = temp_config(Some("# keep\n[zai]\nenabled = true\napi_key = \"k\"\n"));
+        let cfg = Config::load_from(&path).unwrap();
+        let request = serde_json::json!({
+            "schema_version": 1,
+            "vendors": {"grok": true, "zai": false}
+        });
+
+        apply_settings_json_to_path(&cfg, &request.to_string(), &path).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.starts_with("# keep\n"), "{raw}");
+        assert!(raw.contains("api_key = \"k\""), "{raw}");
+        let reloaded = Config::load_from(&path).unwrap();
+        assert!(reloaded.is_enabled(VendorId::Grok));
+        assert!(!reloaded.is_enabled(VendorId::Zai));
+    }
+
+    #[test]
+    fn native_patch_refuses_an_unknown_provider_slug_without_writing() {
+        let (_dir, path) = temp_config(Some("[zai]\nenabled = true\n"));
+        let cfg = Config::load_from(&path).unwrap();
+        for bad in ["", "mytool", "not-a-vendor"] {
+            let request = serde_json::json!({
+                "schema_version": 1,
+                "vendors": {bad: true}
+            });
+            let error = state_from_apply_request(&cfg, &request.to_string())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("unknown provider"), "{bad}: {error}");
+        }
+        // A rejected patch leaves the file untouched.
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[zai]\nenabled = true\n"
+        );
+    }
+
+    /// A vendor-toggle-only patch needs neither a primary nor a key change.
+    #[test]
+    fn native_vendor_toggle_alone_is_a_valid_patch() {
+        let cfg = Config::default();
+        let request = serde_json::json!({
+            "schema_version": 1,
+            "vendors": {"kimi": true}
+        });
+        let state = state_from_apply_request(&cfg, &request.to_string()).unwrap();
+        let kimi = vendor_index(VendorId::Kimi);
+        assert_eq!(
+            state.vendors[kimi],
+            ProviderSwitch {
+                enabled: true,
+                dirty: true
+            }
+        );
+    }
+
+    // ─── Overlay scroll (#244: the body outgrew small terminals) ────────────
+
+    #[test]
+    fn body_layout_positions_every_focusable_row_without_overlap() {
+        let keys = 5;
+        let vendors = 7;
+        let layout = body_layout(keys, vendors);
+        // Credentials: header at 3, rows 4..9, blank 9.
+        assert_eq!(layout.primary, 1);
+        assert_eq!(layout.first_key, 4);
+        // Providers: blank after keys, header, then rows.
+        assert_eq!(layout.first_vendor, layout.first_key + keys + 2);
+        assert_eq!(layout.notify_enabled, layout.first_vendor + vendors + 2);
+        assert_eq!(layout.notify_threshold, layout.notify_enabled + 1);
+        assert_eq!(layout.save, layout.notify_threshold + 2);
+        assert_eq!(layout.rows, layout.save + 1);
+        // No two focusable rows share a line.
+        let mut rows = vec![
+            layout.primary,
+            layout.notify_enabled,
+            layout.notify_threshold,
+            layout.save,
+        ];
+        rows.extend(layout.first_key..layout.first_key + keys);
+        rows.extend(layout.first_vendor..layout.first_vendor + vendors);
+        rows.sort_unstable();
+        let mut unique = rows.clone();
+        unique.dedup();
+        assert_eq!(rows, unique);
+        assert!(rows.iter().all(|row| *row < layout.rows));
+    }
+
+    #[test]
+    fn focus_line_matches_the_body_layout_for_every_focus_variant() {
+        let state = blank_state(VendorId::Anthropic);
+        let layout = body_layout(KEY_VENDORS.len(), state.vendors.len());
+        let cases = [
+            (Focus::Primary, layout.primary),
+            (Focus::Key(0), layout.first_key),
+            (
+                Focus::Key(KEY_VENDORS.len() - 1),
+                layout.first_key + KEY_VENDORS.len() - 1,
+            ),
+            (Focus::Vendor(0), layout.first_vendor),
+            (
+                Focus::Vendor(state.vendors.len() - 1),
+                layout.first_vendor + state.vendors.len() - 1,
+            ),
+            (Focus::NotifyEnabled, layout.notify_enabled),
+            (Focus::NotifyThreshold, layout.notify_threshold),
+            (Focus::Save, layout.save),
+        ];
+        for (focus, want) in cases {
+            let mut s = state.clone();
+            s.focus = focus;
+            assert_eq!(focus_line(&s), want, "{focus:?}");
+        }
+    }
+
+    #[test]
+    fn follow_focus_scroll_sticks_jumps_and_clamps() {
+        // Already visible: unchanged.
+        assert_eq!(follow_focus_scroll(3, 50, 10, 0), 0);
+        assert_eq!(follow_focus_scroll(9, 50, 10, 0), 0);
+        // Below the viewport: pinned to the bottom edge.
+        assert_eq!(follow_focus_scroll(10, 50, 10, 0), 1);
+        assert_eq!(follow_focus_scroll(25, 50, 10, 5), 16);
+        // Above the window: jumps up to the focused line.
+        assert_eq!(follow_focus_scroll(2, 50, 10, 16), 2);
+        // Never past the scrollable range.
+        assert_eq!(follow_focus_scroll(49, 50, 10, 0), 40);
+        assert_eq!(follow_focus_scroll(60, 50, 10, 0), 40);
+        // Degenerate viewport/total: no scrolling.
+        assert_eq!(follow_focus_scroll(5, 50, 0, 3), 0);
+        assert_eq!(follow_focus_scroll(5, 0, 10, 3), 0);
+    }
+
+    /// End-to-end through the real renderer: on a terminal shorter than the
+    /// overlay body, focusing a late provider switch keeps it and the Save
+    /// button on screen — the reason the scroll exists.
+    #[test]
+    fn render_scrolls_the_body_so_a_late_row_and_save_stay_visible() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(100, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = crate::theme::Theme::default();
+        let mut state = blank_state(VendorId::Anthropic);
+        state.focus = Focus::Vendor(vendor_index(VendorId::Grok));
+
+        terminal
+            .draw(|f| render(f, f.area(), &mut state, &theme))
+            .unwrap();
+
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(
+            rendered.iter().any(|line| line.contains("Grok")),
+            "focused provider row must be visible: {rendered:?}"
+        );
+        // The Save control is the last thing focus moves to; keep it on
+        // screen too (it renders after the provider rows).
+        let mut state = blank_state(VendorId::Anthropic);
+        state.focus = Focus::Save;
+        terminal
+            .draw(|f| render(f, f.area(), &mut state, &theme))
+            .unwrap();
+        let rendered = buffer_text(terminal.backend().buffer());
+        assert!(
+            rendered.iter().any(|line| line.contains("Save")),
+            "Save must stay visible: {rendered:?}"
+        );
+    }
+
+    /// Every line of a TestBackend buffer as a String, for substring checks.
+    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
+        let area = buffer.area;
+        let mut lines = Vec::new();
+        for y in area.top()..area.bottom() {
+            let mut line = String::new();
+            for x in area.left()..area.right() {
+                line.push(buffer[(x, y)].symbol().chars().next().unwrap_or(' '));
+            }
+            lines.push(line.trim_end().to_string());
+        }
+        lines
     }
 }

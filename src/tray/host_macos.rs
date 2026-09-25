@@ -34,6 +34,7 @@ use tao::platform::macos::{
     ActivationPolicy, EventLoopExtMacOS, WindowBuilderExtMacOS, WindowExtMacOS,
 };
 use tao::window::{Window, WindowBuilder};
+use tray_icon::menu::{ContextMenu, Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use wry::http::{Request, Response, StatusCode, header::CONTENT_TYPE};
 use wry::{WebView, WebViewBuilder, WebViewBuilderExtDarwin};
@@ -73,6 +74,8 @@ const RELAUNCH_WAIT: Duration = Duration::from_secs(10);
 
 enum UserEvent {
     Tray(TrayIconEvent),
+    /// A fallback-menu item fired (#249); only attached when the webview is absent.
+    Menu(MenuEvent),
     Ipc(String),
     Report(Value),
     Entry(Value),
@@ -127,10 +130,21 @@ impl Theme {
     }
 }
 
+/// Items of the emergency menu (#249), kept alive so their ids can be matched
+/// against incoming `MenuEvent`s. Built only by [`attach_fallback_menu`].
+struct FallbackMenu {
+    refresh: MenuItem,
+    quit: MenuItem,
+}
+
 struct TrayState {
     window: Window,
     webview: Option<WebView>,
     tray: TrayIcon,
+    /// Emergency status-item menu, attached only when `webview` is `None`
+    /// (#249): an accessory app has no app menu, so this is the only quit
+    /// affordance when the popover cannot be built.
+    fallback_menu: Option<FallbackMenu>,
     worker: mpsc::Sender<WorkerCmd>,
     proxy: EventLoopProxy<UserEvent>,
     payload: Value,
@@ -182,6 +196,14 @@ fn run_loop() -> Result<(), String> {
             let _ = proxy.send_event(UserEvent::Tray(event));
         }));
     }
+    // The fallback menu (#249) delivers its selections here, the same shared
+    // muda channel the Windows host's context menu uses.
+    {
+        let proxy = proxy.clone();
+        MenuEvent::set_event_handler(Some(move |event| {
+            let _ = proxy.send_event(UserEvent::Menu(event));
+        }));
+    }
     let window = WindowBuilder::new()
         .with_title("AI Usage")
         .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -223,6 +245,15 @@ fn run_loop() -> Result<(), String> {
 
     let theme = Theme::Light;
     let webview = build_webview(&window, proxy.clone()).ok();
+    // #249: when the WKWebView could not be built there is no popover, and an
+    // accessory app has no app menu — attach the emergency menu so the status
+    // item still offers Refresh and a clean Quit. Normal operation never
+    // attaches one (see `build_tray`).
+    let fallback_menu = if menu_bar::fallback_menu_attached(webview.is_some()) {
+        attach_fallback_menu(&tray)
+    } else {
+        None
+    };
     round_corners(&window);
     let native_background = install_native_background(&window);
 
@@ -230,6 +261,7 @@ fn run_loop() -> Result<(), String> {
         window,
         webview,
         tray,
+        fallback_menu,
         worker: cmd_tx,
         proxy: proxy.clone(),
         payload: empty,
@@ -257,6 +289,9 @@ fn run_loop() -> Result<(), String> {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::UserEvent(UserEvent::Tray(tray_event)) => handle_tray(&mut state, tray_event),
+            Event::UserEvent(UserEvent::Menu(menu_event)) => {
+                handle_menu(&mut state, &menu_event, control_flow);
+            }
             Event::UserEvent(UserEvent::Ipc(body)) => handle_ipc(&mut state, &body, control_flow),
             Event::UserEvent(UserEvent::Report(payload)) => apply_payload(&mut state, payload),
             Event::UserEvent(UserEvent::Entry(entry)) => apply_entry(&mut state, entry),
@@ -751,6 +786,12 @@ fn popover_payload(state: &TrayState) -> String {
 }
 
 fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
+    // With the fallback menu attached (#249) AppKit routes clicks to the menu
+    // and there is no popover to toggle; anything that still arrives here is
+    // ignored rather than flashing an empty window.
+    if state.fallback_menu.is_some() {
+        return;
+    }
     if let TrayIconEvent::Click {
         button,
         button_state: MouseButtonState::Up,
@@ -769,6 +810,37 @@ fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
             MouseButton::Middle => {}
         }
     }
+}
+
+/// A fallback-menu selection (#249). Quit exits the event loop — the same
+/// path the popover's own Quit control takes ("quit" IPC →
+/// `ControlFlow::Exit`), so `LoopDestroyed` still shuts the worker down
+/// cleanly instead of leaving it mid-fetch.
+fn handle_menu(state: &mut TrayState, event: &MenuEvent, control_flow: &mut ControlFlow) {
+    let Some(menu) = state.fallback_menu.as_ref() else {
+        return;
+    };
+    if event.id == menu.quit.id() {
+        *control_flow = ControlFlow::Exit;
+    } else if event.id == menu.refresh.id() {
+        let _ = state.worker.send(WorkerCmd::Refresh);
+    }
+}
+
+/// Build the emergency status-item menu and hand it to the tray (#249). The
+/// menu takes the clicks (`NSStatusItem` menu interception, the behavior
+/// `build_tray` normally avoids) — with no webview there is no popover for
+/// them to open instead.
+fn attach_fallback_menu(tray: &TrayIcon) -> FallbackMenu {
+    let [refresh, quit] = menu_bar::fallback_menu_items();
+    let refresh = MenuItem::with_id(refresh.id, refresh.label, true, None);
+    let quit = MenuItem::with_id(quit.id, quit.label, true, None);
+    let menu = Menu::new();
+    let _ = menu.append_items(&[&refresh, &quit]);
+    tray.set_menu(Some(Box::new(menu) as Box<dyn ContextMenu>));
+    tray.set_show_menu_on_left_click(true);
+    tray.set_show_menu_on_right_click(true);
+    FallbackMenu { refresh, quit }
 }
 
 fn persist_menu_bar_value(key: &str, value: toml_edit::Value) {

@@ -19,7 +19,7 @@ use crate::vendor::VendorId;
 const WIDE_LAYOUT_MIN_WIDTH: u16 = 86;
 const SIDEBAR_WIDTH: u16 = 28;
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -33,9 +33,13 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_body(f, app, chunks[1]);
     draw_footer(f, app, chunks[2]);
 
-    // Settings still floats on top of everything.
-    if let Some(s) = &app.settings {
-        crate::tui::settings::render(f, f.area(), s, &app.theme);
+    // Settings still floats on top of everything. render() scrolls the
+    // overlay body to follow focus, which needs the mutable state.
+    if app.settings.is_some() {
+        let theme = app.theme.clone();
+        if let Some(s) = app.settings.as_mut() {
+            crate::tui::settings::render(f, f.area(), s, &theme);
+        }
     }
 }
 
@@ -492,7 +496,7 @@ mod tests {
         let tab = app.tabs_meta[0].clone();
         assert!(app.begin_refresh(&tab));
 
-        let out = body_text(&app);
+        let out = body_text(&mut app);
         assert!(out.contains("$0.00"), "ready metrics disappeared: {out}");
         assert!(out.contains('↻'), "refresh indicator missing: {out}");
         assert!(!out.contains("fetching…"), "ready row flickered: {out}");
@@ -510,7 +514,7 @@ mod tests {
         app
     }
 
-    fn body_text(app: &App) -> String {
+    fn body_text(app: &mut App) -> String {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
         let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
@@ -528,7 +532,7 @@ mod tests {
     #[test]
     fn full_layout_takes_the_body_and_hides_the_vendor_sidebar() {
         use crate::config::ContextLayout;
-        let out = body_text(&app_with_context(ContextLayout::Full));
+        let out = body_text(&mut app_with_context(ContextLayout::Full));
         assert!(out.contains("Claude context"), "{out}");
         assert!(
             !out.contains("vendors"),
@@ -540,7 +544,7 @@ mod tests {
     fn split_and_bottom_layouts_keep_the_dashboard_visible() {
         use crate::config::ContextLayout;
         for layout in [ContextLayout::Split, ContextLayout::Bottom] {
-            let out = body_text(&app_with_context(layout));
+            let out = body_text(&mut app_with_context(layout));
             assert!(out.contains("Claude context"), "{layout:?}: {out}");
             assert!(out.contains("vendors"), "{layout:?}: {out}");
         }
@@ -554,7 +558,7 @@ mod tests {
         fn rendered(mut app: App, enabled: bool) -> String {
             app.context_enabled = enabled;
             let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
-            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
             terminal
                 .backend()
                 .buffer()
