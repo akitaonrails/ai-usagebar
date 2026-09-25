@@ -30,6 +30,24 @@ Each release is also published at
   Checking, then You're Up to Date, Update Available with Install, or the
   reason it failed with Try Again. Settings → Check Now opens the same dialog.
 
+- **Popover Style: Classic or Native, on macOS and Windows** (Settings →
+  Appearance → Popover Style). Classic is the app's own card layout, the same
+  everywhere; Native follows the system: v1.23.0's glass dashboard over AppKit
+  glass on macOS, and Windows 11 Fluent over Acrylic on Windows (a solid panel
+  on Windows 10). Both draw the same provider card, so collapsing, the reset
+  popover, the row menu, pace notes, errors and account switching work in
+  either; Native shows one provider at a time behind tabs of logos and
+  percentages. Classic keeps each host's width (320 pt on macOS, 300 on
+  Windows); Native is 390.
+- **The macOS menu bar can show logos** (Settings → Menu Bar → Menu Bar
+  Shows: Chart or Logos): each provider's logo followed by the values of the
+  metrics starred in it, two starred metrics stacked. Both looks show exactly
+  the starred metrics.
+- **The usage goal works in both styles**; in v1.23.0 only the glass
+  dashboard drew it.
+- **Text cut short shows the full value on hover**, and picker values are
+  capped so a long one no longer pushes its label out.
+
 ### Changed
 
 - **The Grok Bot card names the subscription that bills it** — "Cursor
@@ -50,6 +68,28 @@ Each release is also published at
   (with Always Show Pacing on), and explains on hover when the pace appears.
   The estimate now waits 1% of the window but never more than an hour, so a
   weekly or monthly meter no longer sits blank for 1h 41m or 7h 12m.
+
+- **The macOS popover opens in Classic again**, the layout it had before
+  v1.23.0; the glass dashboard is one choice away as the Native style. A new
+  look now ships as a style instead of replacing the one people use
+  (`CONTRIBUTING.md` → Changing the tray popover UI).
+- **The macOS menu bar shows the chart by default again**, and the text
+  summary's options are gone: provider names, Show All Providers, Hide Usage
+  Value, Usage Window, Focused Provider and the middle-click provider
+  cycling. The stars already choose which providers and which quota windows
+  appear, so these either repeated that choice or overrode it. Their old
+  `config.toml` keys are ignored, not rejected.
+- **Every popover screen is translated**, the update dialog, error hints and
+  update messages included, and the language list reads English and
+  Português. Strings are Paraglide JS messages now, so a missing translation
+  fails the build instead of falling back to English.
+- **Native lets the system material show**: thin surfaces with one margin on
+  every edge. On macOS it follows the macOS 26 UI kit: 24 pt controls with a
+  6 pt radius, tabs as a segmented control, the small switch with its capsule
+  knob, menus with an accent-filled highlight, group boxes for cards and
+  square tooltips. On Windows it follows Fluent: 4 px controls with their
+  hairline border, 8 px cards, WinUI toggles and Fluent 2 tabs. Settings uses
+  tabs only in Native.
 
 ### Fixed
 

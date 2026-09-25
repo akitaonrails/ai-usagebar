@@ -32,7 +32,7 @@ function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        "flex h-[var(--control-h)] w-fit items-center justify-between gap-[var(--gap-inline)] rounded-[var(--radius-sm)] border-0 bg-[var(--control-fill)] px-[var(--control-px)] py-0 text-[length:var(--sz-control)] whitespace-nowrap outline-none hover:bg-[var(--control-fill-hover)] disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-muted-foreground *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-[var(--gap-controls)] [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        "flex h-[var(--control-h)] w-fit min-w-0 items-center justify-between gap-[var(--gap-inline)] rounded-[var(--radius-sm)] border-0 bg-[var(--control-fill)] px-[var(--control-px)] py-0 text-[length:var(--sz-control)] whitespace-nowrap outline-none hover:bg-[var(--control-fill-hover)] disabled:cursor-not-allowed disabled:opacity-50 data-[placeholder]:text-muted-foreground *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:flex *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-[var(--gap-controls)] [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className
       )}
       {...props}
@@ -57,7 +57,7 @@ function SelectContent({
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
-          "relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] overflow-x-hidden overflow-y-auto rounded-[var(--menu-radius)] border-0 bg-popover text-popover-foreground shadow-[var(--menu-shadow)]",
+          "relative z-50 max-h-(--radix-select-content-available-height) w-max min-w-[var(--radix-select-trigger-width)] max-w-[calc(var(--popover-w)-2*var(--panel-pad))] overflow-x-hidden overflow-y-auto rounded-[var(--menu-radius)] border-0 bg-popover text-popover-foreground shadow-[var(--menu-shadow)]",
           position === "popper" &&
             "data-[side=bottom]:translate-y-[var(--space-xs)] data-[side=left]:-translate-x-[var(--space-xs)] data-[side=right]:translate-x-[var(--space-xs)] data-[side=top]:-translate-y-[var(--space-xs)]",
           className
@@ -104,7 +104,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-[var(--gap-controls)] rounded-[var(--radius-sm)] py-[var(--menu-item-py)] pr-[calc(var(--icon-row)+2*var(--menu-item-px))] pl-[var(--menu-item-px)] text-[length:var(--sz-control)] outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[var(--icon-row)] [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "relative flex w-full cursor-default items-center gap-[var(--gap-controls)] rounded-[var(--radius-sm)] py-[var(--menu-item-py)] pr-[calc(var(--icon-row)+2*var(--menu-item-px))] pl-[var(--menu-item-px)] text-[length:var(--sz-control)] whitespace-normal outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-[var(--icon-row)] [&_svg:not([class*='text-'])]:text-muted-foreground *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:flex-1 [&_[data-slot=select-item-text]]:whitespace-normal [&_[data-slot=select-item-text]]:break-words",
         className
       )}
       {...props}
@@ -117,7 +117,9 @@ function SelectItem({
           <CheckIcon className="size-[var(--icon-row)]" />
         </SelectPrimitive.ItemIndicator>
       </span>
-      <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      <SelectPrimitive.ItemText data-slot="select-item-text" className="min-w-0 flex-1 whitespace-normal break-words">
+        {children}
+      </SelectPrimitive.ItemText>
     </SelectPrimitive.Item>
   )
 }

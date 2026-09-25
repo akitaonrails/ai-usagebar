@@ -4,12 +4,13 @@ import type { RowAction } from "@/components/RowMenu";
 import type { RowLists } from "@/components/dnd";
 import { UpdateDialog } from "@/components/UpdateDialog";
 import type { Layout, Screen } from "@/lib/types";
-import { LanguageProvider, translate } from "@/lib/i18n";
+import { LanguageProvider } from "@/lib/i18n";
+import { m } from "@/paraglide/messages.js";
 import { cn } from "@/lib/utils";
 import { About } from "@/screens/About";
 import { Customize } from "@/screens/Customize";
 import { Dashboard } from "@/screens/Dashboard";
-import { MacDashboard } from "@/screens/MacDashboard";
+import { NativeDashboard } from "@/screens/NativeDashboard";
 import { ProviderDetail } from "@/screens/ProviderDetail";
 import { Settings, type SettingsTab } from "@/screens/Settings";
 import {
@@ -57,6 +58,7 @@ export default function App() {
   const shellRef = useRef<HTMLDivElement>(null);
   const [payload, setPayload] = useState(() => emptyPayload(""));
   const [layout, setLayout] = useState<Layout>(() => loadLayout(storageRef.current));
+  const native = layout.popoverStyle === "native";
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("general");
   const [direction, setDirection] = useState<Direction>("forward");
@@ -78,7 +80,7 @@ export default function App() {
   const [popoverVisible, setPopoverVisible] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const cards = useMemo(() => (payload.hostError ? [] : projectCards(payload, nowMs)), [payload, nowMs]);
+  const cards = useMemo(() => (payload.hostError ? [] : projectCards(payload, nowMs, layout.language)), [payload, nowMs, layout.language]);
   const visible = useMemo(() => applyCardLayout(cards, layout), [cards, layout]);
   const currentCard = cards.find((card) => card.id === providerId);
 
@@ -89,7 +91,7 @@ export default function App() {
   }
 
   function go(next: Screen) {
-    if (next === "customize" && payload.os === "macos") {
+    if (next === "customize" && native) {
       setSettingsTab("providers");
       next = "settings";
     }
@@ -132,16 +134,36 @@ export default function App() {
   }
 
   useEffect(() => {
-    applyTheme(layout.theme);
+    // The host tints its native backdrop by the page's theme, so it hears about every change,
+    // including a System theme flipping with the OS, which moves no height to report.
+    const apply = () => {
+      applyTheme(layout.theme);
+      sendCommand("resize", { theme: resolvedTheme(layout.theme), style: layout.popoverStyle });
+    };
+    apply();
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyTheme(layout.theme);
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, [layout.theme]);
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [layout.theme, layout.popoverStyle]);
 
   useEffect(() => {
     document.documentElement.lang = layout.language;
   }, [layout.language]);
+
+  useEffect(() => {
+    const style = document.documentElement.style;
+    if (payload.accent) {
+      style.setProperty("--system-accent-light", payload.accent.light);
+      style.setProperty("--system-accent-dark", payload.accent.dark);
+    } else {
+      style.removeProperty("--system-accent-light");
+      style.removeProperty("--system-accent-dark");
+    }
+    return () => {
+      style.removeProperty("--system-accent-light");
+      style.removeProperty("--system-accent-dark");
+    };
+  }, [payload.accent]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -153,7 +175,7 @@ export default function App() {
       const next = parseHostPayload(raw);
       setPayload(next);
       setLayout((current) => {
-        const cards = projectCards(next, Date.now());
+        const cards = projectCards(next, Date.now(), current.language);
         const synced = seedStars(absorbPayload(current, next.entries), cards);
         if (synced !== current) saveLayout(storageRef.current, synced);
         sendCommand("strip", stripCommand(synced, cards));
@@ -209,7 +231,7 @@ export default function App() {
       const height = measured > 0 ? Math.max(measured, 360) : measured;
       if (height <= 0 || height === last) return;
       last = height;
-      sendCommand("resize", { height, theme: resolvedTheme(layout.theme) });
+      sendCommand("resize", { height, theme: resolvedTheme(layout.theme), style: layout.popoverStyle });
     };
     const schedule = () => {
       if (frame === 0) frame = window.setTimeout(report, 0);
@@ -338,27 +360,28 @@ export default function App() {
 
   const title =
     screen === "customize"
-      ? translate(layout.language, "Customize")
+      ? m.customize({}, { locale: layout.language })
       : screen === "settings"
-        ? translate(layout.language, "Settings")
+        ? m.settings({}, { locale: layout.language })
         : screen === "about"
-          ? translate(layout.language, "About")
-          : currentCard?.title || "Provider";
+          ? m.about({}, { locale: layout.language })
+          : currentCard?.title || m.provider({}, { locale: layout.language });
 
   return (
     <LanguageProvider language={layout.language}>
     <div
       ref={shellRef}
+      data-os={payload.os}
       className={cn(
         "flex h-full flex-col overflow-hidden rounded-[var(--window-radius)] bg-background text-foreground",
-        payload.os === "macos" && "mac-panel",
+        native && "native-panel",
       )}
     >
       {screen !== "dashboard" ? (
         <TopBar
           resetArmed={resetArmed}
           title={title}
-          resetLabel={screen === "customize" ? translate(layout.language, "Reset All Customization") : screen === "provider" ? `${translate(layout.language, "Reset")} ${title}` : undefined}
+          resetLabel={screen === "customize" ? m.reset_all_customization({}, { locale: layout.language }) : screen === "provider" ? `${m.reset({}, { locale: layout.language })} ${title}` : undefined}
           onBack={goBack}
           onReset={screen === "customize" ? resetAll : screen === "provider" ? () => resetProviderRows(providerId) : undefined}
         />
@@ -374,14 +397,29 @@ export default function App() {
           )}
         >
           {screen === "dashboard" ? (
-            payload.os === "macos" ? (
-              <MacDashboard
+            // Native began as the macOS dashboard and now serves every OS.
+            native ? (
+              <NativeDashboard
                 cards={visible}
+                hint={hintPending(layout)}
                 layout={layout}
                 nowMs={nowMs}
                 payload={payload}
+                onCustomizeProvider={(id) => openProvider(id, "dashboard")}
+                onDismissHint={() => commit({ ...layout, hintDismissed: true })}
                 onOpenCustomize={() => go("customize")}
                 onOpenSettings={() => go("settings")}
+                onResetProvider={resetProviderRows}
+                onRowAction={onRowAction}
+                onRowMenuOpenChange={setRowMenuOpen}
+                onSwitchAccount={(vendor, label) => sendCommand("switch-account", { vendor, label })}
+                onToggleCollapse={(id) => {
+                  const collapsed = { ...layout.collapsed };
+                  if (collapsed[id]) delete collapsed[id];
+                  else collapsed[id] = true;
+                  commit({ ...layout, collapsed });
+                }}
+                onToggleShowAs={toggleShowAs}
               />
             ) : (
               <Dashboard
@@ -477,6 +515,7 @@ export default function App() {
               onShowAs={(showAs) => commit({ ...layout, showAs })}
               onTheme={(theme) => commit({ ...layout, theme })}
               onTimeFormat={(timeFormat) => commit({ ...layout, timeFormat })}
+              onPopoverStyle={(popoverStyle) => commit({ ...layout, popoverStyle })}
             />
           ) : null}
         </div>
@@ -485,6 +524,7 @@ export default function App() {
         nowMs={nowMs}
         optionsOpen={optionsOpen}
         payload={payload}
+        popoverStyle={layout.popoverStyle}
         updatePending={Boolean(payload.update?.version)}
         onCheckUpdates={checkForUpdates}
         onOpenAbout={openAbout}

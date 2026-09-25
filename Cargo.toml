@@ -109,14 +109,18 @@ objc2-app-kit = { version = "0.3.2", features = [
     "NSEvent",
     "NSGraphics",
     "NSGlassEffectView",
+    "NSAttributedString",
     "NSImage",
     "NSImageRep",
+    "NSFont",
+    "NSFontDescriptor",
     "NSResponder",
     "NSScreen",
     "NSStatusBarButton",
     "NSView",
     "NSVisualEffectView",
     "NSWindow",
+    "NSStringDrawing",
     "block2",
 ] }
 objc2-quartz-core = { version = "0.3.2", features = ["CALayer"] }

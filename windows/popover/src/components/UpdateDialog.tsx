@@ -6,6 +6,8 @@ import MdiLoading from "~icons/mdi/loading";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import type { Payload, UpdateAction } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { m } from "@/paraglide/messages.js";
+import { useI18n } from "@/lib/i18n";
 import { sendCommand, updateAction, updateMessage } from "../model.js";
 
 /** A check with no answer by now is reported, not left spinning. */
@@ -46,7 +48,8 @@ export function UpdateDialog({
   onCheck,
   onOpenChange,
 }: UpdateDialogProps) {
-  const view = viewFor(payload, checkBaseline, checkRequestedAt, nowMs);
+  const { language } = useI18n();
+  const view = viewFor(payload, checkBaseline, checkRequestedAt, nowMs, language);
 
   function run(action: UpdateAction) {
     if (action.cmd === "open-url") {
@@ -124,14 +127,14 @@ export function UpdateDialog({
   );
 }
 
-function viewFor(payload: Payload, checkBaseline: number, checkRequestedAt: number, nowMs: number): View {
+function viewFor(payload: Payload, checkBaseline: number, checkRequestedAt: number, nowMs: number, language: "en" | "pt-BR"): View {
   const update = payload.update;
   const state = update?.state;
-  const action = updateAction(update, payload.repository);
+  const action = updateAction(update, payload.repository, language);
   const spinner = <MdiLoading className="animate-spin" />;
 
   if (state === "downloading" || state === "installing") {
-    return { icon: spinner, message: updateMessage(update), primary: action, secondary: "", title: "Updating…", tone: "muted" };
+    return { icon: spinner, message: updateMessage(update, language), primary: action, secondary: "", title: m.updating({}, { locale: language }), tone: "muted" };
   }
   // Compare the host's stamps with each other, never with this WebView's clock.
   const answered = payload.updateCheckedAt !== checkBaseline && state !== "checking";
@@ -139,49 +142,49 @@ function viewFor(payload: Payload, checkBaseline: number, checkRequestedAt: numb
     if (nowMs - checkRequestedAt < NO_ANSWER_MS) {
       return {
         icon: spinner,
-        message: "Looking for a newer release…",
+        message: m.looking_for_newer_release({}, { locale: language }),
         primary: null,
-        secondary: "Cancel",
-        title: "Checking for Updates…",
+        secondary: m.cancel({}, { locale: language }),
+        title: m.checking_for_updates({}, { locale: language }),
         tone: "muted",
       };
     }
     return {
       icon: <MdiAlertCircle />,
-      message: "The update check did not answer. Check your connection and try again.",
-      primary: updateAction(null, payload.repository),
-      secondary: "Close",
-      title: "No Answer",
+      message: m.update_check_no_answer({}, { locale: language }),
+      primary: updateAction(null, payload.repository, language),
+      secondary: m.close({}, { locale: language }),
+      title: m.no_answer({}, { locale: language }),
       tone: "red",
     };
   }
   if (!update) {
-    const version = payload.version ? `AI Usage ${payload.version}` : "This build";
+    const version = payload.version ? `AI Usage ${payload.version}` : m.this_build({}, { locale: language });
     return {
       icon: <MdiCheckCircle />,
-      message: `${version} is the latest version.`,
+      message: m.latest_version({ version }, { locale: language }),
       primary: null,
-      secondary: "OK",
-      title: "You're Up to Date",
+      secondary: m.ok({}, { locale: language }),
+      title: m.youre_up_to_date({}, { locale: language }),
       tone: "green",
     };
   }
   if (state === "failed") {
     return {
       icon: <MdiAlertCircle />,
-      message: updateMessage(update),
+      message: updateMessage(update, language),
       primary: action,
-      secondary: "Close",
-      title: update.version ? "Couldn't Update" : "Couldn't Check for Updates",
+      secondary: m.close({}, { locale: language }),
+      title: update.version ? m.couldnt_update_title({}, { locale: language }) : m.couldnt_check_for_updates_title({}, { locale: language }),
       tone: "red",
     };
   }
   return {
     icon: <MdiArrowDownCircle />,
-    message: updateMessage(update),
+    message: updateMessage(update, language),
     primary: action,
-    secondary: "Later",
-    title: "Update Available",
+    secondary: m.later({}, { locale: language }),
+    title: m.update_available_title({}, { locale: language }),
     tone: "accent",
   };
 }

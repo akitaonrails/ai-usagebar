@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useI18n } from "@/lib/i18n";
+import { m } from "@/paraglide/messages.js";
 
 export type RowAction = "always" | "customize" | "demand" | "hide" | "refresh" | "star";
 
@@ -33,7 +33,6 @@ interface RowMenuProps {
  * laid over the row, and `contextmenu` opens the menu programmatically.
  */
 export function RowMenu({ children, inAlways, providerTitle, starred, onAction, onOpenChange }: RowMenuProps) {
-  const { t } = useI18n();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -65,31 +64,31 @@ export function RowMenu({ children, inAlways, providerTitle, starred, onAction, 
       <DropdownMenuContent align="end" sideOffset={2}>
         <DropdownMenuItem onSelect={() => onAction("hide")}>
           <MdiEyeOff />
-          <span className="flex-1">{t("Hide row")}</span>
+          <span className="flex-1">{m.hide_row()}</span>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => onAction("star")}>
           {starred ? <MdiStar /> : <MdiStarOutline />}
-          <span className="flex-1">{t(starred ? "Unstar from menu bar" : "Star for menu bar")}</span>
+          <span className="flex-1">{starred ? m.unstar_from_menu_bar() : m.star_for_menu_bar()}</span>
         </DropdownMenuItem>
         {inAlways ? (
           <DropdownMenuItem onSelect={() => onAction("demand")}>
             <MdiPinOff />
-            <span className="flex-1">{t("Show on demand")}</span>
+            <span className="flex-1">{m.show_on_demand()}</span>
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem onSelect={() => onAction("always")}>
             <MdiPin />
-            <span className="flex-1">{t("Always show")}</span>
+            <span className="flex-1">{m.always_show()}</span>
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => onAction("refresh")}>
           <MdiRefresh />
-          <span className="flex-1">{t("Refresh")} {providerTitle}</span>
+          <span className="flex-1">{m.refresh()} {providerTitle}</span>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => onAction("customize")}>
           <MdiTune />
-          <span className="flex-1">{t("Customize")} {providerTitle}</span>
+          <span className="flex-1">{m.customize()} {providerTitle}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

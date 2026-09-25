@@ -37,7 +37,7 @@
   --green: #34c759;
   --accent: var(--blue);
 
-  /* Chrome: back/reset circles, Options capsule, glass bars. */
+  /* Chrome: back/reset circles, Options capsule, translucent bars. */
   --control-fill: rgba(0, 0, 0, 0.06);
   --control-fill-hover: rgba(0, 0, 0, 0.1);
   --bar-glass: rgba(255, 255, 255, 0.82);
@@ -117,6 +117,9 @@
   --menu-item-py: 5px;
   --menu-min-w: 184px;
   --popover-w: 232px;
+  /* Widest picker: about "Countdown", the longest everyday value, so a long one ("Highest
+     consumption", a provider name) is cut to match the column instead of standing out. */
+  --picker-max: 110px;
   /* Inset of the hover fill around a text button; cancelled by a negative margin. */
   --hover-pad-x: var(--space-xs);
   --hover-pad-y: var(--space-2xs);
@@ -134,6 +137,7 @@
   /* Hover hints (ui/tooltip). */
   --hint-pad: var(--space-sm) var(--space-md);
   --hint-max-w: 200px;
+  --hint-radius: var(--radius-sm);
 
   /* Named sizes. */
   --meter-h: 4px;
@@ -154,9 +158,11 @@
   --switch-w: 28px;
   --switch-h: 16px;
   --switch-knob: 12px;
+  --switch-knob-w: var(--switch-knob);
+  --switch-knob-inset: var(--space-px);
   --hairline: 1px;
   --focus-ring: 2px;
-  --glass-blur: 20px;
+  --native-blur: 20px;
   --screen-slide: 24px; /* how far a screen slides in */
 
   /* Fixed geometry. */
@@ -251,376 +257,250 @@ body {
   user-select: none;
 }
 
-/* macOS uses a native AppKit material behind the transparent WKWebView. Keep
-   this surface translucent so the desktop and the system tint remain visible. */
-body:has(.mac-panel) {
+/* Native: the host's own look over its native material (NSGlassEffectView on macOS, DWM Acrylic
+   on Windows 11) behind a transparent WebView. This base is the shared glass look; each host
+   refines it further down, macOS after the macOS 26 UI kit and Windows after Fluent. Shapes follow the shadcn base-luma
+   preset (b5Kc86HqK): capsule controls and menu rows, rounded cards and menus, a 40×20 switch
+   with a 24×16 capsule knob. Surfaces stay thin so the material, not a wash, sets the tone.
+   Tokens sit on `body` so the Radix portals (menus, pickers, tooltips) inherit them too. */
+body:has(.native-panel) {
+  --native-page-inset: calc(var(--panel-pad) + 12px);
+  --surface: transparent;
+  --card: rgba(255, 255, 255, 0.34);
+  --card-border: rgba(255, 255, 255, 0.55);
+  --separator: rgba(0, 0, 0, 0.08);
+  --control-fill: rgba(255, 255, 255, 0.5);
+  --control-fill-hover: rgba(255, 255, 255, 0.72);
+  --switch-off: rgba(0, 0, 0, 0.1);
+  --menu: rgba(250, 250, 250, 0.94);
+  --menu-hover: rgba(0, 0, 0, 0.07);
+  --bar-glass: transparent;
+  --card-radius: 18px;
+  --card-pad: 14px;
+  --menu-radius: 16px;
+  --radius-sm: var(--radius-full);
+  /* Hints are text blocks, not controls: rounder than Classic, never a capsule at one line. */
+  --hint-radius: 10px;
+  --switch-w: 40px;
+  --switch-h: 20px;
+  --switch-knob: 16px;
+  --switch-knob-w: 24px;
+  --knob-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
   background: transparent;
 }
 
-.mac-panel {
+.dark body:has(.native-panel) {
+  --card: rgba(255, 255, 255, 0.07);
+  --card-border: rgba(255, 255, 255, 0.1);
+  --separator: rgba(255, 255, 255, 0.1);
+  --control-fill: rgba(255, 255, 255, 0.12);
+  --control-fill-hover: rgba(255, 255, 255, 0.2);
+  --switch-off: rgba(255, 255, 255, 0.2);
+  --menu: rgba(38, 38, 40, 0.94);
+  --menu-hover: rgba(255, 255, 255, 0.12);
+  --menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+}
+
+.native-panel {
+  background: transparent;
+  /* The native edge: a thin light rim, as on system menus. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.native-panel [data-scroll-content]:not(:has(.native-dashboard)) {
+  padding-inline: var(--native-page-inset);
+}
+
+.dark .native-panel {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.native-panel[data-os="macos"] {
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-  background: rgba(255, 255, 255, 0.22);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62);
 }
 
-.dark .mac-panel {
-  background: rgba(18, 22, 29, 0.28);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+/* Menus, picker lists, popovers and dialogs float as their own frosted layer over the panel;
+   near-opaque so a row under them never reads through where WebKit skips the blur. */
+body:has(.native-panel) [data-slot="dropdown-menu-content"],
+body:has(.native-panel) [data-slot="select-content"],
+body:has(.native-panel) [data-slot="popover-content"],
+body:has(.native-panel) [data-slot="dialog-content"] {
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  backdrop-filter: blur(24px) saturate(1.6);
 }
 
-.mac-panel .bar-glass {
-  background: rgba(255, 255, 255, 0.18);
-  border-color: rgba(0, 0, 0, 0.08);
+.native-panel .card-surface {
+  padding-block: var(--space-xs);
 }
 
-.dark .mac-panel .bar-glass {
-  background: rgba(22, 24, 31, 0.2);
-  border-color: rgba(255, 255, 255, 0.1);
+body:has(.native-panel) [data-slot="switch"][data-state="unchecked"] {
+  background: var(--switch-off);
 }
 
-.mac-panel .card-surface {
-  background: rgba(255, 255, 255, 0.28);
+/* Footer: no band of its own, only a hairline above it. Its sides and bottom take the page inset,
+   so the panel keeps one margin on every edge (the dashboard's top is already that inset). */
+.native-panel .bar-glass {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-color: var(--separator);
+  padding-inline: var(--native-page-inset);
 }
 
-.dark .mac-panel .card-surface {
-  background: rgba(255, 255, 255, 0.08);
+/* Only the footer takes the page inset on its bottom edge; the top bar keeps its own. */
+.native-panel footer.bar-glass {
+  padding-bottom: var(--native-page-inset);
 }
 
-.mac-panel .settings-tabs {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.native-panel .native-tabs {
+  display: flex;
   gap: 2px;
   padding: 3px;
-  border-radius: 10px;
+  border-radius: var(--radius-full);
   background: var(--control-fill);
-  box-shadow: inset 0 0 0 0.5px var(--separator);
 }
 
-.mac-panel .settings-tab {
+.native-panel .settings-tabs,
+.native-panel .native-provider-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.native-panel .settings-tabs::-webkit-scrollbar,
+.native-panel .native-provider-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Settings tabs take their label's width plus a real inset and share whatever width is left. */
+.native-panel .settings-tabs .native-tab {
+  flex: 1 0 auto;
+  padding-inline: 10px;
+}
+
+.native-panel .native-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
+  min-height: 30px;
   overflow: hidden;
   border: 0;
-  border-radius: 7px;
-  padding: 7px 2px;
+  border-radius: var(--radius-full);
+  padding: 5px 10px;
   background: transparent;
   color: var(--label-2);
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
 
-.mac-panel .settings-tab:hover {
-  background: var(--control-fill-hover);
+.native-panel .native-provider-tabs .native-tab {
+  flex: 0 0 auto;
+  width: max-content;
 }
 
-.mac-panel .settings-tab[aria-selected="true"] {
-  background: rgba(255, 255, 255, 0.52);
+/* Hover: a lighter pane of the same translucent surface as the active tab, so it previews the selection
+   without competing with it. */
+.native-panel .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover {
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.dark .native-panel .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.native-panel .native-tab[aria-selected="true"],
+.native-panel .native-tab[data-active="true"] {
+  background: rgba(255, 255, 255, 0.55);
   color: var(--label-1);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 2px 8px rgba(0, 0, 0, 0.12);
+  -webkit-backdrop-filter: blur(12px) saturate(1.6);
+  backdrop-filter: blur(12px) saturate(1.6);
 }
 
-.dark .mac-panel .settings-tab[aria-selected="true"] {
+.dark .native-panel .native-tab[aria-selected="true"],
+.dark .native-panel .native-tab[data-active="true"] {
   background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 2px 8px rgba(0, 0, 0, 0.28);
 }
 
-.mac-panel .settings-tab:focus-visible {
+.native-panel .native-tab:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-.mac-dashboard {
+.native-dashboard {
   display: flex;
   flex-direction: column;
   gap: 16px;
   padding: 12px 12px 6px;
 }
 
-.mac-dashboard-header,
-.mac-provider-heading,
-.mac-metric-heading,
-.mac-metric-note,
-.mac-detail-row,
-.mac-dashboard-status {
+.native-dashboard-header,
+.native-dashboard-status {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.mac-dashboard-header h1 {
+.native-dashboard-header h1 {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.035em;
 }
 
-.mac-dashboard-header p {
+.native-dashboard-header p {
   margin: 3px 0 0;
   color: var(--label-2);
   font-size: 11px;
 }
 
-.mac-dashboard-actions {
+.native-dashboard-actions {
   display: flex;
   gap: 5px;
 }
 
-.mac-icon-button,
-.mac-provider-refresh {
+.native-icon-button {
   display: grid;
   flex: none;
   place-items: center;
   width: 29px;
   height: 29px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 9px;
+  border: 0;
+  border-radius: var(--radius-full);
   background: var(--control-fill);
   color: var(--label-1);
   cursor: pointer;
 }
 
-.mac-icon-button svg,
-.mac-provider-refresh svg {
+.native-icon-button svg {
   width: 16px;
   height: 16px;
 }
 
-.mac-icon-button:hover,
-.mac-provider-refresh:hover,
-.mac-provider-tab:hover {
+.native-icon-button:hover {
   background: var(--control-fill-hover);
 }
 
-.mac-icon-button:focus-visible,
-.mac-provider-refresh:focus-visible,
-.mac-provider-tab:focus-visible {
+.native-icon-button:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 
-.mac-provider-tabs {
-  display: flex;
-  gap: 7px;
-  overflow-x: auto;
-  padding: 1px 1px 5px;
-  scrollbar-width: none;
-}
-
-.mac-provider-tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.mac-provider-tab {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 5px 9px;
-  border: 1px solid rgba(90, 90, 100, 0.15);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.22);
-  color: var(--label-1);
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.dark .mac-provider-tab {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.13);
-}
-
-.mac-provider-tab[data-active="true"] {
-  border-color: rgba(0, 122, 255, 0.25);
-  background: rgba(0, 122, 255, 0.15);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.3);
-}
-
-.mac-tab-name {
-  font-weight: 600;
-}
-
-.mac-tab-value {
+.native-tab-value {
   color: var(--label-2);
   font-variant-numeric: tabular-nums;
 }
 
-.mac-provider-content {
-  min-width: 0;
-}
-
-.mac-provider-heading {
-  gap: 10px;
-  padding: 4px 1px 14px;
-}
-
-.mac-provider-mark {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-}
-
-.mac-provider-title {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.mac-provider-title strong {
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mac-provider-title small {
-  overflow: hidden;
-  color: var(--label-2);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mac-provider-refresh {
-  width: 25px;
-  height: 25px;
-  border: 0;
-  background: transparent;
-}
-
-.mac-usage-section {
-  padding: 0 1px 2px;
-}
-
-.mac-section-label {
-  margin-bottom: 17px;
-  color: var(--label-2);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.mac-metric + .mac-metric,
-.mac-metric + .mac-detail-row,
-.mac-detail-row + .mac-metric,
-.mac-detail-row + .mac-detail-row {
-  margin-top: 17px;
-}
-
-.mac-metric-heading,
-.mac-detail-row {
-  gap: 10px;
-  font-size: 12px;
-}
-
-.mac-metric-heading strong,
-.mac-detail-row strong {
-  flex: none;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-
-.mac-meter-line {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.mac-meter-value {
-  min-width: 38px;
-  color: var(--label-1);
-  font-size: 12px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.mac-meter {
-  flex: 1;
-  height: 5px;
-  overflow: hidden;
-  border-radius: 5px;
-  background: var(--fill-tertiary);
-}
-
-.mac-meter-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--blue);
-}
-
-.mac-meter-fill[data-severity="mid"],
-.mac-meter-fill[data-severity="high"] { background: var(--orange); }
-.mac-meter-fill[data-severity="critical"] { background: var(--red); }
-
-.mac-usage-goal {
-  margin-top: 6px;
-}
-
-.mac-usage-goal .mac-meter-line {
-  margin-top: 0;
-}
-
-.mac-usage-goal .mac-meter-value {
-  color: var(--label-2);
-}
-
-.mac-goal-meter {
-  flex: 1;
-  height: 3px;
-  overflow: hidden;
-  border-radius: 3px;
-  background: var(--fill-tertiary);
-}
-
-.mac-goal-meter-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--label-2);
-}
-
-.mac-metric-note {
-  min-height: 14px;
-  margin-top: 8px;
-  color: var(--label-2);
-  font-size: 10px;
-}
-
-.mac-detail-block {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 14px;
-  color: var(--label-2);
-  font-size: 11px;
-}
-
-.mac-detail-block strong {
-  color: var(--label-1);
-  font-size: 12px;
-}
-
-.mac-cached-note {
-  margin: 0;
-  padding: 4px 1px 0;
-  color: var(--label-2);
-  font-size: 10px;
-}
-
-.mac-empty-state {
+.native-empty-state {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -629,15 +509,15 @@ body:has(.mac-panel) {
   font-size: 12px;
 }
 
-.mac-empty-state strong {
+.native-empty-state strong {
   color: var(--label-1);
 }
 
-.mac-empty-state p {
+.native-empty-state p {
   margin: 0;
 }
 
-.mac-retry-button {
+.native-retry-button {
   align-self: flex-start;
   margin-top: 8px;
   padding: 6px 10px;
@@ -648,12 +528,381 @@ body:has(.mac-panel) {
   cursor: pointer;
 }
 
-.mac-dashboard-status {
+.native-dashboard-status {
   gap: 6px;
-  padding: 0 2px;
+  padding: 0;
   color: var(--label-2);
   font-size: 10px;
   white-space: nowrap;
+}
+
+/* Native on macOS: macOS 26 (Tahoe) controls over the AppKit glass, after Apple's macOS 26 UI kit.
+   Controls are 24pt with a 6pt radius and a 5% fill, 13pt medium text; the segmented control fills
+   the selected segment with the controls tint and separates idle ones with a 14pt hairline; the
+   small switch is 44×20 with a 26×16 capsule knob; menus are 13pt-radius glass with 24pt rows and
+   an accent-filled highlight; group boxes (cards) are a 3% fill at 12pt; tooltips are nearly square
+   Thick material with 11pt medium text. The kit ships light values only: dark ones are macOS's own
+   dark equivalents. The window's glass and corners stay the host's (NSGlassEffectView). */
+body:has(.native-panel[data-os="macos"]) {
+  --accent: #0d6fff;
+  --label-1: rgba(0, 0, 0, 0.85);
+  --label-2: rgba(0, 0, 0, 0.5);
+  --label-3: rgba(0, 0, 0, 0.25);
+  --card: rgba(0, 0, 0, 0.03);
+  --card-border: transparent;
+  --separator: rgba(0, 0, 0, 0.1);
+  --control-fill: rgba(0, 0, 0, 0.05);
+  --control-fill-hover: rgba(0, 0, 0, 0.09);
+  --segment-separator: rgba(0, 0, 0, 0.15);
+  --field-fill: #ffffff;
+  --field-ring: rgba(0, 0, 0, 0.08);
+  --menu: rgba(245, 245, 245, 0.94);
+  --menu-highlight: #0088ff;
+  --menu-shadow: 0 0 2px rgba(0, 0, 0, 0.1), 0 0 25px rgba(0, 0, 0, 0.16);
+  --menu-radius: 13px;
+  --card-radius: 12px;
+  --radius-sm: 6px;
+  --sz-control: 13px;
+  --hint-radius: 1px;
+  --hint-pad: 3px 6px 2px;
+  --hint-bg: rgba(246, 246, 246, 0.72);
+  --hint-fg: #4d4d4d;
+  --hint-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  --switch-w: 44px;
+  --switch-h: 20px;
+  --switch-knob: 16px;
+  --switch-knob-w: 26px;
+  --switch-knob-inset: 1px;
+  --switch-off: rgba(0, 0, 0, 0.05);
+  --knob-shadow: 0 0 1px rgba(0, 0, 0, 0.05), 0 0 4px rgba(0, 0, 0, 0.05), 0 0 44px rgba(0, 0, 0, 0.1);
+}
+
+.dark body:has(.native-panel[data-os="macos"]) {
+  --label-1: rgba(255, 255, 255, 0.85);
+  --label-2: rgba(255, 255, 255, 0.55);
+  --label-3: rgba(255, 255, 255, 0.25);
+  --card: rgba(255, 255, 255, 0.04);
+  --separator: rgba(255, 255, 255, 0.1);
+  --control-fill: rgba(255, 255, 255, 0.1);
+  --control-fill-hover: rgba(255, 255, 255, 0.15);
+  --segment-separator: rgba(255, 255, 255, 0.15);
+  --field-fill: rgba(255, 255, 255, 0.06);
+  --field-ring: rgba(255, 255, 255, 0.12);
+  --menu: rgba(40, 40, 40, 0.94);
+  --menu-shadow: 0 0 2px rgba(0, 0, 0, 0.3), 0 0 25px rgba(0, 0, 0, 0.4);
+  --hint-bg: rgba(40, 40, 40, 0.72);
+  --hint-fg: rgba(255, 255, 255, 0.75);
+  --hint-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --switch-off: rgba(255, 255, 255, 0.1);
+}
+
+/* Controls: medium weight, as every macOS 26 control label. */
+body:has(.native-panel[data-os="macos"]) :is([data-slot="chip"], [data-slot="select-trigger"], .capsule-btn, .action-btn) {
+  font-weight: 500;
+}
+
+/* Text fields: an opaque field inside a hairline ring. */
+body:has(.native-panel[data-os="macos"]) :is(.recorder, .threshold-input) {
+  background: var(--field-fill);
+  box-shadow: 0 0 0 1px var(--field-ring);
+}
+
+/* Menus and pickers: rows inset in the glass, the highlighted one filled with the menu tint. */
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-content"], [data-slot="select-content"]) {
+  padding: 5px;
+}
+
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"]) {
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"])[data-highlighted],
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"])[data-highlighted] * {
+  background-color: var(--menu-highlight);
+  color: #ffffff;
+}
+
+body:has(.native-panel[data-os="macos"]) :is([data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-checkbox-item"], [data-slot="dropdown-menu-radio-item"], [data-slot="dropdown-menu-sub-trigger"], [data-slot="select-item"])[data-highlighted] * {
+  background-color: transparent;
+}
+
+body:has(.native-panel[data-os="macos"]) [data-slot="tooltip-content"] {
+  font-weight: 500;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+/* Tabs as a segmented control: one 24pt track, the selected segment filled with the controls tint
+   and white text, idle segments split by a hairline that disappears beside the selection. */
+.native-panel[data-os="macos"] .native-tabs {
+  gap: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--control-fill);
+}
+
+.native-panel[data-os="macos"] .native-tab {
+  position: relative;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--label-1);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Settings has five segments in 350pt: 12pt labels and 8pt margins fit them, and a segment that
+   still does not fit shrinks with an ellipsis, as NSSegmentedControl does. */
+.native-panel[data-os="macos"] .settings-tabs .native-tab {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.native-panel[data-os="macos"] .native-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.native-panel[data-os="macos"] .native-tab + .native-tab::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 0;
+  width: 1px;
+  background: var(--segment-separator);
+}
+
+.native-panel[data-os="macos"] :is(.native-tab[aria-selected="true"], .native-tab[data-active="true"])::before,
+.native-panel[data-os="macos"] :is(.native-tab[aria-selected="true"], .native-tab[data-active="true"]) + .native-tab::before {
+  display: none;
+}
+
+.native-panel[data-os="macos"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover,
+.dark .native-panel[data-os="macos"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover {
+  background: var(--control-fill);
+  box-shadow: none;
+}
+
+.native-panel[data-os="macos"] .native-tab[aria-selected="true"],
+.native-panel[data-os="macos"] .native-tab[data-active="true"],
+.dark .native-panel[data-os="macos"] .native-tab[aria-selected="true"],
+.dark .native-panel[data-os="macos"] .native-tab[data-active="true"] {
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.native-panel[data-os="macos"] .native-tab[data-active="true"] :is(svg, .native-tab-value) {
+  color: #ffffff;
+}
+
+/* Native on Windows: Windows 11 Fluent over DWM Acrylic, the transient-window material of the
+   system flyouts (volume, quick settings). Values are WinUI 3 theme resources: 4px controls and
+   8px layers, layer and control fills with a hairline stroke (plus a darker bottom edge on
+   controls), secondary text for the idle tab, a 40×20 toggle with a 12px knob inset 3px, and an
+   accent pill under the selected tab instead of a frosted capsule. The DWM draws the window's own
+   border and 8px corners, so the panel drops the macOS rim. The accent is Windows' default blue;
+   following the user's accent needs the host to pass it. */
+body:has(.native-panel[data-os="windows"]) {
+  --native-accent: var(--system-accent-light, #005fb8);
+  --accent: var(--native-accent);
+  --label-1: rgba(0, 0, 0, 0.894);
+  --label-2: rgba(0, 0, 0, 0.62);
+  --label-3: rgba(0, 0, 0, 0.447);
+  --card: rgba(255, 255, 255, 0.5);
+  --card-border: rgba(0, 0, 0, 0.059);
+  --separator: rgba(0, 0, 0, 0.059);
+  --control-fill: rgba(255, 255, 255, 0.7);
+  --control-fill-hover: rgba(249, 249, 249, 0.5);
+  --control-stroke: rgba(0, 0, 0, 0.059);
+  --control-stroke-bottom: rgba(0, 0, 0, 0.16);
+  --subtle-hover: rgba(0, 0, 0, 0.037);
+  --menu: rgba(252, 252, 252, 0.96);
+  --menu-hover: rgba(0, 0, 0, 0.037);
+  --menu-shadow: 0 8px 16px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.059);
+  --hint-bg: rgba(252, 252, 252, 0.98);
+  --hint-fg: var(--label-1);
+  --hint-shadow: 0 4px 8px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.059);
+  --card-radius: 8px;
+  --menu-radius: 8px;
+  --radius-sm: 4px;
+  --hint-radius: 4px;
+  --window-radius: 8px;
+  --switch-w: 40px;
+  --switch-h: 20px;
+  --switch-knob: 12px;
+  --switch-knob-w: 12px;
+  --switch-knob-inset: 3px;
+  --switch-off: rgba(0, 0, 0, 0.024);
+  --switch-off-stroke: rgba(0, 0, 0, 0.62);
+  --switch-off-knob: rgba(0, 0, 0, 0.62);
+  --switch-on-knob: #ffffff;
+  --knob-shadow: none;
+}
+
+.dark body:has(.native-panel[data-os="windows"]) {
+  --native-accent: var(--system-accent-dark, #60cdff);
+  --label-1: #ffffff;
+  --label-2: rgba(255, 255, 255, 0.773);
+  --label-3: rgba(255, 255, 255, 0.53);
+  --card: rgba(58, 58, 58, 0.3);
+  --card-border: rgba(0, 0, 0, 0.1);
+  --separator: rgba(255, 255, 255, 0.084);
+  --control-fill: rgba(255, 255, 255, 0.061);
+  --control-fill-hover: rgba(255, 255, 255, 0.084);
+  --control-stroke: rgba(255, 255, 255, 0.07);
+  --control-stroke-bottom: rgba(255, 255, 255, 0.07);
+  --subtle-hover: rgba(255, 255, 255, 0.061);
+  --menu: rgba(44, 44, 44, 0.96);
+  --menu-hover: rgba(255, 255, 255, 0.061);
+  --menu-shadow: 0 8px 16px rgba(0, 0, 0, 0.26), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  --hint-bg: rgba(44, 44, 44, 0.98);
+  --hint-shadow: 0 4px 8px rgba(0, 0, 0, 0.26), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  --switch-off: rgba(0, 0, 0, 0.1);
+  --switch-off-stroke: rgba(255, 255, 255, 0.545);
+  --switch-off-knob: rgba(255, 255, 255, 0.773);
+  --switch-on-knob: #000000;
+}
+
+.native-panel[data-os="windows"],
+.dark .native-panel[data-os="windows"] {
+  box-shadow: none;
+}
+
+/* Controls: the Fluent elevation border, a hairline with a darker bottom edge. */
+body:has(.native-panel[data-os="windows"]) :is([data-slot="chip"], [data-slot="select-trigger"], .capsule-btn, .action-btn, .recorder) {
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--control-stroke), inset 0 -1px 0 var(--control-stroke-bottom);
+}
+
+body:has(.native-panel[data-os="windows"]) [data-slot="switch"][data-state="unchecked"] {
+  border-color: var(--switch-off-stroke);
+}
+
+body:has(.native-panel[data-os="windows"]) [data-slot="switch-thumb"][data-state="unchecked"] {
+  background: var(--switch-off-knob);
+}
+
+body:has(.native-panel[data-os="windows"]) [data-slot="switch-thumb"][data-state="checked"] {
+  background: var(--switch-on-knob);
+}
+
+.native-panel[data-os="windows"] .native-dashboard-header h1 {
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* Header actions are Fluent subtle buttons: no fill until hovered. */
+.native-panel[data-os="windows"] .native-icon-button {
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+
+.native-panel[data-os="windows"] .native-icon-button:hover {
+  background: var(--subtle-hover);
+}
+
+/* Tabs as Fluent 2's transparent Tab: content-sized, regular weight at rest; the selected tab
+   turns semibold with its icon in the accent, over a 3px capsule indicator as wide as its content
+   (the padding insets it). Hovering an idle tab shows the same indicator in a neutral stroke. The
+   bold label's width is reserved by a hidden copy (`data-text`), so selecting never shifts the row. */
+body:has(.native-panel[data-os="windows"]) {
+  --tab-pad-x: 8px;
+  --tab-hover-indicator: rgba(0, 0, 0, 0.22);
+}
+
+.dark body:has(.native-panel[data-os="windows"]) {
+  --tab-hover-indicator: rgba(255, 255, 255, 0.4);
+}
+
+.native-panel[data-os="windows"] .native-tabs {
+  justify-content: flex-start;
+  gap: 2px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.native-panel[data-os="windows"] .native-tab,
+.native-panel[data-os="windows"] .settings-tabs .native-tab {
+  position: relative;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 6px var(--tab-pad-x) 9px;
+  border-radius: var(--radius-sm);
+  color: var(--label-2);
+  font-size: 12px;
+  font-weight: 400;
+  overflow: visible;
+}
+
+.native-panel[data-os="windows"] :is(.native-tab-label, .native-tab-value) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.native-panel[data-os="windows"] :is(.native-tab-label, .native-tab-value)::after {
+  content: attr(data-text);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 600;
+}
+
+.native-panel[data-os="windows"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover,
+.dark .native-panel[data-os="windows"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover {
+  background: transparent;
+  box-shadow: none;
+  color: var(--label-1);
+}
+
+.native-panel[data-os="windows"] .native-tab[aria-selected="true"],
+.native-panel[data-os="windows"] .native-tab[data-active="true"],
+.dark .native-panel[data-os="windows"] .native-tab[aria-selected="true"],
+.dark .native-panel[data-os="windows"] .native-tab[data-active="true"] {
+  background: transparent;
+  color: var(--label-1);
+  font-weight: 600;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.native-panel[data-os="windows"] .native-tab[data-active="true"] svg {
+  color: var(--accent);
+}
+
+.native-panel[data-os="windows"] .native-tab[data-active="true"] .native-tab-value {
+  color: var(--label-1);
+}
+
+.native-panel[data-os="windows"] .native-tab::after {
+  content: "";
+  position: absolute;
+  right: var(--tab-pad-x);
+  bottom: 0;
+  left: var(--tab-pad-x);
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: transparent;
+}
+
+.native-panel[data-os="windows"] .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover::after {
+  background: var(--tab-hover-indicator);
+}
+
+.native-panel[data-os="windows"] .native-tab[aria-selected="true"]::after,
+.native-panel[data-os="windows"] .native-tab[data-active="true"]::after {
+  background: var(--accent);
 }
 
 ::-webkit-scrollbar {
@@ -715,6 +964,20 @@ body:has(.mac-panel) {
 .meter-fill[data-empty="true"] {
   min-width: 0;
   width: 0 !important;
+}
+
+.usage-goal-meter {
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--fill-tertiary);
+}
+
+.usage-goal-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--label-2);
 }
 
 /* Pace tick: where the fill would sit on an even burn (WidgetRowView's marker). */
@@ -843,11 +1106,42 @@ body:has(.mac-panel) {
   box-shadow: inset 0 0 0 var(--hairline) var(--red);
 }
 
-/* Pinned top bar / footer: content scrolls underneath (barGlass). */
+.threshold-input {
+  appearance: textfield;
+  width: 3.5rem;
+  height: var(--control-h);
+  padding: 0 var(--control-px);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--control-fill);
+  color: var(--label-1);
+  font: inherit;
+  font-size: var(--sz-control);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+}
+
+.threshold-input:hover {
+  background: var(--control-fill-hover);
+}
+
+.threshold-input:focus-visible {
+  outline: var(--focus-ring) solid var(--accent);
+  outline-offset: 2px;
+}
+
+.threshold-input::-webkit-inner-spin-button,
+.threshold-input::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+/* Pinned top bar / footer: content scrolls underneath (bar-glass). */
 .bar-glass {
   background: var(--bar-glass);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--native-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--native-blur)) saturate(1.4);
 }
 
 /* Provider-header shortcuts (Customize / Reset). Plain CSS on purpose: Tailwind

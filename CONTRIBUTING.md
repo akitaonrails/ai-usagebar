@@ -72,6 +72,41 @@ Open an issue first with the endpoint, the auth mechanism, and a real response
 capture with the numbers redacted. Field names and nesting are what a parser
 gets pinned to, and a paraphrase is not enough to build against.
 
+## Changing the tray popover UI
+
+The popover is the part of the project with the most opinions, and all of
+them are valid: some people want every provider at a glance, others one at a
+time in their system's own look. To keep one person's taste from replacing
+another's, UI changes follow one rule: **add, don't replace.**
+
+- A different look is a new **popover style** (Settings → Appearance →
+  Popover Style), not a rewrite of Classic or Native. Scope its CSS to the
+  style (tokens on `body:has(.<style>-panel)`, rules under `.<style>-panel` in
+  `windows/popover/src/index.css`) and reuse the shared components; do not
+  fork `ProviderSection`, the Settings rows or the menus.
+- Native follows the host: a shared glass base, refined per OS under
+  `.native-panel[data-os="<os>"]` (macOS after Apple's macOS 26 UI kit,
+  Windows after Fluent). Making
+  Native match another system — a GTK or Omarchy theme, should a Linux host
+  ever share this popover — is adding that OS's tokens, not a new style.
+- A style changes presentation only. Features, data and settings live in the
+  shared components and work in every style; what a host cannot do is gated
+  by the OS, never by the style.
+- Do not change a default (style, width, menu-bar look) in the same PR as a
+  new look. Propose it separately, with the reason.
+- **Show a visual change.** Anything that changes how the popover, the menu
+  bar or the tray icon looks puts before/after screenshots in the PR
+  description, for every style, OS and theme it touches. A look cannot be
+  judged from a diff: screenshots let it be reviewed without building it, and
+  nobody finds out after an update. Fixes and features that apply to every
+  style are welcome as usual; say which styles you checked.
+- Open an issue first for a new style: a screenshot or mockup and who it is
+  for is enough to agree it belongs before anyone writes it.
+
+The frontends already work this way one level up — Waybar, GNOME, KDE,
+Omarchy and the TUI all read the same `usage --json` and each looks the way
+its users want. Styles bring that inside the popover.
+
 ## Platform reality
 
 CI builds Linux, macOS and Windows, but the maintainer works on Linux. macOS
