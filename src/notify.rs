@@ -545,33 +545,23 @@ impl RefreshInput {
                 _ => None,
             })
             .collect();
-        let credits = match &ready.snapshot {
-            crate::usage::VendorSnapshot::Openai(snapshot) => &snapshot.reset_credits,
-            crate::usage::VendorSnapshot::SuperGrok(snapshot) => &snapshot.reset_credits,
-            _ => {
-                return Some(Self {
-                    entry_id,
-                    vendor,
-                    account: tab.account.clone(),
-                    rows,
-                    credits: Vec::new(),
-                });
-            }
-        };
-        let credits = if credits.available > 0 {
-            credits
-                .credits
-                .iter()
-                .filter_map(|credit| {
-                    credit.expires_at.map(|expires_at| CreditExpiry {
-                        title: credit.title.clone(),
-                        expires_at,
+        let credits = ready
+            .snapshot
+            .reset_credits()
+            .filter(|credits| credits.available > 0)
+            .map(|credits| {
+                credits
+                    .credits
+                    .iter()
+                    .filter_map(|credit| {
+                        credit.expires_at.map(|expires_at| CreditExpiry {
+                            title: credit.title.clone(),
+                            expires_at,
+                        })
                     })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                    .collect()
+            })
+            .unwrap_or_default();
         Some(Self {
             entry_id,
             vendor,
@@ -1079,6 +1069,16 @@ mod tests {
                 sonnet: None,
                 scoped: vec![],
                 extra: None,
+                // Claude banks resets too, and the expiry warning is the
+                // whole point of carrying them: a grant the sidebar lists but
+                // the notifier ignores is a half-delivered feature.
+                reset_credits: ResetCredits {
+                    available: 1,
+                    credits: vec![ResetCredit {
+                        title: Some("Opus 5.5 launch reset".into()),
+                        expires_at: Some(at(25, 0, 0)),
+                    }],
+                },
             }),
             stale: false,
             last_error: None,
@@ -1098,6 +1098,13 @@ mod tests {
                 row("Session (5h)", 98, Some(reset)),
                 row("Weekly (7d)", 42, None),
             ]
+        );
+        assert_eq!(
+            projected.credits,
+            vec![CreditExpiry {
+                title: Some("Opus 5.5 launch reset".into()),
+                expires_at: at(25, 0, 0),
+            }]
         );
 
         // A Codex snapshot carries its banked credits through.

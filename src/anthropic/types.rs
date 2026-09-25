@@ -7,7 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::usage::{AnthropicSnapshot, Cents, ExtraUsage, ScopedWindow, UsageWindow};
+use crate::usage::{
+    AnthropicSnapshot, Cents, ExtraUsage, ResetCredit, ResetCredits, ScopedWindow, UsageWindow,
+    checked_reset_title,
+};
 
 /// Top-level response from `GET /api/oauth/usage`.
 #[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
@@ -25,6 +28,50 @@ pub struct UsageResponse {
     /// dedicated `seven_day_*` field.
     #[serde(default)]
     pub limits: Vec<LimitEntry>,
+    /// Banked limit resets. Present only when the request asks for them
+    /// (`?cedar_ember=1`) *and* the endpoint accepts the caller's surface —
+    /// otherwise the key is absent or null, which is not an error: most
+    /// accounts have no grant most of the time.
+    #[serde(default)]
+    pub cedar_ember: Option<ResetGrantsBlock>,
+}
+
+/// The `cedar_ember` block. Every field is optional because the endpoint
+/// answers with a partial block for an ineligible caller (`eligible: false`,
+/// `ineligible_reason: "surface" | "cli_version" | …`) and the reason is not
+/// ours to render — a status bar has nothing to say about an offer the
+/// account cannot take.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ResetGrantsBlock {
+    #[serde(default)]
+    pub eligible: bool,
+    #[serde(default)]
+    pub grants: Vec<ResetGrant>,
+}
+
+/// One banked grant. `id` is the handle that *spends* the reset, so — as with
+/// Codex's `credits[].id` and SuperGrok's `token_id` — it is never
+/// deserialized, and nothing downstream can leak what was never held.
+#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ResetGrant {
+    /// e.g. "Claude Opus 5.5 launch: one usage-limit reset for Team members".
+    #[serde(default)]
+    pub label: Option<String>,
+    /// How many of this grant's resets are still unspent. A grant that has
+    /// been fully redeemed stays in the array at 0.
+    #[serde(default)]
+    pub resets_left: u32,
+    /// RFC3339. The deadline the user is actually racing.
+    #[serde(default)]
+    pub ends_at: Option<String>,
+    /// The server's own verdict on whether the reset can be redeemed right
+    /// now — it accounts for `starts_at`, cooldowns, and campaign state.
+    /// Defaulting to false matches the official client and keeps a grant we
+    /// cannot vouch for off the bar.
+    #[serde(default)]
+    pub usable_now: bool,
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// One entry of the `limits[]` array. Only `weekly_scoped` entries with a
@@ -283,8 +330,44 @@ impl UsageResponse {
             sonnet,
             scoped,
             extra,
+            reset_credits: reset_credits(self.cedar_ember),
         }
     }
+}
+
+/// Project the `cedar_ember` block onto the shared banked-reset model.
+///
+/// Only grants the server says are redeemable are counted: `eligible` gates
+/// the whole block, and a grant must be unspent, not paused, and `usable_now`.
+/// A grant that has not opened yet (`starts_at` in the future) reports
+/// `usable_now: false`, and counting it would put a reset on the bar that the
+/// account cannot actually use.
+///
+/// Expiry is left to the renderer rather than filtered here: `into_snapshot`
+/// has no clock, and [`crate::format::reset_credit_lines`] already renders a
+/// lapsed credit as "expired <date>" — truthful either way, and the server
+/// retires the grant on its own schedule.
+fn reset_credits(block: Option<ResetGrantsBlock>) -> ResetCredits {
+    let Some(block) = block.filter(|block| block.eligible) else {
+        return ResetCredits::default();
+    };
+    let usable = block
+        .grants
+        .into_iter()
+        .filter(|grant| grant.usable_now && !grant.paused && grant.resets_left > 0);
+    let mut credits = ResetCredits::default();
+    for grant in usable {
+        credits.available = credits.available.saturating_add(grant.resets_left);
+        credits.credits.push(ResetCredit {
+            title: checked_reset_title(grant.label),
+            expires_at: grant
+                .ends_at
+                .as_deref()
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc)),
+        });
+    }
+    credits
 }
 
 #[cfg(test)]
@@ -614,6 +697,142 @@ mod tests {
         let snap = resp.into_snapshot("Pro".into());
         assert_eq!(snap.scoped[0].label, "Fable");
         assert_eq!(snap.scoped[0].window.utilization_pct, 84);
+    }
+
+    /// The `cedar_ember` block as the endpoint actually returned it on
+    /// 2026-09-24 for a Team account holding the Opus 5.5 launch grant.
+    const LAUNCH_GRANT: &str = r#"{
+        "five_hour": {"utilization": 2, "resets_at": "2026-09-24T17:49:59Z"},
+        "seven_day": {"utilization": 63, "resets_at": "2026-09-25T08:59:59Z"},
+        "cedar_ember": {
+            "eligible": true,
+            "ineligible_reason": null,
+            "at_limit": false,
+            "exhausted": [],
+            "grants": [{
+                "id": "a-redemption-handle",
+                "label": "Claude Opus 5.5 launch: one usage-limit reset for Team members",
+                "resets_total": 1,
+                "resets_left": 1,
+                "starts_at": "2026-09-22T16:00:00+00:00",
+                "ends_at": "2026-10-22T16:00:00+00:00",
+                "clears": ["five_hour", "seven_day", "seven_day_overage_included"],
+                "paused": false,
+                "usable_now": true,
+                "use_requires_limit": false,
+                "percent_used": {"five_hour": 2, "seven_day": 63},
+                "blocking": [],
+                "arm": null
+            }],
+            "next_grant_id": "a-redemption-handle",
+            "weekly_resets_at": "2026-09-25T09:00:00+00:00",
+            "cooldown_until": null,
+            "event_props": null
+        }
+    }"#;
+
+    #[test]
+    fn parses_banked_resets_from_the_cedar_ember_block() {
+        let resp: UsageResponse = serde_json::from_str(LAUNCH_GRANT).unwrap();
+        let snap = resp.into_snapshot("Max 20x".into());
+
+        assert_eq!(snap.reset_credits.available, 1);
+        assert_eq!(
+            snap.reset_credits.credits[0].title.as_deref(),
+            Some("Claude Opus 5.5 launch: one usage-limit reset for Team members")
+        );
+        assert_eq!(
+            snap.reset_credits.next_expiry(),
+            Some("2026-10-22T16:00:00Z".parse().unwrap())
+        );
+        // The rest of the payload is untouched by the added query parameter.
+        assert_eq!(snap.session.utilization_pct, 2);
+        assert_eq!(snap.weekly.utilization_pct, 63);
+    }
+
+    /// `id` is what *spends* the grant. It must not survive parsing, so that
+    /// no later cache write, tooltip, or error message can carry it.
+    #[test]
+    fn the_redemption_grant_id_never_leaves_the_parser() {
+        let resp: UsageResponse = serde_json::from_str(LAUNCH_GRANT).unwrap();
+        let snap = resp.into_snapshot("Max 20x".into());
+        assert!(!format!("{snap:?}").contains("a-redemption-handle"));
+    }
+
+    /// An ineligible caller still gets a well-formed block. Counting its
+    /// grants would put a reset on the bar that the account cannot redeem.
+    #[test]
+    fn an_ineligible_block_reports_no_resets() {
+        let raw = r#"{
+            "cedar_ember": {
+                "eligible": false,
+                "ineligible_reason": "cli_version",
+                "grants": [{"id": "g", "resets_left": 1, "usable_now": true,
+                            "ends_at": "2026-10-22T16:00:00Z"}]
+            }
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        assert!(resp.into_snapshot("Pro".into()).reset_credits.is_empty());
+    }
+
+    /// Three ways a grant can sit in the array without being yours to use:
+    /// not yet open (`usable_now: false`, which is how a future `starts_at`
+    /// arrives), paused mid-campaign, or already spent down to zero.
+    #[test]
+    fn only_redeemable_grants_are_counted() {
+        let raw = r#"{
+            "cedar_ember": {
+                "eligible": true,
+                "grants": [
+                    {"id": "a", "label": "not open yet", "resets_left": 1,
+                     "usable_now": false, "paused": false},
+                    {"id": "b", "label": "paused", "resets_left": 1,
+                     "usable_now": true, "paused": true},
+                    {"id": "c", "label": "spent", "resets_left": 0,
+                     "usable_now": true, "paused": false},
+                    {"id": "d", "label": "yours", "resets_left": 2,
+                     "usable_now": true, "paused": false,
+                     "ends_at": "2026-10-22T16:00:00Z"}
+                ]
+            }
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let credits = resp.into_snapshot("Pro".into()).reset_credits;
+        assert_eq!(credits.available, 2, "only the redeemable grant counts");
+        assert_eq!(credits.credits.len(), 1);
+        assert_eq!(credits.credits[0].title.as_deref(), Some("yours"));
+    }
+
+    /// Most accounts, most of the time. An absent or null block is the normal
+    /// answer, not drift, so it must not fail the whole response.
+    #[test]
+    fn an_absent_or_null_block_is_not_a_parse_failure() {
+        for raw in [
+            r#"{"five_hour": {"utilization": 5}}"#,
+            r#"{"cedar_ember": null}"#,
+        ] {
+            let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+            assert!(resp.into_snapshot("Pro".into()).reset_credits.is_empty());
+        }
+    }
+
+    /// The label is rendered verbatim into Pango markup and the desktop
+    /// FORMAT protocol. A hostile one is dropped without taking the expiry —
+    /// the only actionable part — down with it.
+    #[test]
+    fn a_control_bearing_label_is_dropped_but_the_expiry_survives() {
+        let raw = r#"{
+            "cedar_ember": {
+                "eligible": true,
+                "grants": [{"id": "a", "label": "line\u0000break", "resets_left": 1,
+                            "usable_now": true, "ends_at": "2026-10-22T16:00:00Z"}]
+            }
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let credits = resp.into_snapshot("Pro".into()).reset_credits;
+        assert_eq!(credits.available, 1);
+        assert!(credits.credits[0].title.is_none());
+        assert!(credits.credits[0].expires_at.is_some());
     }
 
     #[test]

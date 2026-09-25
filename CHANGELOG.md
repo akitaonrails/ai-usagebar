@@ -9,11 +9,52 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Claude's banked limit resets.** Claude now grants redeemable usage-limit
+  resets during a campaign — the "Resets" offer with its own expiry date —
+  and they land on the same row Codex and SuperGrok resets already use: the
+  tooltip, the TUI panel, `usage --json`'s `reset_credits`, and from there the
+  Omarchy, GNOME and KDE surfaces, plus the 48-hour expiry notification. Two
+  new placeholders, `{resets_available}` and `{resets}`. The figures come from
+  the `cedar_ember` block on the existing usage endpoint, so there is no
+  second request; an account without a grant is the normal case and shows no
+  row at all. The redemption handle the API returns alongside each grant is
+  never deserialized — ai-usagebar reports that a reset exists and when it
+  lapses, and redeeming it stays with Claude Code (`/limit-reset`).
+
 ### Changed
 
 - **macOS usage panel layout.** Current usage and goal percentages sit to the
   right of their bars, with the pace projection following the reset note below
   both bars. Provider buttons switch the main view without a nested card.
+
+### Fixed
+
+- **A named Codex account no longer caches another account's usage.** A
+  fetch chose its `auth.json` before taking the credentials lock, so an
+  `account switch --codex` landing in between made it read the other login
+  and store that usage under its own label. The route is now resolved again
+  once the lock is held, and followed if the switch moved the login.
+- **The unnamed Codex tab shows the new login right after a switch.** A
+  successful `account switch --codex` now drops the default account's usage
+  cache, which otherwise kept showing the previous account's quota until it
+  expired. Named accounts keep their own caches.
+- **The unnamed Claude tab shows the new login right after a switch.** The
+  Claude CLI switch had the same stale default cache as the Codex one, and now
+  drops it the same way after a successful `account switch`.
+- **Account labels, paths and errors printed by `account` are sanitized.**
+  The Codex status line, the switch output and the `add` / `--adopt-current`
+  messages for both vendors now pass through the untrusted-text sanitizers,
+  so a label carrying bidi controls cannot reorder terminal output.
+- **The macOS tray switches accounts without a separate `ai-usagebar`
+  binary.** The documented build produces only `ai-usagebar-tray`, and the
+  switch looked for `ai-usagebar` beside it or in `~/.cargo/bin`, so it
+  failed there or could run a different version. The tray now runs the
+  switch itself.
+- **Every rendered account card keeps its switch control.** The popover
+  offered switch controls to only the first 32 accounts while rendering up to
+  64 cards, and a label longer than a card id's cut matched no card.
 
 ## [1.23.0] — 2026-09-24
 

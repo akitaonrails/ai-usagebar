@@ -93,6 +93,10 @@ pub struct AnthropicSnapshot {
     pub scoped: Vec<ScopedWindow>,
     /// `None` when `extra_usage.is_enabled` is false or the block is absent.
     pub extra: Option<ExtraUsage>,
+    /// Banked limit resets from the `cedar_ember` block — the same idea as
+    /// Codex's rate-limit reset credits and SuperGrok's remaining resets.
+    /// Empty when the account has no grant or the endpoint withheld the block.
+    pub reset_credits: ResetCredits,
 }
 
 /// A usage window scoped to a specific model, labeled by the API
@@ -410,6 +414,26 @@ pub enum VendorSnapshot {
     /// that fetched it holds the `CustomProviderConfig`, and the cache
     /// directory is keyed by its `id`.
     Custom(crate::custom::types::CustomSnapshot),
+}
+
+impl VendorSnapshot {
+    /// Banked, user-redeemable resets, for the vendors that have them.
+    ///
+    /// The one place this table lives. It had already been written twice —
+    /// once for the report's `reset_credits` field and once for the
+    /// expiry notifications — and adding a third provider to only one of them
+    /// is a silent half-feature: the sidebar lists a grant the notifier never
+    /// warns about. `None` is the honest answer for every other vendor; it is
+    /// not the same as an empty [`ResetCredits`], which means "this provider
+    /// banks resets and you currently hold none".
+    pub fn reset_credits(&self) -> Option<&ResetCredits> {
+        match self {
+            Self::Anthropic(snapshot) => Some(&snapshot.reset_credits),
+            Self::Openai(snapshot) => Some(&snapshot.reset_credits),
+            Self::SuperGrok(snapshot) => Some(&snapshot.reset_credits),
+            _ => None,
+        }
+    }
 }
 
 /// Google Antigravity 2.0 / CLI snapshot. The API groups models into Gemini
@@ -742,6 +766,23 @@ pub struct ResetCredit {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+/// A provider's own label for a banked reset, rendered verbatim in Pango bar
+/// markup and in the `;;`-delimited desktop FORMAT protocol. Both vendors that
+/// carry one gate it here rather than each keeping a copy: an over-long or
+/// control-character-bearing title is dropped, leaving the expiry line alone,
+/// which still says everything the user has to act on.
+pub fn checked_reset_title(value: Option<String>) -> Option<String> {
+    const MAX_RESET_TITLE_CHARS: usize = 80;
+    let value = value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+    if value.chars().count() > MAX_RESET_TITLE_CHARS || value.chars().any(char::is_control) {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 impl ResetCredits {
     pub fn is_empty(&self) -> bool {
         self.available == 0
@@ -987,6 +1028,7 @@ mod tests {
                 currency: None,
                 decimal_places: Some(2),
             }),
+            reset_credits: Default::default(),
         }
     }
 

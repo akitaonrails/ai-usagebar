@@ -289,11 +289,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
 
 fn reset_credits_for(state: &TabState) -> Option<crate::usage::ResetCredits> {
     let credits = match state {
-        TabState::Ready(ready) => match &ready.snapshot {
-            crate::usage::VendorSnapshot::Openai(snapshot) => &snapshot.reset_credits,
-            crate::usage::VendorSnapshot::SuperGrok(snapshot) => &snapshot.reset_credits,
-            _ => return None,
-        },
+        TabState::Ready(ready) => ready.snapshot.reset_credits()?,
         _ => return None,
     };
     (!credits.is_empty()).then(|| credits.clone())
@@ -981,6 +977,62 @@ mod tests {
         );
     }
 
+    /// The sidebar reads `reset_credits` off the entry, so Claude's grant has
+    /// to arrive through the same field Codex and SuperGrok already use —
+    /// not a Claude-shaped one a frontend would have to learn.
+    #[test]
+    fn json_exposes_claude_reset_credit_expiries() {
+        let expiry: DateTime<Utc> = "2026-10-22T16:00:00Z".parse().unwrap();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Anthropic(crate::usage::AnthropicSnapshot {
+                plan: "Max 20x".into(),
+                session: crate::usage::UsageWindow {
+                    utilization_pct: 2,
+                    resets_at: None,
+                    window_duration: chrono::Duration::hours(5),
+                },
+                weekly: crate::usage::UsageWindow {
+                    utilization_pct: 63,
+                    resets_at: None,
+                    window_duration: chrono::Duration::days(7),
+                },
+                sonnet: None,
+                scoped: Vec::new(),
+                extra: None,
+                reset_credits: ResetCredits {
+                    available: 1,
+                    credits: vec![ResetCredit {
+                        title: Some("Opus 5.5 launch reset".into()),
+                        expires_at: Some(expiry),
+                    }],
+                },
+            }),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+            display: Default::default(),
+        }));
+        let projected = entry_from_state(&TabId::vendor(VendorId::Anthropic), &state, Utc::now());
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[projected], None)).unwrap();
+        let entry = &value["entries"][0];
+
+        assert_eq!(entry["reset_credits"]["available"], 1);
+        assert_eq!(
+            entry["reset_credits"]["credits"][0]["title"],
+            "Opus 5.5 launch reset"
+        );
+        assert_eq!(
+            entry["reset_credits"]["credits"][0]["expires_at"],
+            expiry.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        );
+        assert!(
+            entry["sections"].as_array().unwrap().iter().any(|section| {
+                section["type"] == "block" && section["label"] == "Reset credits"
+            })
+        );
+    }
+
     #[test]
     fn json_exposes_supergrok_reset_credit_expiries() {
         let expiry: DateTime<Utc> = "2026-10-03T23:00:00Z".parse().unwrap();
@@ -1042,6 +1094,7 @@ mod tests {
                 sonnet: None,
                 scoped: vec![],
                 extra: None,
+                reset_credits: Default::default(),
             }),
             stale: false,
             last_error: None,

@@ -257,6 +257,8 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
                 .unwrap_or_else(|| "0".into()),
         ),
         ("extra_bar", extra_bar),
+        ("resets_available", snap.reset_credits.available.to_string()),
+        ("resets", crate::format::reset_credits(&snap.reset_credits)),
     ]);
 
     insert_pace(&mut v, "session", &session, input.format_pace_color, theme);
@@ -522,6 +524,20 @@ fn render_default_tooltip(input: &RenderInput) -> String {
         )));
     }
 
+    if snap.reset_credits.available > 0 {
+        lines.push(Line::Body("".into()));
+        lines.push(Line::Sep);
+        lines.push(Line::Body(format!(
+            " <span foreground='{fg}'>  󰁯  Reset credits</span>"
+        )));
+        for line in crate::format::reset_credit_lines(&snap.reset_credits, input.now) {
+            lines.push(Line::Body(format!(
+                " <span foreground='{dim}'>     {}</span>",
+                escape(&line)
+            )));
+        }
+    }
+
     if let Some((code, msg)) = input.outcome.last_error.as_ref()
         && *code != 0
     {
@@ -621,6 +637,7 @@ mod tests {
                 currency: None,
                 decimal_places: Some(2),
             }),
+            reset_credits: Default::default(),
         };
         FetchOutcome {
             snapshot: snap,
@@ -807,6 +824,41 @@ mod tests {
         // Still contains the basics.
         assert!(out.tooltip.contains("Session"));
         assert!(out.tooltip.contains("Weekly"));
+    }
+
+    #[test]
+    fn tooltip_reports_banked_resets_and_stays_silent_without_them() {
+        let theme = Theme::default();
+        let mut oc = sample_outcome();
+
+        // The overwhelmingly common case: no grant, and therefore no row.
+        let out = render_anthropic(&input(&oc, &theme));
+        assert!(!out.tooltip.contains("Reset credits"), "{}", out.tooltip);
+
+        oc.snapshot.reset_credits = crate::usage::ResetCredits {
+            available: 1,
+            credits: vec![crate::usage::ResetCredit {
+                title: Some("Opus 5.5 launch reset".into()),
+                expires_at: Some(now() + chrono::Duration::days(28)),
+            }],
+        };
+        let out = render_anthropic(&input(&oc, &theme));
+        assert!(out.tooltip.contains("Reset credits"), "{}", out.tooltip);
+        assert!(
+            out.tooltip.contains("Opus 5.5 launch reset"),
+            "{}",
+            out.tooltip
+        );
+        // The deadline is what the user acts on, so it travels with the row.
+        // Asserted through the countdown rather than the rendered date: the
+        // date is formatted in local time and this suite must not depend on
+        // the machine's zone.
+        assert!(out.tooltip.contains("expires"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("28d"), "{}", out.tooltip);
+
+        let values = build_placeholders(&input(&oc, &theme));
+        assert_eq!(values["resets_available"], "1");
+        assert_eq!(values["resets"], "1 reset available");
     }
 
     #[test]

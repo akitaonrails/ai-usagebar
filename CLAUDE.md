@@ -124,7 +124,18 @@ When cutting a new version (patch, minor, or major):
    `packaging/aur/PKGBUILD*` + regen'd `.SRCINFO*` from the main repo,
    commit, push.
 
-**Anything skipping any of 1–9 is an incomplete release.** Tags are
+10. **Reclaim the build storage.** After the release is verified (not merely
+    tagged), run `cargo clean` — release gates leave tens of GB of
+    incremental artifacts in `target/`, and multi-arch work compounds it.
+    Also remove scratch from the audit/gating workflow: any `git worktree`
+    checkouts under `/tmp` (prune with `git worktree remove --force` +
+    `git worktree prune`) and their `CARGO_TARGET_DIR` side directories
+    (`/tmp/opencode/*-tgt`), which each hold a full dependency build.
+    The next `make test` pays a full rebuild for the reclaimed space —
+    that trade is correct exactly once per release, and leaving the trash
+    in place has exhausted disk storage before.
+
+**Anything skipping any of 1–10 is an incomplete release.** Tags are
 immutable; do **not** force-move a tag once it's pushed. Cut a new
 patch version instead.
 

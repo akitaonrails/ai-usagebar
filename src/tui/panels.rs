@@ -778,6 +778,7 @@ fn anthropic_sections(
             None,
         );
     }
+    push_reset_credits(&mut v, &s.reset_credits, now);
     v
 }
 
@@ -2242,6 +2243,7 @@ mod tests {
                 currency: None,
                 decimal_places: Some(2),
             }),
+            reset_credits: Default::default(),
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
         // Title (carries "Updated …" inline now) + 4 metrics (3 windows +
@@ -2285,6 +2287,7 @@ mod tests {
                 currency: Some("BRL".into()),
                 decimal_places: Some(2),
             }),
+            reset_credits: Default::default(),
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
         let extra = sections
@@ -2328,6 +2331,7 @@ mod tests {
             sonnet: None,
             scoped: vec![],
             extra: None,
+            reset_credits: Default::default(),
         };
         let sections = sections_for(&ready(VendorSnapshot::Anthropic(snap)), now(), 5);
         let metric_count = sections
@@ -2577,11 +2581,12 @@ mod tests {
         )));
     }
 
-    /// Both vendors reach every frontend through these sections — the TUI
-    /// panel, `usage --json`, and from there the Omarchy, GNOME and KDE
-    /// surfaces. One row, one wording, whichever provider banked the reset.
+    /// Every vendor that banks resets reaches every frontend through these
+    /// sections — the TUI panel, `usage --json`, and from there the Omarchy,
+    /// GNOME and KDE surfaces. One row, one wording, whichever provider
+    /// banked the reset.
     #[test]
-    fn banked_resets_reach_the_panel_for_both_providers() {
+    fn banked_resets_reach_the_panel_for_every_provider() {
         let now = now();
         let credits = ResetCredits {
             available: 2,
@@ -2614,13 +2619,31 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: Some(now + chrono::Duration::days(3)),
             prepaid_balance: None,
-            reset_credits: credits,
+            reset_credits: credits.clone(),
             products: Vec::new(),
+        };
+        let claude = AnthropicSnapshot {
+            plan: "Max 20x".into(),
+            session: UsageWindow {
+                utilization_pct: 2,
+                resets_at: Some(now + chrono::Duration::hours(1)),
+                window_duration: chrono::Duration::hours(5),
+            },
+            weekly: UsageWindow {
+                utilization_pct: 63,
+                resets_at: Some(now + chrono::Duration::days(1)),
+                window_duration: chrono::Duration::days(7),
+            },
+            sonnet: None,
+            scoped: Vec::new(),
+            extra: None,
+            reset_credits: credits,
         };
 
         for snapshot in [
             VendorSnapshot::Openai(codex),
             VendorSnapshot::SuperGrok(supergrok),
+            VendorSnapshot::Anthropic(claude),
         ] {
             let sections = sections_for(&ready(snapshot), now, 5);
             let body = sections.iter().find_map(|section| match section {

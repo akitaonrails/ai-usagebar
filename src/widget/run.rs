@@ -713,32 +713,41 @@ async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput
     ))
 }
 
-/// Resolve a Codex login and its cache as one identity, the way
-/// [`openrouter_target`] does for a key. The default login keeps the historical
+/// The cache for the Codex login `--account` names, kept to one identity the
+/// way [`openrouter_target`] does for a key. The default login keeps the historical
 /// vendor-root cache; each named account is isolated below `openai/<label>`, so
 /// two ChatGPT subscriptions never serve each other's usage from a warm cache.
-fn openai_target(cli: &Cli, config: &Config) -> Result<(std::path::PathBuf, Cache)> {
-    let label = cli.account.as_deref();
-    let creds_path = config.openai.fetch_auth_path(label)?;
-    let cache = match (cli.cache_dir.as_deref(), label) {
+///
+/// The login's path is resolved inside the fetch, under its lock, because
+/// `account switch --codex` can move it between two looks.
+fn openai_cache(cli: &Cli) -> Result<Cache> {
+    Ok(match (cli.cache_dir.as_deref(), cli.account.as_deref()) {
         (Some(root), Some(label)) => Cache::at(root.join("openai").join(label)),
         (Some(root), None) => Cache::at(root.join("openai")),
         (None, Some(label)) => Cache::for_vendor_account("openai", label)?,
         (None, None) => Cache::for_vendor("openai")?,
-    };
-    Ok((creds_path, cache))
+    })
 }
 
 async fn openai_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
-    let (creds_path, cache) = openai_target(cli, config)?;
+    let label = cli.account.as_deref();
+    let route = || config.openai.fetch_auth_path(label);
+    let cache = openai_cache(cli)?;
     let endpoints = openai::fetch::Endpoints::default();
-    let outcome =
-        match openai::fetch_snapshot(&client, &creds_path, &cache, &endpoints, DEFAULT_TTL).await {
-            Ok(o) => o,
-            Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
-            Err(e) => return Err(e),
-        };
+    let outcome = match openai::fetch_snapshot_routed(
+        &client,
+        route,
+        &cache,
+        &endpoints,
+        DEFAULT_TTL,
+    )
+    .await
+    {
+        Ok(o) => o,
+        Err(e) if e.is_transient() => return Ok(WaybarOutput::loading(cli.icon.as_deref())),
+        Err(e) => return Err(e),
+    };
 
     let theme = theme_from_cli(cli);
     let snap = outcome.snapshot.clone();
@@ -1157,6 +1166,7 @@ mod tests {
                 sonnet: None,
                 scoped: vec![],
                 extra: None,
+                reset_credits: Default::default(),
             },
             stale: false,
             last_error: None,

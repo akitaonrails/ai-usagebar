@@ -53,9 +53,19 @@ These are compatible with claudebar.
 | `{sonnet_*}` | The same family for the seven-day Sonnet window. Empty when absent. |
 | `{scoped_model}`, `{scoped_pct}`, `{scoped_reset}`, `{scoped_elapsed}`, `{scoped_bar}` | `Fable`, `84`, `5d 2h`, `27`, `█████████████████░░░` |
 | `{extra_spent}`, `{extra_limit}`, `{extra_pct}`, `{extra_bar}` | `$2.50`, `$50.00`, `5`, `█░░░░░░░░░░░░░░░░░░░` |
+| `{resets_available}`, `{resets}` | `1`, `1 reset available` |
 
 The scoped family describes the first model-specific weekly window. When that
 window is absent, it returns neutral empty, `0`, or `—` values as appropriate.
+
+`{resets_available}` is the number of banked limit resets Claude is offering —
+the ones the app shows under "Resets", which you redeem by hand rather than
+waiting for `{session_reset}`. `{resets}` is the compact count (`1 reset
+available`); it reads `0 resets available` when there is no grant, so gate the
+row on `{resets_available}` if you only want it when there is one. The
+per-grant labels and expiry dates appear in the default tooltip and in the TUI
+panel. Claude only offers these during a campaign, and only to accounts it
+selects — most of the time both are `0`.
 
 ## Codex
 
