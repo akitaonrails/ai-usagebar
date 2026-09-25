@@ -3,7 +3,8 @@
 //! The glyph is a linear gauge mark (dial arc, needle and hub) supplied by the
 //! user (Solar Icons style, CC BY 4.0). It is rasterized from
 //! `windows/tray-icon.svg` into one anti-aliased `windows/tray-icon-<size>.rgba`
-//! per NotifyIcon size (black ink, alpha as rendered).
+//! per NotifyIcon size (black ink, alpha as rendered). A dark taskbar gets the
+//! same glyph in white ([`Ink::White`]); the macOS menu bar tints it itself.
 
 /// One Dark bar colors, same thresholds the widget already uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +72,28 @@ pub fn tray_icon_rgba(wanted: u32, _severity: Severity) -> (Vec<u8>, u32) {
     (bytes.to_vec(), size)
 }
 
+/// Stroke color for the Windows NotifyIcon: black reads on a light taskbar,
+/// white on a dark one (the Windows 11 default).
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ink {
+    Black,
+    White,
+}
+
+/// Recolors a black-ink raster from [`tray_icon_rgba`] in place. Only RGB
+/// changes; alpha, and with it the anti-aliasing, stays as rendered.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn apply_ink(rgba: &mut [u8], ink: Ink) {
+    let value = match ink {
+        Ink::Black => 0,
+        Ink::White => 255,
+    };
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel[..3].fill(value);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +151,26 @@ mod tests {
                 "glyph too sparse at {size}: {inked}"
             );
             assert!(soft > 0, "raster at {size} should be anti-aliased");
+        }
+    }
+
+    #[test]
+    fn white_ink_keeps_the_glyph_shape_and_changes_only_color() {
+        for size in ICON_SIZES {
+            let (black, _) = tray_icon_rgba(size, Severity::Mid);
+            let mut white = black.clone();
+            apply_ink(&mut white, Ink::White);
+            for (b, w) in black
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(white.as_chunks::<4>().0)
+            {
+                assert_eq!(b[3], w[3], "alpha is untouched at {size}");
+                assert_eq!(&w[..3], &[255, 255, 255], "strokes are white at {size}");
+            }
+            apply_ink(&mut white, Ink::Black);
+            assert_eq!(white, black, "black ink restores the shipped raster");
         }
     }
 
