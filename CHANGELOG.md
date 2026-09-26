@@ -9,6 +9,13 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **The tray popover no longer logs a 404 for `/favicon.ico`.** The page had
+  no icon, so the WebView asked the tray's custom protocol for
+  `/favicon.ico` on every open, and the console showed a failed request. The
+  page now declares an empty icon (`data:,`), so nothing is requested.
+
 ## [1.25.0] — 2026-09-25
 
 ### Added
