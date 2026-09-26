@@ -10,14 +10,15 @@ Run the gate. It is the same one CI runs, and it catches almost everything a
 review would otherwise send back:
 
 ```
-make test                                   # cargo test + the GNOME, KDE and Omarchy contract suites
+make test                                   # cargo test + GNOME, KDE, Omarchy and Mint contract suites
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo machete                               # no unused dependencies
 ```
 
-`make test` rather than `cargo test`: the frontends have their own Node contract
-tests, and a change to the report shape can break them without touching Rust.
+`make test` rather than `cargo test`: the frontends have Node and Python
+contract tests, and a change to the report shape can break them without
+touching Rust.
 
 ## Checklist
 

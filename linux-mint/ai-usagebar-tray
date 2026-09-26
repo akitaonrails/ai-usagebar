@@ -1,0 +1,759 @@
+#!/usr/bin/env python3
+"""
+AI Usage Bar - Native Linux Mint / Cinnamon Tray & Dashboard
+Integrates with `ai-usagebar` to provide a system tray icon and
+a beautiful floating dashboard that tracks Mint-Y light and dark themes.
+"""
+
+import os
+import sys
+import json
+import subprocess
+import threading
+import socket
+import fcntl
+import time
+from datetime import datetime
+
+from tray_model import metric_display, metric_usage_label, is_not_connected, connection_help, metric_pace, meter_color, report_sections, tr, installed_binary
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+gi.require_version('GdkPixbuf', '2.0')
+try:
+    gi.require_version('AyatanaAppIndicator3', '0.1')
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator
+except ValueError:
+    try:
+        gi.require_version('AppIndicator3', '0.1')
+        from gi.repository import AppIndicator3 as AppIndicator
+    except ValueError:
+        AppIndicator = None
+
+from gi.repository import Gtk, Gdk, GLib, GdkPixbuf, Pango, Gio
+try:
+    gi.require_version('GdkX11', '3.0')
+    from gi.repository import GdkX11
+except (ValueError, ImportError):
+    GdkX11 = None
+try:
+    gi.require_version('XApp', '1.0')
+    from gi.repository import XApp
+except (ValueError, ImportError):
+    XApp = None
+
+AI_USAGEBAR_BIN = installed_binary("ai-usagebar", override=os.environ.get("AI_USAGEBAR_BIN"))
+AI_USAGEBAR_TUI_BIN = installed_binary("ai-usagebar-tui", override=os.environ.get("AI_USAGEBAR_TUI_BIN"))
+ICON_NAME = "ai-usagebar"
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache")
+LOCK_PATH = os.path.join(RUNTIME_DIR, "ai-usagebar-tray.lock")
+SOCKET_PATH = os.path.join(RUNTIME_DIR, "ai-usagebar-tray.sock")
+SOURCE_ICON_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "omarchy", "icons"))
+INSTALLED_ICON_DIR = os.path.expanduser("~/.local/share/ai-usagebar/tray/icons")
+ICON_FILES = {
+    "anthropic": "claude.svg", "anthropic_api": "anthropic.svg",
+    "openai": "openai.svg", "copilot": "copilot.svg", "zai": "zhipu.svg",
+    "openrouter": "openrouter.svg", "deepseek": "deepseek.svg",
+    "kimi": "kimi.svg", "kilo": "kilo.svg", "novita": "novita.svg",
+    "moonshot": "moonshot.svg", "grok": "grok.svg",
+    "supergrok": "grok.svg", "grokbot": "grokbot.svg",
+    "antigravity": "antigravity.svg", "cursor": "cursor.svg",
+    "minimax": "minimax.svg", "kiro": "kiro.svg", "nous": "nous.svg",
+    "opencode-go": "opencode.svg", "opencode_go": "opencode.svg",
+}
+
+
+def provider_icon(entry, title, dark=False):
+    """Reuse the provider marks already shipped by the Omarchy frontend."""
+    brand = str(entry.get("brand") or entry.get("id") or "").split("@", 1)[0]
+    filename = ICON_FILES.get(brand)
+    if filename:
+        for icon_dir in (SOURCE_ICON_DIR, INSTALLED_ICON_DIR):
+            path = os.path.join(icon_dir, filename)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, "rb") as icon_file:
+                    tint = b"#aab3c0" if dark else b"#717982"
+                    svg = icon_file.read().replace(b"#ffffff", tint).replace(b"currentColor", tint)
+                loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+                loader.set_size(20, 20)
+                loader.write(svg)
+                loader.close()
+                image = Gtk.Image.new_from_pixbuf(loader.get_pixbuf())
+                image.set_size_request(22, 22)
+                return image
+            except (OSError, GLib.Error):
+                continue
+    initials = (title.strip()[:2] or "?").upper()
+    fallback = Gtk.Label(label=initials)
+    fallback.get_style_context().add_class("provider-initials")
+    fallback.set_size_request(22, 22)
+    return fallback
+
+def get_theme_mode():
+    """Detect if Linux Mint is in Dark or Light mode."""
+    try:
+        settings = Gtk.Settings.get_default()
+        theme_name = os.environ.get("GTK_THEME") or settings.get_property("gtk-theme-name") or ""
+        prefer_dark = settings.get_property("gtk-application-prefer-dark-theme")
+        if prefer_dark or "-Dark" in theme_name or "-dark" in theme_name:
+            return "dark"
+    except Exception:
+        pass
+    return "light"
+
+def get_css(mode="dark"):
+    if mode == "dark":
+        bg_main = "#202126"
+        bg_card = "#2d3037"
+        fg_main = "#f0f1f4"
+        fg_muted = "#aab3c0"
+        border_col = "#41454e"
+        bar_bg = "#4b505a"
+    else:
+        bg_main = "#ffffff"
+        bg_card = "#f3f4f6"
+        fg_main = "#292d33"
+        fg_muted = "#747b84"
+        border_col = "#e1e4e8"
+        bar_bg = "#e4e6e9"
+
+    return f"""
+    window {{
+        background-color: {bg_main};
+        color: {fg_main};
+        font-family: system-ui, -apple-system, sans-serif;
+    }}
+    .subtitle-label {{
+        font-size: 12px;
+        color: {fg_muted};
+    }}
+    .scroll-container {{
+        background-color: transparent;
+        padding: 14px 18px;
+    }}
+    .provider-group {{
+        margin-bottom: 10px;
+    }}
+    .provider-header {{
+        padding: 3px 4px 8px 4px;
+    }}
+    .metric-panel {{
+        background-color: {bg_card};
+        border-radius: 18px;
+        padding: 14px 18px;
+    }}
+    .provider-title {{
+        font-size: 17px;
+        font-weight: bold;
+        color: {fg_main};
+    }}
+    .provider-initials {{
+        color: {fg_muted};
+        font-size: 12px;
+        font-weight: bold;
+    }}
+    .plan-badge {{
+        font-size: 13px;
+        color: {fg_muted};
+    }}
+    .metric-label {{
+        font-size: 14px;
+        color: {fg_main};
+        font-weight: bold;
+    }}
+    .metric-detail {{
+        font-size: 12px;
+        color: {fg_muted};
+    }}
+    .metric-value {{
+        font-size: 13px;
+        color: {fg_main};
+    }}
+    .section-label {{
+        font-size: 11px;
+        font-weight: bold;
+        color: {fg_muted};
+        margin-top: 5px;
+    }}
+    .status-label {{
+        font-size: 11px;
+        color: {fg_muted};
+    }}
+    .error-label {{
+        font-size: 11px;
+        color: #d96b58;
+    }}
+    .disconnected-label {{
+        color: {fg_muted};
+        font-size: 13px;
+    }}
+    .pace-warning {{
+        color: #e6504f;
+        font-size: 12px;
+    }}
+    .pace-near {{
+        color: #bb8510;
+        font-size: 12px;
+    }}
+    progressbar trough {{
+        background-color: {bar_bg};
+        border-radius: 4px;
+        min-height: 6px;
+    }}
+    progressbar progress {{
+        border-radius: 4px;
+    }}
+    .meter-blue progressbar progress {{
+        background-color: #2580f7;
+    }}
+    .meter-yellow progressbar progress {{
+        background-color: #f2bd34;
+    }}
+    .meter-red progressbar progress {{
+        background-color: #ed4b48;
+    }}
+    .footer-box {{
+        padding: 8px 18px;
+        border-top: 1px solid {border_col};
+    }}
+    .tui-btn {{
+        background-color: {border_col};
+        border-radius: 16px;
+        padding: 4px 12px;
+        font-size: 12px;
+    }}
+    """
+
+
+class UsageDashboard(Gtk.Window):
+    def __init__(self, tray_app):
+        super().__init__(title="AI Usage Bar")
+        self.tray_app = tray_app
+        self.set_default_size(440, 560)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_icon_name(ICON_NAME)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+        self.set_keep_above(True)
+        self.focused_since_open = False
+        self.focus_started_at = 0.0
+        self.focus_retry_pending = False
+        self.connect("delete-event", self.on_close)
+        self.connect("focus-in-event", self.on_focus_in)
+        self.connect("focus-out-event", self.on_focus_out)
+
+        # Style provider
+        self.css_provider = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            self.css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        self.update_theme_style()
+
+        # Listen to theme changes
+        settings = Gtk.Settings.get_default()
+        settings.connect("notify::gtk-theme-name", lambda *args: self.update_theme_style())
+        settings.connect("notify::gtk-application-prefer-dark-theme", lambda *args: self.update_theme_style())
+
+        # Main layout
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(main_box)
+
+        # Refresh remains available in the compact footer.
+        self.refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
+        self.refresh_btn.set_tooltip_text(tr("Refresh usage now", "Atualizar métricas agora"))
+        self.refresh_btn.connect("clicked", lambda b: self.tray_app.trigger_refresh())
+
+        # Scrollable Cards Area
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.get_style_context().add_class("scroll-container")
+        self.cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        scroller.add(self.cards_box)
+        main_box.pack_start(scroller, True, True, 0)
+
+        # Footer
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        footer.get_style_context().add_class("footer-box")
+
+        self.last_update_lbl = Gtk.Label(label=tr("Updating...", "Atualizando..."), xalign=0)
+        self.last_update_lbl.get_style_context().add_class("subtitle-label")
+        footer.pack_start(self.last_update_lbl, True, True, 0)
+        footer.pack_start(self.refresh_btn, False, False, 0)
+
+        tui_btn = Gtk.Button(label=tr("Open terminal TUI", "Abrir Terminal TUI"))
+        tui_btn.get_style_context().add_class("tui-btn")
+        tui_btn.connect("clicked", lambda b: self.tray_app.launch_tui())
+        footer.pack_end(tui_btn, False, False, 0)
+
+        main_box.pack_start(footer, False, False, 0)
+
+    def update_theme_style(self):
+        mode = get_theme_mode()
+        css = get_css(mode)
+        self.css_provider.load_from_data(css.encode())
+        if hasattr(self, "cards_box") and self.tray_app.latest_data:
+            self.render_data(self.tray_app.latest_data)
+
+    def on_close(self, widget, event):
+        self.hide()
+        return True  # Don't destroy window, keep running in tray
+
+    def on_focus_in(self, widget, event):
+        self.focused_since_open = True
+        self.focus_started_at = time.monotonic()
+        return False
+
+    def on_focus_out(self, widget, event):
+        # The panel can receive focus and lose it again while the status
+        # applet finishes its click. That transition is not an outside click.
+        if self.focused_since_open and time.monotonic() - self.focus_started_at < 0.25:
+            if not self.focus_retry_pending:
+                self.focus_retry_pending = True
+                GLib.timeout_add(75, self.retry_focus)
+            return False
+        if self.focused_since_open:
+            self.hide()
+            self.focused_since_open = False
+        return False
+
+    def retry_focus(self):
+        self.focus_retry_pending = False
+        if self.is_visible() and not self.is_active():
+            self.present()
+        return False
+
+    def render_data(self, data):
+        # Clear old cards
+        for child in self.cards_box.get_children():
+            self.cards_box.remove(child)
+
+        entries = data.get("entries", [])
+        active_entries = list(entries)
+
+        if not active_entries:
+            empty_lbl = Gtk.Label(label=tr("No active provider or detected credentials.",
+                                           "Nenhum provedor ativo ou com credenciais detectadas."))
+            empty_lbl.get_style_context().add_class("subtitle-label")
+            self.cards_box.pack_start(empty_lbl, True, True, 20)
+            self.cards_box.show_all()
+            return
+
+        primary = data.get("primary")
+        active_entries.sort(key=lambda e: (e.get("id") != primary and e.get("name") != primary))
+        for entry in active_entries:
+            group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            group.get_style_context().add_class("provider-group")
+
+            card_hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            card_hdr.get_style_context().add_class("provider-header")
+            brand_name = entry.get("display_name") or entry.get("name", "").capitalize()
+            card_hdr.pack_start(provider_icon(entry, brand_name, get_theme_mode() == "dark"), False, False, 0)
+            brand_lbl = Gtk.Label(label=brand_name, xalign=0)
+            brand_lbl.get_style_context().add_class("provider-title")
+            card_hdr.pack_start(brand_lbl, False, False, 0)
+
+            plan = entry.get("plan")
+            if plan:
+                plan_badge = Gtk.Label(label=plan)
+                plan_badge.get_style_context().add_class("plan-badge")
+                plan_badge.set_ellipsize(Pango.EllipsizeMode.END)
+                card_hdr.pack_start(plan_badge, True, True, 0)
+
+            refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.MENU)
+            refresh_btn.set_relief(Gtk.ReliefStyle.NONE)
+            refresh_btn.set_tooltip_text(tr("Refresh usage report", "Atualizar relatório de uso"))
+            refresh_btn.connect("clicked", lambda _button: self.tray_app.trigger_refresh())
+            card_hdr.pack_end(refresh_btn, False, False, 0)
+
+            settings_btn = Gtk.Button.new_from_icon_name("preferences-system-symbolic", Gtk.IconSize.MENU)
+            settings_btn.set_relief(Gtk.ReliefStyle.NONE)
+            settings_btn.set_tooltip_text(tr(f"Configure {brand_name}", f"Configurar {brand_name}"))
+            settings_btn.connect("clicked", lambda _button, selected=entry: self.show_provider_settings(selected))
+            card_hdr.pack_end(settings_btn, False, False, 0)
+
+            group.pack_start(card_hdr, False, False, 0)
+            panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            panel.get_style_context().add_class("metric-panel")
+
+            if is_not_connected(entry):
+                self.add_text(panel, tr("Not connected", "Não conectado"), "disconnected-label")
+                expander = Gtk.Expander(label=tr("Learn more", "Saiba mais"))
+                help_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+                self.add_text(help_box, connection_help(entry), "metric-detail")
+                guide = Gtk.LinkButton.new_with_label(
+                    "https://github.com/akitaonrails/ai-usagebar#authentication",
+                    tr("Authentication guide", "Guia de autenticação"),
+                )
+                guide.set_halign(Gtk.Align.START)
+                help_box.pack_start(guide, False, False, 0)
+                expander.add(help_box)
+                panel.pack_start(expander, False, False, 0)
+            else:
+                if entry.get("stale"):
+                    self.add_text(panel, tr("Previous data — refresh unavailable",
+                                            "Dados anteriores — atualização indisponível"), "status-label")
+                if entry.get("error"):
+                    self.add_text(panel, str(entry["error"]), "error-label")
+
+                # Sections preserve the upstream report's grouping and text rows.
+                sections = list(report_sections(entry))
+                if sections:
+                    for section in sections:
+                        kind = section.get("type")
+                        if kind == "heading":
+                            self.add_text(panel, section.get("label") or section.get("title") or "", "section-label")
+                        elif kind == "metric":
+                            self.add_metric(panel, section)
+                        elif kind == "block":
+                            self.add_text(panel, section.get("label") or "", "section-label")
+                            for line in section.get("body") or []:
+                                self.add_text(panel, line, "metric-detail")
+                        elif kind in ("text", "detail"):
+                            label = section.get("label") or ""
+                            value = section.get("value") or section.get("body") or ""
+                            self.add_text(panel, f"{label}: {value}" if label and value else label or value, "metric-detail")
+
+            group.pack_start(panel, False, False, 0)
+            self.cards_box.pack_start(group, False, False, 0)
+
+        now_str = datetime.now().strftime("%H:%M:%S")
+        self.last_update_lbl.set_text(tr(f"Last updated: {now_str}", f"Última atualização: {now_str}"))
+        self.cards_box.show_all()
+
+    def add_text(self, parent, value, style):
+        if not value:
+            return
+        label = Gtk.Label(label=str(value), xalign=0)
+        label.set_line_wrap(True)
+        label.set_selectable(True)
+        label.get_style_context().add_class(style)
+        parent.pack_start(label, False, False, 0)
+
+    def show_provider_settings(self, entry):
+        name = entry.get("display_name") or entry.get("name") or tr("Provider", "Provedor")
+        config_dir = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+        config_path = os.path.join(config_dir, "ai-usagebar", "config.toml")
+        dialog = Gtk.MessageDialog(
+            transient_for=self, modal=True, message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.NONE, text=tr(f"Configure {name}", f"Configurar {name}"),
+        )
+        guidance = connection_help(entry) if is_not_connected(entry) else tr(
+            "Edit this provider's options in the configuration file or in the TUI (press s).",
+            "Ajuste as opções deste provedor no arquivo de configuração ou na TUI (tecla s).")
+        dialog.format_secondary_text(f"{guidance}\n\n{config_path}")
+        dialog.add_button(tr("Authentication guide", "Guia de autenticação"), 2)
+        dialog.add_button(tr("Open config.toml", "Abrir config.toml"), 1)
+        dialog.add_button(tr("Close", "Fechar"), Gtk.ResponseType.CLOSE)
+        response = dialog.run()
+        dialog.destroy()
+        try:
+            if response == 1:
+                if not os.path.isfile(config_path):
+                    raise FileNotFoundError(tr(
+                        "config.toml does not exist yet; create it from config.example.toml or use TUI Settings.",
+                        "config.toml ainda não existe; crie-o a partir de config.example.toml ou use as configurações da TUI"))
+                Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(config_path).get_uri())
+            elif response == 2:
+                Gio.AppInfo.launch_default_for_uri("https://github.com/akitaonrails/ai-usagebar#authentication")
+        except (GLib.Error, OSError) as error:
+            warning = Gtk.MessageDialog(
+                transient_for=self, modal=True, message_type=Gtk.MessageType.ERROR,
+                buttons=Gtk.ButtonsType.CLOSE, text=str(error),
+            )
+            warning.run()
+            warning.destroy()
+
+    def add_metric(self, card, m):
+        metric_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        pct = m.get("percent")
+        pace = (("behind", tr("🔥 Limit reached", "🔥 Limite atingido")) if isinstance(pct, (int, float)) and pct >= 100
+                else metric_pace(m))
+        metric_box.get_style_context().add_class(f"meter-{meter_color(m, pace)}")
+
+        # Metric text row
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        lbl = Gtk.Label(label=m.get("label", ""), xalign=0)
+        lbl.get_style_context().add_class("metric-label")
+        row.pack_start(lbl, True, True, 0)
+        value = metric_display(m)
+        if pace and pace[1]:
+            pace_lbl = Gtk.Label(label=pace[1], xalign=1)
+            pace_lbl.get_style_context().add_class(
+                "pace-warning" if pace[0] == "behind" else "pace-near"
+            )
+            row.pack_end(pace_lbl, False, False, 0)
+        if m.get("headline") == "value" or not isinstance(pct, (int, float)):
+            val_lbl = Gtk.Label(label=value, xalign=1)
+            val_lbl.get_style_context().add_class("metric-value")
+            row.pack_end(val_lbl, False, False, 0)
+        metric_box.pack_start(row, False, False, 0)
+
+        # Progress bar
+        if isinstance(pct, (int, float)):
+            pbar = Gtk.ProgressBar()
+            pbar.set_fraction(max(0.0, min(1.0, pct / 100.0)))
+            metric_box.pack_start(pbar, False, False, 0)
+
+        # Keep the report's reset and pace text, with the usage value alongside it.
+        detail = str(m.get("detail") or "")
+        detail_parts = [part.strip() for part in detail.split(" · ") if part.strip()]
+        detail_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        if isinstance(pct, (int, float)):
+            usage_lbl = Gtk.Label(label=metric_usage_label(m), xalign=0)
+            usage_lbl.get_style_context().add_class("metric-value")
+            detail_row.pack_start(usage_lbl, False, False, 0)
+        if detail_parts:
+            reset_lbl = Gtk.Label(label=detail_parts[0], xalign=1)
+            reset_lbl.set_line_wrap(True)
+            reset_lbl.get_style_context().add_class("metric-detail")
+            detail_row.pack_end(reset_lbl, True, True, 0)
+        metric_box.pack_start(detail_row, False, False, 0)
+        if len(detail_parts) > 1:
+            self.add_text(metric_box, " · ".join(detail_parts[1:]), "metric-detail")
+
+        card.pack_start(metric_box, False, False, 4)
+
+class AIUsageTrayApp:
+    def __init__(self):
+        self.window = UsageDashboard(self)
+        self.latest_data = {}
+        self.refreshing = False
+        self.status_icon = None
+        self.indicator = None
+
+        self.xapp_icon = None
+        # Cinnamon's native XApp applet supports distinct left and right clicks.
+        if XApp and "cinnamon" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower() and XApp.StatusIcon.any_monitors():
+            self.xapp_icon = XApp.StatusIcon()
+            self.xapp_icon.set_name("ai-usagebar")
+            self.xapp_icon.set_icon_name(ICON_NAME)
+            self.xapp_icon.set_tooltip_text(tr("AI Usage Bar — open dashboard", "AI Usage Bar — abrir painel"))
+            self.xapp_icon.connect("activate", self.on_xapp_activate)
+            self.xapp_icon.set_visible(True)
+        elif os.environ.get("XDG_SESSION_TYPE", "").lower() == "x11":
+            self.status_icon = Gtk.StatusIcon.new_from_icon_name(ICON_NAME)
+            self.status_icon.set_tooltip_text(tr("AI Usage Bar — open dashboard", "AI Usage Bar — abrir painel"))
+            self.status_icon.connect("activate", lambda icon: self.toggle_window(near_pointer=True))
+            self.status_icon.connect("popup-menu", self.on_popup_menu)
+            self.status_icon.set_visible(True)
+        elif AppIndicator:
+            self.indicator = AppIndicator.Indicator.new(
+                "ai-usagebar-tray",
+                ICON_NAME,
+                AppIndicator.IndicatorCategory.APPLICATION_STATUS
+            )
+            self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
+        self.build_menu()
+
+        # Initial fetch
+        self.trigger_refresh()
+
+        # Auto refresh every 60 seconds
+        GLib.timeout_add_seconds(60, self.auto_refresh_tick)
+
+    def build_menu(self, data=None):
+        menu = Gtk.Menu()
+
+        entries = (data or {}).get("entries", [])
+        summaries = []
+        for entry in entries:
+            metrics = entry.get("metrics") or []
+            if not metrics:
+                continue
+            metric = max(metrics, key=lambda item: item.get("percent") or 0)
+            name = entry.get("display_name") or entry.get("name", tr("Provider", "Provedor"))
+            suffix = tr(" · stale", " · antigo") if entry.get("stale") else ""
+            summaries.append(f"{name}: {metric_display(metric)}{suffix}")
+        for summary in summaries[:4]:
+            row = Gtk.MenuItem(label=summary)
+            row.set_sensitive(False)
+            menu.append(row)
+        if not summaries:
+            row = Gtk.MenuItem(label=tr("Loading usage...", "Carregando uso...") if not entries
+                               else tr("No metrics available", "Sem métricas disponíveis"))
+            row.set_sensitive(False)
+            menu.append(row)
+        menu.append(Gtk.SeparatorMenuItem())
+
+        title_item = Gtk.MenuItem(label=tr("📊 Open dashboard", "📊 Abrir Painel Completo"))
+        title_item.connect("activate", lambda w: self.toggle_window())
+        menu.append(title_item)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        refresh_item = Gtk.MenuItem(label=tr("🔄 Refresh now", "🔄 Atualizar Agora"))
+        refresh_item.connect("activate", lambda w: self.trigger_refresh())
+        menu.append(refresh_item)
+
+        tui_item = Gtk.MenuItem(label=tr("💻 Open TUI in terminal", "💻 Abrir TUI no Terminal"))
+        tui_item.connect("activate", lambda w: self.launch_tui())
+        menu.append(tui_item)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
+        quit_item = Gtk.MenuItem(label=tr("❌ Quit", "❌ Sair"))
+        quit_item.connect("activate", lambda w: Gtk.main_quit())
+        menu.append(quit_item)
+
+        menu.show_all()
+        if self.indicator:
+            self.indicator.set_menu(menu)
+        if self.xapp_icon:
+            self.xapp_icon.set_secondary_menu(menu)
+        self.menu = menu
+
+    def on_xapp_activate(self, icon, button, activate_time):
+        if button == Gdk.BUTTON_PRIMARY:
+            self.toggle_window(near_pointer=True, activate_time=activate_time)
+
+    def on_popup_menu(self, icon, button, activate_time):
+        self.menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
+
+    def update_menu_summary(self, data):
+        self.build_menu(data)
+
+    def toggle_window(self, near_pointer=False, activate_time=Gdk.CURRENT_TIME):
+        if self.window.is_visible() and self.window.is_active():
+            self.window.hide()
+        else:
+            self.show_window(near_pointer, activate_time)
+
+    def show_window(self, near_pointer=False, activate_time=Gdk.CURRENT_TIME):
+        self.window.focused_since_open = False
+        self.window.focus_started_at = 0.0
+        self.window.show_all()
+        if near_pointer:
+            self.position_window_near_pointer()
+        if activate_time == Gdk.CURRENT_TIME and GdkX11 and self.window.get_window():
+            activate_time = GdkX11.x11_get_server_time(self.window.get_window())
+        self.window.present_with_time(activate_time)
+
+    def position_window_near_pointer(self):
+        display = Gdk.Display.get_default()
+        _, pointer_x, pointer_y = display.get_default_seat().get_pointer().get_position()
+        monitor = display.get_monitor_at_point(pointer_x, pointer_y)
+        area = monitor.get_workarea() if monitor else Gdk.Screen.get_default().get_monitor_geometry(0)
+        width, height = self.window.get_size()
+        left = area.x
+        top = area.y
+        right = left + area.width
+        bottom = top + area.height
+        x = max(left, min(pointer_x - width // 2, right - width))
+        y = pointer_y - height - 12
+        if y < top:
+            y = min(pointer_y + 12, bottom - height)
+        self.window.move(x, max(top, y))
+
+    def launch_tui(self):
+        terminal = next((path for path in ("/usr/bin/x-terminal-emulator", "/usr/bin/gnome-terminal")
+                         if os.path.isfile(path) and os.access(path, os.X_OK)), None)
+        if terminal:
+            subprocess.Popen([terminal, "-e", AI_USAGEBAR_TUI_BIN])
+
+    def auto_refresh_tick(self):
+        self.trigger_refresh()
+        return True
+
+    def trigger_refresh(self):
+        if self.refreshing:
+            return
+        self.refreshing = True
+        self.window.refresh_btn.set_sensitive(False)
+        threading.Thread(target=self._fetch_data, daemon=True).start()
+
+    def _fetch_data(self):
+        try:
+            res = subprocess.run([AI_USAGEBAR_BIN, "usage", "--json"], capture_output=True, text=True, timeout=15)
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout)
+                GLib.idle_add(self._on_data_received, data)
+            else:
+                GLib.idle_add(self._on_fetch_error, res.stderr.strip() or tr(
+                    "Could not load usage data", "Não foi possível obter os dados"))
+        except Exception as e:
+            GLib.idle_add(self._on_fetch_error, str(e))
+
+    def _on_fetch_error(self, message):
+        self.window.last_update_lbl.set_text(tr(f"Refresh failed: {message[:100]}",
+                                                f"Falha ao atualizar: {message[:100]}"))
+        self.refreshing = False
+        self.window.refresh_btn.set_sensitive(True)
+        return False
+
+    def _on_data_received(self, data):
+        self.latest_data = data
+        self.window.render_data(data)
+        if self.indicator or self.status_icon or self.xapp_icon:
+            self.update_menu_summary(data)
+        self.refreshing = False
+        self.window.refresh_btn.set_sensitive(True)
+        return False
+
+
+def notify_existing(command):
+    for _ in range(15):
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(0.5)
+                client.connect(SOCKET_PATH)
+                client.sendall(command.encode("ascii"))
+            return True
+        except (OSError, socket.timeout):
+            time.sleep(0.1)
+    return False
+
+
+def on_ipc_ready(fd, condition, server, app):
+    try:
+        connection, _ = server.accept()
+        with connection:
+            command = connection.recv(32)
+        if command == b"SHOW":
+            app.show_window()
+        elif command == b"REFRESH":
+            app.trigger_refresh()
+    except OSError as error:
+        print(f"Tray IPC error: {error}", file=sys.stderr)
+    return True
+
+
+def main():
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    lock_fd = os.open(LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        if "--window" in sys.argv and not notify_existing("SHOW"):
+            print("The tray is running but did not respond.", file=sys.stderr)
+        return
+
+    try:
+        os.unlink(SOCKET_PATH)
+    except FileNotFoundError:
+        pass
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(SOCKET_PATH)
+    os.chmod(SOCKET_PATH, 0o600)
+    server.listen(4)
+    server.setblocking(False)
+    app = AIUsageTrayApp()
+    GLib.io_add_watch(server.fileno(), GLib.IO_IN, on_ipc_ready, server, app)
+    # Check if launched with --window or if no tray available
+    if "--window" in sys.argv or not (app.indicator or app.status_icon or app.xapp_icon):
+        app.show_window()
+    try:
+        Gtk.main()
+    finally:
+        server.close()
+        os.unlink(SOCKET_PATH)
+        os.close(lock_fd)
+
+
+if __name__ == "__main__":
+    main()

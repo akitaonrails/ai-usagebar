@@ -70,6 +70,15 @@ jobs:
       - name: Test Omarchy plugin model
         run: make plugin-test
 
+      - name: Test Linux Mint tray model
+        run: make mint-test
+
+      - name: Test Linux Mint GTK and IPC regressions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkx11-3.0 gir1.2-xapp-1.0
+          make mint-runtime-test
+
       - name: Unused dependencies
         uses: bnjbvr/cargo-machete@ac30a525c0a8d163a92d727b3ff079ee3f6ecb08 # v0.9.2
 

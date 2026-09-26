@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AI Usage Bar Tray
+Comment=AI Usage Bar Tray Indicator
+Exec=@TRAY_EXEC@
+Icon=ai-usagebar
+Terminal=false
+X-GNOME-Autostart-enabled=true

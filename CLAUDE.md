@@ -76,9 +76,9 @@ When cutting a new version (patch, minor, or major):
    cargo machete                               # no unused deps
    omarchy plugin validate .                   # plugin manifest + entry points
    ```
-   `make test` rather than `cargo test`: it also runs the GNOME, KDE, and
-   Omarchy frontend contract suites. `cargo fmt --all -- --check` is on this
-   list because CI's ubuntu job runs it and fails the build on a diff — it was
+   `make test` rather than `cargo test`: it also runs the GNOME, KDE, Omarchy,
+   and Linux Mint frontend contract suites. `cargo fmt --all -- --check` is on
+   this list because CI's ubuntu job runs it and fails the build on a diff — it was
    missing here once, and a correctly-working commit landed on `main` red for
    nothing but a rustfmt line-wrap. If `kde-plasmoid/` changed, also bump
    `KPlugin.Version` in `kde-plasmoid/package/metadata.json`; it is versioned

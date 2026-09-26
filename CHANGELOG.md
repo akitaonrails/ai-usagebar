@@ -9,6 +9,24 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Added
+
+- **Linux Mint Cinnamon tray frontend.** An experimental GTK dashboard reads
+  the existing `usage --json` report, shows provider quota groups with the
+  icon marks already shipped for Omarchy, color-coded pacing bars, a flame
+  warning when projected usage exceeds the limit, and concise disconnected
+  cards. It opens from the native status icon, hides on focus loss, stays out
+  of the taskbar, and offers settings and refresh actions beside each provider.
+  The frontend supports English and Portuguese and retains cached quota rows
+  when authentication temporarily fails.
+
+### Fixed
+
+- **Linux Mint installer binary resolution.** The tray recognizes the Cargo
+  installation in `~/.cargo/bin` and retains explicit binary paths for
+  autostart after the installer exits. The desktop launcher's TUI action also
+  uses the detected TUI path.
+
 ## [1.25.0] — 2026-09-25
 
 ### Added
