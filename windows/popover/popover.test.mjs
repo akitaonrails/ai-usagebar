@@ -80,6 +80,15 @@ import {
 import { measurePanelHeight } from './src/panel-size.js';
 
 const englishMessages = JSON.parse(readFileSync(new URL('./messages/en.json', import.meta.url), 'utf8'));
+
+// The page declares an empty icon, so the WebView never asks the tray for /favicon.ico: the
+// custom protocol serves only the page, its script and its stylesheet, and the request logged
+// a 404 in the popover's console on every open.
+{
+  const page = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+  assert.match(page, /<link rel="icon" href="data:," \/>/);
+}
+
 const portugueseMessages = JSON.parse(readFileSync(new URL('./messages/pt-BR.json', import.meta.url), 'utf8'));
 assert.deepEqual(Object.keys(portugueseMessages).sort(), Object.keys(englishMessages).sort());
 assert.ok(Object.values(englishMessages).every((value) => typeof value === 'string' && value.trim()));
