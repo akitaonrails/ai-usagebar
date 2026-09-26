@@ -9,6 +9,22 @@ Each release is also published at
 
 ## [Unreleased]
 
+### Fixed
+
+- **Grok Bot reads its session on Linux when the app used Chromium's
+  `"peanuts"` key.** The Grok Bot desktop app picks its OSCrypt key at runtime
+  from whichever Secret Service backend Electron selected, and encrypts with
+  `"peanuts"` whenever that backend is `basic_text`. A machine can therefore
+  hold an `application="Grok Bot"` keyring item while the blobs in
+  `sand-secrets.json` were keyed with `"peanuts"` — and the reader preferred
+  the item's key, so every token failed to decrypt and the bar reported
+  "a stored token could not be decrypted; sign in to the Grok Bot desktop app
+  again" for a session that was perfectly valid. Both keys are now tried, most
+  specific first; a wrong AES key almost always fails PKCS#7 unpadding, so the
+  right candidate is effectively ruled in. No configuration, re-login or
+  keyring change is needed, and a genuinely unreadable file still reports the
+  same error it always did.
+
 ## [1.25.0] — 2026-09-25
 
 ### Added
