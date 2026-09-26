@@ -20,8 +20,12 @@ Column {
   property string barWindow: "auto"
   readonly property color dim: Qt.darker(foreground, 1.45)
 
-  property var snapshot: ({ primary_choices: [], keys: [] })
+  property var snapshot: ({ primary_choices: [], keys: [], vendors: [] })
   property string selectedPrimary: ""
+  // Pending provider on/off overrides (#244), keyed by provider id. Rebuilt
+  // (never mutated) so the Toggle bindings re-evaluate.
+  property var vendorOverrides: ({})
+  property int vendorPendingCount: 0
   property string stateStdout: ""
   property string stateStderr: ""
   property string applyStdout: ""
@@ -34,7 +38,8 @@ Column {
   property bool loading: false
   property bool saving: false
   readonly property bool canSave: !loading && !saving
-    && (selectedPrimary !== "" || snapshot.primary_choices.length === 0)
+    && (selectedPrimary !== "" || snapshot.primary_choices.length === 0
+        || vendorPendingCount > 0)
 
   signal saved()
   signal fallbackRequested()
@@ -60,6 +65,7 @@ Column {
     stateStdout = ""
     stateStderr = ""
     stateExitCode = -1
+    resetVendorOverrides()
     stateProcess.running = true
   }
 
@@ -70,14 +76,14 @@ Column {
       errorText = detail.indexOf("unrecognized subcommand") >= 0
         ? "This installed ai-usagebar binary predates native settings. Update the package, or use the terminal settings fallback."
         : detail
-      snapshot = ({ primary_choices: [], keys: [] })
+      snapshot = ({ primary_choices: [], keys: [], vendors: [] })
       selectedPrimary = ""
       return
     }
     var parsed = Model.parseSettingsSnapshot(stateStdout)
     if (!parsed.ok) {
       errorText = parsed.error
-      snapshot = ({ primary_choices: [], keys: [] })
+      snapshot = ({ primary_choices: [], keys: [], vendors: [] })
       selectedPrimary = ""
       return
     }
@@ -99,9 +105,41 @@ Column {
     return changes
   }
 
+  function collectVendorToggles() {
+    var toggles = []
+    for (var id in root.vendorOverrides) {
+      if (Object.prototype.hasOwnProperty.call(root.vendorOverrides, id))
+        toggles.push({ id: id, enabled: root.vendorOverrides[id] })
+    }
+    return toggles
+  }
+
+  // Record one pending provider switch (#244). A value equal to the snapshot
+  // drops the override, so toggling twice returns the row to "unchanged".
+  function setVendorOverride(id, enabled) {
+    var next = {}
+    var base = snapshot.vendors || []
+    var current = null
+    for (var i = 0; i < base.length; i++) {
+      if (base[i].id === id) current = base[i].enabled
+    }
+    for (var key in root.vendorOverrides) {
+      if (Object.prototype.hasOwnProperty.call(root.vendorOverrides, key) && key !== id)
+        next[key] = root.vendorOverrides[key]
+    }
+    if (enabled !== current) next[id] = enabled
+    vendorOverrides = next
+    vendorPendingCount = Object.keys(next).length
+  }
+
+  function resetVendorOverrides() {
+    vendorOverrides = ({})
+    vendorPendingCount = 0
+  }
+
   function save() {
     if (!canSave) return
-    var built = Model.buildSettingsPatch(selectedPrimary, collectChanges())
+    var built = Model.buildSettingsPatch(selectedPrimary, collectChanges(), collectVendorToggles())
     if (!built.ok) {
       errorText = built.error
       return
@@ -370,6 +408,53 @@ Column {
   }
 
   Column {
+    visible: !root.loading && root.snapshot.vendors.length > 0
+    width: parent.width
+    spacing: Style.space(8)
+
+    PanelSeparator {
+      width: parent.width
+      foreground: root.foreground
+    }
+    PanelSectionHeader {
+      text: "PROVIDERS"
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+    Text {
+      width: parent.width
+      text: "Which providers are fetched at all. Turn one off and it leaves the bar, panel and reports until you switch it back on; turning one on takes effect on the next refresh. Saving a credential for a provider keeps switching it on."
+      textFormat: Text.PlainText
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
+    Repeater {
+      model: root.snapshot.vendors
+
+      Toggle {
+        required property var modelData
+        width: parent.width
+        label: root.safe(modelData.label)
+        description: {
+          var pending = root.vendorOverrides[modelData.id]
+          var effective = pending === true || pending === false ? pending : modelData.enabled
+          return effective ? "On — included in the report." : "Off — not fetched."
+        }
+        checked: {
+          var pending = root.vendorOverrides[modelData.id]
+          return pending === true || pending === false ? pending : modelData.enabled
+        }
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        enabled: !root.saving
+        onClicked: root.setVendorOverride(modelData.id, !checked)
+      }
+    }
+  }
+
+  Column {
     visible: !root.loading
     width: parent.width
     spacing: Style.space(10)
@@ -596,7 +681,8 @@ Column {
 
   Button {
     visible: !root.loading
-      && (root.snapshot.primary_choices.length > 0 || root.snapshot.keys.length > 0)
+      && (root.snapshot.primary_choices.length > 0 || root.snapshot.keys.length > 0
+          || root.snapshot.vendors.length > 0)
     width: parent.width
     text: root.saving ? "Saving…" : "Save settings"
     iconText: root.saving ? "󰑐" : "󰄬"

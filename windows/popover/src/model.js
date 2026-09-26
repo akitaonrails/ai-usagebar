@@ -3,6 +3,8 @@
 // The JSDoc below only types the exports for the TypeScript side (allowJs);
 // it is inert at runtime.
 
+import { m } from "./paraglide/messages.js";
+
 /** @typedef {import("./lib/types").Card} Card */
 /** @typedef {import("./lib/types").Layout} Layout */
 /** @typedef {import("./lib/types").Payload} Payload */
@@ -17,6 +19,7 @@
 
 export const LAYOUT_KEY = "aiub.tray.layout.v1";
 const COLLAPSED_METRIC_CAP = 2;
+const lang = (locale) => locale === "pt-BR" ? "pt-BR" : "en";
 /** At most two starred metrics per provider, matching OpenUsage. */
 export const MAX_STARS_PER_PROVIDER = 2;
 
@@ -38,10 +41,6 @@ export function emptyPayload(hostError) {
     nextRefreshAt: 0,
     startupEnabled: false,
     hostError: hostError || "",
-    menuBarShowAll: true,
-    menuBarHideValue: false,
-    menuBarProvider: "highest",
-    menuBarWindow: "auto",
     menuBarChart: false,
     notificationsEnabled: true,
     notificationsThreshold: 97,
@@ -56,6 +55,7 @@ export function emptyPayload(hostError) {
     updateCheckedAt: 0,
     repository: "",
     accounts: {},
+    accent: null,
   };
 }
 
@@ -89,10 +89,6 @@ function normalizePayload(parsed) {
     nextRefreshAt: Number(parsed.next_refresh_at) || 0,
     startupEnabled: parsed.startup_enabled === true,
     hostError: clean(parsed.host_error, 1200),
-    menuBarShowAll: parsed.menu_bar_show_all !== false,
-    menuBarHideValue: parsed.menu_bar_hide_value === true,
-    menuBarProvider: clean(parsed.menu_bar_provider || "highest", 180),
-    menuBarWindow: ["session", "weekly", "monthly"].includes(parsed.menu_bar_window) ? parsed.menu_bar_window : "auto",
     menuBarChart: parsed.menu_bar_chart === true,
     notificationsEnabled: parsed.notifications_enabled !== false,
     notificationsThreshold: Number.isInteger(parsed.notifications_threshold) && parsed.notifications_threshold >= 1 && parsed.notifications_threshold <= 100 ? parsed.notifications_threshold : 97,
@@ -107,7 +103,16 @@ function normalizePayload(parsed) {
     updateCheckedAt: finiteNumber(parsed.update_checked_at),
     repository: githubPage(parsed.repository),
     accounts: normalizeAccounts(parsed.accounts),
+    accent: normalizeAccent(parsed.accent),
   };
+}
+
+// Both colors must be complete CSS hex values before either reaches styles.
+function normalizeAccent(value) {
+  if (!isPlainObject(value)) return null;
+  const color = /^#[0-9a-f]{6}$/i;
+  if (!color.test(value.light) || !color.test(value.dark)) return null;
+  return { light: value.light.toLowerCase(), dark: value.dark.toLowerCase() };
 }
 
 const SWITCHABLE_VENDORS = ["anthropic", "openai"];
@@ -188,7 +193,7 @@ const REFRESH_MINUTES = [1, 5, 10];
 
 function normalizeOs(value) {
   const os = String(value || "").toLowerCase();
-  if (os === "macos" || os === "windows" || os === "linux") return os;
+  if (["macos", "windows", "linux"].includes(os)) return os;
   return "";
 }
 
@@ -295,6 +300,9 @@ function normalizeSection(raw) {
       severity,
       resetAt: clean(raw.reset_at, 80),
       window: windowSeconds(raw.window_secs),
+      // The sub-group the report assigned this metric ("Breakdown" slices,
+      // Claude CLI "Sessions"); "" when it stands on its own.
+      group: clean(raw.group, 80),
     };
   }
   if (type === "text") {
@@ -312,7 +320,7 @@ function normalizeSection(raw) {
 }
 
 export function formatDuration(milliseconds, locale) {
-  if (!(milliseconds > 0)) return locale === "pt-BR" ? "agora" : "now";
+  if (!(milliseconds > 0)) return m.now({}, { locale: lang(locale) });
   const minutes = Math.floor(milliseconds / 60000);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
@@ -321,11 +329,11 @@ export function formatDuration(milliseconds, locale) {
   return Math.max(1, minutes) + "m";
 }
 
-export function resetLabel(section, nowMs) {
+export function resetLabel(section, nowMs, locale) {
   if (!section || section.type !== "metric") return "";
   if (section.resetAt) {
     const at = Date.parse(section.resetAt);
-    if (!Number.isNaN(at)) return "Resets in " + formatDuration(at - nowMs);
+    if (!Number.isNaN(at)) return m.resets_in({ duration: formatDuration(at - nowMs, locale) }, { locale: lang(locale) });
   }
   const detail = section.detail || "";
   if (/reset/i.test(detail)) return detail;
@@ -440,12 +448,12 @@ export function formatResetExact(atMs, nowMs, opts) {
   // fold it to a plain space so the string is stable across runtimes.
   const time = new Intl.DateTimeFormat(locale, timeOptions).format(at).replace(/ /g, " ");
   const atDay = dayKey(atMs, locale, timeZone);
-  if (atDay === dayKey(nowMs, locale, timeZone)) return (locale === "pt-BR" ? "hoje às " : "today at ") + time;
-  if (atDay === dayKey(nowMs + 86_400_000, locale, timeZone)) return (locale === "pt-BR" ? "amanhã às " : "tomorrow at ") + time;
+  if (atDay === dayKey(nowMs, locale, timeZone)) return m.today_at({ time }, { locale: lang(locale) });
+  if (atDay === dayKey(nowMs + 86_400_000, locale, timeZone)) return m.tomorrow_at({ time }, { locale: lang(locale) });
   const dayOptions = { month: "short", day: "numeric" };
   if (timeZone) dayOptions.timeZone = timeZone;
   const day = new Intl.DateTimeFormat(locale, dayOptions).format(at).replace(/ /g, " ");
-  return day + (locale === "pt-BR" ? " às " : " at ") + time;
+  return m.day_at({ day, time }, { locale: lang(locale) });
 }
 
 // Banked reset credits always show a calendar date, even when they expire
@@ -453,7 +461,7 @@ export function formatResetExact(atMs, nowMs, opts) {
 // item and the stable date makes neighboring expiries easy to compare.
 export function formatResetCreditDate(value, opts) {
   const atMs = typeof value === "number" ? value : Date.parse(String(value || ""));
-  if (!Number.isFinite(atMs)) return opts && opts.locale === "pt-BR" ? "Data indisponível" : "Date unavailable";
+  if (!Number.isFinite(atMs)) return m.date_unavailable({}, { locale: lang(opts && opts.locale) });
   // `undefined` asks Intl for the WebView/Windows locale. Tests can still
   // inject a locale explicitly to keep their expected strings deterministic.
   const locale = opts && opts.locale ? opts.locale : undefined;
@@ -470,7 +478,7 @@ export function formatResetCreditDate(value, opts) {
   else if (timeFormat === "24") timeOptions.hourCycle = "h23";
   const day = new Intl.DateTimeFormat(locale, dayOptions).format(at).replace(/ /g, " ");
   const time = new Intl.DateTimeFormat(locale, timeOptions).format(at).replace(/ /g, " ");
-  return day + (locale === "pt-BR" ? " às " : " at ") + time;
+  return m.day_at({ day, time }, { locale: lang(opts && opts.locale) });
 }
 
 /** @returns {{ items: ResetItem[], hidden: number }} */
@@ -490,7 +498,7 @@ export function resetCreditDetails(row, nowMs, opts) {
     const atMs = Date.parse(String(credit.expiresAt || ""));
     items.push({
       date: formatResetCreditDate(credit.expiresAt, opts),
-      remaining: Number.isNaN(atMs) ? "—" : atMs <= nowMs ? opts && opts.locale === "pt-BR" ? "expirado" : "expired" : formatDuration(atMs - nowMs, opts && opts.locale),
+      remaining: Number.isNaN(atMs) ? "—" : atMs <= nowMs ? m.expired({}, { locale: lang(opts && opts.locale) }) : formatDuration(atMs - nowMs, opts && opts.locale),
       severity: Number.isNaN(atMs) ? "" : expirySeverity(atMs, nowMs),
       title: String(credit.title || ""),
     });
@@ -509,10 +517,11 @@ export function resetText(row, mode, nowMs, opts) {
   const at = parseResetAt(row);
   if (Number.isNaN(at)) {
     const fallback = (row && row.reset) || "";
-    return opts && opts.locale === "pt-BR" ? fallback.replace(/^Resets in /, "Redefine em ") : fallback;
+    const resetFallback = /^Resets in (.*)$/.exec(fallback);
+    return resetFallback ? m.resets_in({ duration: resetFallback[1] }, { locale: lang(opts && opts.locale) }) : fallback;
   }
-  if (mode === "exact") return (opts && opts.locale === "pt-BR" ? "Redefine " : "Resets ") + formatResetExact(at, Number(nowMs) || 0, opts);
-  return (opts && opts.locale === "pt-BR" ? "Redefine em " : "Resets in ") + formatDuration(at - (Number(nowMs) || 0), opts && opts.locale);
+  if (mode === "exact") return m.resets_at({ exact: formatResetExact(at, Number(nowMs) || 0, opts) }, { locale: lang(opts && opts.locale) });
+  return m.resets_in({ duration: formatDuration(at - (Number(nowMs) || 0), opts && opts.locale) }, { locale: lang(opts && opts.locale) });
 }
 
 // Same row in the other mode, for hover tooltips; "" without a timestamp.
@@ -524,8 +533,9 @@ export function resetAlternate(row, mode, nowMs, opts) {
 // Burn-rate pacing, ported from OpenUsage's Pace.swift. Projects the row's
 // usage at its current rate to the end of the reset window. Null when there is
 // no signal: no window length, no parseable reset, the window already reset,
-// nothing spent yet, or too early in the window (see paceMinElapsedMs; under 1% of it, at least a
-// minute) for the projection to be stable.
+// nothing spent yet, too early in the window (see paceMinElapsedMs; under 1% of it, at least a
+// minute) for the projection to be stable, or the meter already spent: a row at 100% reads
+// "Limit reached" and has no pace to keep, so it gets no tick.
 /** @returns {Pace|null} */
 export function pace(row, nowMs) {
   if (!row || typeof row !== "object") return null;
@@ -538,7 +548,7 @@ export function pace(row, nowMs) {
   const elapsed = windowMs - (resetMs - now);
   if (elapsed < paceMinElapsedMs(window)) return null;
   const used = finiteNumber(row.usedPercent);
-  if (used <= 0) return null;
+  if (used <= 0 || used >= 100) return null;
   const rate = used / elapsed; // percent per millisecond
   // Multiply before dividing so a whole-percent meter at a clean fraction of the
   // window lands exactly on the 90 / 100 thresholds instead of a hair past them.
@@ -610,12 +620,12 @@ export function paceTickPercent(pace, showAs) {
 export function paceText(pace, nowMs, opts) {
   if (!pace) return "";
   const now = Number(nowMs) || 0;
-  const pt = opts && opts.locale === "pt-BR";
-  if (pace.state === "ahead") return "~" + Math.round(pace.sparePercent) + (pt ? "% restantes na redefinição" : "% left at reset");
-  if (pace.state === "onTrack") return "~" + Math.max(Math.round(pace.sparePercent), 0) + (pt ? "% de folga" : "% spare");
+  const locale = lang(opts && opts.locale);
+  if (pace.state === "ahead") return m.percent_left_at_reset({ percent: Math.round(pace.sparePercent) }, { locale });
+  if (pace.state === "onTrack") return m.percent_spare({ percent: Math.max(Math.round(pace.sparePercent), 0) }, { locale });
   if (pace.runsOutMs === null || pace.runsOutMs === undefined) return "";
-  if (opts && opts.resetTimes === "exact") return (pt ? "Limite " : "Limit ") + formatResetExact(pace.runsOutMs, now, opts);
-  return (pt ? "Limite em " : "Limit in ") + formatDuration(pace.runsOutMs - now, opts && opts.locale);
+  if (opts && opts.resetTimes === "exact") return m.limit_at({ exact: formatResetExact(pace.runsOutMs, now, opts) }, { locale });
+  return m.limit_in({ duration: formatDuration(pace.runsOutMs - now, opts && opts.locale) }, { locale });
 }
 
 const PACE_MIN_WAIT_MS = 60_000;
@@ -644,15 +654,15 @@ export function paceWarmupMs(row, nowMs) {
 }
 
 // The warm-up note and its hover explanation, or "" once there is a pace.
-export function paceWarmupText(row, nowMs) {
-  return paceWarmupMs(row, nowMs) > 0 ? "Estimating…" : "";
+export function paceWarmupText(row, nowMs, locale) {
+  return paceWarmupMs(row, nowMs) > 0 ? m.estimating({}, { locale: lang(locale) }) : "";
 }
 
-export function paceWarmupHint(row) {
+export function paceWarmupHint(row, locale) {
   const window = windowSeconds(row && row.window);
   if (window === 0) return "";
-  const first = formatDuration(paceMinElapsedMs(window)).replace(/ 0m$/, "");
-  return "The pace shows after the first " + first + " of each window.";
+  const duration = formatDuration(paceMinElapsedMs(window), locale).replace(/ 0m$/, "");
+  return m.pace_shows_after_first({ duration }, { locale: lang(locale) });
 }
 
 // Ahead-of-pace rows stay quiet unless the layout asks for pacing everywhere.
@@ -679,7 +689,7 @@ function dedupeRowKeys(rows) {
 }
 
 /** @returns {Card[]} */
-export function projectCards(payload, nowMs) {
+export function projectCards(payload, nowMs, locale) {
   const now = Number(nowMs) || 0;
   const cards = [];
   for (const entry of payload.entries || []) {
@@ -692,8 +702,8 @@ export function projectCards(payload, nowMs) {
     let warning = null;
     for (const section of entry.sections || []) {
       if (isWarningSection(section)) {
-        const explained = explainError(section.value || section.label, entry);
-        warning = { title: explained.title, hint: explained.hint, raw: shortenDiagnostic(section.value || section.label) };
+        const explained = explainError(section.value || section.label, entry, locale);
+        warning = { title: explained.title, hint: explained.hint, raw: shortenDiagnostic(section.value || section.label, locale) };
         continue;
       }
       if (section.type === "text" && section.label && !section.value) {
@@ -703,20 +713,25 @@ export function projectCards(payload, nowMs) {
       if (section.type === "metric") {
         const left = Math.max(0, 100 - section.percent);
         const hostLabel = metricLabel(entry.id, section.label);
+        // A metric can also name its group directly in the report (SuperGrok's
+        // product slices, the Claude entry's CLI sessions): that field wins
+        // over the positional heading in effect, so both mechanisms label and
+        // key the row identically.
+        const metricGroup = section.group || group;
         const row = {
           kind: "metric",
-          label: prettyMetricLabel(entry.id, hostLabel, group),
+          label: prettyMetricLabel(entry.id, hostLabel, metricGroup),
           leftPercent: left,
           usedPercent: section.percent,
           headline: section.headline === "value" && section.value ? "value" : "percent",
           value: section.value || "",
           detail: section.detail || "",
           severity: section.severity,
-          reset: resetLabel(section, now),
+          reset: resetLabel(section, now, locale),
           resetAt: section.resetAt || "",
           window: section.window || 0,
         };
-        row.key = metricRowKey(entry.id, section.label, group);
+        row.key = metricRowKey(entry.id, section.label, metricGroup);
         rows.push(row);
       } else if (section.type === "text" && (section.label || section.value)) {
         const row = { kind: "text", label: section.label, value: section.value };
@@ -739,7 +754,7 @@ export function projectCards(payload, nowMs) {
     }
     dropRedundantResetRows(rows);
     dedupeRowKeys(rows);
-    const explained = explainError(entry.error, entry);
+    const explained = explainError(entry.error, entry, locale);
     cards.push({
       id: entry.id,
       title: entry.displayName || entry.shortName || entry.id,
@@ -834,6 +849,7 @@ export function emptyLayout() {
     hideExtras: false,
     hintDismissed: false,
     language: "en",
+    popoverStyle: "classic",
     resetTimes: "countdown",
     rows: {},
     seeded: false,
@@ -977,7 +993,8 @@ export function normalizeLayout(raw) {
   layout.timeFormat = normalizeTimeFormat(raw.timeFormat);
   layout.hideExtras = raw.hideExtras === true;
   layout.hintDismissed = raw.hintDismissed === true;
-  layout.language = raw.language === "pt-BR" ? "pt-BR" : "en";
+  layout.language = lang(raw.language);
+  layout.popoverStyle = raw.popoverStyle === "native" || raw.popoverStyle === "glass" ? "native" : "classic";
   layout.seeded = raw.seeded === true;
   layout.resetTimes = normalizeResetTimes(raw.resetTimes);
   layout.showAs = normalizeShowAs(raw.showAs);
@@ -1064,7 +1081,8 @@ export function syncLayout(layout, cardIds) {
     collapsed,
     hideExtras: layout.hideExtras === true,
     hintDismissed: layout.hintDismissed === true,
-    language: layout.language === "pt-BR" ? "pt-BR" : "en",
+    language: lang(layout.language),
+    popoverStyle: layout.popoverStyle === "native" || layout.popoverStyle === "glass" ? "native" : "classic",
     resetTimes: normalizeResetTimes(layout.resetTimes),
     seeded: layout.seeded === true,
     rows,
@@ -1444,7 +1462,7 @@ function joinError(explained) {
   return explained.title + ". " + explained.hint;
 }
 
-function shortenDiagnostic(raw) {
+function shortenDiagnostic(raw, locale) {
   let text = String(raw || "")
     .replace(/credentials error:\s*/ig, "")
     .replace(/network transport error:\s*/ig, "")
@@ -1455,34 +1473,34 @@ function shortenDiagnostic(raw) {
     .replace(/\s{2,}/g, " ")
     .trim();
   text = text.replace(/^[A-Za-z0-9. _-]+:\s+/, "");
-  if (text === "") return "Open TUI for details.";
+  if (text === "") return m.open_tui_for_details({}, { locale: lang(locale) });
   // The card wraps long hints, so keep the whole diagnosis; only a runaway
   // body (an HTML error page pasted into the message) is cut.
   if (text.length <= 400) return text;
   return text.slice(0, 399) + "…";
 }
 
-const OPEN_TUI = { cmd: "open-tui", label: "Open TUI" };
-const REFRESH = { cmd: "refresh", label: "Refresh" };
-
 // Title + one-line hint for a raw vendor error, plus the one action the popover
 // can offer (a host command) when there is one. Errors whose fix is a terminal
 // command (sign-in) or waiting (429 backoff) carry no action.
 /** @returns {ExplainedError} */
-export function explainError(text, entry) {
+export function explainError(text, entry, locale) {
   const raw = clean(text, 1200);
+  const options = { locale: lang(locale) };
+  const openTui = { cmd: "open-tui", label: m.open_tui({}, options) };
+  const refresh = { cmd: "refresh", label: m.refresh({}, options) };
   if (raw === "") return { title: "", hint: "" };
   if (/no vendors enabled/i.test(raw)) {
-    return { title: "No providers enabled", hint: "Open TUI → Settings to turn one on.", action: OPEN_TUI };
+    return { title: m.no_providers_enabled({}, options), hint: m.open_tui_settings_to_turn_one_on({}, options), action: openTui };
   }
   if (/no API key/i.test(raw)) {
-    return { title: "No API key", hint: "Open TUI → Settings to add one.", action: OPEN_TUI };
+    return { title: m.no_api_key({}, options), hint: m.open_tui_settings_to_add_one({}, options), action: openTui };
   }
   if (/no local server found|Antigravity must be running|no local language server/i.test(raw)) {
     return {
-      title: "Antigravity isn't running",
-      hint: "Open the Antigravity app or an agy session, then Refresh.",
-      action: REFRESH,
+      title: m.antigravity_not_running({}, options),
+      hint: m.antigravity_start_hint({}, options),
+      action: refresh,
     };
   }
   if (/HTTP 429|rate limited|too many requests/i.test(raw)) {
@@ -1490,26 +1508,30 @@ export function explainError(text, entry) {
     // that instead of inviting a manual Refresh the backoff would ignore.
     const retry = /next attempt in ([0-9]+[a-z]+(?: [0-9]+[a-z]+)?)/i.exec(raw);
     return {
-      title: "Too many requests",
-      hint: retry ? "Retrying automatically in " + retry[1] + "." : "Try Refresh in a minute.",
+      title: m.too_many_requests({}, options),
+      hint: retry ? m.retrying_automatically_in({ duration: retry[1] }, options) : m.try_refresh_in_a_minute({}, options),
     };
   }
   if (/HTTP 401|HTTP 403|authentication rejected|not signed in|token refresh failed|re-auth|run `claude`|run `codex/i.test(raw)) {
-    return { title: "Sign-in expired", hint: signInHint(entry) };
+    const hint = signInHint(entry);
+    return {
+      title: m.sign_in_expired({}, options),
+      hint: hint === "Open TUI → Settings to sign in." ? m.open_tui_settings_to_sign_in({}, options) : hint,
+    };
   }
   if (/HTTP 5\d\d|schema mismatch/i.test(raw)) {
-    return { title: "Provider is unavailable", hint: "Try Refresh in a bit.", action: REFRESH };
+    return { title: m.provider_is_unavailable({}, options), hint: m.try_refresh_in_a_bit({}, options), action: refresh };
   }
   if (/network transport|timed out|timeout|connection refused|dns|connect/i.test(raw)) {
-    return { title: "Can't reach the server", hint: "Check your connection, then Refresh.", action: REFRESH };
+    return { title: m.can_t_reach_the_server({}, options), hint: m.connection_retry_hint({}, options), action: refresh };
   }
   if (/io error/i.test(raw)) {
-    return { title: "Couldn't read local files", hint: "Open TUI for details.", action: OPEN_TUI };
+    return { title: m.couldn_t_read_local_files({}, options), hint: m.open_tui_for_details({}, options), action: openTui };
   }
   if (/did not contain valid JSON/i.test(raw)) {
-    return { title: "Couldn't read usage data", hint: "Try Refresh. If it keeps happening, Open TUI.", action: REFRESH };
+    return { title: m.couldn_t_read_usage_data({}, options), hint: m.error_recovery_hint({}, options), action: refresh };
   }
-  return { title: "Couldn't update", hint: shortenDiagnostic(raw) };
+  return { title: m.couldn_t_update({}, options), hint: shortenDiagnostic(raw, locale) };
 }
 
 // A vendor's "Warning" text section (the cached-data note built from
@@ -1534,47 +1556,50 @@ function isWarningSection(section) {
   return section.type === "text" && (section.label === "Warning" || /schema drift/i.test(section.label));
 }
 
-export function friendlyError(text, entry) {
-  return joinError(explainError(text, entry));
+export function friendlyError(text, entry, locale) {
+  return joinError(explainError(text, entry, locale));
 }
 
 export function nextUpdateLabel(payload, nowMs, locale) {
   const remaining = (Number(payload.nextRefreshAt) || 0) - (Number(nowMs) || 0);
-  if (!(remaining > 0)) return locale === "pt-BR" ? "Atualizando…" : "Updating…";
-  return (locale === "pt-BR" ? "Próxima atualização em " : "Next update in ") + formatDuration(remaining, locale);
+  const options = { locale: lang(locale) };
+  if (!(remaining > 0)) return m.updating({}, options);
+  return m.next_update_in({ duration: formatDuration(remaining, locale) }, options);
 }
 
 // "just now", "5m ago", "2h ago", "3d ago".
 export function formatAgo(milliseconds, locale) {
   const ms = Number(milliseconds) || 0;
-  if (ms < 60_000) return locale === "pt-BR" ? "agora mesmo" : "just now";
+  const options = { locale: lang(locale) };
+  if (ms < 60_000) return m.just_now({}, options);
   const minutes = Math.floor(ms / 60_000);
-  if (minutes < 60) return locale === "pt-BR" ? "há " + minutes + " min" : minutes + "m ago";
+  if (minutes < 60) return m.minutes_ago({ minutes }, options);
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return locale === "pt-BR" ? "há " + hours + " h" : hours + "h ago";
-  return locale === "pt-BR" ? "há " + Math.floor(hours / 24) + " d" : Math.floor(hours / 24) + "d ago";
+  if (hours < 24) return m.hours_ago({ hours }, options);
+  return m.days_ago({ days: Math.floor(hours / 24) }, options);
 }
 
 // The Settings row under the update-mode picker.
 export function updateStatusLabel(payload, nowMs, locale) {
   const update = payload && payload.update;
+  const options = { locale: lang(locale) };
   if (!update) {
     const checkedAt = finiteNumber(payload && payload.updateCheckedAt);
-    if (checkedAt === 0) return locale === "pt-BR" ? "Ainda não verificado" : "Not checked yet";
-    return locale === "pt-BR" ? "Atualizado · verificado " + formatAgo((Number(nowMs) || 0) - checkedAt, locale) : "Up to date · checked " + formatAgo((Number(nowMs) || 0) - checkedAt);
+    if (checkedAt === 0) return m.not_checked_yet({}, options);
+    return m.up_to_date_checked({ ago: formatAgo((Number(nowMs) || 0) - checkedAt, locale) }, options);
   }
   const version = update.version ? "v" + String(update.version).replace(/^v/i, "") : "";
   switch (update.state) {
     case "checking":
-      return locale === "pt-BR" ? "Verificando…" : "Checking…";
+      return m.checking({}, options);
     case "downloading":
-      return (locale === "pt-BR" ? "Baixando " : "Downloading ") + (version || (locale === "pt-BR" ? "atualização" : "update")) + "…";
+      return m.downloading_update({ version: version || m.update_word({}, options) }, options);
     case "installing":
-      return locale === "pt-BR" ? "Instalando…" : "Installing…";
+      return m.installing({}, options);
     case "failed":
-      return update.error ? (locale === "pt-BR" ? "Não foi possível atualizar: " : "Couldn't update: ") + update.error : locale === "pt-BR" ? "Não foi possível atualizar" : "Couldn't update";
+      return update.error ? m.update_failed_with_error({ what: m.couldn_t_update({}, options), error: update.error }, options) : m.couldn_t_update({}, options);
     default:
-      return locale === "pt-BR" ? (version || "Uma atualização") + " disponível" : (version || "An update") + " available";
+      return m.update_available_status({ version: version || m.new_update({}, options) }, options);
   }
 }
 
@@ -1583,22 +1608,23 @@ export function updateStatusLabel(payload, nowMs, locale) {
 // release the host cannot install here (no build for this OS, read-only
 // install directory) links its release page instead of a dead Install.
 /** @returns {import("./lib/types").UpdateAction} */
-export function updateAction(update, repository) {
+export function updateAction(update, repository, locale) {
+  const options = { locale: lang(locale) };
   switch (update && update.state) {
     case "checking":
-      return { busy: true, cmd: "", label: "Checking…", url: "" };
+      return { busy: true, cmd: "", label: m.checking({}, options), url: "" };
     case "downloading":
-      return { busy: true, cmd: "", label: "Downloading…", url: "" };
+      return { busy: true, cmd: "", label: m.downloading({}, options), url: "" };
     case "installing":
-      return { busy: true, cmd: "", label: "Installing…", url: "" };
+      return { busy: true, cmd: "", label: m.installing({}, options), url: "" };
     case "failed":
       // The host reinstalls what it found, or checks again when it found nothing.
-      return { busy: false, cmd: "install-update", label: "Try Again", url: "" };
+      return { busy: false, cmd: "install-update", label: m.try_again({}, options), url: "" };
     case "available":
-      if (update.installable) return { busy: false, cmd: "install-update", label: "Install Update", url: "" };
-      return { busy: false, cmd: "open-url", label: "View Release", url: update.url || releasesPage(repository) };
+      if (update.installable) return { busy: false, cmd: "install-update", label: m.install_update({}, options), url: "" };
+      return { busy: false, cmd: "open-url", label: m.view_release_action({}, options), url: update.url || releasesPage(repository) };
     default:
-      return { busy: false, cmd: "check-update", label: "Check Now", url: "" };
+      return { busy: false, cmd: "check-update", label: m.check_now({}, options), url: "" };
   }
 }
 
@@ -1607,25 +1633,26 @@ function releasesPage(repository) {
 }
 
 // The sentence under an update's title, in the banner and the dialog.
-export function updateMessage(update) {
+export function updateMessage(update, locale) {
   if (!update) return "";
-  const version = update.version ? "v" + String(update.version).replace(/^v/i, "") : "the new version";
+  const options = { locale: lang(locale) };
+  // Without a version the sentence names "the new version"; each language words that itself.
+  const version = update.version ? "v" + String(update.version).replace(/^v/i, "") : "";
   switch (update.state) {
     case "checking":
-      return "Looking for a newer release…";
+      return m.looking_for_newer_release({}, options);
     case "downloading":
-      return "Downloading " + version + "…";
+      return version ? m.downloading_update({ version }, options) : m.downloading_new_version({}, options);
     case "installing":
-      return "Installing " + version + ". AI Usage restarts by itself.";
+      return version ? m.installing_version({ version }, options) : m.installing_new_version({}, options);
     case "failed": {
       // With a version the install failed; without one, the check itself did.
-      const what = update.version ? "Couldn't update" : "Couldn't check";
-      return update.error ? what + ": " + update.error : what + ".";
+      const what = update.version ? m.couldn_t_update({}, options) : m.couldnt_check({}, options);
+      return update.error ? m.update_failed_with_error({ what, error: update.error }, options) : what + ".";
     }
     default:
-      return update.installable
-        ? "AI Usage " + version + " is ready to install."
-        : "AI Usage " + version + " is out. It can't install itself here, so get it from the release page.";
+      if (update.installable) return version ? m.ready_to_install({ version }, options) : m.new_version_ready({}, options);
+      return version ? m.update_available_uninstallable({ version }, options) : m.new_version_uninstallable({}, options);
   }
 }
 
@@ -1637,14 +1664,15 @@ export function updateBannerPending(payload) {
   return !!update && update.state !== "checking" && !!update.version;
 }
 
-export function updateModeLabel(mode) {
+export function updateModeLabel(mode, locale) {
+  const options = { locale: lang(locale) };
   switch (normalizeUpdateMode(mode)) {
     case "auto":
-      return "Automatic";
+      return m.automatic({}, options);
     case "off":
-      return "Off";
+      return m.off({}, options);
     default:
-      return "Notify me";
+      return m.notify_me({}, options);
   }
 }
 

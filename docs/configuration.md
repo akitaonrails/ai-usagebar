@@ -32,6 +32,10 @@ enabled = false           # opt in, then press c in ai-usagebar-tui
 # context_window_tokens = 200000  # optional fallback denominator
 # [context.model_context_window_tokens]
 # "claude-opus-4-6" = 1000000    # exact model id overrides the fallback
+# While enabled, `usage` (and the tray/Omarchy panels built on it) also shows
+# the most recent Claude Code sessions on the Claude entry as a "Sessions"
+# group: one row per session with its context health on the same severity
+# colors as quota meters, plus the model and last-active time.
 
 # Quota-threshold desktop notifications. On by default at 97%: a window that
 # crosses the threshold raises one notification per crossing (Linux uses
@@ -77,6 +81,9 @@ api_key_env = "OPENROUTER_API_KEY"
 # label = "work"
 # api_key_env = "OPENROUTER_WORK_API_KEY"
 # api_key = "sk-or-v1-..."      # optional fallback; chmod 600 if inline
+# One entry per workspace; keys inside one workspace share its billing
+# account, so the per-entry split is per login session, not per key within
+# a bill. See docs/openrouter-accounts.md.
 
 [deepseek]
 enabled = true             # disabled by default; enable once you add an API key

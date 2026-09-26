@@ -221,8 +221,9 @@ scoop bucket add akitaonrails https://github.com/akitaonrails/scoop-bucket
 scoop install ai-usagebar
 ```
 
-Scoop owns updates for Scoop installs (`scoop update ai-usagebar`); the
-tray's built-in updater applies to standalone ZIP installs.
+Scoop owns updates for Scoop installs (`scoop update ai-usagebar`): a tray
+installed by Scoop offers the release page instead of replacing its own
+files. The tray's built-in updater applies to standalone ZIP installs.
 
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok and Antigravity with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 2d 7h" and "~63% left at reset", and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](screenshots/windows-tray-dashboard.png)
 
@@ -269,7 +270,7 @@ come from environment variables or `config.toml`.
 | Codex | OAuth, read from `~/.codex/auth.json` | Run `codex login` once. Token auto-refreshes. |
 | GitHub Copilot | GitHub CLI OAuth | Run `gh auth login --web`, then choose GitHub Copilot as the primary provider in Settings. ai-usagebar gets the token only with `gh auth token`; `GITHUB_COPILOT_TOKEN` is an optional explicit override. |
 | Z.AI | API key (`ZAI_API_KEY` env or `[zai] api_key` in config) | Set either. |
-| OpenRouter | API key (`OPENROUTER_API_KEY` env or `[openrouter] api_key` in config) | Set either. Named keys are supported. |
+| OpenRouter | API key (`OPENROUTER_API_KEY` env or `[openrouter] api_key` in config) | Set either. Multiple keys: one `[[openrouter.accounts]]` entry each. |
 | DeepSeek | API key (`DEEPSEEK_API_KEY` or config) | Set either and opt in. |
 | Kimi | Existing Kimi Code CLI login **or** API key (`KIMI_API_KEY` or config) | Opt in, then either log in with `kimi` (nothing to paste) or set an API key, which wins when present. A Kimi For Coding subscription can issue one at kimi.com/code/console. |
 | Kilo | API key (`KILO_API_KEY` env or `[kilo] api_key` in config) | Set either. Opt-in. For a team balance, also set `[kilo] organization_id`; omit it for the personal balance. |
@@ -320,10 +321,10 @@ subscription's billing period end.
 
 **There is no key to enter, and no key field in the settings panel.**
 Command Code appears in the provider selector but not in the key list, the same
-way Claude, Codex, Cursor and Kiro do. It is enabled by default like Codex; if
-no local credential exists, the TUI shows the tab as unavailable rather than
-silently omitting the provider. Set `enabled = false` under `[commandcode]` to
-hide it.
+way Claude, Codex, Cursor and Kiro do. It is disabled by default; a local login
+can auto-enable it, or you can set `enabled = true` under `[commandcode]`.
+If it appeared without a login after an earlier version, set `enabled = false`
+under `[commandcode]` to hide it.
 
 Credentials are reused, never issued. The OAuth token comes from
 `~/.commandcode/auth.json` from the official CLI first, then
@@ -896,7 +897,10 @@ Claude Desktop or CLI login. The dedicated
 Add one `[[openrouter.accounts]]` entry per key, then select it with
 `--vendor openrouter --account <label>`. Named accounts appear separately in
 the TUI, native integrations, and `usage` reports. Each has its own cache, so
-one key's fresh data cannot be shown for another. See the
+one key's fresh data cannot be shown for another. One entry per workspace is
+the pattern for several workspaces; keys inside one workspace share its
+billing account, so the split is per login session, not per key within a
+bill. See the
 [OpenRouter account guide](docs/openrouter-accounts.md) for the config and
 Waybar examples.
 

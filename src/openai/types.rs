@@ -218,7 +218,10 @@ where
 }
 
 /// Accept either a string ("$0.00") or a finite number (0.0) — codexbar
-/// treats both. Null and an omitted field mean that no balance was supplied.
+/// treats both. A string that is only a number ("0", observed 2026-09-09 on a
+/// Pro account with no extra-usage credits) is formatted like the number, so
+/// a balance always reads as dollars. Null and an omitted field mean that no
+/// balance was supplied.
 fn de_opt_money_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -226,7 +229,10 @@ where
     let v = serde_json::Value::deserialize(d)?;
     match v {
         serde_json::Value::Null => Ok(None),
-        serde_json::Value::String(s) => Ok(Some(s)),
+        serde_json::Value::String(s) => Ok(Some(match s.trim().parse::<f64>() {
+            Ok(value) if value.is_finite() => crate::format::usd(value),
+            _ => s,
+        })),
         serde_json::Value::Number(n) => match n.as_f64() {
             Some(value) if value.is_finite() => Ok(Some(crate::format::usd(value))),
             _ => Err(serde::de::Error::custom(
@@ -642,6 +648,25 @@ mod tests {
         let r: UsageResponse = serde_json::from_str(body).unwrap();
         let s = r.into_snapshot(None).unwrap();
         assert_eq!(s.credits.unwrap().balance, "$1.50");
+    }
+
+    #[test]
+    fn balance_as_numeric_string_formats_to_dollars_too() {
+        let balance = |raw: &str| {
+            let body = format!(
+                r#"{{"credits":{{"balance":"{raw}","has_credits":false,"unlimited":false}}}}"#
+            );
+            let r: UsageResponse = serde_json::from_str(&body).unwrap();
+            r.into_snapshot(None).unwrap().credits.unwrap().balance
+        };
+        for (raw, want) in [("0", "$0.00"), (" 2.5 ", "$2.50"), ("-1", "-$1.00")] {
+            assert_eq!(balance(raw), want, "balance {raw:?}");
+        }
+        // Anything the vendor already formatted, or that is not a finite number, passes through
+        // untouched, so a cached "$2.50" reads back the same.
+        for raw in ["$2.50", "NaN", "inf", "1,000.50", "n/a"] {
+            assert_eq!(balance(raw), raw, "balance {raw:?}");
+        }
     }
 
     #[test]

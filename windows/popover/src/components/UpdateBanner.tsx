@@ -1,6 +1,7 @@
 import MdiArrowDownCircle from "~icons/mdi/arrow-down-circle-outline";
 import { HintCard } from "@/components/HintCard";
 import type { UpdateInfo } from "@/lib/types";
+import { m } from "@/paraglide/messages.js";
 import { useI18n } from "@/lib/i18n";
 import { useBusyLabel } from "@/lib/useBusyLabel";
 import { sendCommand, updateAction, updateMessage } from "../model.js";
@@ -16,9 +17,9 @@ interface UpdateBannerProps {
  * is hidden while a download or install is under way.
  */
 export function UpdateBanner({ repository, update }: UpdateBannerProps) {
-  const { t } = useI18n();
+  const { language } = useI18n();
   const [clicked, startClicked] = useBusyLabel();
-  const action = updateAction(update, repository);
+  const action = updateAction(update, repository, language);
   const busy = clicked !== null || action.busy;
 
   function onAction() {
@@ -26,17 +27,17 @@ export function UpdateBanner({ repository, update }: UpdateBannerProps) {
       if (action.url) sendCommand("open-url", { url: action.url });
       return;
     }
-    startClicked(t("Updating…"));
+    startClicked(m.updating());
     sendCommand(action.cmd);
   }
   return (
     <HintCard
       actionDisabled={busy}
-      buttonTitle={clicked ?? t(action.label)}
-      dismissTitle={t("Remind me later")}
+      buttonTitle={clicked ?? action.label}
+      dismissTitle={m.remind_me_later()}
       icon={<MdiArrowDownCircle />}
-      message={clicked ?? updateMessage(update)}
-      title={t("Update available")}
+      message={clicked ?? updateMessage(update, language)}
+      title={m.update_available()}
       onAction={onAction}
       onDismiss={busy ? undefined : () => sendCommand("snooze-update")}
     />

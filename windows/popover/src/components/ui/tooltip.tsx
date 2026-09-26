@@ -50,7 +50,7 @@ function TooltipContent({
         side={side}
         sideOffset={sideOffset}
         className={cn(
-          "z-50 w-fit max-w-[var(--hint-max-w)] origin-(--radix-tooltip-content-transform-origin) rounded-[var(--radius-sm)] bg-[var(--hint-bg)] p-[var(--hint-pad)] text-left text-[length:var(--sz-support)] leading-[var(--leading-note)] font-normal text-[var(--hint-fg)] shadow-[var(--hint-shadow)]",
+          "z-50 w-fit max-w-[var(--hint-max-w)] origin-(--radix-tooltip-content-transform-origin) rounded-[var(--hint-radius)] bg-[var(--hint-bg)] p-[var(--hint-pad)] text-left text-[length:var(--sz-support)] leading-[var(--leading-note)] font-normal text-[var(--hint-fg)] shadow-[var(--hint-shadow)]",
           className
         )}
         {...props}

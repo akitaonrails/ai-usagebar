@@ -2,7 +2,7 @@
 Type=Application
 Name=AI Usage Bar Tray
 Comment=AI Usage Bar Tray Indicator
-Exec=@BINDIR@/ai-usagebar-tray
+Exec=@TRAY_EXEC@
 Icon=ai-usagebar
 Terminal=false
 X-GNOME-Autostart-enabled=true

@@ -79,6 +79,18 @@ import {
 } from './src/model.js';
 import { measurePanelHeight } from './src/panel-size.js';
 
+const englishMessages = JSON.parse(readFileSync(new URL('./messages/en.json', import.meta.url), 'utf8'));
+const portugueseMessages = JSON.parse(readFileSync(new URL('./messages/pt-BR.json', import.meta.url), 'utf8'));
+assert.deepEqual(Object.keys(portugueseMessages).sort(), Object.keys(englishMessages).sort());
+assert.ok(Object.values(englishMessages).every((value) => typeof value === 'string' && value.trim()));
+assert.ok(Object.values(portugueseMessages).every((value) => typeof value === 'string' && value.trim()));
+assert.equal(englishMessages.menu_bar_shows_hint, "Both show the metrics you star in each provider.");
+assert.equal(portugueseMessages.menu_bar_shows_hint, "Os dois mostram as métricas marcadas com estrela em cada provedor.");
+for (const key of ['focused_provider', 'highest_consumption', 'usage_window']) {
+  assert.equal(Object.hasOwn(englishMessages, key), false);
+  assert.equal(Object.hasOwn(portugueseMessages, key), false);
+}
+
 // The native window can retain a tall viewport while WebView2 is hidden. Its
 // stretched scroll region must not become the next requested panel height.
 const intrinsicContent = { offsetHeight: 420, scrollHeight: 510 };
@@ -97,8 +109,9 @@ const report = {
   host_error: null,
   menu_bar_show_all: false,
   menu_bar_hide_value: true,
-  menu_bar_window: 'weekly',
+  menu_bar_names: 'short',
   menu_bar_chart: true,
+  accent: { light: '#123456', dark: '#ABCDEF' },
   primary: 'anthropic',
   entries: [
     {
@@ -133,17 +146,24 @@ const report = {
 const payload = parseHostPayload(report);
 assert.equal(payload.version, '1.10.0');
 assert.equal(payload.startupEnabled, true);
-assert.equal(payload.menuBarShowAll, false);
-assert.equal(payload.menuBarHideValue, true);
-assert.equal(payload.menuBarWindow, 'weekly');
+assert.equal(Object.hasOwn(payload, 'menuBarShowAll'), false);
+assert.equal(Object.hasOwn(payload, 'menuBarHideValue'), false);
+assert.equal(Object.hasOwn(payload, 'menuBarNames'), false);
 assert.equal(payload.menuBarChart, true);
-assert.equal(payload.menuBarProvider, 'highest');
+assert.deepEqual(payload.accent, { light: '#123456', dark: '#abcdef' });
+// ASSERT: malformed, partial, and non-object accent data cannot set either CSS color.
+assert.equal(parseHostPayload({ accent: { light: '#112233', dark: 'bad' } }).accent, null);
+assert.equal(parseHostPayload({ accent: { light: '#112233' } }).accent, null);
+assert.equal(parseHostPayload({ accent: ['#112233', '#445566'] }).accent, null);
+assert.equal(emptyPayload('').accent, null);
+assert.equal(Object.hasOwn(emptyPayload(''), 'menuBarShowAll'), false);
+assert.equal(Object.hasOwn(emptyPayload(''), 'menuBarHideValue'), false);
+assert.equal(Object.hasOwn(emptyPayload(''), 'menuBarNames'), false);
 assert.equal(payload.notificationsEnabled, true);
 assert.equal(payload.notificationsThreshold, 97);
 assert.equal(parseHostPayload({ notifications_enabled: false, notifications_threshold: 85 }).notificationsEnabled, false);
 assert.equal(parseHostPayload({ notifications_threshold: 85 }).notificationsThreshold, 85);
 assert.equal(parseHostPayload({ notifications_threshold: 101 }).notificationsThreshold, 97);
-assert.equal(parseHostPayload({ menu_bar_provider: 'openai@work' }).menuBarProvider, 'openai@work');
 assert.equal(payload.entries.length, 1);
 assert.equal(payload.entries[0].displayName, 'Claude');
 assert.equal(payload.entries[0].sections.length, 2); // spacer dropped
@@ -152,6 +172,8 @@ assert.equal(formatDuration(0), 'now');
 assert.equal(formatDuration(90_000), '1m');
 assert.equal(formatDuration(3_600_000 + 120_000), '1h 2m');
 assert.equal(formatDuration(2 * 86_400_000 + 3_600_000), '2d 1h');
+assert.equal(formatDuration(0, 'pt-BR'), 'agora');
+assert.equal(formatDuration(90_000, 'pt-BR'), '1m');
 
 const cards = projectCards(payload, Date.parse('2026-09-04T00:00:00Z'));
 assert.equal(cards.length, 1);
@@ -171,6 +193,15 @@ assert.equal(
 
 assert.equal(nextUpdateLabel(payload, 1_000), 'Next update in 1m');
 assert.equal(nextUpdateLabel(payload, 61_000), 'Updating…');
+assert.equal(nextUpdateLabel(payload, 1_000, 'pt-BR'), 'Próxima atualização em 1m');
+assert.equal(nextUpdateLabel(payload, 61_000, 'pt-BR'), 'Atualizando…');
+assert.equal(updateMessage({ state: 'checking' }, 'pt-BR'), 'Procurando uma versão mais recente…');
+// Without a version each language words "the new version" itself, never an English splice.
+assert.equal(updateMessage({ state: 'available', installable: true }, 'pt-BR'), 'A nova versão do AI Usage está pronta para instalar.');
+assert.equal(updateMessage({ state: 'downloading' }, 'pt-BR'), 'Baixando a nova versão…');
+assert.equal(updateMessage({ state: 'downloading' }), 'Downloading the new version…');
+// A diagnosis that is only a path cleans to nothing: the fallback hint is translated too.
+assert.equal(explainError('/Users/someone/.config/x', 'zai', 'pt-BR').hint, 'Abra o TUI para ver detalhes.');
 
 const bad = parseHostPayload('{');
 assert.equal(bad.hostError.includes('valid JSON'), true);
@@ -418,6 +449,19 @@ const synced = syncLayout(loaded, ['anthropic', 'openai', 'cursor']);
 assert.deepEqual(synced.cardOrder, ['cursor', 'openai', 'anthropic']);
 assert.ok(store.getItem(LAYOUT_KEY).includes('cursor'));
 assert.deepEqual(emptyLayout().cardOrder, []);
+assert.equal(emptyLayout().popoverStyle, 'classic');
+assert.equal(normalizeLayout({ popoverStyle: 'glass' }).popoverStyle, 'native');
+assert.equal(normalizeLayout({ popoverStyle: 'native' }).popoverStyle, 'native');
+assert.equal(normalizeLayout({ popoverStyle: 'other' }).popoverStyle, 'classic');
+assert.equal(normalizeLayout({}).popoverStyle, 'classic');
+const nativeStyleStore = memoryStorage();
+saveLayout(nativeStyleStore, { ...emptyLayout(), popoverStyle: 'native' });
+assert.equal(JSON.parse(nativeStyleStore.getItem(LAYOUT_KEY)).popoverStyle, 'native');
+assert.equal(loadLayout(nativeStyleStore).popoverStyle, 'native');
+const legacyStyleStore = memoryStorage({ [LAYOUT_KEY]: JSON.stringify({ popoverStyle: 'glass' }) });
+assert.equal(loadLayout(legacyStyleStore).popoverStyle, 'native');
+saveLayout(legacyStyleStore, loadLayout(legacyStyleStore));
+assert.equal(JSON.parse(legacyStyleStore.getItem(LAYOUT_KEY)).popoverStyle, 'native');
 
 // Language must survive storage normalization and every host payload refresh.
 const languageStore = memoryStorage();
@@ -739,12 +783,24 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
     'Limit today at 12:30 PM',
   );
 
-  // behind without a run-out instant (the limit is already spent) has no text: the flame alone
+  // a spent meter (100%, "Limit reached") has no pace at all: no tick, no text, not visible
   const spent = pace(row(100, 2 * 3600_000), now);
-  assert.equal(spent.state, 'behind');
-  assert.equal(spent.runsOutMs, null);
+  assert.equal(spent, null);
+  assert.equal(paceTickPercent(spent, 'used'), null);
+  assert.equal(paceTickPercent(spent, 'left'), null);
   assert.equal(paceText(spent, now), '');
-  assert.equal(paceText(spent, now, { resetTimes: 'exact', timeZone: 'UTC' }), '');
+  assert.equal(paceVisible(spent, { alwaysShowPace: true }), false);
+  assert.equal(pace(row(100.5, 2 * 3600_000), now), null); // past the limit is still spent
+  // one percent short of the limit is still a live row: behind, with the tick on the bar
+  const almostSpent = pace(row(99, 2 * 3600_000), now);
+  assert.equal(almostSpent.state, 'behind');
+  assert.equal(almostSpent.elapsedPercent, 40);
+  assert.equal(paceTickPercent(almostSpent, 'used'), 40);
+  assert.equal(paceTickPercent(almostSpent, 'left'), 60);
+  // behind without a run-out instant has no text: the flame alone
+  const noRunOut = { state: 'behind', sparePercent: -100, projectedPercent: 200, runsOutMs: null, elapsedPercent: 40 };
+  assert.equal(paceText(noRunOut, now), '');
+  assert.equal(paceText(noRunOut, now, { resetTimes: 'exact', timeZone: 'UTC' }), '');
 
   // ASSERT: the tick follows the meter's reading — elapsed in Used mode, remaining in Left mode
   assert.equal(paceTickPercent(behind, 'used'), 40);
@@ -1087,6 +1143,57 @@ assert.equal(quotaAlternate(null, 'left'), '');
   const keys = projectCards(repeated, 0)[0].rows.map(rowKey);
   assert.deepEqual(keys, ['metric:Quota', 'metric:Quota #2']);
   assert.equal(visibleRowsFor(projectCards(repeated, 0)[0], { collapsed: false }).length, 2);
+}
+
+// --- metric-level groups (#213's report field): SuperGrok slices, Claude CLI sessions -----
+
+{
+  // ARRANGE: a Claude entry carrying the #255 session rows — grouped by the
+  // report's own field, not a positional heading — plus one duplicate title.
+  const claude = parseHostPayload({
+    entries: [{ id: 'anthropic', display_name: 'Claude', sections: [
+      { type: 'metric', label: 'Session (5h)', percent: 29, severity: 'low', value: '29%' },
+      { type: 'spacer' },
+      { type: 'metric', label: 'ship the release', percent: 90, severity: 'critical',
+        value: '90%', group: 'Sessions' },
+      { type: 'metric', label: 'ship the release', percent: 0, severity: 'low',
+        value: 'compacted', group: 'Sessions' },
+      { type: 'text', label: '', value: '… and 4 more sessions' },
+    ] }],
+  });
+
+  // ASSERT: normalization keeps the field, and the rows group exactly as a
+  // positional heading would have — "(Sessions)" label suffix, group-aware
+  // keys, severity passthrough — with no heading row of its own. A repeated
+  // session title dedupes on the key (#2), the label untouched.
+  const normalized = claude.entries[0].sections.find((s) => s.group === 'Sessions');
+  assert.ok(normalized, 'metric group survives normalization');
+  const card = projectCards(claude, 0)[0];
+  assert.deepEqual(card.rows.map((r) => [r.label, r.key]), [
+    ['Session', 'metric:Session (5h)'],
+    ['ship the release (Sessions)', 'metric:ship the release (Sessions)'],
+    ['ship the release (Sessions)', 'metric:ship the release (Sessions) #2'],
+    ['', 'text:'],
+  ]);
+  assert.equal(card.rows[3].value, '… and 4 more sessions');
+  assert.equal(card.rows[1].severity, 'critical');
+  assert.equal(card.rows[1].usedPercent, 90);
+  assert.equal(card.rows[2].value, 'compacted');
+  assert.equal(new Set(card.rows.map(rowKey)).size, card.rows.length);
+  assert.equal(metricCount(card), 3);
+
+  // ASSERT: the field wins over a positional heading still in effect, so a
+  // producer cannot accidentally file a session under the previous group.
+  const superimposed = parseHostPayload({
+    entries: [{ id: 'supergrok', display_name: 'SuperGrok', sections: [
+      { type: 'text', label: 'Breakdown', value: '' },
+      { type: 'metric', label: 'Grok Build', percent: 94, severity: 'low', group: 'Breakdown' },
+    ] }],
+  });
+  const grok = projectCards(superimposed, 0)[0];
+  assert.deepEqual(grok.rows.map((r) => [r.label, r.key]), [
+    ['Grok Build (Breakdown)', 'metric:Grok Build (Breakdown)'],
+  ]);
 }
 
 // --- vendor warnings become card.warning, and errors carry an action ------------

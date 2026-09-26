@@ -1,5 +1,5 @@
 {
-  "version": "1.24.0",
+  "version": "1.25.0",
   "description": "Widgets, tray and TUI for tracking multi-provider AI plan usage",
   "homepage": "https://github.com/akitaonrails/ai-usagebar",
   "license": "MIT",

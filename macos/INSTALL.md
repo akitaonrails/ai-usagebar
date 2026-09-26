@@ -96,6 +96,7 @@ system notifications.
 |---|---|
 | `npm` missing during `cargo build` | install Node.js 20+ |
 | Popover is empty / stub page | `npm ci && npm run build` in `windows/popover/`, then rebuild the tray |
+| Clicking the icon opens a menu instead of the popover | the WKWebView could not be built, so the status item falls back to a bare Refresh / Quit menu (#249). Quit it from that menu, rebuild, and check the error printed at launch |
 | Two status items | quit `ai-usagebar-menubar` (legacy Swift dropdown) |
 | No usage in the glyph | star metrics in Settings → Providers (max two per provider); turn on Chart Icon Only in the Menu tab |
 | macOS blocks the binary (Gatekeeper) | local build — launch from Terminal; if Finder blocks it, right-click → **Open** once |

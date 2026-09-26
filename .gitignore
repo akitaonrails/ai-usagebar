@@ -37,3 +37,4 @@ macos/printscreen/
 
 windows/popover/node_modules/
 windows/popover/dist/
+windows/popover/tsconfig.tsbuildinfo

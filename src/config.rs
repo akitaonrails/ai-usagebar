@@ -111,17 +111,8 @@ pub struct TrayConfig {
     pub refresh_minutes: Option<u64>,
     /// What the tray does when a newer release is published.
     pub updates: Option<UpdateMode>,
-    /// macOS menu-bar presentation: `provider` (Omarchy-style) or `bars`.
+    /// macOS menu-bar presentation: `provider` (logos) or `bars` (default).
     pub menu_bar_style: Option<String>,
-    /// The last provider selected in the macOS menu bar. A missing entry falls
-    /// back for display without erasing this choice during a transient gap.
-    pub menu_bar_provider: Option<String>,
-    /// Show all ready providers in the macOS menu bar; defaults to true.
-    pub menu_bar_show_all: Option<bool>,
-    /// Hide headline values, leaving only provider codes.
-    pub menu_bar_hide_value: bool,
-    /// Which quota window the macOS menu bar displays.
-    pub menu_bar_window: Option<String>,
 }
 
 /// Poll intervals the tray offers, in minutes. The provider cache TTL is
@@ -151,10 +142,6 @@ impl Default for NotificationsConfig {
 }
 
 impl TrayConfig {
-    pub fn menu_bar_show_all(&self) -> bool {
-        self.menu_bar_show_all.unwrap_or(true)
-    }
-
     pub fn refresh_minutes(&self) -> u64 {
         self.refresh_minutes.unwrap_or(DEFAULT_TRAY_REFRESH_MINUTES)
     }
@@ -740,6 +727,40 @@ pub fn set_notification_value(path: &Path, key: &str, value: toml_edit::Value) -
     write_config_document(path, &doc)
 }
 
+/// Flip one provider's `enabled` switch in the config at `path`, creating the
+/// file and the provider's section when either doesn't exist and leaving every
+/// other line — comments, keys, unrelated sections — exactly as it was
+/// (#244). An unchanged document is not rewritten. This is the whitelisted
+/// writer the settings surfaces go through; the slug is validated inside
+/// [`set_vendor_enabled_in_doc`], so no caller can create an arbitrary
+/// section or reach a `[[custom]]` entry from here.
+pub fn set_vendor_enabled(path: &Path, slug: &str, enabled: bool) -> Result<()> {
+    let mut doc = read_config_document(path)?;
+    let before = doc.to_string();
+    set_vendor_enabled_in_doc(&mut doc, slug, enabled)?;
+    if doc.to_string() == before {
+        return Ok(());
+    }
+    write_config_document(path, &doc)
+}
+
+/// The validated core of [`set_vendor_enabled`], over an already-open
+/// document: strictly `slug → VendorId → config_section()` — never a
+/// caller-chosen section name — then the shared comment-preserving
+/// [`set_bool`] both the Settings overlay and `enable_vendors_in` use.
+pub fn set_vendor_enabled_in_doc(
+    doc: &mut toml_edit::DocumentMut,
+    slug: &str,
+    enabled: bool,
+) -> Result<()> {
+    let Some(vendor) = VendorId::from_slug(slug) else {
+        return Err(AppError::Other(format!(
+            "unknown provider {slug:?}: not a built-in vendor"
+        )));
+    };
+    set_bool(doc, vendor.config_section(), "enabled", enabled)
+}
+
 /// Read `path` into a `toml_edit` document with comments intact. A missing
 /// file is an empty document, so a writer can create the config from nothing;
 /// any other I/O failure or a parse error is reported rather than clobbered.
@@ -988,23 +1009,13 @@ pub struct OpenCodeGoConfig {
 
 /// Command Code reads the OAuth credential from the official CLI or pi, so it
 /// has no API key of its own. `auth_paths` overrides that search list for a
-/// non-standard install. It is enabled by default, like OpenAI/Codex; when no
-/// local credential exists the TUI reports that tab as unavailable instead of
-/// silently hiding the provider.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// non-standard install. It is disabled until explicitly enabled or detected
+/// from a local credential.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CommandCodeConfig {
     pub enabled: bool,
     pub auth_paths: Option<Vec<PathBuf>>,
-}
-
-impl Default for CommandCodeConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            auth_paths: None,
-        }
-    }
 }
 
 /// Ollama Cloud (`ollama.com/api/usage`). Disabled by default: the local
@@ -2650,13 +2661,12 @@ mod tests {
     }
 
     #[test]
-    fn defaults_enable_only_the_five_core_vendors() {
+    fn defaults_enable_only_the_four_core_vendors() {
         let c = Config::default();
         assert!(c.is_enabled(VendorId::Anthropic));
         assert!(c.is_enabled(VendorId::Openai));
         assert!(c.is_enabled(VendorId::Zai));
         assert!(c.is_enabled(VendorId::Openrouter));
-        assert!(c.is_enabled(VendorId::CommandCode));
         for opt_in in [
             VendorId::AnthropicApi,
             VendorId::Copilot,
@@ -2671,12 +2681,25 @@ mod tests {
             VendorId::Cursor,
             VendorId::Minimax,
             VendorId::Kiro,
+            VendorId::CommandCode,
             VendorId::OrcaRouter,
             VendorId::ModelStudio,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
-        assert_eq!(c.enabled_vendors().len(), 5);
+        assert_eq!(c.enabled_vendors().len(), 4);
+    }
+
+    #[test]
+    fn commandcode_is_opt_in_when_loading_existing_configs() {
+        let absent: Config = toml::from_str("[openai]\nenabled = true\n").unwrap();
+        assert!(!absent.is_enabled(VendorId::CommandCode));
+
+        let opted_in: Config = toml::from_str("[commandcode]\nenabled = true\n").unwrap();
+        assert!(opted_in.is_enabled(VendorId::CommandCode));
+
+        let opted_out: Config = toml::from_str("[commandcode]\nenabled = false\n").unwrap();
+        assert!(!opted_out.is_enabled(VendorId::CommandCode));
     }
 
     #[test]
@@ -3627,7 +3650,6 @@ enabled = false
                 VendorId::Openai,
                 VendorId::Zai,
                 VendorId::Openrouter,
-                VendorId::CommandCode,
             ]
         );
     }
@@ -3794,7 +3816,6 @@ enabled = false
                 VendorId::Openrouter,
                 VendorId::Deepseek,
                 VendorId::Kimi,
-                VendorId::CommandCode,
             ]
         );
     }
@@ -4895,6 +4916,15 @@ enabled = true
     }
 
     #[test]
+    fn tray_ignores_removed_menu_bar_keys_for_back_compatibility() {
+        let legacy = write_toml(
+            "[tray]\nmenu_bar_show_all = false\nmenu_bar_hide_value = true\nmenu_bar_names = \"short\"\nmenu_bar_provider = \"anthropic\"\nmenu_bar_window = \"weekly\"\n",
+        );
+        let config = Config::load_from(legacy.path()).unwrap();
+        assert_eq!(config.tray, TrayConfig::default());
+    }
+
+    #[test]
     fn tray_section_rejects_a_misspelled_mode() {
         let file = write_toml("[tray]\nupdates = \"sometimes\"\n");
         assert!(Config::load_from(file.path()).is_err());
@@ -4965,6 +4995,78 @@ enabled = true
         assert_eq!(config.notifications.threshold, 85);
         assert!(set_notification_value(&path, "threshold", 101i64.into()).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    /// #244's whitelist: a real slug round-trips onto that vendor's `enabled`
+    /// switch (creating the section when the config never had one) while the
+    /// rest of the file is untouched, and a slug that names no built-in vendor
+    /// is refused without writing anything.
+    #[test]
+    fn vendor_enabled_round_trips_and_rejects_unknown_slugs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "# keep\n[zai]\nenabled = true # mine\n").unwrap();
+
+        set_vendor_enabled(&path, "zai", false).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# keep\n"), "{text}");
+        assert!(text.contains("enabled = false # mine"), "{text}");
+        assert!(!config_enabled(&path, VendorId::Zai));
+
+        set_vendor_enabled(&path, "grok", true).unwrap();
+        let config = Config::load_from(&path).unwrap();
+        assert!(config.is_enabled(VendorId::Grok));
+        assert!(
+            !config.is_enabled(VendorId::Deepseek),
+            "only the named vendor moves; untouched opt-in vendors stay off"
+        );
+        assert!(
+            config.is_enabled(VendorId::Openai),
+            "an untouched default-on vendor is not switched off either"
+        );
+
+        for bad in ["", "custom", "not-a-vendor", "anthropic "] {
+            let error = set_vendor_enabled(&path, bad, true)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("unknown provider"), "{bad}: {error}");
+        }
+        // A refused write leaves the file byte-for-byte alone.
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("enabled = false # mine")
+        );
+    }
+
+    /// The doc-level core only ever lands on the vendor's own section, and an
+    /// idempotent call does not rewrite the file.
+    #[test]
+    fn set_vendor_enabled_in_doc_targets_the_section_and_stays_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[grok]\nenabled = true\napi_key = \"k\"\n").unwrap();
+        let before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        set_vendor_enabled(&path, "grok", true).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "[grok]\nenabled = true\napi_key = \"k\"\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().modified().unwrap(),
+            before
+        );
+
+        let mut doc = toml_edit::DocumentMut::new();
+        set_vendor_enabled_in_doc(&mut doc, "opencode-go", true).unwrap();
+        assert_eq!(doc.to_string(), "[opencode-go]\nenabled = true\n");
+        assert!(set_vendor_enabled_in_doc(&mut doc, "mytool", true).is_err());
+    }
+
+    fn config_enabled(path: &std::path::Path, vendor: VendorId) -> bool {
+        Config::load_from(path).unwrap().is_enabled(vendor)
     }
 
     #[test]

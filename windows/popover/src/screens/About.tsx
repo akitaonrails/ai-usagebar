@@ -5,8 +5,9 @@ import MdiGithub from "~icons/mdi/github";
 import MdiOpenInNew from "~icons/mdi/open-in-new";
 import MdiScaleBalance from "~icons/mdi/scale-balance";
 import MdiTagOutline from "~icons/mdi/tag-outline";
+import { TruncatedText } from "@/components/TruncatedText";
 import type { Payload } from "@/lib/types";
-import { useI18n } from "@/lib/i18n";
+import { m } from "@/paraglide/messages.js";
 import { sendCommand } from "../model.js";
 
 interface AboutProps {
@@ -18,18 +19,9 @@ interface AboutProps {
  * repeated here: the footer shows the one and Options → Check for Updates runs the other.
  */
 export function About({ payload }: AboutProps) {
-  const { t } = useI18n();
   const repository = payload.repository;
   const owner = repository.replace("https://github.com/", "").split("/")[0];
-  // Whole sentences, so each language can place the host's name where its grammar wants it.
-  const summary =
-    payload.os === "windows"
-      ? t(
-          "How much of each AI plan you have left — Claude, Codex, Cursor, Copilot and many more — right in the system tray, with reset times and pacing so a limit never catches you mid-task.",
-        )
-      : t(
-          "How much of each AI plan you have left — Claude, Codex, Cursor, Copilot and many more — right in the menu bar, with reset times and pacing so a limit never catches you mid-task.",
-        );
+  const summary = payload.os === "windows" ? m.about_summary_tray() : m.about_summary_menu_bar();
 
   return (
     <div className="flex flex-col gap-[var(--section-gap)]">
@@ -40,29 +32,29 @@ export function About({ payload }: AboutProps) {
         <span className="text-[length:var(--sz-header)] font-semibold">AI Usage</span>
         <p className="m-0 text-[length:var(--sz-support)] leading-[var(--leading-note)] text-label-2">{summary}</p>
         <p className="m-0 text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">
-          {t("The same readings power the ai-usagebar CLI, the terminal TUI and the Waybar, GNOME and KDE widgets.")}
-          {owner ? ` ${t("Open source, by {owner} and contributors.").replace("{owner}", owner)}` : ""}
+          {m.same_readings_power()}
+          {owner ? ` ${m.open_source_by({ owner })}` : ""}
         </p>
       </div>
       {repository ? (
         <div className="card-surface">
-          <LinkRow icon={<MdiGithub />} subtitle={repository.replace("https://", "")} title={t("Source Code")} url={repository} />
+          <LinkRow icon={<MdiGithub />} subtitle={repository.replace("https://", "")} title={m.source_code()} url={repository} />
           <LinkRow
             icon={<MdiTagOutline />}
-            subtitle={t("What changed in each version")}
-            title={t("Release Notes")}
+            subtitle={m.what_changed_each_version()}
+            title={m.release_notes()}
             url={`${repository}/releases`}
           />
           <LinkRow
             icon={<MdiBugOutline />}
-            subtitle={t("Bugs, provider requests, ideas")}
-            title={t("Report an Issue")}
+            subtitle={m.bugs_provider_requests_ideas()}
+            title={m.report_issue()}
             url={`${repository}/issues`}
           />
           <LinkRow
             icon={<MdiScaleBalance />}
-            subtitle={t("MIT — free to use, change and share")}
-            title={t("License")}
+            subtitle={m.mit_license_summary()}
+            title={m.license()}
             url={`${repository}/blob/main/LICENSE`}
           />
         </div>
@@ -89,8 +81,8 @@ function LinkRow({ icon, subtitle, title, url }: LinkRowProps) {
         {icon}
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[length:var(--sz-label)] font-semibold">{title}</span>
-        <span className="truncate text-[length:var(--sz-badge)] text-label-2">{subtitle}</span>
+        <TruncatedText className="text-[length:var(--sz-label)] font-semibold">{title}</TruncatedText>
+        <TruncatedText className="text-[length:var(--sz-badge)] text-label-2">{subtitle}</TruncatedText>
       </span>
       <MdiOpenInNew aria-hidden="true" className="size-[var(--icon-inline)] shrink-0 text-label-3" />
     </button>

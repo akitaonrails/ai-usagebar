@@ -59,7 +59,7 @@ jobs:
       - name: Test desktop integration models
         run: make desktop-test
 
-      # The MacDashboard SSR contract test needs vite, so it runs here (npm is
+      # The NativeDashboard SSR contract test needs vite, so it runs here (npm is
       # guaranteed on ubuntu) rather than in the bare-node desktop-test gate.
       - name: Test the popover SSR screens
         run: make popover-ssr-test
@@ -72,6 +72,12 @@ jobs:
 
       - name: Test Linux Mint tray model
         run: make mint-test
+
+      - name: Test Linux Mint GTK and IPC regressions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkx11-3.0 gir1.2-xapp-1.0
+          make mint-runtime-test
 
       - name: Unused dependencies
         uses: bnjbvr/cargo-machete@ac30a525c0a8d163a92d727b3ff079ee3f6ecb08 # v0.9.2

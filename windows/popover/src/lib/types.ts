@@ -8,6 +8,7 @@ export interface RowPrefs {
 
 export type TimeFormat = "12" | "24" | "auto";
 export type Language = "en" | "pt-BR";
+export type PopoverStyle = "classic" | "native";
 
 export interface Layout {
   alwaysShowPace: boolean;
@@ -18,6 +19,7 @@ export interface Layout {
   hideExtras: boolean;
   hintDismissed: boolean;
   language: Language;
+  popoverStyle: PopoverStyle;
   resetTimes: string;
   rows: Record<string, RowPrefs>;
   seeded: boolean;
@@ -144,6 +146,8 @@ export interface Card {
 
 export interface MetricSection {
   detail: string;
+  /** Sub-group heading this metric renders under ("" when it stands alone). */
+  group: string;
   headline: "percent" | "value";
   label: string;
   percent: number;
@@ -228,16 +232,18 @@ export interface UpdateAction {
   url: string;
 }
 
+export interface Accent {
+  dark: string;
+  light: string;
+}
+
 export interface Payload {
   /** Switchable logins keyed by vendor slug ("anthropic", "openai"); empty off macOS. */
   accounts: Record<string, AccountSwitchInfo>;
+  accent: Accent | null;
   entries: Entry[];
   generatedAt: number;
   hostError: string;
-  menuBarShowAll: boolean;
-  menuBarHideValue: boolean;
-  menuBarProvider: string;
-  menuBarWindow: "auto" | "session" | "weekly" | "monthly";
   menuBarChart: boolean;
   notificationsEnabled: boolean;
   notificationsThreshold: number;

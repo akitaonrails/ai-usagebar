@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import MdiClose from "~icons/mdi/close";
 import { Hint } from "@/components/Hint";
-import { useI18n } from "@/lib/i18n";
+import { TruncatedText } from "@/components/TruncatedText";
+import { m } from "@/paraglide/messages.js";
 
 interface HintCardProps {
   actionDisabled?: boolean;
@@ -30,17 +31,16 @@ export function HintCard({
   onAction,
   onDismiss,
 }: HintCardProps) {
-  const { t } = useI18n();
   return (
     <div className="card-surface flex flex-col items-start gap-[var(--gap-stack)] p-[var(--card-pad)]">
       <div className="flex w-full items-center gap-[var(--gap-item)]">
         <span className="grid shrink-0 place-items-center text-label-2 [&_svg]:size-[var(--icon-row)]">{icon}</span>
-        <span className="min-w-0 flex-1 truncate text-[length:var(--sz-label)] font-semibold">{title}</span>
+        <TruncatedText className="min-w-0 flex-1 text-[length:var(--sz-label)] font-semibold">{title}</TruncatedText>
         {onDismiss ? (
           <Hint align="end" content={dismissTitle}>
             <button
               type="button"
-              aria-label={t("Dismiss")}
+              aria-label={m.dismiss()}
               className="plain-btn hover-icon grid size-[var(--dismiss-box)] shrink-0 place-items-center text-label-2"
               onClick={onDismiss}
             >

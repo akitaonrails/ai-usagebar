@@ -1,23 +1,17 @@
 # AI Usage Bar — macOS menu bar app
 
 The product UI is **`ai-usagebar-tray`**: an NSStatusItem plus a WKWebView
-popover with a macOS provider switcher on an AppKit glass background. Its
-tabs show only enabled providers and the current usage or balance; selecting
-one shows its metrics, reset times, and other account details. The header has
-Refresh and Settings buttons. The menu-bar item shows every ready provider's
-name and usage headline beside the
-compact usage-chart glyph by default (for example, `Claude 21%   Codex 15%`).
-Providers with a fetch error stay available in the dashboard and when cycling,
-but do not crowd the default summary. Middle-click focuses the next provider
-and switches to the single-provider summary; left-click or right-click opens
-the dashboard. **Settings → Menu Bar** offers Show All Providers,
-Hide Usage Value, Chart Icon Only, and a choice of 5-hour, weekly, or monthly
-quota window. A provider without the chosen window falls back to its highest metric. The
-selection and display options survive restarts in `config.toml`.
+popover. **Settings → Appearance → Popover Style** picks its look: **Classic**
+(every provider's card at a glance, the default) or **Native** (the system's
+own look — on macOS, one provider at a time behind tabs of logos and values,
+over AppKit glass). Both draw the same provider card: metrics, reset times,
+pace notes, the reset popover, the row menu and account switching.
 
-**Chart Icon Only** restores the old compact glyph
-without the text summary. Its bars use starred metrics (at most two per
-provider).
+The menu-bar item shows the metrics you star in each provider (up to two):
+**Settings → Menu Bar → Menu Bar Shows** draws them as the usage **Chart**
+(the default) or as **Logos**, each starred provider's logo followed by its
+value, two starred metrics stacked. With nothing starred it shows the app
+icon. Left-click or right-click opens the popover.
 
 ```bash
 cargo build --release --bin ai-usagebar-tray
@@ -29,10 +23,11 @@ Click either mouse button on the status item to toggle the popover. Display
 options are in Settings; the footer's Options menu has Detect Providers,
 Open TUI, Start at Login, and Quit. No Dock icon.
 
-![Previous chart-only mode in the macOS menu bar, next to the Cursor, Claude, Antigravity, Codex and Claude Code icons](../screenshots/macos-tray-icon.png)
+![Chart mode in the macOS menu bar, next to the Cursor, Claude, Antigravity, Codex and Claude Code icons](../screenshots/macos-tray-icon.png)
 
 Star up to two metrics per provider from **Settings → Providers**, then open
-that provider's details. Those fills are what the status item paints.
+that provider's details, or right-click a row. Those metrics are what the
+status item shows.
 
 With named Claude or Codex accounts, each account's card also shows which login
 is active (a filled star) and an outline star to switch to the others; see "Switch from

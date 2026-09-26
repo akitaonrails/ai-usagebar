@@ -75,6 +75,12 @@ rather than argv or the environment. Leave a field blank to keep its current
 value, or use its clear button to remove an inline key. Saving a new key also
 enables that provider, matching the terminal overlay.
 
+The **Providers** section lists every known provider with an on/off switch
+(the per-vendor `enabled` in config.toml). Turning a provider off removes it
+from the bar, panel and reports; turning one on takes effect on the next
+refresh. The switch only ever names built-in providers, and travels over the
+same stdin patch as everything else.
+
 Not every provider has a credential field, and a missing one is not an omission.
 Claude, Codex, GitHub Copilot, Cursor, Kiro, Antigravity, and Command Code
 authenticate through an existing official or local login, so they never appear

@@ -399,7 +399,9 @@ pub fn sections_for(session: &ContextSession) -> Vec<Section> {
     sections
 }
 
-fn format_tokens(value: u64) -> String {
+/// Group digits with `,` separators. Shared with the report's session rows so
+/// a token count reads the same in the TUI overlay and the machine contract.
+pub(crate) fn format_tokens(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (index, ch) in digits.chars().enumerate() {

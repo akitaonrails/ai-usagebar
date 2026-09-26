@@ -15,7 +15,43 @@ Each release is also published at
   the existing `usage --json` report, shows provider quota groups with the
   icon marks already shipped for Omarchy, color-coded pacing bars, a flame
   warning when projected usage exceeds the limit, and concise disconnected
-  cards. It opens from the native status icon.
+  cards. It opens from the native status icon, hides on focus loss, stays out
+  of the taskbar, and offers settings and refresh actions beside each provider.
+  The frontend supports English and Portuguese and retains cached quota rows
+  when authentication temporarily fails.
+
+### Fixed
+
+- **Linux Mint installer binary resolution.** The tray recognizes the Cargo
+  installation in `~/.cargo/bin` and retains explicit binary paths for
+  autostart after the installer exits. The desktop launcher's TUI action also
+  uses the detected TUI path.
+
+## [1.25.0] — 2026-09-25
+
+### Added
+
+- **Claude CLI sessions in the report and popover (#255).** When the opt-in
+  `[context]` monitor is enabled, the usage report's Claude entry gains a
+  `"Sessions"` group — up to eight recent Claude Code sessions, one row each,
+  with context health on the same severity colours as quota meters (a 90%
+  context reads as saturated), plus the model, token count and last-active
+  time; compacted or unreadable contexts keep an honest `compacted` /
+  `unknown` value instead of a fabricated percentage. The Windows and macOS
+  popover renders them as grouped rows on the Claude card, the Omarchy panel
+  under a "Sessions" heading, and `usage` prints them in the text report.
+  Sessions are machine-local, so they attach to the first ready Claude entry
+  exactly once, never per account; with `[context]` disabled nothing changes.
+  The reporter's suggested icon beside the options/refresh buttons is a
+  follow-up — the card section is the first slice. The TUI keeps its dedicated
+  `c` overlay.
+- **OpenRouter across multiple workspaces (#221).** The existing
+  `[[openrouter.accounts]]` entries (v1.3.0) are now documented for the
+  reporter's setup — one entry per workspace key, so each workspace gets its
+  own tab, report entry, and cache. The docs state the split's limit honestly:
+  keys created inside one OpenRouter workspace share that workspace's billing
+  account, so entries separate login sessions (workspaces), not keys within a
+  single bill.
 - **Grok Bot on Windows.** `[grokbot]` read the desktop app's session only on
   Linux and macOS and failed closed elsewhere. On Windows it now reads
   `%APPDATA%\Grok Bot\sand-secrets.json`, whose tokens are Chromium's Windows
@@ -35,8 +71,45 @@ Each release is also published at
   Checking, then You're Up to Date, Update Available with Install, or the
   reason it failed with Try Again. Settings → Check Now opens the same dialog.
 
+- **Popover Style: Classic or Native, on macOS and Windows** (Settings →
+  Appearance → Popover Style). Classic is the app's own card layout, the same
+  everywhere; Native follows the system: v1.23.0's glass dashboard over AppKit
+  glass on macOS, and Windows 11 Fluent over Acrylic on Windows (a solid panel
+  on Windows 10). Both draw the same provider card, so collapsing, the reset
+  popover, the row menu, pace notes, errors and account switching work in
+  either; Native shows one provider at a time behind tabs of logos and
+  percentages. Classic keeps each host's width (320 pt on macOS, 300 on
+  Windows); Native is 390.
+- **The macOS menu bar can show logos** (Settings → Menu Bar → Menu Bar
+  Shows: Chart or Logos): each provider's logo followed by the values of the
+  metrics starred in it, two starred metrics stacked. Both looks show exactly
+  the starred metrics.
+- **The usage goal works in both styles**; in v1.23.0 only the glass
+  dashboard drew it.
+- **Text cut short shows the full value on hover**, and picker values are
+  capped so a long one no longer pushes its label out.
+- **Per-provider on/off switches in the settings surfaces (#244).** The
+  terminal Settings overlay grew a Providers section — one on/off row per
+  known vendor — and the Omarchy settings form a Providers section of
+  toggles, both writing `enabled = true/false` under the vendor's own
+  config.toml section through the same comment-preserving save path. Only
+  toggled providers are written, so an untouched save adds no section; an
+  explicit off in the same save wins over the enable-a-pasted-key rule; and
+  the switch names built-in vendors only (the slug is validated against the
+  vendor list before anything is written, on both the TUI and the native
+  stdin patch). Defaults are unchanged — this is only the switch. The
+  overlay's body now scrolls to follow focus, keeping Save reachable with
+  every provider listed.
+
 ### Changed
 
+- **Grouped rows on the Windows/macOS popover and menu bar now carry their
+  group in the row key.** A metric that names its group in the report
+  (SuperGrok's "Breakdown" slices, the new "Sessions" rows) used to be keyed
+  without it, so the popover and the menu-bar strip could disagree with the
+  Omarchy panel's rendering. Both now label and key such rows exactly as a
+  positional heading would; a SuperGrok slice starred in an older build needs
+  re-starring once.
 - **The Grok Bot card names the subscription that bills it** — "Cursor
   Ultra" — instead of the app's own "Grok Bot Plan", which reads the same on
   every account (the popover trimmed it to a bare "Plan"). It comes from the
@@ -56,8 +129,61 @@ Each release is also published at
   The estimate now waits 1% of the window but never more than an hour, so a
   weekly or monthly meter no longer sits blank for 1h 41m or 7h 12m.
 
+- **The macOS popover opens in Classic again**, the layout it had before
+  v1.23.0; the glass dashboard is one choice away as the Native style. A new
+  look now ships as a style instead of replacing the one people use
+  (`CONTRIBUTING.md` → Changing the tray popover UI).
+- **The macOS menu bar shows the chart by default again**, and the text
+  summary's options are gone: provider names, Show All Providers, Hide Usage
+  Value, Usage Window, Focused Provider and the middle-click provider
+  cycling. The stars already choose which providers and which quota windows
+  appear, so these either repeated that choice or overrode it. Their old
+  `config.toml` keys are ignored, not rejected.
+- **Every popover screen is translated**, the update dialog, error hints and
+  update messages included, and the language list reads English and
+  Português. Strings are Paraglide JS messages now, so a missing translation
+  fails the build instead of falling back to English.
+- **Native lets the system material show**: thin surfaces with one margin on
+  every edge. On macOS it follows the macOS 26 UI kit: 24 pt controls with a
+  6 pt radius, tabs as a segmented control, the small switch with its capsule
+  knob, menus with an accent-filled highlight, group boxes for cards and
+  square tooltips. On Windows it follows Fluent: 4 px controls with their
+  hairline border, 8 px cards, WinUI toggles and Fluent 2 tabs. Settings uses
+  tabs only in Native.
+
 ### Fixed
 
+- **Command Code no longer appears without a login on fresh configurations.**
+  It was enabled by default, so the bar showed a red credentials error even for
+  people who never used it. It now starts off and can be enabled explicitly or
+  by local credential detection. Existing explicit `[commandcode] enabled = true`
+  settings remain respected; switch that setting off to hide it.
+- **The Windows tray popover keeps its layout when the exe moves.** WebView2
+  kept the popover's profile next to the exe (`<exe dir>\ai-usagebar-tray.exe.WebView2`),
+  so running the tray from another folder, or a Scoop update into a new
+  version folder, started from an empty profile and lost the Customize
+  layout, theme, style and dismissed hints; under Program Files the folder is
+  not writable at all. The profile now lives in
+  `%LOCALAPPDATA%\ai-usagebar\popover`, beside `detect.json`. The first run
+  copies the `Local Storage` of the profile beside the exe (the layout, a few
+  KB) into it and leaves the old folder alone. If the folder cannot be created the popover
+  falls back to the old location and still opens.
+- **Antigravity says what a free plan means.** Accounts whose plan does not
+  include Antigravity get 403 `SUBSCRIPTION_REQUIRED` from the cloud quota
+  fallback; the widget called that a rejected session, sending the user to
+  re-sign-in for nothing. The message now says the plan has no quota to
+  report and names the `[antigravity]` toggle, and only a 403 without that
+  reason keeps the session wording. (#256)
+- **A Scoop install of the Windows tray no longer updates itself behind
+  Scoop's back.** The built-in updater only knew Homebrew, Nix and cargo
+  builds, so under Scoop "Install Update" (or Automatic, silently) wrote the
+  new exes into Scoop's version folder: `scoop list` kept the old version, the
+  next `scoop update` fetched the running version again and `scoop reset`
+  handed back the new one. A tray running from
+  `<scoop>\apps\<app>\<version or current>\`, with Scoop's `install.json`
+  beside it, now offers the release page like a Homebrew install does, and
+  Scoop owns the update (`scoop update ai-usagebar`), as the README already
+  said.
 - **The Windows tray popover no longer runs under the taskbar.** A tall popover
   was sized and kept on screen against the whole monitor, so on a 1440 px
   display with a 48 px taskbar its bottom went behind it. It now uses the
@@ -66,6 +192,14 @@ Each release is also published at
   centered on the icon on the side away from the taskbar, so a taskbar docked
   at the top, left or right works the same; it used to hang a margin above the
   icon, twice as far from a bottom taskbar as the global shortcut put it.
+- **A Codex credit balance sent as a numeric string reads as dollars.** The
+  usage endpoint sometimes sends the balance as a bare string (`"0"` on a Pro
+  account with no extra-usage credits) instead of a number, and only numbers
+  were formatted, so the Credits block, the Waybar tooltip,
+  `{oai_credit_balance}`, `usage --json` and the tray popover showed
+  "balance: 0". A string that is only a finite number is now formatted like a
+  number (`$0.00`, a negative as `-$1.00`); anything else, such as an already
+  formatted `$2.50`, passes through unchanged.
 - **A click outside the Windows tray popover closes it right after opening.**
   The popover took focus 400 ms after the tray click and ignored blurs for 400
   ms more, so a click elsewhere in that time left it open until it was clicked
@@ -120,6 +254,19 @@ Each release is also published at
 - **Buttons, chips and pickers share one height and label size**, the Options
   button included; the banked-resets count is a chip like Status and
   Dashboard.
+- **No pace tick on a spent meter.** A tray popover row at 100% reads "Limit
+  reached", yet it still got a behind verdict, so the even-pace tick sat on
+  the full bar as if there were room left, and Always Show Pacing counted it
+  as visible. A spent row now has no pace at all, as in OpenUsage; a row one
+  percent short of the limit keeps its tick.
+- **The macOS tray offers Quit when the popover's webview cannot be built
+  (#249).** A WKWebView that fails to build left the accessory app (no Dock
+  icon, no app menu) with no menu and no way out but `killall`: clicking the
+  status item flashed an empty window. The status item now attaches a
+  minimal fallback menu — Refresh and Quit AI Usage — only on that failure
+  path, with Quit exiting through the same clean loop shutdown the popover's
+  own Quit control uses. Normal operation is unchanged: the status item stays
+  menu-free so both mouse buttons open the popover.
 
 
 ## [1.24.0] — 2026-09-24
@@ -2963,7 +3110,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.24.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.25.0...HEAD
+[1.25.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.24.0...v1.25.0
 [1.24.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.23.0...v1.24.0
 [1.23.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.22.0...v1.23.0
 [1.22.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.21.1...v1.22.0

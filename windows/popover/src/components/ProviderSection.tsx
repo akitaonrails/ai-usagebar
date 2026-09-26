@@ -15,6 +15,7 @@ import { Hint } from "@/components/Hint";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ResetPopover } from "@/components/ResetPopover";
 import { RowMenu, type RowAction } from "@/components/RowMenu";
+import { TruncatedText, clippedHint, useClipped } from "@/components/TruncatedText";
 import type {
   BlockRow,
   Card,
@@ -27,6 +28,7 @@ import type {
   Row,
   TextRow as TextRowData,
 } from "@/lib/types";
+import { m } from "@/paraglide/messages.js";
 import { translateUsage, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import {
@@ -52,6 +54,7 @@ import {
   resetText,
   rowKey,
   sendCommand,
+  usageGoal,
   visibleRowsFor,
 } from "../model.js";
 
@@ -100,7 +103,7 @@ export function ProviderSection({
   onToggleCollapse,
   onToggleShowAs,
 }: ProviderSectionProps) {
-  const { t } = useI18n();
+  const { language } = useI18n();
   const prefs = prefsForCard(card, layout);
   const expanded = layout.collapsed?.[card.id] !== true;
   const opts = { hideExtras: layout.hideExtras, prefs };
@@ -117,7 +120,7 @@ export function ProviderSection({
     const key = rowKey(row);
     const node =
       row.kind === "metric" ? (
-        <MetricRow
+        <UsageMetricRow
           key={key}
           demand={demand}
           layout={layout}
@@ -169,13 +172,13 @@ export function ProviderSection({
           lifted ? "lifted-surface" : "card-surface",
         )}
       >
-        {card.errorTitle ? <ErrorRow explained={explainError(card.errorDetail, card.id)} /> : null}
+        {card.errorTitle ? <ErrorRow explained={explainError(card.errorDetail, card.id, language)} /> : null}
         {alwaysRows.map((row, index) => renderRow(row, index, condensedAlways, false))}
         {showExpander ? (
           <button
             type="button"
             aria-expanded={expanded}
-            aria-label={t(expanded ? "Show less" : "Show more")}
+            aria-label={expanded ? m.show_less() : m.show_more()}
             className={cn(
               "hover-row flex justify-center pt-[var(--space-2xs)] text-label-2",
               expanderLast ? "pb-[calc(var(--space-2xs)+var(--card-gutter))]" : "pb-[var(--space-2xs)]",
@@ -202,9 +205,9 @@ interface ResetCreditsRowProps {
 }
 
 function ResetCreditsRow({ condensedTop, demand, layout, nowMs, row }: ResetCreditsRowProps) {
-  const { language, metricLabel, t } = useI18n();
+  const { language, metricLabel } = useI18n();
   const details = resetCreditDetails(row, nowMs, { timeFormat: layout.timeFormat, locale: language });
-  const noun = row.available === 1 ? t("available reset") : t("available resets");
+  const noun = row.available === 1 ? m.available_reset() : m.available_resets();
   return (
     <div
       className={cn(
@@ -215,9 +218,9 @@ function ResetCreditsRow({ condensedTop, demand, layout, nowMs, row }: ResetCred
       <span className={cn("shrink-0 font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
       <span className="min-w-[var(--gap-controls)] flex-1" />
       <ResetPopover hidden={details.hidden} items={details.items}>
-        <Chip aria-label={`${row.available} ${noun}; ${t("show expiry dates")}`} variant="compact">
+        <Chip aria-label={`${row.available} ${noun}; ${m.show_expiry_dates()}`} variant="compact">
           <span aria-hidden="true" className="size-[var(--dot-sm)] rounded-full bg-meter-yellow" />
-          <span className="tabular-nums">{row.available} {row.available === 1 ? t("available singular") : t("available")}</span>
+          <span className="tabular-nums">{row.available} {row.available === 1 ? m.available_singular() : m.available()}</span>
         </Chip>
       </ResetPopover>
     </div>
@@ -248,7 +251,6 @@ export function ProviderSectionHeader({
   onReset,
   onSwitchAccount,
 }: ProviderSectionHeaderProps) {
-  const { t } = useI18n();
   const plan = displayPlan(card.title, card.plan);
   return (
     <header
@@ -258,9 +260,9 @@ export function ProviderSectionHeader({
     >
       <ProviderIcon className="text-label-2" size="var(--sz-icon)" slug={providerIconId(card.id)} title={card.title} />
       <div className="flex min-w-0 items-baseline gap-[var(--gap-inline)]">
-        <span className="min-w-0 truncate text-[length:var(--sz-header)] font-semibold">{card.title}</span>
+        <TruncatedText className="min-w-0 text-[length:var(--sz-header)] font-semibold">{card.title}</TruncatedText>
         {plan ? <span className="shrink-0 text-[length:var(--sz-badge)] text-label-2">{plan}</span> : null}
-        {card.stale ? <span className="text-[length:var(--sz-badge)] text-label-3">{t("stale")}</span> : null}
+        {card.stale ? <span className="text-[length:var(--sz-badge)] text-label-3">{m.stale()}</span> : null}
       </div>
       {card.errorTitle ? (
         <MdiAlert className="size-[var(--icon-mark)] shrink-0 text-meter-red" aria-label={card.errorTitle}>
@@ -274,10 +276,10 @@ export function ProviderSectionHeader({
       <span className="min-w-[var(--gap-controls)] flex-1" />
       {account ? <AccountControl account={account} title={card.title} onSwitch={onSwitchAccount} /> : null}
       {onCustomize ? (
-        <HeaderAction icon={<MdiTune />} label={`${t("Customize")} ${card.title}`} onClick={onCustomize} />
+        <HeaderAction icon={<MdiTune />} label={`${m.customize()} ${card.title}`} onClick={onCustomize} />
       ) : null}
       {onReset ? (
-        <HeaderAction icon={<MdiRestore />} label={`${t("Reset")} ${card.title}`} onClick={onReset} />
+        <HeaderAction icon={<MdiRestore />} label={`${m.reset()} ${card.title}`} onClick={onReset} />
       ) : null}
     </header>
   );
@@ -364,14 +366,16 @@ interface MetricRowProps {
  * pace tick where an even burn would sit → `52% left ⟷ Resets in 4d 17h`. The pace note and
  * tick show only off-pace unless Settings asks for them always (paceVisible).
  */
-function MetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProps) {
-  const { language, metricLabel, t } = useI18n();
+function UsageMetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProps) {
+  const { language, metricLabel } = useI18n();
   // The fill follows the headline's reading (WidgetData.fraction): remaining in Left mode,
   // consumed in Used mode. The color is a verdict and never flips with the toggle.
   const fill = layout.showAs === "used" ? row.usedPercent : row.leftPercent;
   const spent = row.leftPercent === 0;
   const headline = translateUsage(language, headlineLabel(row, layout.showAs));
   const headlineAlt = translateUsage(language, headlineAlternate(row, layout.showAs));
+  // The headline sits inside the Used/Left button, whose hint also carries the clipped text.
+  const headlineText = useClipped<HTMLSpanElement>(headline);
   const resetOpts = { timeFormat: layout.timeFormat, locale: language };
   const reset = resetText(row, layout.resetTimes, nowMs, resetOpts);
   const resetHint = resetAlternate(row, layout.resetTimes, nowMs, resetOpts);
@@ -380,26 +384,24 @@ function MetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProp
   const paceNote = showPace && rowPace ? paceText(rowPace, nowMs, { resetTimes: layout.resetTimes, timeFormat: layout.timeFormat, locale: language }) : "";
   // Too early in the window for a projection: say so instead of leaving the note empty, when
   // the layout asks for pacing on every metric.
-  const warmup = rowPace === null && layout.alwaysShowPace ? paceWarmupText(row, nowMs) : "";
+  const warmup = rowPace === null && layout.alwaysShowPace ? paceWarmupText(row, nowMs, language) : "";
   const behind = rowPace?.state === "behind";
   const tick = paceTickPercent(rowPace, layout.showAs);
+  const goal = layout.usageGoal ? usageGoal(row, nowMs) : null;
+  const goalLabel = goal ? (goal.estimated ? m.estimated_goal_now() : m.goal_now()) : "";
   return (
     <div className="flex flex-col gap-[var(--row-inner)] px-[var(--card-pad)] py-[var(--pad-bar-row)]">
       <div className="flex items-center gap-[var(--gap-item)]">
-        <span className={cn("truncate font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</span>
+        <TruncatedText className={cn("font-semibold", demand ? "text-[length:var(--sz-demand)]" : "text-[length:var(--sz-label)]")}>{metricLabel(row.label)}</TruncatedText>
         {spent ? (
           <span className="ml-auto flex shrink-0 items-center gap-[var(--gap-inline)] text-[length:var(--sz-support)] text-label-2">
             <MdiFire className="size-[var(--icon-note)] text-meter-red" />
-            {t("Limit reached")}
+            {m.limit_reached()}
           </span>
         ) : showPace && rowPace && (paceNote !== "" || behind) ? (
           <Hint
             align="end"
-            content={
-              language === "pt-BR"
-                ? `Neste ritmo, ${Math.round(rowPace.projectedPercent)}% da cota serão usados até a redefinição`
-                : `On this pace, ${Math.round(rowPace.projectedPercent)}% of the quota is used by the reset`
-            }
+            content={m.pace_by_reset({ percent: Math.round(rowPace.projectedPercent) })}
           >
             <span className="ml-auto flex shrink-0 items-center gap-[var(--gap-inline)] text-[length:var(--sz-support)] text-label-2">
               {behind ? <MdiFire className="size-[var(--icon-note)] text-meter-red" /> : null}
@@ -407,7 +409,7 @@ function MetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProp
             </span>
           </Hint>
         ) : warmup ? (
-          <Hint align="end" content={paceWarmupHint(row)}>
+          <Hint align="end" content={paceWarmupHint(row, language)}>
             <span className="ml-auto shrink-0 text-[length:var(--sz-support)] text-label-2">{warmup}</span>
           </Hint>
         ) : null}
@@ -430,18 +432,34 @@ function MetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProp
         ) : null}
       </div>
       <div className="flex items-baseline gap-[var(--gap-controls)] text-[length:var(--sz-support)] tabular-nums">
-        <Hint align="start" content={headlineAlt}>
-          <button type="button" className="plain-btn hover-fill truncate" onClick={onToggleShowAs}>
-            {headline}
+        <Hint align="start" content={clippedHint(headline, headlineText.clipped, headlineAlt)}>
+          <button type="button" className="plain-btn hover-fill min-w-0" onClick={onToggleShowAs} onPointerEnter={headlineText.measure}>
+            <span ref={headlineText.ref} className="block truncate">{headline}</span>
           </button>
         </Hint>
         <span className="min-w-[var(--gap-controls)] flex-1" />
         {reset ? (
-          <Hint align="end" content={resetHint}>
-            <span className="truncate text-label-2">{reset}</span>
-          </Hint>
+          <TruncatedText align="end" className="text-label-2" hint={resetHint}>{reset}</TruncatedText>
         ) : null}
       </div>
+      {goal ? (
+        <div className="usage-goal mt-[var(--space-sm)]">
+          <div className="flex items-center justify-between gap-[var(--gap-controls)] text-[length:var(--sz-badge)] text-label-2 tabular-nums">
+            <span>{goalLabel}</span>
+            <strong className="font-semibold">{Math.round(goal.percent)}%</strong>
+          </div>
+          <div
+            className="usage-goal-meter mt-[var(--space-2xs)]"
+            role="progressbar"
+            aria-label={`${metricLabel(row.label)}: ${goalLabel}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(goal.percent)}
+          >
+            <span className="usage-goal-meter-fill" style={{ width: `${goal.percent}%` }} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -485,12 +503,11 @@ interface ErrorRowProps {
  * command — a small action button. Terminal-side fixes (sign-in) and waits (429) get no button.
  */
 export function ErrorRow({ explained }: ErrorRowProps) {
-  const { t } = useI18n();
   return (
     <div className="flex flex-col gap-[var(--gap-stack)] px-[var(--card-pad)] py-[var(--pad-text-row)]">
-      <span className="text-[length:var(--sz-support)] font-semibold">{t(explained.title || "Couldn't update")}</span>
+      <span className="text-[length:var(--sz-support)] font-semibold">{explained.title || m.couldn_t_update()}</span>
       {explained.hint ? (
-        <span className="text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">{t(explained.hint)}</span>
+        <span className="text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">{explained.hint}</span>
       ) : null}
       {explained.action ? (
         <button
@@ -498,7 +515,7 @@ export function ErrorRow({ explained }: ErrorRowProps) {
           className="action-btn mt-[var(--gap-stack)] w-fit"
           onClick={() => sendCommand(explained.action?.cmd)}
         >
-          {t(explained.action.label)}
+          {explained.action.label}
         </button>
       ) : null}
     </div>
@@ -506,12 +523,12 @@ export function ErrorRow({ explained }: ErrorRowProps) {
 }
 
 function ProviderLinks({ links }: { links: Array<{ label: string; url: string }> }) {
-  const { t } = useI18n();
+  const { metricLabel } = useI18n();
   return (
     <div className="flex gap-[var(--gap-controls)] px-[var(--card-pad)] py-[var(--pad-text-row)]">
       {links.map((link) => (
         <Chip key={link.url} variant="link" onClick={() => sendCommand("open-url", { url: link.url })}>
-          <span className="truncate">{t(link.label)}</span>
+          <TruncatedText className="min-w-0">{metricLabel(link.label)}</TruncatedText>
           <MdiArrowTopRight className="size-[var(--icon-mark)] shrink-0 text-label-2" />
         </Chip>
       ))}
@@ -528,14 +545,13 @@ interface WarningStripProps {
  * of the card. The numbers above are the last good snapshot; the raw diagnosis lives in the hover.
  */
 function WarningStrip({ warning }: WarningStripProps) {
-  const { t } = useI18n();
   return (
     <Hint align="start" content={warning.raw}>
       <div className="mt-[var(--space-2xs)] flex items-start gap-[var(--gap-item)] border-t border-border px-[var(--card-pad)] pt-[var(--space-sm)] pb-[var(--space-2xs)] text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">
         <MdiAlert className="mt-[var(--space-px)] size-[var(--icon-dismiss)] shrink-0 text-notice" />
         <span>
-          {t(warning.title)}
-          {warning.hint ? ` · ${t(warning.hint)}` : ""}
+          {warning.title}
+          {warning.hint ? ` · ${warning.hint}` : ""}
         </span>
       </div>
     </Hint>

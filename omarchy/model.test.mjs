@@ -148,6 +148,16 @@ assert.match(settingsViewSource, /Log in with Nous Research/);
 assert.match(settingsViewSource, /Log in with GitHub Copilot/);
 assert.match(settingsViewSource, /choose GitHub Copilot as primary and save/);
 assert.match(settingsViewSource, /model:\s*root\.snapshot\.keys/);
+// Provider on/off switches (#244): the section lists the snapshot's vendors
+// and routes every change through the same stdin patch as the keys.
+assert.match(settingsViewSource, /text:\s*"PROVIDERS"/);
+assert.match(settingsViewSource, /model:\s*root\.snapshot\.vendors/);
+assert.match(settingsViewSource, /function\s+collectVendorToggles\s*\(/);
+assert.match(settingsViewSource, /function\s+setVendorOverride\s*\(/);
+assert.match(
+  settingsViewSource,
+  /Model\.buildSettingsPatch\(selectedPrimary,\s*collectChanges\(\),\s*collectVendorToggles\(\)\)/
+);
 assert.match(settingsViewSource, /Paste\s*"\s*\+\s*\(keyCard\.modelData\.secret_label/);
 assert.match(panelSource, /function\s+openNousLogin\s*\(/);
 assert.match(panelSource, /ai-usagebar auth nous login/);
@@ -426,6 +436,37 @@ assert.deepEqual(JSON.parse(JSON.stringify(model.groupedSections([{type: 'spacer
 assert.equal(model.groupedSections(null).length, 0);
 assert.equal(model.groupedSections('not-sections').length, 0);
 
+// #255: the Claude entry's CLI-session rows arrive the same way — grouped
+// metrics — so the panel draws them under one "Sessions" heading beneath the
+// quota meters, with the health severity the report assigned.
+const claudeSections = model.parseReport(JSON.stringify({entries: [{
+  id: 'anthropic', error: null,
+  sections: [
+    {type: 'metric', label: 'Session (5h)', percent: 29, value: '29%', detail: '',
+     severity: 'low', reset_at: '2026-09-25T14:20:00Z', window_secs: 18000},
+    {type: 'metric', label: 'ship the release', percent: 90, value: '90%',
+     detail: '180,000 / 200,000 tokens · claude-test · last active 12:34:56',
+     severity: 'critical', group: 'Sessions'},
+    {type: 'metric', label: 'sketch ideas', percent: 0, value: 'compacted',
+     detail: 'compacted · waiting for the next response', severity: 'low', group: 'Sessions'},
+    {type: 'text', label: '', value: '… and 4 more sessions'}
+  ]
+}]})).entries[0].sections;
+assert.deepEqual(Array.from(model.groupedSections(claudeSections)).map(row => {
+  if (row.type === 'text' && row.value === '') return 'heading:' + row.label;
+  return row.type + ':' + row.label;
+}), [
+  'metric:Session (5h)',
+  'heading:Sessions',
+  'metric:ship the release',
+  'metric:sketch ideas',
+  'text:'                       // the overflow note is not a heading
+]);
+const sessionRow = model.groupedSections(claudeSections).find(row =>
+  row.type === 'metric' && row.group === 'Sessions');
+assert.equal(sessionRow.severity, 'critical');
+assert.equal(sessionRow.value, '90%');
+
 const balance = model.parseReport(JSON.stringify({entries: [{
   id: 'deepseek', error: null,
   sections: [{type: 'text', label: 'Balance', value: '$8.42'}]
@@ -564,6 +605,59 @@ assert.equal(model.buildSettingsPatch('openai', [{id: 'kimi', action: 'set', val
 assert.equal(model.buildSettingsPatch('openai', [{id: 'kimi', action: 'bogus'}]).ok, false);
 assert.equal(model.parseSettingsApplyResult('{"ok":true}'), true);
 assert.equal(model.parseSettingsApplyResult('{"ok":false}'), false);
+
+// Provider on/off switches (#244): the snapshot carries every provider's
+// enabled state, an older binary's vendor-less snapshot still parses, and the
+// patch gains `vendors` only when a toggle is pending.
+const vendorsRaw = JSON.stringify({
+  schema_version: 1, primary: 'anthropic',
+  primary_choices: [{id: 'anthropic', label: 'Claude'}],
+  keys: [],
+  vendors: [
+    {id: 'anthropic', label: 'Claude', enabled: true},
+    {id: 'grok', label: 'Grok', enabled: false},
+    {id: 'opencode-go', label: 'OpenCode Go', enabled: true},
+    {id: '__proto__', label: 'never', enabled: true},
+    {id: 'kimi', label: 'Kimi', enabled: 'yes'}
+  ]
+});
+const vendorSnapshot = model.parseSettingsSnapshot(vendorsRaw);
+assert.equal(vendorSnapshot.ok, true);
+assert.equal(vendorSnapshot.vendors.length, 4);
+assert.equal(vendorSnapshot.vendors[0].id, 'anthropic');
+assert.equal(vendorSnapshot.vendors[0].enabled, true);
+assert.equal(vendorSnapshot.vendors[1].id, 'grok');
+assert.equal(vendorSnapshot.vendors[1].enabled, false);
+assert.equal(vendorSnapshot.vendors[2].label, 'OpenCode Go');
+// A non-boolean enabled is treated as off, never coerced from a string.
+assert.equal(vendorSnapshot.vendors[3].enabled, false);
+const noVendors = model.parseSettingsSnapshot(JSON.stringify({
+  schema_version: 1, primary: 'anthropic',
+  primary_choices: [{id: 'anthropic', label: 'Claude'}], keys: []
+}));
+assert.equal(noVendors.ok, true);
+assert.equal(noVendors.vendors.length, 0);
+
+const togglePatch = model.buildSettingsPatch('', [], [
+  {id: 'grok', enabled: true},
+  {id: 'zai', enabled: false}
+]);
+assert.equal(togglePatch.ok, true);
+assert.deepEqual(JSON.parse(togglePatch.payload), {
+  schema_version: 1, keys: {}, vendors: {grok: true, zai: false}
+});
+// A save with no pending toggle omits `vendors`, so an older binary still
+// accepts a display-only patch (its ApplyRequest denies unknown fields).
+const noTogglePatch = model.buildSettingsPatch('anthropic', []);
+assert.deepEqual(JSON.parse(noTogglePatch.payload), {
+  schema_version: 1, primary: 'anthropic', keys: {}
+});
+assert.equal(model.buildSettingsPatch('', [{id: 'kimi', action: 'clear'}], undefined).ok, true);
+assert.equal(model.buildSettingsPatch('', [], [{id: '__proto__', enabled: true}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], [{id: 'grok'}, {id: 'grok', enabled: true}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], [{id: 'grok', enabled: true}, {id: 'grok', enabled: false}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], [{id: 'grok', enabled: 'on'}]).ok, false);
+assert.equal(model.buildSettingsPatch('', [], []).ok, false);
 
 // Top bar window pinning: auto keeps history, session/weekly/monthly pin one
 // window class, unknown pins fall back to highest instead of blanking.
