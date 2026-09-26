@@ -6,13 +6,16 @@
 //! The credential is the app's own OAuth session: `creds.rs` reads
 //! `sand-secrets.json` (read-only, never written), whose token fields are
 //! Chromium OSCrypt `v10` blobs. On Linux the file is
-//! `~/.config/Grok Bot/sand-secrets.json` and the key is one PBKDF2 round
-//! (`secret-tool lookup application "Grok Bot"`, `"peanuts"` fallback). On
-//! macOS it is `~/Library/Application Support/Grok Bot/sand-secrets.json`
-//! and the key is the login Keychain item `Grok Bot Safe Storage` /
-//! `Grok Bot Key` (1003 rounds, same scheme as Claude Desktop). On Windows it
-//! is `%APPDATA%\Grok Bot\sand-secrets.json`, the blobs are AES-256-GCM, and
-//! the key is the DPAPI-protected `os_crypt.encrypted_key` in the `Local State`
+//! `~/.config/Grok Bot/sand-secrets.json`; the key is the Secret Service item
+//! `application="Grok Bot"`, Chromium's documented `"peanuts"` default, or both.
+//! The app encrypts with `"peanuts"` whenever Electron's selected Linux Secret
+//! Service backend is `basic_text`, which it can be on a machine that still
+//! holds the item, so both are always tried. On macOS it is
+//! `~/Library/Application Support/Grok Bot/sand-secrets.json` and the key is
+//! the login Keychain item `Grok Bot Safe Storage` / `Grok Bot Key` (1003
+//! rounds, same scheme as Claude Desktop). On Windows it is
+//! `%APPDATA%\Grok Bot\sand-secrets.json`, the blobs are AES-256-GCM, and the
+//! key is the DPAPI-protected `os_crypt.encrypted_key` in the `Local State`
 //! file beside it. `fetch.rs` refreshes the session through Cursor's public
 //! OAuth client and persists rotations only in ai-usagebar's own vendor cache.
 //!
@@ -76,7 +79,17 @@ pub fn secrets_path(cfg: &GrokbotConfig) -> Result<PathBuf> {
 /// key. Windows: the same file, keyed by the DPAPI-protected key in the
 /// `Local State` beside it. Elsewhere this fails closed with a `Credentials`
 /// error that says so, rather than pretending the file was missing.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub fn resolve_credentials(cfg: &GrokbotConfig) -> Result<creds::GrokbotCredentials> {
+    let path = secrets_path(cfg)?;
+    // Both the Secret Service secret and Chromium's `"peanuts"` default: the
+    // app writes with `"peanuts"` whenever its Linux Secret Service backend is
+    // `basic_text`, which it can be on a machine that still holds an
+    // `application=Grok Bot` item. See `creds::oscrypt_keys`.
+    creds::read_at_any(&path, &creds::oscrypt_keys())
+}
+
+#[cfg(target_os = "macos")]
 pub fn resolve_credentials(cfg: &GrokbotConfig) -> Result<creds::GrokbotCredentials> {
     let path = secrets_path(cfg)?;
     creds::read_at(&path, &creds::oscrypt_key()?)
