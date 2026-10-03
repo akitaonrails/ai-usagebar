@@ -68,6 +68,14 @@ Each release is also published at
   and path overrides (`credentials_path`, `codex_auth_path`), matching the
   credential resolution of the fetch and `detect` (see #307).
 
+- **Provider catalog recognizes Anthropic named accounts backed by Keychain.**
+  On macOS, an Anthropic named account configured via `[[anthropic.accounts]]`
+  or discovered via `accounts_dir` whose credentials exist only in its
+  `CLAUDE_CONFIG_DIR`-scoped Keychain item reported `configured: false` in
+  `ai-usagebar vendors --json`, even though the fetch and `detect` resolved it.
+  The catalog now probes the account's Keychain item when no on-disk credentials
+  file exists (fixes #329).
+
 ## [1.30.0] — 2026-10-01
 
 ### Added

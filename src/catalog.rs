@@ -35,6 +35,10 @@ pub struct Probes<'a> {
     /// which is why it is injected and asked only once Claude's credential
     /// file has already been ruled out.
     pub keychain_has_claude: &'a dyn Fn() -> bool,
+    /// Whether the macOS login Keychain holds Claude Code's OAuth blob for a
+    /// specific account's `CLAUDE_CONFIG_DIR`. Always `false` off macOS;
+    /// consulted only once the account's credentials file is ruled out.
+    pub keychain_has_claude_for: &'a dyn Fn(&Path) -> bool,
     /// Whether one of Command Code's auth files holds a live credential. Its
     /// search list includes pi's shared keystore, which exists whenever the
     /// user signed pi into any provider, so existence alone cannot mean
@@ -75,6 +79,7 @@ pub fn statuses(cfg: &Config) -> Vec<VendorStatus> {
         env_set: &|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()),
         exists: &|path| path.exists(),
         keychain_has_claude: &keychain_has_claude,
+        keychain_has_claude_for: &keychain_has_claude_for,
         commandcode_signed_in: &|paths| {
             paths
                 .iter()
@@ -143,11 +148,10 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
                 cfg.anthropic.credentials_path.is_none() && (probes.keychain_has_claude)();
             default_or_explicit
                 || keychain
-                || cfg
-                    .anthropic
-                    .all_accounts()
-                    .iter()
-                    .any(|account| (probes.exists)(&account.credentials_path))
+                || cfg.anthropic.all_accounts().iter().any(|account| {
+                    (probes.exists)(&account.credentials_path)
+                        || (probes.keychain_has_claude_for)(&account.config_dir())
+                })
         }
         VendorId::Openai => {
             any_exists(probes, [cfg.openai.resolve_auth_path(None)])
@@ -259,6 +263,19 @@ fn keychain_has_claude() -> bool {
     false
 }
 
+#[cfg(target_os = "macos")]
+fn keychain_has_claude_for(config_dir: &Path) -> bool {
+    matches!(
+        crate::anthropic::keychain::read_raw_for(config_dir),
+        Ok(Some(_))
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keychain_has_claude_for(_config_dir: &Path) -> bool {
+    false
+}
+
 /// `vendors --json`: the catalog as one JSON document.
 pub fn run(json: bool) -> i32 {
     let cfg = match Config::load() {
@@ -308,6 +325,7 @@ mod tests {
             env_set: env,
             exists,
             keychain_has_claude: &|| false,
+            keychain_has_claude_for: &|_| false,
             commandcode_signed_in,
         }
     }
@@ -431,6 +449,7 @@ mod tests {
             env_set: &|_| false,
             exists: &|_| false,
             keychain_has_claude: &|| true,
+            keychain_has_claude_for: &|_| false,
             commandcode_signed_in: &|_| false,
         };
         assert!(row(&statuses_with(&cfg, &with_keychain), "anthropic").configured);
@@ -460,6 +479,27 @@ mod tests {
         let exists = |path: &Path| path == custom;
         let rows = statuses_with(&cfg, &probes(&|_| false, &exists, &|_| false));
         assert!(row(&rows, "anthropic").configured);
+    }
+
+    #[test]
+    fn a_keychain_only_anthropic_named_account_counts_as_configured() {
+        let mut cfg = Config::default();
+        let custom = PathBuf::from("/accounts/work/.credentials.json");
+        cfg.anthropic
+            .accounts
+            .push(crate::config::AnthropicAccount {
+                label: "work".into(),
+                credentials_path: custom,
+            });
+        let with_named_keychain = Probes {
+            env_set: &|_| false,
+            exists: &|_| false,
+            keychain_has_claude: &|| false,
+            keychain_has_claude_for: &|dir| dir == Path::new("/accounts/work"),
+            commandcode_signed_in: &|_| false,
+        };
+        assert!(row(&statuses_with(&cfg, &with_named_keychain), "anthropic").configured);
+        assert!(!row(&statuses_with(&cfg, &bare()), "anthropic").configured);
     }
 
     #[test]
