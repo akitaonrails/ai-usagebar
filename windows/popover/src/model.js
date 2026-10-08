@@ -441,7 +441,12 @@ export function paceVerdict(pace, leftPercent) {
   const gap = Number.isFinite(left) ? (100 - left) - Number(pace.elapsedPercent) : 0;
   // Nearly spent and still over the line: the last few percent go fast.
   if (projected > 100 && Number.isFinite(left) && left < PACE_CRITICAL_LEFT) return "critical";
-  if (projected > PACE_CRITICAL_PERCENT && gap >= PACE_CRITICAL_GAP) return "critical";
+  if (projected > PACE_CRITICAL_PERCENT && gap >= PACE_CRITICAL_GAP) {
+    if (Number(pace.elapsedPercent) < 15 && Number.isFinite(left) && left >= METER_YELLOW_BELOW_LEFT) {
+      return "over";
+    }
+    return "critical";
+  }
   if (projected > PACE_OVER_PERCENT && gap >= PACE_OVER_GAP) return "over";
   return "calm";
 }
@@ -670,12 +675,11 @@ export function usageGoalPercent(goal, showAs) {
 }
 
 // Where the "you should be here" tick sits on the meter, as a percent of its
-// width. The meter fills with what is consumed in Used mode and with what
-// remains in Left mode, so the tick follows the same reading.
-export function paceTickPercent(pace, showAs) {
+// width: the elapsed share, because the meter always fills with what is
+// consumed — the Used/Left toggle reads the headline number, never the ink.
+export function paceTickPercent(pace) {
   if (!pace) return null;
-  const elapsed = clampPercent(pace.elapsedPercent);
-  return showAs === "used" ? elapsed : 100 - elapsed;
+  return clampPercent(pace.elapsedPercent);
 }
 
 // One-line pace verdict beside the row label, in OpenUsage's WidgetRowView

@@ -1,5 +1,30 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Meters fill with what is consumed in both readings.** PR #389 made the
+  bar geometry follow the Show Usage As toggle, so in Left mode the fill
+  painted what *remained* while the color and the verdict kept speaking about
+  consumption — SuperGrok's "88% left" drew as an almost-full red bar that
+  read as nearly spent, and the monochrome menu-bar bars told the story
+  backwards too: the healthiest windows carried the most ink while a spent
+  one shrank to a barely visible track. The fill is now always the consumed
+  share on the popover and the compact bars alike; the Used/Left toggle reads
+  only the headline number, the chips, and the tooltip, and the pace tick
+  keeps sitting at the elapsed share of the window.
+- **An empty menu-bar bar draws a visible capsule.** A 0% row used to
+  vanish against the dark menu bar — its bare track was all but invisible
+  there. It now draws the whole track at the remainder's strength, like the
+  popover's empty meter.
+- **Early-window weekly usage no longer triggers a false critical pace alert.**
+  In long reset windows (such as SuperGrok, Grok Bot, or Claude/Codex weekly),
+  normal session usage during the opening stretch of a cycle (< 15% elapsed,
+  e.g. the first ~25 hours of a week) previously pushed the ratio past 130%
+  and the absolute gap past 5 percentage points, marking the metric as critical
+  (flame icon, and run-out date). In the opening 15% of a window with at least
+  50% allowance remaining, accelerated usage now warns as "over" pace (yellow)
+  rather than a run-out crisis (#390).
+
 ## [1.34.0] — 2026-10-08
 
 ### Added

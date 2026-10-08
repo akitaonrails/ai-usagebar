@@ -590,7 +590,7 @@ fn apply_strip_icon(state: &mut TrayState) {
         }
         StatusItemContent::Chart => {
             state.menu_bar_logo_key = None;
-            let fractions = menu_bar::chart_fractions(&content, state.usage_reading);
+            let fractions = menu_bar::chart_fractions(&content);
             if let Ok(icon) = bars_icon(&fractions) {
                 let _ = state.tray.set_icon_templated(Some(icon));
             }
@@ -1717,16 +1717,22 @@ fn draw_template_bars(dst: NSRect, fractions: &[f64]) {
                 1.0,
             );
         }
-        if fill.fill_w > 0.0
-            && fill.remainder_w > 0.0
+        if fill.remainder_w > 0.0
             && let Some(divider_x) = fill.divider_x
         {
+            // A remainder starting at 0 is the whole track of an empty gauge:
+            // round both ends like the track, not like a tail meeting a fill.
+            let r_left = if divider_x <= 0.0 {
+                layout.rx
+            } else {
+                (layout.rx * 0.2).floor().max(0.0)
+            };
             fill_round_rect(
                 ox + layout.track_x + divider_x,
                 y,
                 fill.remainder_w,
                 layout.track_h,
-                layout.rx,
+                r_left,
                 0.24,
             );
         }

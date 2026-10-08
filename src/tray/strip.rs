@@ -64,12 +64,6 @@ pub struct StripMetric {
     /// popover's Left reading shows it; `None` for a value headline or a row
     /// with no percent, which read the same either way.
     pub left_value: Option<String>,
-    /// The remaining share as bar fill for the compact Bars glyph: `Some`
-    /// whenever the row carries a percent, value headlines included — the
-    /// popover's meter flips those too, keeping only the headline figure
-    /// fixed. `None` for a row with no percent, which draws the same empty
-    /// bar either way.
-    pub left_fraction: Option<f64>,
     /// The report named this metric's own figure as its headline
     /// (`headline = "value"`, a prepaid balance): a figure, not a quota
     /// window, so it never wins the highest-window race the Quattro chip runs.
@@ -135,11 +129,22 @@ pub fn visual_fraction(fraction: f64) -> f64 {
 }
 
 pub fn bar_fill(track_w: f64, fraction: f64) -> BarFill {
-    if !fraction.is_finite() || fraction <= 0.0 {
+    if !fraction.is_finite() {
         return BarFill {
             fill_w: 0.0,
             remainder_w: 0.0,
             divider_x: None,
+        };
+    }
+    if fraction <= 0.0 {
+        // An empty gauge is still a gauge: the whole track draws at the
+        // remainder's strength, so a 0% row reads as an empty capsule — like
+        // the popover's meter — instead of vanishing against the menu bar
+        // (its bare 0.16-alpha track was all but invisible there).
+        return BarFill {
+            fill_w: 0.0,
+            remainder_w: track_w,
+            divider_x: Some(0.0),
         };
     }
     let visual = visual_fraction(fraction);
@@ -416,7 +421,6 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             fraction,
             bounded: true,
             left_value,
-            left_fraction: percent.map(|_| 1.0 - fraction),
             value_headline,
             grouped: !effective_group.is_empty(),
         });
@@ -551,10 +555,17 @@ pub fn bars_rgba(fractions: &[f64], side: u32) -> Vec<u8> {
                 255,
             );
         }
-        if fill.fill_w > 0.0
-            && fill.remainder_w > 0.0
+        if fill.remainder_w > 0.0
             && let Some(divider_x) = fill.divider_x
         {
+            // A remainder that starts at 0 is the whole track of an empty
+            // gauge: round both ends like the track, not like a tail meeting
+            // a fill.
+            let r_left = if divider_x <= 0.0 {
+                layout.rx
+            } else {
+                (layout.rx * 0.2).floor().max(0.0)
+            };
             stamp_round_rect(
                 &mut buf,
                 side,
@@ -563,7 +574,7 @@ pub fn bars_rgba(fractions: &[f64], side: u32) -> Vec<u8> {
                     y,
                     w: fill.remainder_w,
                     h: layout.track_h,
-                    r_left: (layout.rx * 0.2).floor().max(0.0),
+                    r_left,
                     r_right: layout.rx,
                 },
                 61, // 0.24 * 255
@@ -638,9 +649,16 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn zero_or_negative_fraction_draws_nothing() {
-        assert_eq!(bar_fill(100.0, 0.0).fill_w, 0.0);
+    fn zero_or_negative_fraction_draws_no_fill_but_a_visible_track() {
+        let empty = bar_fill(100.0, 0.0);
+        assert_eq!(empty.fill_w, 0.0);
+        assert_eq!(empty.remainder_w, 100.0);
+        assert_eq!(empty.divider_x, Some(0.0));
         assert_eq!(bar_fill(100.0, -0.5).fill_w, 0.0);
+        // A non-finite fraction is the only fully invisible case.
+        let nan = bar_fill(100.0, f64::NAN);
+        assert_eq!(nan.remainder_w, 0.0);
+        assert_eq!(nan.divider_x, None);
     }
 
     #[test]
@@ -954,6 +972,32 @@ mod tests {
     fn empty_fractions_are_fully_transparent() {
         let bytes = bars_rgba(&[], BARS_PIXEL_SIDE);
         assert!(bytes.as_chunks::<4>().0.iter().all(|p| p[3] == 0));
+    }
+
+    /// A 0% row keeps a visible capsule: before, only its faint 0.16-alpha
+    /// track was stamped, which vanished against the menu bar — the row read
+    /// as a missing bar instead of an empty gauge, the popover's meter being
+    /// plainly visible at the same 0%.
+    #[test]
+    fn empty_bars_keep_a_visible_capsule() {
+        let bytes = bars_rgba(&[0.0, 0.5], BARS_PIXEL_SIDE);
+        let side = BARS_PIXEL_SIDE as usize;
+        let layout = bars_layout(2, f64::from(BARS_PIXEL_SIDE));
+        let y = (layout.y_offset + 1.0 + layout.track_h / 2.0) as usize;
+        let mut peak = 0u8;
+        let mut visible_cols = 0usize;
+        for x in 0..side {
+            let alpha = bytes[(y * side + x) * 4 + 3];
+            peak = peak.max(alpha);
+            if alpha >= 61 {
+                visible_cols += 1;
+            }
+        }
+        assert_eq!(peak, 61, "empty row peaks at the remainder alpha");
+        assert!(
+            visible_cols > side / 2,
+            "capsule spans the track: {visible_cols}"
+        );
     }
 
     #[test]

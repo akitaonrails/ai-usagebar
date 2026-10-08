@@ -632,7 +632,10 @@ assert.equal(meterColor(NaN), 'blue');
   assert.equal(verdict(6, early), 'calm'); // ~126%, 1.2 pp
   assert.equal(verdict(7, early), 'calm'); // ~147%, 2.2 pp
   assert.equal(verdict(9, early), 'over'); // ~189%, 4.2 pp
-  assert.equal(verdict(10, early), 'critical'); // ~210%, 5.2 pp
+  assert.equal(verdict(10, early), 'over'); // ~210%, 5.2 pp: early in week with 90% left is over pace, not critical
+  assert.equal(color(10, early), 'yellow');
+  assert.equal(verdict(55, early), 'critical'); // heavy burn (>50% spent in 8h) is critical
+  assert.equal(color(55, early), 'red');
   assert.equal(color(7, early), 'blue');
   // Past 130% but only 3-5 points over the tick is a look, not a run-out.
   assert.equal(verdict(8, early), 'over'); // ~168%, 3.2 pp
@@ -927,8 +930,7 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   // a spent meter (100%, "Limit reached") has no pace at all: no tick, no text, not visible
   const spent = pace(row(100, 2 * 3600_000), now);
   assert.equal(spent, null);
-  assert.equal(paceTickPercent(spent, 'used'), null);
-  assert.equal(paceTickPercent(spent, 'left'), null);
+  assert.equal(paceTickPercent(spent), null);
   assert.equal(paceText(spent, now), '');
   assert.equal(paceVisible(spent, { alwaysShowPace: true }), false);
   assert.equal(pace(row(100.5, 2 * 3600_000), now), null); // past the limit is still spent
@@ -936,24 +938,20 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   const almostSpent = pace(row(99, 2 * 3600_000), now);
   assert.equal(almostSpent.state, 'behind');
   assert.equal(almostSpent.elapsedPercent, 40);
-  assert.equal(paceTickPercent(almostSpent, 'used'), 40);
-  assert.equal(paceTickPercent(almostSpent, 'left'), 60);
+  assert.equal(paceTickPercent(almostSpent), 40);
   // behind without a run-out instant has no text: the flame alone
   const noRunOut = { state: 'behind', sparePercent: -100, projectedPercent: 200, runsOutMs: null, elapsedPercent: 40 };
   assert.equal(paceText(noRunOut, now), '');
   assert.equal(paceText(noRunOut, now, { resetTimes: 'exact', timeZone: 'UTC' }), '');
 
-  // ASSERT: the tick follows the meter's reading — elapsed in Used mode, remaining in Left mode
-  assert.equal(paceTickPercent(behind, 'used'), 40);
-  assert.equal(paceTickPercent(behind, 'left'), 60);
-  assert.equal(paceTickPercent(ahead, 'used'), 50);
-  assert.equal(paceTickPercent(ahead, undefined), 50);
-  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: 250 }, 'used'), 100);
-  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: 250 }, 'left'), 0);
-  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: -5 }, 'used'), 0);
-  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: -5 }, 'left'), 100);
-  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: NaN }, 'used'), 0);
-  assert.equal(paceTickPercent(null, 'used'), null);
+  // ASSERT: the tick sits in the meter's space, which always fills with the
+  // consumed share — the Used/Left toggle reads the headline, never the ink
+  assert.equal(paceTickPercent(behind), 40);
+  assert.equal(paceTickPercent(ahead), 50);
+  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: 250 }), 100);
+  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: -5 }), 0);
+  assert.equal(paceTickPercent({ ...ahead, elapsedPercent: NaN }), 0);
+  assert.equal(paceTickPercent(null), null);
 
   // ASSERT: no signal → null
   assert.equal(pace(row(50, 30_000), now), null); // 30s in: under the 1% / 60s floor
