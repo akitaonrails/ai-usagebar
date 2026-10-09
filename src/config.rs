@@ -1183,7 +1183,7 @@ pub struct CommandCodeConfig {
     pub auth_paths: Option<Vec<PathBuf>>,
 }
 
-/// Ollama Cloud (`ollama.com/api/usage`). Disabled by default: the local
+/// Ollama Cloud (`ollama.com/api/balance`). Disabled by default: the local
 /// `ollama` daemon is the product most users reach for, and it has no quota
 /// route to query. Cloud quota is opt-in, with the key taken from
 /// `OLLAMA_API_KEY` (or `api_key` as a fallback for `chmod 600` configs).

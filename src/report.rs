@@ -2244,6 +2244,33 @@ mod tests {
     }
 
     #[test]
+    fn ollama_credit_report_carries_monthly_reset_and_dollar_details() {
+        let body: crate::ollama::types::Body = serde_json::from_str(include_str!(
+            "../tests/fixtures/ollama/balance_credits.json"
+        ))
+        .unwrap();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Ollama(body.into_snapshot("pro".into())),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+            display: Default::default(),
+        }));
+        let now = "2026-10-09T08:00:00Z".parse().unwrap();
+        let projected = entry_from_state(&TabId::vendor(VendorId::Ollama), &state, now);
+        assert!(projected.sections.iter().any(|section| matches!(
+            section,
+            ReportSection::Block { label, body } if label == "Credits"
+                && body.iter().any(|line| line == "$45.00 remaining of $60.00")
+                && body.iter().any(|line| line == "Purchased credits: $12.50")
+        )));
+        let rendered = render_json_entries(&[projected]);
+        assert!(rendered.contains("Monthly"), "{rendered}");
+        assert!(rendered.contains("2026-11-08T08:00:00"), "{rendered}");
+        assert!(!rendered.contains("Session (5h)"), "{rendered}");
+    }
+
+    #[test]
     fn real_balance_text_is_not_exposed_as_a_percentage_metric() {
         let state = TabState::Ready(Box::new(ReadyTab {
             snapshot: VendorSnapshot::Deepseek(DeepseekSnapshot {

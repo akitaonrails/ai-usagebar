@@ -1,15 +1,30 @@
-//! Wire types for the unofficial-but-stable `https://ollama.com/api/usage`
-//! endpoint. Fields are `Option` / `Default` where the server may omit them
-//! (a fresh account can have empty `models` or no `activity`).
+//! Wire types for `https://ollama.com/api/balance` and historical quota
+//! payloads cached from `/api/usage`. Current usage-history responses are
+//! deliberately rejected: request/token totals are not quota limits.
 
 use serde::Deserialize;
 
-use crate::usage::{OllamaModelUsage, OllamaSnapshot, UsageWindow};
+use crate::usage::{OllamaCredits, OllamaModelUsage, OllamaSnapshot, UsageWindow};
 
-/// Top-level body of `GET /api/usage`.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-pub struct Body {
-    #[serde(default)]
+#[serde(untagged)]
+pub enum Body {
+    Balance(BalanceBody),
+    Legacy(LegacyBody),
+}
+
+impl Body {
+    pub fn into_snapshot(self, plan: String) -> OllamaSnapshot {
+        match self {
+            Self::Balance(body) => body.into_snapshot(plan),
+            Self::Legacy(body) => body.into_snapshot(plan),
+        }
+    }
+}
+
+/// Required discriminator prevents unrelated JSON from becoming empty quotas.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct LegacyBody {
     pub limits: Limits,
     #[serde(default)]
     pub activity: Option<Activity>,
@@ -64,7 +79,7 @@ pub struct Period {
     pub ending_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-impl Body {
+impl LegacyBody {
     /// Fraction in `[0, 1]` → percent `0..=100`, saturated. Missing usage is 0%.
     fn pct(frac: Option<f64>) -> i32 {
         let f = frac.unwrap_or(0.0).clamp(0.0, 1.0);
@@ -120,12 +135,135 @@ impl Body {
             monthly_models,
             activity_cost: cost,
             activity_period: period_kind,
+            credits: None,
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct BalanceBody {
+    pub included: Included,
+    #[serde(default)]
+    pub purchased: Option<Purchased>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Included {
+    Credits {
+        balance_usd: f64,
+        allowance_usd: f64,
+        period: BillingPeriod,
+    },
+    Legacy {
+        session: RemainingWindow,
+        weekly: RemainingWindow,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct BillingPeriod {
+    pub from: chrono::DateTime<chrono::Utc>,
+    pub until: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Purchased {
+    pub balance_usd: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RemainingWindow {
+    pub remaining_percent: f64,
+    pub resets_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl RemainingWindow {
+    fn into_window(self, duration: chrono::Duration) -> UsageWindow {
+        UsageWindow {
+            utilization_pct: (100.0 - self.remaining_percent).clamp(0.0, 100.0).round() as i32,
+            resets_at: Some(self.resets_at),
+            window_duration: duration,
+        }
+    }
+}
+
+impl BalanceBody {
+    fn into_snapshot(self, plan: String) -> OllamaSnapshot {
+        let mut snap = LegacyBody {
+            limits: Limits::default(),
+            activity: None,
+        }
+        .into_snapshot(plan);
+        match self.included {
+            Included::Credits {
+                balance_usd,
+                allowance_usd,
+                period,
+            } => {
+                // No measurable percentage for a zero allowance; still show
+                // the actual dollar balance, without dividing by zero.
+                if allowance_usd > 0.0 {
+                    snap.monthly = Some(UsageWindow {
+                        utilization_pct: LegacyBody::pct(Some(1.0 - balance_usd / allowance_usd)),
+                        resets_at: Some(period.until),
+                        window_duration: period.until - period.from,
+                    });
+                }
+                snap.credits = Some(OllamaCredits {
+                    balance: crate::format::usd(balance_usd),
+                    allowance: crate::format::usd(allowance_usd),
+                    purchased: self.purchased.map(|p| crate::format::usd(p.balance_usd)),
+                });
+            }
+            Included::Legacy { session, weekly } => {
+                snap.session = Some(session.into_window(chrono::Duration::hours(5)));
+                snap.weekly = Some(weekly.into_window(chrono::Duration::days(7)));
+            }
+        }
+        snap
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A real `/api/balance` payload from a session/weekly account, captured by
+    /// a third party on #387. The credits branch of `Included` had a committed
+    /// capture; this one did not, and it is the branch every pre-existing user
+    /// depends on — so the shape is pinned by the bytes the API actually sent
+    /// rather than by a hand-written sample.
+    #[test]
+    fn a_real_quota_account_balance_payload_keeps_its_windows() {
+        let raw = include_str!("../../tests/fixtures/ollama/balance_quota.json");
+        let body: Body = serde_json::from_str(raw).expect("captured payload must parse");
+        let snap = body.into_snapshot("pro".into());
+
+        // `remaining_percent` is what is LEFT, so utilization is its complement:
+        // 100 remaining is 0 used, and 59.19 remaining rounds to 41 used.
+        let session = snap.session.expect("session window");
+        assert_eq!(session.utilization_pct, 0);
+        let weekly = snap.weekly.expect("weekly window");
+        assert_eq!(weekly.utilization_pct, 41);
+
+        // A quota account has no credits block and no monthly window; a zero
+        // purchased balance must not invent one.
+        assert!(
+            snap.monthly.is_none(),
+            "quota accounts report no monthly window"
+        );
+        assert!(snap.credits.is_none(), "a quota account has no credits");
+
+        // The resets travel with the windows rather than being guessed.
+        assert!(
+            session.resets_at.is_some(),
+            "session reset comes from the payload"
+        );
+        assert!(
+            weekly.resets_at.is_some(),
+            "weekly reset comes from the payload"
+        );
+    }
+
     use super::*;
 
     /// Real 200 body captured 2026-09-09 against a Pro account (numbers
@@ -230,10 +368,87 @@ mod tests {
     }
 
     #[test]
+    fn credit_balance_projects_monthly_usage_and_exact_billing_period() {
+        let body: Body = serde_json::from_str(include_str!(
+            "../../tests/fixtures/ollama/balance_credits.json"
+        ))
+        .unwrap();
+        let snap = body.into_snapshot("pro".into());
+        let monthly = snap.monthly.unwrap();
+        assert_eq!(monthly.utilization_pct, 25);
+        assert_eq!(
+            monthly.resets_at.unwrap().to_rfc3339(),
+            "2026-11-08T08:00:00+00:00"
+        );
+        assert_eq!(monthly.window_duration, chrono::Duration::days(31));
+        assert!(snap.session.is_none());
+        assert!(snap.weekly.is_none());
+        let credits = snap.credits.unwrap();
+        assert_eq!(credits.balance, "$45.00");
+        assert_eq!(credits.allowance, "$60.00");
+        assert_eq!(credits.purchased.as_deref(), Some("$12.50"));
+        assert!(
+            snap.activity_cost.is_none(),
+            "balance is not usage-history cost"
+        );
+    }
+
+    #[test]
+    fn legacy_balance_inverts_remaining_percent_and_keeps_resets() {
+        let body: Body = serde_json::from_str(
+            r#"{
+          "included": {
+            "session": {"remaining_percent":75,"resets_at":"2026-10-01T07:00:00Z"},
+            "weekly": {"remaining_percent":40,"resets_at":"2026-10-05T00:00:00Z"}
+          },
+          "purchased": {"balance_usd":25}
+        }"#,
+        )
+        .unwrap();
+        let snap = body.into_snapshot("pro".into());
+        let session = snap.session.unwrap();
+        assert_eq!(session.utilization_pct, 25);
+        assert_eq!(session.window_duration, chrono::Duration::hours(5));
+        assert_eq!(
+            session.resets_at.unwrap().to_rfc3339(),
+            "2026-10-01T07:00:00+00:00"
+        );
+        assert_eq!(snap.weekly.unwrap().utilization_pct, 60);
+        assert!(snap.monthly.is_none());
+        assert!(snap.credits.is_none());
+    }
+
+    #[test]
+    fn zero_allowance_is_not_a_fabricated_percentage() {
+        let body: Body = serde_json::from_str(
+            r#"{
+          "included": {"balance_usd":0,"allowance_usd":0,
+            "period":{"from":"2026-10-01T00:00:00Z","until":"2026-11-01T00:00:00Z"}}
+        }"#,
+        )
+        .unwrap();
+        let snap = body.into_snapshot("free".into());
+        assert!(snap.monthly.is_none());
+        assert_eq!(snap.credits.unwrap().balance, "$0.00");
+    }
+
+    #[test]
+    fn usage_history_and_unknown_shapes_are_rejected() {
+        for payload in [
+            r#"{"range":"7d","totals":{"request_count":213,"usage_usd":0.2},"buckets":[]}"#,
+            r#"{}"#,
+            r#"{"included":{}}"#,
+            r#"{"included":{"balance_usd":45}}"#,
+        ] {
+            assert!(serde_json::from_str::<Body>(payload).is_err(), "{payload}");
+        }
+    }
+
+    #[test]
     fn clamps_over_full_and_negative_usage() {
-        assert_eq!(Body::pct(Some(1.4)), 100);
-        assert_eq!(Body::pct(Some(-0.2)), 0);
-        assert_eq!(Body::pct(None), 0);
-        assert_eq!(Body::pct(Some(0.5)), 50);
+        assert_eq!(LegacyBody::pct(Some(1.4)), 100);
+        assert_eq!(LegacyBody::pct(Some(-0.2)), 0);
+        assert_eq!(LegacyBody::pct(None), 0);
+        assert_eq!(LegacyBody::pct(Some(0.5)), 50);
     }
 }

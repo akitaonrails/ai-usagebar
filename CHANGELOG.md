@@ -1,5 +1,31 @@
 ## [Unreleased]
 
+### Added
+
+- **Ollama Cloud provider mark in the Omarchy bar and panel.** Ship the
+  monochrome Lobe Icons SVG under MIT, with source provenance and the
+  existing LobeHub licence notice. The same mark is used for custom
+  providers that declare `brand = "ollama"`.
+
+### Changed
+
+- **Ollama Cloud quota now comes from `/api/balance`.** `/api/usage` returned
+  request and token history rather than quota, so the provider reads the
+  documented balance route instead. Both account shapes are served there —
+  verified against a real capture from a session/weekly account — so existing
+  quota users see no change beyond the source.
+
+### Fixed
+
+- **Ollama Cloud credit-based Pro plans no longer show an empty quota.**
+  Fetch the documented `/api/balance` endpoint instead of `/api/usage`, which
+  now returns request/token history. Automatically detect monthly included
+  credits (such as Pro's $60 allowance) or legacy session/weekly limits.
+  Show remaining/allowance dollars and purchased credits, derive monthly
+  utilization from included credits, and preserve billing resets and actual
+  period lengths. Historical quota caches remain readable; usage-history
+  payloads are rejected rather than silently accepted as empty limits.
+
 ## [1.34.0] — 2026-10-08
 
 ### Added
