@@ -1754,6 +1754,19 @@ fn ollama_sections(
     push_top_models(&mut v, &s.session_models, "Top models (5h)");
     push_top_models(&mut v, &s.weekly_models, "Top models (weekly)");
     push_top_models(&mut v, &s.monthly_models, "Top models (monthly)");
+    if let Some(credits) = &s.credits {
+        let mut body = vec![format!(
+            "{} remaining of {}",
+            credits.balance, credits.allowance
+        )];
+        if let Some(purchased) = &credits.purchased {
+            body.push(format!("Purchased credits: {purchased}"));
+        }
+        v.push(Section::Block {
+            label: "Credits".into(),
+            body,
+        });
+    }
     if let Some(cost) = &s.activity_cost {
         v.push(Section::Spacer);
         v.push(Section::Block {

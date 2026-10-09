@@ -30,3 +30,4 @@ back to its `short_name` (`cmc`).
 | `kiro.svg` | Kiro | lobe-icons `kiro` | MIT |
 | `nous.svg` | Nous Research | lobe-icons `nousresearch` | MIT |
 | `opencode.svg` | OpenCode Go | lobe-icons `opencode` | MIT |
+| `ollama.svg` | Ollama Cloud | lobe-icons `ollama` | MIT |

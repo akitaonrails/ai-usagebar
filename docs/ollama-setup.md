@@ -1,15 +1,8 @@
 # Ollama Cloud
 
-Native provider for the cloud quota behind [ollama.com/settings](https://ollama.com/settings)
-(session + weekly windows on most accounts, a single monthly window on
-others, per-model request counts, rolling 4-week activity cost). **Not**
-the local daemon at `127.0.0.1:11434` — that process has no quota route.
-
-- [Credential](#credential)
-- [Config](#config)
-- [Run](#run)
-- [What the bar shows](#what-the-bar-shows)
-- [Troubleshooting](#troubleshooting)
+Native provider for cloud credits and legacy quotas behind
+[ollama.com/settings](https://ollama.com/settings). **Not** the local daemon
+at `127.0.0.1:11434` — that process has no quota route.
 
 ## Credential
 
@@ -25,13 +18,12 @@ $env:OLLAMA_API_KEY = "…"          # Windows (session)
 ```
 
 The Ed25519 key in `~/.ollama/id_ed25519` is a **registry** credential
-(`pull` / `push`). `GET /api/usage` refuses it with 401. A browser cookie
-from the settings page is also out of scope — see CONTRIBUTING.
+(`pull` / `push`), not an API key. Browser cookies are out of scope.
 
 ## Config
 
-Ollama Cloud is opt-in, like DeepSeek. Enable it in
-`~/.config/ai-usagebar/config.toml` (or `%APPDATA%\ai-usagebar\config\config.toml`):
+Ollama Cloud is opt-in. Enable it in
+`~/.config/ai-usagebar/config.toml` (or `%APPDATA%/ai-usagebar/config/config.toml`):
 
 ```toml
 [ui]
@@ -40,28 +32,23 @@ primary = "ollama"
 [ollama]
 enabled = true
 api_key_env = "OLLAMA_API_KEY"
-# Label only — /api/usage does not send a plan field.
+# Label only — the API does not send a plan name.
 plan = "pro"
 ```
 
-The `[ollama]` section is documented in [`config.example.toml`](../config.example.toml).
-Copy it into your config and set `enabled = true`. `api_key_env` is the
-**name of the variable**, not the token.
+`api_key_env` is the **name of the variable**, not the token. An inline
+`api_key` also works; `chmod 600` the file if you use it. Saving a key or
+picking Ollama as primary in TUI Settings enables the provider.
 
-An inline `api_key` works (`chmod 600` the file — the app now tightens the
-permissions itself on load when Ollama's is the only inline key) but the
-environment is preferred.
-
-Saving a key (or picking Ollama as primary) in the TUI Settings overlay
-writes `enabled = true` for you.
+**No plan-mode switch is needed.** The response automatically selects the
+credit-based monthly plan or legacy session/weekly quotas. The $20 Pro
+subscription's $60 usage allowance is read from the API, not hard-coded;
+the subscription price is not the usage allowance.
 
 ## Run
 
 ```bash
-# widget
 ai-usagebar --vendor ollama
-
-# TUI (Overview + an Ollama tab)
 ai-usagebar-tui
 ```
 
@@ -70,95 +57,97 @@ ai-usagebar-tui
 .\target\release\ai-usagebar-tui.exe
 ```
 
-Default bar format: `{oll_session_pct}% · {oll_weekly_pct}%w`. Accounts that
-report `limits.monthly` instead render `{oll_monthly_pct}%` there — see
-"What the bar shows" below. Placeholders for a window the account omitted
-are empty (not `0`), so a native menu bar cannot paint a fake 0% 5h/7d pair.
-
 ## What the bar shows
 
-`GET https://ollama.com/api/usage` with `Authorization: Bearer <key>`:
+The provider queries the documented
+[`GET https://ollama.com/api/balance`](https://docs.ollama.com/api/balance)
+with `Authorization: Bearer <key>`.
 
-| Field | Meaning |
-|---|---|
-| `limits.session.usage` | Fraction `[0, 1]` of the session window (rendered as %) |
-| `limits.weekly.usage` | Fraction of the weekly window |
-| `limits.monthly.usage` | Fraction of the calendar-month window |
-| `limits.*.models[]` | `{name, request_count}` per model in that window |
-| `activity.cost` | Rolling cost as a **string** of dollars (`"0.00000"`) |
-| `activity.period.type` | Always `"last_4_weeks"` today |
+### Credit-based plans
 
-Two response shapes are observed in the wild, both under the same `"pro"`
-plan label: some accounts report `session` + `weekly`, others report
-`monthly` alone. ai-usagebar renders whichever the account sends; the
-shapes are never combined in one response.
-
-The JSON does **not** carry reset timestamps or a plan name (those exist
-only in the HTML UI). The tooltip therefore shows `Resets in —` and uses
-the `plan` string from config. The monthly window has no fixed length on
-the wire either — ai-usagebar paces it against a nominal 30 days, which is
-cosmetic only since there is no reset timestamp to pace against.
-
-Live-verified shapes (numbers redacted):
+Example (synthetic values):
 
 ```json
 {
-  "limits": {
-    "session": {
-      "usage": 0.82,
-      "models": [{"name": "kimi-k3", "request_count": 180}]
-    },
-    "weekly": {
-      "usage": 0.23,
-      "models": [{"name": "kimi-k3", "request_count": 180}]
+  "included": {
+    "balance_usd": 45,
+    "allowance_usd": 60,
+    "period": {
+      "from": "2026-10-08T08:00:00Z",
+      "until": "2026-11-08T08:00:00Z"
     }
   },
-  "activity": {
-    "cost": "0.00000",
-    "period": {"type": "last_4_weeks"}
-  }
+  "purchased": {"balance_usd": 12.5}
 }
 ```
 
+The default bar displays **$45.00 / $60.00** (remaining / included
+allowance). The tooltip and TUI also show purchased credits separately.
+Monthly utilization is **25% used**, calculated from the included balance
+and allowance; purchased credits do not change that percentage. The reset
+comes from `period.until`, and pacing uses the actual billing-period length,
+not a fixed 30 days. A zero allowance has no percentage window.
+
+Custom formats can use `{oll_balance}`, `{oll_allowance}`, `{oll_purchased}`
+(all USD-formatted), `{oll_monthly_pct}`, and `{oll_monthly_reset}`.
+
+### Legacy plans
+
+The same endpoint returns remaining percentages and reset timestamps:
+
 ```json
 {
-  "limits": {
-    "monthly": {
-      "usage": 0.003,
-      "models": [{"name": "gpt-oss:120b", "request_count": 100}]
-    }
+  "included": {
+    "session": {"remaining_percent": 75, "resets_at": "2026-10-01T07:00:00Z"},
+    "weekly": {"remaining_percent": 40, "resets_at": "2026-10-05T00:00:00Z"}
   },
-  "activity": {
-    "cost": "0.00000",
-    "period": {"type": "last_4_weeks"}
-  }
+  "purchased": {"balance_usd": 25}
 }
 ```
+
+The default bar remains `{oll_session_pct}% · {oll_weekly_pct}%w`:
+**25% · 60%w** in this example. These percentages are **used**, converted
+from the API's remaining percentages. Reset timestamps are preserved.
+Absent windows have empty placeholders, never fabricated zero percentages.
+
+### Older caches and usage history
+
+Historical `/api/usage` quota payloads (`limits.session`, `limits.weekly`,
+or `limits.monthly`, plus activity/model counts) remain readable as cache
+fallbacks. Their reset timestamps are unavailable.
+
+The current [`/api/usage`](https://docs.ollama.com/api/cloud-usage) endpoint
+returns request/token/cost history, **not remaining quota**. That shape is
+rejected instead of silently turning into an empty snapshot. An existing
+usage-history cache triggers a live balance fetch even if it is fresh.
+The balance endpoint does not supply model counts or activity cost, so live
+snapshots no longer populate those historical fields (`{oll_cost}` is `—`).
 
 ## Troubleshooting
 
-**Vendor in Settings, missing as a tab.** `[ollama] enabled` is still
-`false`. Enable it in TOML or pick Ollama Cloud as primary and Save.
+**Vendor in Settings, missing as a tab.** Enable `[ollama] enabled = true`.
 
-**`HTTP 401` / `invalid credentials`.** Key missing, revoked, or you sent
-the CLI Ed25519 session. Mint a new one at `/settings/keys`.
+**HTTP 401.** Key missing, revoked, or a registry credential instead of an
+API key. Mint a new key at `/settings/keys`.
 
-**`HTTP 404` against `127.0.0.1:11434/api/usage`.** That is the local
-daemon. Quota lives only on `https://ollama.com/api/usage`.
+**HTTP 404 from localhost.** The local daemon has no cloud quota route.
 
-**Probe the endpoint yourself:**
+**HTTP 429.** Ollama limits the balance endpoint to 10 requests/minute per
+user, shared across devices and keys; it recommends polling once per minute.
+
+Probe the endpoint:
 
 ```bash
 curl -sS -H "Authorization: Bearer $OLLAMA_API_KEY" \
-  https://ollama.com/api/usage
+  https://ollama.com/api/balance
 ```
 
 ```powershell
 Invoke-RestMethod `
-  -Uri "https://ollama.com/api/usage" `
+  -Uri "https://ollama.com/api/balance" `
   -Headers @{ Authorization = "Bearer $env:OLLAMA_API_KEY" }
 ```
 
-See also: [configuration.md](./configuration.md),
-[vendor-endpoints.md](./vendor-endpoints.md),
-[DEVELOPMENT.md](../DEVELOPMENT.md).
+See also [configuration.md](./configuration.md),
+[format-placeholders.md](./format-placeholders.md), and
+[vendor-endpoints.md](./vendor-endpoints.md).

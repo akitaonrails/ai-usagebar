@@ -17,15 +17,16 @@ use crate::waybar::{Class, WaybarOutput};
 use super::fetch::FetchOutcome;
 
 pub const DEFAULT_FORMAT: &str = "{oll_session_pct}% · {oll_weekly_pct}%w";
-/// Bar text when the account reports `limits.monthly` instead of the
-/// session/weekly pair. `docs/ollama-setup.md` already documents this shape.
+/// Bar text for historical monthly-only quota caches, without dollar credits.
 pub const MONTHLY_FORMAT: &str = "{oll_monthly_pct}%";
 
 /// Pick the bar format that names a window the account actually reported.
 /// Fabricating `0% · 0%w` for a monthly-only payload is a lie: those windows
 /// were omitted, not exhausted. A present window at 0% used still renders `0`.
 pub fn default_format(snap: &OllamaSnapshot) -> &'static str {
-    if snap.session.is_some() || snap.weekly.is_some() {
+    if snap.credits.is_some() {
+        "{oll_balance} / {oll_allowance}"
+    } else if snap.session.is_some() || snap.weekly.is_some() {
         DEFAULT_FORMAT
     } else if snap.monthly.is_some() {
         MONTHLY_FORMAT
@@ -98,6 +99,27 @@ fn build_placeholders_with_tolerance(
         ("oll_monthly_pace", monthly.ratio_pace),
         ("oll_monthly_pace_indicator", monthly.point_pace),
         ("oll_cost", cost),
+        (
+            "oll_balance",
+            snap.credits
+                .as_ref()
+                .map(|c| c.balance.clone())
+                .unwrap_or_default(),
+        ),
+        (
+            "oll_allowance",
+            snap.credits
+                .as_ref()
+                .map(|c| c.allowance.clone())
+                .unwrap_or_default(),
+        ),
+        (
+            "oll_purchased",
+            snap.credits
+                .as_ref()
+                .and_then(|c| c.purchased.clone())
+                .unwrap_or_default(),
+        ),
     ])
 }
 
@@ -207,7 +229,7 @@ pub fn render(
 }
 
 fn row(w: &UsageWindow) -> WindowRow {
-    // No reset timestamp on the wire, so no elapsed marker / pace glyph.
+    // Keep the compact tooltip row; resets are rendered by the shared helper.
     let _ = w;
     WindowRow::default()
 }
@@ -255,6 +277,21 @@ fn render_tooltip(
         push_window_with_row(&mut lines, "  Monthly", w, theme, now, row(w));
         if !snap.monthly_models.is_empty() {
             push_model_rows(&mut lines, &snap.monthly_models, dim);
+        }
+        lines.push(TooltipLine::Body("".into()));
+    }
+
+    if let Some(credits) = &snap.credits {
+        lines.push(TooltipLine::Body(format!(
+            "   {} remaining of {}",
+            escape(&credits.balance),
+            escape(&credits.allowance)
+        )));
+        if let Some(purchased) = &credits.purchased {
+            lines.push(TooltipLine::Body(format!(
+                "   Purchased credits: {}",
+                escape(purchased)
+            )));
         }
         lines.push(TooltipLine::Body("".into()));
     }
@@ -362,6 +399,7 @@ mod tests {
             monthly_models: vec![],
             activity_cost: Some("0.00000".into()),
             activity_period: Some("last_4_weeks".into()),
+            credits: None,
         }
     }
 
@@ -403,6 +441,7 @@ mod tests {
             }],
             activity_cost: Some("0.00000".into()),
             activity_period: Some("last_4_weeks".into()),
+            credits: None,
         }
     }
 
@@ -488,6 +527,35 @@ mod tests {
             "no-window payload must not fabricate zeros: {}",
             out.text
         );
+    }
+
+    #[test]
+    fn credit_plan_renders_dollars_and_monthly_reset() {
+        let body: crate::ollama::types::Body = serde_json::from_str(include_str!(
+            "../../tests/fixtures/ollama/balance_credits.json"
+        ))
+        .unwrap();
+        let snap = body.into_snapshot("pro".into());
+        let now = "2026-10-09T08:00:00Z".parse().unwrap();
+        let values = build_placeholders(&snap, now);
+        assert_eq!(values["oll_balance"], "$45.00");
+        assert_eq!(values["oll_allowance"], "$60.00");
+        assert_eq!(values["oll_purchased"], "$12.50");
+        assert_eq!(values["oll_monthly_pct"], "25");
+        assert_eq!(values["session_pct"], "");
+        assert_ne!(values["oll_monthly_reset"], "—");
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now,
+        );
+        assert!(out.text.contains("$45.00 / $60.00"), "{}", out.text);
+        assert!(out.tooltip.contains("$45.00 remaining of $60.00"));
+        assert!(out.tooltip.contains("Purchased credits: $12.50"));
+        assert!(out.tooltip.contains("Monthly"));
+        assert!(!out.tooltip.contains("Session (5h)"));
     }
 
     #[test]

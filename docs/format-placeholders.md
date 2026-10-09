@@ -435,23 +435,28 @@ interpretation; its currency contract is not verified for all accounts.
 `{oll_session_pct}`, `{oll_session_reset}`, `{oll_session_pace}`,
 `{oll_weekly_pct}`, `{oll_weekly_reset}`, `{oll_weekly_pace}`,
 `{oll_monthly_pct}`, `{oll_monthly_reset}`, `{oll_monthly_pace}`,
-`{oll_plan}`, `{oll_cost}`
+`{oll_plan}`, `{oll_cost}`, `{oll_balance}`, `{oll_allowance}`, `{oll_purchased}`
 
-Ollama Cloud reports either a 5-hour session + weekly pair, or a single
-calendar-month window, as a fraction of the plan limit — never both in the
-same response — so all three percentage placeholders are whole numbers
-after clamping to 0..=100. A window the account did not report is an empty
-string, not `0`: native surfaces key off that emptiness so an omitted 5h/7d
-pair cannot become a confident 0% bar, and a present monthly window at 0%
-used still renders `0`. The default bar follows the same rule
-(`{oll_session_pct}% · {oll_weekly_pct}%w` when those exist,
-`{oll_monthly_pct}%` when only the month is present). The API does not
-publish reset timestamps, pace deltas, or a plan label: `{oll_plan}` falls
-back to the `plan` string from your config, and the reset/pace families
-render `—` when the window exists but has no timestamp, or stay empty when
-the window is absent. `{oll_cost}` is the dollar figure the settings page
-reports for the last four weeks of activity. `{session_pct}` and
-`{weekly_pct}` alias the session and weekly windows.
+The documented `/api/balance` endpoint automatically selects credit-based
+monthly plans or legacy session/weekly plans. Credit plans default to
+`{oll_balance} / {oll_allowance}` (remaining / included allowance, e.g.
+`$45.00 / $60.00`); `{oll_purchased}` is the separate purchased credit balance.
+These money placeholders include `$` and two decimal places and are empty
+for legacy quota snapshots. `{oll_monthly_pct}` is the included allowance's
+used percentage, excluding purchased credits; a zero allowance has no
+percentage window. The monthly reset and pacing use the API's billing period.
+
+Legacy plans keep `{oll_session_pct}% · {oll_weekly_pct}%w` as the default.
+Their remaining percentages are converted to used percentages, with resets
+preserved. All percentage placeholders are whole numbers clamped to 0..=100.
+An absent window is empty, not a fabricated `0`; `{session_pct}` and
+`{weekly_pct}` alias only the actual session and weekly windows.
+
+`{oll_plan}` remains the config-supplied label. Historical `/api/usage` quota
+caches remain readable, including monthly-only windows, activity cost, and
+missing resets (`—`). The current usage-history response is not quota data
+and is rejected. Live balance snapshots have no activity cost, so `{oll_cost}`
+is `—`. See [ollama-setup.md](ollama-setup.md).
 
 ## Lyceum
 

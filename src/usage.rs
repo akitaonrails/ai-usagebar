@@ -906,10 +906,9 @@ pub struct ZaiSnapshot {
     pub mcp: Option<UsageWindow>,
 }
 
-/// Ollama Cloud — the session and weekly usage windows served by
-/// `ollama.com/api/usage`, plus a per-model breakdown. The response also
-/// carries an `activity.cost` string for the current period; we keep it raw
-/// (it is already dollar-formatted upstream) and let the renderer place it.
+/// Ollama Cloud — credit balances or legacy quota windows from
+/// `ollama.com/api/balance`. Older cached `/api/usage` payloads can also
+/// carry per-model counts and activity cost.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OllamaSnapshot {
     /// Display label, taken from the `[ollama] plan` config field. The API
@@ -938,6 +937,16 @@ pub struct OllamaSnapshot {
     /// `activity.period.type` (`"last_4_weeks"` and friends). A short
     /// human-readable label the renderer can show next to the cost.
     pub activity_period: Option<String>,
+    /// Monthly included credits and optional purchased credits, formatted
+    /// through the shared money formatter for all desktop surfaces.
+    pub credits: Option<OllamaCredits>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OllamaCredits {
+    pub balance: String,
+    pub allowance: String,
+    pub purchased: Option<String>,
 }
 
 /// One row of `OllamaSnapshot::{session,weekly}_models`. The API carries the

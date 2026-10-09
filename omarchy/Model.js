@@ -568,6 +568,8 @@ function brandFileFor(provider) {
       return "nous.svg"
     case "opencode-go":
       return "opencode.svg"
+    case "ollama":
+      return "ollama.svg"
     default:
       return ""
   }

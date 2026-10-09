@@ -1,4 +1,4 @@
-//! Ollama Cloud fetch. Bearer-token auth against `https://ollama.com/api/usage`.
+//! Ollama Cloud fetch. Bearer-token auth against `https://ollama.com/api/balance`.
 //! Single request, small body; `Outcome` plumbing mirrors the other single-shot
 //! API-key providers (cache the validated wire body, stale-fallback on errors).
 
@@ -10,19 +10,19 @@ use crate::usage::OllamaSnapshot;
 
 use super::types::Body;
 
-pub const USAGE_URL: &str = "https://ollama.com/api/usage";
+pub const BALANCE_URL: &str = "https://ollama.com/api/balance";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone)]
 pub struct Endpoints {
-    pub usage: String,
+    pub balance: String,
 }
 
 impl Default for Endpoints {
     fn default() -> Self {
         Self {
-            usage: USAGE_URL.into(),
+            balance: BALANCE_URL.into(),
         }
     }
 }
@@ -48,7 +48,7 @@ pub async fn fetch_snapshot(
     }
     // Corrupt fresh cache: fall through to live fetch rather than fabricate.
 
-    match fetch_live(client, &endpoints.usage, api_key).await {
+    match fetch_live(client, &endpoints.balance, api_key).await {
         Ok((bytes, body)) => {
             // Only a validated body reaches the cache.
             cache.write_payload(&bytes)?;
@@ -123,7 +123,7 @@ async fn fetch_live(client: &reqwest::Client, url: &str, api_key: &str) -> Resul
     }
 
     let body: Body = serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Schema(format!("ollama usage response: {e}")))?;
+        .map_err(|e| AppError::Schema(format!("ollama balance response: {e}")))?;
     Ok((bytes.to_vec(), body))
 }
 
@@ -167,7 +167,7 @@ mod tests {
     async fn live_200_returns_snapshot() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
-            .mock("GET", "/api/usage")
+            .mock("GET", "/api/balance")
             .match_header("Authorization", "Bearer test-key")
             .with_status(200)
             .with_body(SAMPLE)
@@ -177,7 +177,7 @@ mod tests {
         let (_td, cache) = cache_fixture();
         let client = reqwest::Client::new();
         let endpoints = Endpoints {
-            usage: format!("{}/api/usage", server.url()),
+            balance: format!("{}/api/balance", server.url()),
         };
         let outcome = fetch_snapshot(
             &client,
@@ -198,10 +198,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn usage_history_cache_is_replaced_by_live_balance() {
+        assert_eq!(
+            Endpoints::default().balance,
+            "https://ollama.com/api/balance"
+        );
+        let mut server = mockito::Server::new_async().await;
+        let sample = include_str!("../../tests/fixtures/ollama/balance_credits.json");
+        let mock = server
+            .mock("GET", "/api/balance")
+            .match_header("Authorization", "Bearer test-key")
+            .with_status(200)
+            .with_body(sample)
+            .create_async()
+            .await;
+        let (_td, cache) = cache_fixture();
+        cache
+            .write_payload(br#"{"range":"7d","totals":{"usage_usd":0.2},"buckets":[]}"#)
+            .unwrap();
+        let endpoints = Endpoints {
+            balance: format!("{}/api/balance", server.url()),
+        };
+        let outcome = fetch_snapshot(
+            &reqwest::Client::new(),
+            "test-key",
+            "pro",
+            &cache,
+            &endpoints,
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+        mock.assert_async().await;
+        assert!(!outcome.stale);
+        assert_eq!(outcome.snapshot.monthly.unwrap().utilization_pct, 25);
+        assert_eq!(outcome.snapshot.credits.unwrap().balance, "$45.00");
+        assert!(parse_cache(sample.as_bytes(), "pro").is_ok());
+        // The validated balance is reusable without another HTTP request.
+        let cached = fetch_snapshot(
+            &reqwest::Client::new(),
+            "test-key",
+            "pro",
+            &cache,
+            &endpoints,
+            Duration::from_secs(60),
+        )
+        .await
+        .unwrap();
+        assert!(!cached.stale);
+        assert_eq!(cached.snapshot.credits.unwrap().allowance, "$60.00");
+    }
+
+    #[tokio::test]
+    async fn unrecognized_live_payload_is_not_cached() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/api/balance")
+            .with_status(200)
+            .with_body(r#"{"totals":{"usage_usd":0.2}}"#)
+            .create_async()
+            .await;
+        let (_td, cache) = cache_fixture();
+        let endpoints = Endpoints {
+            balance: format!("{}/api/balance", server.url()),
+        };
+        let err = fetch_snapshot(
+            &reqwest::Client::new(),
+            "test-key",
+            "pro",
+            &cache,
+            &endpoints,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("ollama balance response"));
+        assert!(
+            cache
+                .fresh_payload(Duration::from_secs(60))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn live_401_falls_back_to_cache() {
         let mut server = mockito::Server::new_async().await;
         server
-            .mock("GET", "/api/usage")
+            .mock("GET", "/api/balance")
             .with_status(401)
             .with_body(r#"{"error":"invalid credentials"}"#)
             .create_async()
@@ -214,7 +298,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let endpoints = Endpoints {
-            usage: format!("{}/api/usage", server.url()),
+            balance: format!("{}/api/balance", server.url()),
         };
         let outcome = fetch_snapshot(
             &client,
