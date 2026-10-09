@@ -1,6 +1,6 @@
 ## [Unreleased]
 
-### Fixed
+### Changed
 
 - **Meters fill with what is consumed in both readings.** PR #389 made the
   bar geometry follow the Show Usage As toggle, so in Left mode the fill
@@ -12,6 +12,9 @@
   share on the popover and the compact bars alike; the Used/Left toggle reads
   only the headline number, the chips, and the tooltip, and the pace tick
   keeps sitting at the elapsed share of the window.
+
+### Fixed
+
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
