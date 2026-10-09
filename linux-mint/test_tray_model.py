@@ -83,7 +83,8 @@ class TrayModelTest(unittest.TestCase):
         self.assertEqual(calm[0], "near")
         self.assertEqual(meter_color(metric(7, week, eight_hours), calm), "blue")
         self.assertEqual(metric_pace(metric(9, week, eight_hours), NOW)[0], "over")
-        self.assertEqual(metric_pace(metric(10, week, eight_hours), NOW)[0], "behind")
+        self.assertEqual(metric_pace(metric(10, week, eight_hours), NOW)[0], "over")
+        self.assertEqual(metric_pace(metric(55, week, eight_hours), NOW)[0], "behind")
 
     def test_weekly_warmup_is_capped_at_one_hour(self):
         self.assertIsNone(metric_pace(metric(1, 604_800, 3_599), NOW))

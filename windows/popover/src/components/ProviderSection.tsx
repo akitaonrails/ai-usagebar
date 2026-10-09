@@ -361,9 +361,11 @@ interface MetricRowProps {
  */
 function UsageMetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRowProps) {
   const { language, metricLabel } = useI18n();
-  // The fill follows the headline's reading (WidgetData.fraction): remaining in Left mode,
-  // consumed in Used mode. The color is a verdict and never flips with the toggle.
-  const fill = layout.showAs === "used" ? row.usedPercent : row.leftPercent;
+  // The fill is always the consumed share — ink is consumption, like every usage
+  // gauge. The Used/Left toggle is a reading of the headline number only, and the
+  // color is a verdict; filling with what remains in Left mode painted SuperGrok's
+  // "88% left" as an almost-full red bar that read as nearly spent.
+  const fill = row.usedPercent;
   const spent = row.leftPercent === 0;
   const headline = translateUsage(language, headlineLabel(row, layout.showAs));
   const headlineAlt = translateUsage(language, headlineAlternate(row, layout.showAs));
@@ -380,7 +382,8 @@ function UsageMetricRow({ demand, layout, nowMs, onToggleShowAs, row }: MetricRo
   const warmup = rowPace === null && layout.alwaysShowPace ? paceWarmupText(row, nowMs, language) : "";
   // The flame is for a row that runs out well before its reset, not for any row a hair over the line.
   const behind = paceVerdict(rowPace, row.leftPercent) === "critical";
-  const tick = paceTickPercent(rowPace, layout.showAs);
+  // The tick sits in the meter's space, which always shows the consumed share.
+  const tick = paceTickPercent(rowPace);
   const goal = layout.usageGoal ? usageGoal(row, nowMs) : null;
   const goalLabel = goal ? (goal.estimated ? m.estimated_goal_now() : m.goal_now()) : "";
   // Like the tick, the goal follows the headline's reading so the two numbers compare directly.

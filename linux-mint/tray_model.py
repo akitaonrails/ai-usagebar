@@ -149,8 +149,11 @@ def metric_pace(metric, now=None, language=None):
     # 10% left, is "behind" (red, flame).
     left = 100 - used
     gap = used - elapsed * 100 / window
+    elapsed_pct = elapsed * 100 / window
     critical = (projected > 100 and left < PACE_CRITICAL_LEFT) or (
-        projected > PACE_CRITICAL_PERCENT and gap >= PACE_CRITICAL_GAP
+        projected > PACE_CRITICAL_PERCENT
+        and gap >= PACE_CRITICAL_GAP
+        and not (elapsed_pct < 15 and left >= METER_YELLOW_BELOW_LEFT)
     )
     if not critical and projected > PACE_OVER_PERCENT and gap >= PACE_OVER_GAP:
         over = round(projected - 100)
