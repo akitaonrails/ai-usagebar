@@ -272,4 +272,14 @@ mod tests {
             parse_account(&json!({"plan":"Pro\u{202e}spoof", "monthly_credits": 100.0})).unwrap();
         assert!(!render_tooltip(&bidi, now).contains('\u{202e}'));
     }
+
+    #[test]
+    fn format_credit_trims_trailing_decimal_point_when_fraction_rounds_to_zero() {
+        assert_eq!(format_credit(Some(1.00000004)), "1");
+        assert_eq!(format_credit(Some(1e-7)), "0");
+        assert_eq!(format_credit(Some(1.500000)), "1.5");
+        assert_eq!(format_credit(Some(125.123456)), "125.123456");
+        assert_eq!(format_credit(Some(1000.0)), "1000");
+        assert_eq!(format_credit(None), NEUTRAL_UNAVAILABLE);
+    }
 }
