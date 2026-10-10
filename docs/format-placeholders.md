@@ -31,7 +31,8 @@ Use `{session_pct}`, `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}`
 when one format must work across providers. Providers without matching time
 windows return neutral values. Cursor maps Cursor Models to the session slot
 and Other Models to the weekly slot; both reset with the billing cycle. Kiro
-has one pool, so it maps `kiro_pct` to both percentage slots.
+has one pool, so it maps `kiro_pct` to both percentage slots, and Nous Research
+maps `nous_pct` and `nous_renewal` the same way.
 
 Claude and Codex also provide `*_elapsed`, `*_pace`, and `*_bar` families.
 Z.AI, MiniMax, OpenCode Go, and Cursor provide elapsed aliases plus provider-specific pace families.
@@ -398,6 +399,31 @@ through the documented AWS SSO OIDC `CreateToken` API and stores refreshed or
 rotated credentials in an account-scoped `kiro/oauth.json` file. That file is
 mode `0600` on Unix. kiro-cli's database is opened read-only and is never
 modified.
+
+## Nous Research
+
+`{nous_plan}`, `{nous_pct}`, `{nous_renewal}`, `{nous_credits_remaining}`,
+`{nous_monthly_credits}`, `{nous_purchased_credits_remaining}`,
+`{nous_top_up_credits_remaining}`, `{nous_total_usable_credits}`,
+`{nous_rollover_credits}`
+
+These describe the Portal account the OAuth login reads. `{nous_pct}` is the
+consumed share of the monthly subscription-credit pool, a whole number held to
+0..=100 and computed from the subscription credits alone, never from top-up
+credits; it is `—` when the Portal omits the monthly allocation or the
+subscription credits remaining. `{nous_renewal}` counts down to the end of the
+current period (`—` when none is stated). The credit placeholders are plain
+numbers without a currency symbol: whole credits print without decimals,
+fractions keep up to six decimal places with trailing zeros trimmed, and a
+value the Portal does not report is `—`. `{nous_top_up_credits_remaining}`
+aliases `{nous_purchased_credits_remaining}`.
+
+The default format is `{nous_pct}% · {nous_renewal}`; with no `format`
+configured and no percentage available, the bar shows the renewal countdown
+alone. Nous has one pool and one period, so `{session_pct}` and
+`{weekly_pct}` alias `{nous_pct}`, `{session_reset}` and `{weekly_reset}`
+alias `{nous_renewal}`, and `{plan}` aliases `{nous_plan}`. There are no
+elapsed or pace placeholders.
 
 ## Command Code
 
