@@ -28,6 +28,13 @@
 
 ### Fixed
 
+- **Antigravity's keyring lookup no longer inherits provider keys.** The
+  saved Google session is read through `secret-tool` on Linux and `security`
+  on macOS, and both spawns carried every vendor secret variable of this
+  process (`ZAI_API_KEY`, `OPENROUTER_API_KEY`, the named accounts'
+  `api_key_env` names) into a child that has no use for them. They are now
+  dropped before the lookup runs, the scrub the Grok Bot keyring lookups,
+  `claude`, `codex login`, `gh` and `agy` already apply.
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
