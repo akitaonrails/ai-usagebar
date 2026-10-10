@@ -609,7 +609,11 @@ mod tests {
         o.format = Some("{oll_cost}".into());
 
         let out = render(&outcome, &snap, &Theme::default(), &o, Utc::now());
-        assert!(out.text.contains("0.5 &lt;est&gt; &amp; up"), "{}", out.text);
+        assert!(
+            out.text.contains("0.5 &lt;est&gt; &amp; up"),
+            "{}",
+            out.text
+        );
         assert!(!out.text.contains("<est>"), "{}", out.text);
         // The default tooltip names the period beside the cost.
         let period = "last &lt;4&gt; weeks &amp; more";
