@@ -294,8 +294,17 @@ pub fn worst_severity(payload: &Value) -> Severity {
         let Some(sections) = entry.get("sections").and_then(Value::as_array) else {
             continue;
         };
-        for section in sections {
-            if section.get("type").and_then(Value::as_str) != Some("metric") {
+        let metrics: Vec<&Value> = sections
+            .iter()
+            .filter(|section| section.get("type").and_then(Value::as_str) == Some("metric"))
+            .collect();
+        // A grouped row (the Claude entry's context sessions, SuperGrok's
+        // product slices) sits under its own heading below the meters and is
+        // not a quota window: it counts only when the entry has nothing else,
+        // the partition `strip::quota_group` already applies.
+        let has_window = metrics.iter().any(|section| !is_grouped(section));
+        for section in metrics {
+            if has_window && is_grouped(section) {
                 continue;
             }
             if let Some(sev) = section
@@ -309,6 +318,15 @@ pub fn worst_severity(payload: &Value) -> Severity {
         }
     }
     worst
+}
+
+/// Whether a metric sits under a group heading, which the report marks with a
+/// non-empty `group`.
+fn is_grouped(section: &Value) -> bool {
+    section
+        .get("group")
+        .and_then(Value::as_str)
+        .is_some_and(|group| !group.is_empty())
 }
 
 #[cfg(test)]
