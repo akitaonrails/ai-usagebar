@@ -28,6 +28,13 @@
 
 ### Fixed
 
+- **KDE plasmoid: a Claude Code session row no longer colours the vendor
+  card.** The card view took its accent from the worst severity of every
+  metric row, grouped or not, so a context session at 90% of its window
+  painted the Claude card critical while the quota windows sat at 29%. The
+  accent now applies the same partition the headline and the panel cells
+  do: ungrouped quota rows first, grouped rows standing in only when an
+  entry has nothing else.
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
