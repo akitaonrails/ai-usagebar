@@ -28,6 +28,16 @@
 
 ### Fixed
 
+- **Custom format placeholders escape the remaining API-controlled text.**
+  Claude's `{plan}` (built from the credentials file) and `{scoped_model}`
+  (the API's model display name), Codex's `{oai_credit_balance}` (kept as
+  the string OpenAI sent when it is not a plain number) and Ollama's
+  `{oll_cost}` were substituted into the bar text and a custom
+  `--tooltip-format` unescaped, and Ollama's default tooltip printed the
+  activity period raw. All of them reach Waybar's Pango markup, where an `&`
+  or `<` breaks the module. They are now escaped at the projection boundary,
+  the rule every other provider's plan and model placeholders already
+  follow.
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
