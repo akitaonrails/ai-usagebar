@@ -120,6 +120,9 @@ assert.match(mainQml, /sourceName\s*!==\s*root\.pendingCommand/,
     'a completed command must be matched to the exact in-flight command');
 assert.match(mainQml, /Logic\.panelCells\(root\.entry, \{max: 2\}\)/,
     'the compact view must not pretend a removed weekly toggle selects metrics');
+assert.match(readFileSync(at('./package/contents/ui/UsageRow.qml'), 'utf8'),
+    /item\.row\.headline\s*===\s*["']value["']/,
+    'UsageRow must honor headline === "value" before falling back to the percentage');
 
 // The Vendors page was removed when the report started carrying per-vendor
 // status; config.qml must not still point at the deleted file, which Plasma
@@ -357,6 +360,9 @@ assert.deepEqual(panelCells(openai), []);
 // has nothing else.
 assert.deepEqual(panelCells(sessionBreakdown, {max: 2}).map(c => c.text), ['29%']);
 assert.deepEqual(panelCells(onlyGrouped, {max: 2}).map(c => c.text), ['90%']);
+// A metric that names 'value' as its headline draws the value string in panel cells.
+assert.deepEqual(panelCells(metered('value'), {max: 1}).map(c => c.text), ['$75.00']);
+assert.deepEqual(panelCells(emptyValue, {max: 1}).map(c => c.text), ['60%']);
 
 // ---------------------------------------------------------------------------
 // cards (viewMode "VendorCards")
@@ -407,6 +413,9 @@ const partial = cardFor(parseReport(JSON.stringify({entries: [{
 }]})).entries[0]);
 assert.deepEqual(partial.windows.map(w => [w.percent, w.value]), [[null, '$1.20']]);
 assert.equal(partial.accent, 'low');
+// A metric that names 'value' as its headline draws the value string on the card gauge.
+assert.deepEqual(cardFor(metered('value')).windows.map(w => w.value), ['$75.00']);
+assert.deepEqual(cardFor(emptyValue).windows.map(w => w.value), ['60%']);
 
 assert.equal(shortLabel('Session (5h)'), '5h');
 assert.equal(shortLabel('Weekly (7d)'), '7d');
