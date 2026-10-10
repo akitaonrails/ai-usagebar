@@ -270,7 +270,19 @@ fn read_platform() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn read_platform() -> Option<String> {
-    let out = std::process::Command::new("/usr/bin/security")
+    let out = keyring_lookup_command().output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    decode_blob_bytes(&out.stdout)
+}
+
+/// `security find-generic-password -s <service> -a <account> -w`, read-only;
+/// the secret arrives on stdout, never in argv.
+#[cfg(target_os = "macos")]
+fn keyring_lookup_command() -> std::process::Command {
+    let mut command = std::process::Command::new("/usr/bin/security");
+    command
         .args([
             "find-generic-password",
             "-s",
@@ -280,13 +292,8 @@ fn read_platform() -> Option<String> {
             "-w",
         ])
         .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    decode_blob_bytes(&out.stdout)
+        .stderr(std::process::Stdio::null());
+    command
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -294,7 +301,19 @@ fn read_platform() -> Option<String> {
     // `secret-tool` (libsecret) speaks to whichever Secret Service is running.
     // A missing binary or no running daemon both exit non-zero / fail to
     // spawn, and both mean "no session available here".
-    let out = std::process::Command::new("secret-tool")
+    let out = keyring_lookup_command().output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    decode_blob_bytes(&out.stdout)
+}
+
+/// `secret-tool lookup service <service> username <account>`, read-only; the
+/// secret arrives on stdout, never in argv.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn keyring_lookup_command() -> std::process::Command {
+    let mut command = std::process::Command::new("secret-tool");
+    command
         .args([
             "lookup",
             "service",
@@ -303,13 +322,8 @@ fn read_platform() -> Option<String> {
             KEYRING_ACCOUNT,
         ])
         .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    decode_blob_bytes(&out.stdout)
+        .stderr(std::process::Stdio::null());
+    command
 }
 
 #[cfg(test)]
