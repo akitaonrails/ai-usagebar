@@ -195,9 +195,10 @@ pub fn render(
         .unwrap_or_else(|| default_format(snap).to_string());
     let mut values = build_placeholders_with_tolerance(snap, opts.pace_tolerance, now);
     // Both sinks fed by this map (bar text and --tooltip-format) are Pango
-    // markup. The plan label is configurable, so escape its aliases at the
-    // projection boundary. The default tooltip escapes the raw snapshot.
-    for key in ["plan", "oll_plan"] {
+    // markup. The plan label is configurable and the activity cost is the string
+    // the server sent, so escape them at the projection boundary. The default
+    // tooltip escapes the raw snapshot.
+    for key in ["plan", "oll_plan", "oll_cost"] {
         if let Some(value) = values.get_mut(key) {
             *value = escape(value);
         }
@@ -297,7 +298,7 @@ fn render_tooltip(
     }
 
     if let Some(cost) = snap.activity_cost.as_deref() {
-        let period = snap.activity_period.as_deref().unwrap_or("activity");
+        let period = escape(snap.activity_period.as_deref().unwrap_or("activity"));
         lines.push(TooltipLine::Body(format!(
             " <span foreground='{dim}'>  $  {period}</span>"
         )));
