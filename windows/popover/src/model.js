@@ -117,7 +117,7 @@ function normalizeAccent(value) {
   return { light: value.light.toLowerCase(), dark: value.dark.toLowerCase() };
 }
 
-const SWITCHABLE_VENDORS = ["anthropic", "openai"];
+const SWITCHABLE_VENDORS = ["anthropic", "openai", "claude-desktop"];
 
 // Switchable logins per vendor. Only the macOS host sends any; anything absent
 // or malformed means no switch control at all rather than a guessed one.
@@ -130,7 +130,8 @@ function normalizeAccounts(value) {
     // Labels are kept whole, since the whole label is what a switch sends;
     // matching a card goes through the card id's own cut (see `cardIdOf`).
     const labels = raw.labels.slice(0, MAX_ENTRIES).map((label) => clean(label, 4096)).filter(Boolean);
-    if (labels.length === 0) continue;
+    // The Desktop app with nothing saved yet still gets its section, to add one.
+    if (labels.length === 0 && vendor !== "claude-desktop") continue;
     out[vendor] = {
       active: clean(raw.active, 4096),
       labels,
@@ -140,6 +141,14 @@ function normalizeAccounts(value) {
     };
   }
   return out;
+}
+
+/** Whether `account add` takes `label`: the rule `validate_account_label` keeps. */
+export function validAccountLabel(label) {
+  const text = String(label || "").trim();
+  if (!text || text === "." || text === ".." || [...text].length > 64) return false;
+  if (/[\\/:]/.test(text) || /[\u0000-\u001f\u007f-\u009f]/.test(text)) return false;
+  return !["usage.json", ".stale", ".last_error", ".fetch.lock"].includes(text);
 }
 
 /** The id the card for `vendor`'s `label` account gets, cut as entry ids are. */

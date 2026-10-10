@@ -252,6 +252,13 @@ or neither, does not carry two permanent menu rows. A dim line under the
 dropdown header still shows both active accounts at a glance —
 `Desktop: work · Code: personal`.
 
+The tray (AI Usage.app) has the Desktop half in **Settings → Claude Desktop**
+(under General with the Native style): the same list, the signed-in account
+marked, and a **Switch** that asks for a second click before it runs
+`account switch --desktop`. **Add account** takes a name and opens Terminal on
+`account add <name> --desktop`. Claude Code logins switch from the star on each
+account's card.
+
 Switching the Desktop app **quits and reopens Claude.app**, so Preferences
 confirms first; your local history is merged into the target account and a
 rollback archive is written before anything changes. The Claude Code switch has

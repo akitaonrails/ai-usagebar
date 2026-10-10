@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   accountSwitchFor,
+  validAccountLabel,
   formatDuration,
   nextUpdateLabel,
   parseHostPayload,
@@ -1787,6 +1788,42 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.equal(accountSwitchFor('cursor@x', payload.accounts), null);
   assert.equal(accountSwitchFor('openai@work', {}), null);
   assert.deepEqual(parseHostPayload(JSON.stringify({ entries: [] })).accounts, {});
+}
+
+// The Claude Desktop app's accounts ride the same map under their own key, for
+// Settings' Claude Desktop section; no usage card is ever named after it.
+{
+  const payload = parseHostPayload(JSON.stringify({
+    entries: [{ id: 'anthropic@work' }],
+    accounts: {
+      'claude-desktop': { active: 'home', labels: ['home', 'work'], target: 'work', switching: true, error: '' },
+    },
+  }));
+  assert.deepEqual(payload.accounts['claude-desktop'], {
+    active: 'home',
+    labels: ['home', 'work'],
+    target: 'work',
+    switching: true,
+    error: '',
+  });
+  assert.equal(accountSwitchFor('anthropic@work', payload.accounts), null);
+
+  // With nothing saved yet the section still comes, to add the first account;
+  // an empty list for any other vendor offers nothing and is dropped.
+  const empty = parseHostPayload(JSON.stringify({
+    entries: [],
+    accounts: { 'claude-desktop': { active: null, labels: [] }, anthropic: { active: '', labels: [] } },
+  }));
+  assert.deepEqual(Object.keys(empty.accounts), ['claude-desktop']);
+  assert.deepEqual(empty.accounts['claude-desktop'].labels, []);
+}
+
+// A Desktop account name passes where `account add` would take it.
+{
+  for (const good of ['work', 'Work 2', 'pessoal-ç', ' trimmed ']) assert.equal(validAccountLabel(good), true, good);
+  for (const bad of ['', '  ', '.', '..', 'a/b', 'a\\b', 'c:', 'tab\there', 'usage.json', 'x'.repeat(65)]) {
+    assert.equal(validAccountLabel(bad), false, JSON.stringify(bad));
+  }
 }
 
 // Every card that renders keeps its switch control: as many accounts as there

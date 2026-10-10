@@ -45,6 +45,17 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{}} Checking_For_UpdatesInputs */
 /** @typedef {{}} Choose_What_S_Visible_And_WhereInputs */
 /** @typedef {{}} ClassicInputs */
+/** @typedef {{}} Claude_DesktopInputs */
+/** @typedef {{}} Claude_Desktop_ActiveInputs */
+/** @typedef {{}} Claude_Desktop_AddInputs */
+/** @typedef {{}} Claude_Desktop_Add_ButtonInputs */
+/** @typedef {{}} Claude_Desktop_Add_HintInputs */
+/** @typedef {{}} Claude_Desktop_Add_PlaceholderInputs */
+/** @typedef {{}} Claude_Desktop_NoneInputs */
+/** @typedef {{}} Claude_Desktop_SwitchInputs */
+/** @typedef {{ error: NonNullable<unknown> }} Claude_Desktop_Switch_FailedInputs */
+/** @typedef {{}} Claude_Desktop_Switch_NoteInputs */
+/** @typedef {{}} Claude_Desktop_SwitchingInputs */
 /** @typedef {{}} Clear_ShortcutInputs */
 /** @typedef {{}} Click_Again_To_ConfirmInputs */
 /** @typedef {{}} Click_To_Record_A_ShortcutInputs */
@@ -962,6 +973,182 @@ export const classic = /** @type {((inputs?: ClassicInputs, options?: { locale?:
 	if (locale === "ko") return __ko.classic(inputs)
 	if (locale === "es") return __es.classic(inputs)
 	return __en.classic(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Claude Desktop" |
+*
+* @param {Claude_DesktopInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop = /** @type {((inputs?: Claude_DesktopInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_DesktopInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop(inputs)
+	if (locale === "ko") return __ko.claude_desktop(inputs)
+	if (locale === "es") return __es.claude_desktop(inputs)
+	return __en.claude_desktop(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Active" |
+*
+* @param {Claude_Desktop_ActiveInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_active = /** @type {((inputs?: Claude_Desktop_ActiveInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_ActiveInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_active(inputs)
+	if (locale === "ko") return __ko.claude_desktop_active(inputs)
+	if (locale === "es") return __es.claude_desktop_active(inputs)
+	return __en.claude_desktop_active(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Add account" |
+*
+* @param {Claude_Desktop_AddInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_add = /** @type {((inputs?: Claude_Desktop_AddInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_AddInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_add(inputs)
+	if (locale === "ko") return __ko.claude_desktop_add(inputs)
+	if (locale === "es") return __es.claude_desktop_add(inputs)
+	return __en.claude_desktop_add(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Add" |
+*
+* @param {Claude_Desktop_Add_ButtonInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_add_button = /** @type {((inputs?: Claude_Desktop_Add_ButtonInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_Add_ButtonInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_add_button(inputs)
+	if (locale === "ko") return __ko.claude_desktop_add_button(inputs)
+	if (locale === "es") return __es.claude_desktop_add_button(inputs)
+	return __en.claude_desktop_add_button(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Opens Terminal to save an account under this name. Claude quits and reopens at its sign-in screen so you can sign in as it; the current account comes back if..." |
+*
+* @param {Claude_Desktop_Add_HintInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_add_hint = /** @type {((inputs?: Claude_Desktop_Add_HintInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_Add_HintInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_add_hint(inputs)
+	if (locale === "ko") return __ko.claude_desktop_add_hint(inputs)
+	if (locale === "es") return __es.claude_desktop_add_hint(inputs)
+	return __en.claude_desktop_add_hint(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "work" |
+*
+* @param {Claude_Desktop_Add_PlaceholderInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_add_placeholder = /** @type {((inputs?: Claude_Desktop_Add_PlaceholderInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_Add_PlaceholderInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_add_placeholder(inputs)
+	if (locale === "ko") return __ko.claude_desktop_add_placeholder(inputs)
+	if (locale === "es") return __es.claude_desktop_add_placeholder(inputs)
+	return __en.claude_desktop_add_placeholder(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "No Claude Desktop accounts saved yet. Add the one the app is signed in as, then any other." |
+*
+* @param {Claude_Desktop_NoneInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_none = /** @type {((inputs?: Claude_Desktop_NoneInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_NoneInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_none(inputs)
+	if (locale === "ko") return __ko.claude_desktop_none(inputs)
+	if (locale === "es") return __es.claude_desktop_none(inputs)
+	return __en.claude_desktop_none(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Switch" |
+*
+* @param {Claude_Desktop_SwitchInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_switch = /** @type {((inputs?: Claude_Desktop_SwitchInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_SwitchInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_switch(inputs)
+	if (locale === "ko") return __ko.claude_desktop_switch(inputs)
+	if (locale === "es") return __es.claude_desktop_switch(inputs)
+	return __en.claude_desktop_switch(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Switch failed: {error}" |
+*
+* @param {Claude_Desktop_Switch_FailedInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_switch_failed = /** @type {((inputs: Claude_Desktop_Switch_FailedInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_Switch_FailedInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_switch_failed(inputs)
+	if (locale === "ko") return __ko.claude_desktop_switch_failed(inputs)
+	if (locale === "es") return __es.claude_desktop_switch_failed(inputs)
+	return __en.claude_desktop_switch_failed(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Switching quits and reopens the Claude app; your local history moves to the account you switch to." |
+*
+* @param {Claude_Desktop_Switch_NoteInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_switch_note = /** @type {((inputs?: Claude_Desktop_Switch_NoteInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_Switch_NoteInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_switch_note(inputs)
+	if (locale === "ko") return __ko.claude_desktop_switch_note(inputs)
+	if (locale === "es") return __es.claude_desktop_switch_note(inputs)
+	return __en.claude_desktop_switch_note(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Switching…" |
+*
+* @param {Claude_Desktop_SwitchingInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const claude_desktop_switching = /** @type {((inputs?: Claude_Desktop_SwitchingInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Claude_Desktop_SwitchingInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.claude_desktop_switching(inputs)
+	if (locale === "ko") return __ko.claude_desktop_switching(inputs)
+	if (locale === "es") return __es.claude_desktop_switching(inputs)
+	return __en.claude_desktop_switching(inputs)
 });
 /**
 * | output |

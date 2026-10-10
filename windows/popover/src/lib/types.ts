@@ -242,7 +242,7 @@ export interface Accent {
 }
 
 export interface Payload {
-  /** Switchable logins keyed by vendor slug ("anthropic", "openai"); empty off macOS. */
+  /** Switchable logins keyed by vendor slug ("anthropic", "openai", "claude-desktop"); empty off macOS. */
   accounts: Record<string, AccountSwitchInfo>;
   accent: Accent | null;
   entries: Entry[];
