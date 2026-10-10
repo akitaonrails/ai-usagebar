@@ -360,12 +360,15 @@ export function panelCells(entry, options) {
             metrics.push(s);
     }
     const chosen = metrics.length ? metrics : grouped;
-    return chosen.slice(0, max).map(s => ({
-        label: shortLabel(s.label),
-        text: s.percent === null ? s.value : `${s.percent}%`,
-        severity: s.severity,
-        percent: s.percent,
-    }));
+    return chosen.slice(0, max).map(s => {
+        const showsValue = s.headline === 'value' && s.value !== '';
+        return {
+            label: shortLabel(s.label),
+            text: showsValue ? s.value : (s.percent === null ? s.value : `${s.percent}%`),
+            severity: s.severity,
+            percent: s.percent,
+        };
+    });
 }
 
 // The card view (viewMode "VendorCards") projects one card per entry the
@@ -413,15 +416,18 @@ export function cardFor(entry) {
         // An errored vendor outranks whatever its last good numbers said.
         accent: state === 'error' ? 'critical' : accent,
         error: state === 'error' ? errorMessage(entry.error) : '',
-        windows: entry.sections.filter(s => s.type === 'metric').map(s => ({
-            label: s.label,
-            window: shortLabel(s.label),
-            percent: s.percent,
-            value: s.percent === null ? s.value : `${s.percent}%`,
-            severity: s.severity,
-            resetAt: s.resetAt,
-            detail: metricDetail(s),
-        })),
+        windows: entry.sections.filter(s => s.type === 'metric').map(s => {
+            const showsValue = s.headline === 'value' && s.value !== '';
+            return {
+                label: s.label,
+                window: shortLabel(s.label),
+                percent: s.percent,
+                value: showsValue ? s.value : (s.percent === null ? s.value : `${s.percent}%`),
+                severity: s.severity,
+                resetAt: s.resetAt,
+                detail: metricDetail(s),
+            };
+        }),
         blocks: entry.sections.filter(s => s.type === 'block'),
     };
 }

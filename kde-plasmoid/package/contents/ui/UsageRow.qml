@@ -44,8 +44,11 @@ ColumnLayout {
             text: {
                 if (!item.row)
                     return "";
-                if (item.isMetric)
+                if (item.isMetric) {
+                    if (item.row.headline === "value" && item.row.value !== "")
+                        return item.row.value;
                     return item.row.percent === null ? item.row.value : item.row.percent + "%";
+                }
                 return item.row.value || "";
             }
             textFormat: Text.PlainText
