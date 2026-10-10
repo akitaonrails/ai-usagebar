@@ -2,6 +2,12 @@
 
 ### Added
 
+- **Claude Code mod to switch the Claude Desktop account** (`claude-code-mod/`).
+  `/claude-account` in a Claude Code session opens a pane with the saved
+  Desktop accounts, each with its quota windows, and switches the app with
+  `account switch --desktop` after a dry run. The switch is handed to launchd
+  so it outlives Claude.app quitting, which takes the session down with it.
+
 - **Ollama Cloud provider mark in the Omarchy bar and panel.** Ship the
   monochrome Lobe Icons SVG under MIT, with source provenance and the
   existing LobeHub licence notice. The same mark is used for custom

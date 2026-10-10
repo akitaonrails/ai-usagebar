@@ -342,6 +342,11 @@ vendor's response shape drifts:
   own Node contract tests. `gnome-extension/report-model.js` projects
   `usage --json` for the provider submenus; the top bar still uses the format
   string.
+- `claude-code-mod/` — Claude Code mod (function hooks, TypeScript): `/claude-account`
+  switches the Claude Desktop account through `account switch --desktop`, handed
+  to `launchctl submit` so it outlives Claude.app. Reads `account status --json`
+  and `usage --json` only; tests mock `$.process`. Checked with
+  `claude plugin validate|test claude-code-mod`, not by `make test`.
 - `kde-plasmoid/` — KDE Plasma 6 plasmoid (KPackage). Vendor selection is
   per applet instance via KConfigXT. Its single `usage --json` request omits
   `--vendor`; selection happens client-side, so it never reads

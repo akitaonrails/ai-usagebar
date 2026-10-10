@@ -890,6 +890,7 @@ Quattro: one chip with the selected provider's logo, short name and highest perc
 | [KDE Plasma 6](kde-plasmoid/README.md) | Whatever `usage --json` reports | Provider tabs in the popup; vendor is per applet instance. |
 | [Linux Mint / Cinnamon](linux-mint/README.md) | Whatever `usage --json` reports | Experimental GTK dashboard with provider icons; left-click the status icon. |
 | [Windows tray](windows/README.md) | Whatever `usage --json` reports | NotifyIcon + WebView2 popover; left-click the tray icon. |
+| [Claude Code mod](claude-code-mod/README.md) | Claude (Desktop accounts) | `/claude-account` in a Claude Code session: switch the Claude Desktop account, each with its quota. macOS. |
 
 The GNOME click menu includes Cursor when enabled in `config.toml`; the
 top bar still supports the providers listed in its preferences.
