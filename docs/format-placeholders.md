@@ -179,13 +179,22 @@ cumulative usage (the API reports it in US cents; `275` renders as `$2.75`).
 `{mst_session_elapsed}`, `{mst_session_pace}`,
 `{mst_session_pace_indicator}`, `{mst_weekly_pct}`, `{mst_weekly_reset}`,
 `{mst_weekly_elapsed}`, `{mst_weekly_pace}`,
-`{mst_weekly_pace_indicator}`
+`{mst_weekly_pace_indicator}`, `{mst_monthly_pct}`, `{mst_monthly_reset}`,
+`{mst_monthly_elapsed}`, `{mst_monthly_pace}`,
+`{mst_monthly_pace_indicator}`
 
-The default bar format is `5h {mst_session_pct}% · 7d {mst_weekly_pct}%`.
+The default bar format is `5h {mst_session_pct}% · 7d {mst_weekly_pct}%`, with
+the `30d {mst_monthly_pct}%` window appended when the account reports it, and
+`30d {mst_monthly_pct}%` as the whole bar for a monthly-only account (the
+individual Token Plan's shape).
 `{session_*}` and `{weekly_*}` are cross-provider aliases. The API has no plan
 name, so `{mst_plan}` is always `Model Studio`. An absent window (no-data,
 possibly unlimited) expands to the empty string — never `0%`. The percentages
 are whole numbers: the wire carries ratios in `[0,1]` (`0.4217` → `42`).
+`{mst_monthly_elapsed}`, `{mst_monthly_pace}` and
+`{mst_monthly_pace_indicator}` are always empty: the monthly cycle length is
+plan-dependent (28–31 days), so pacing would guess a denominator rather than
+measure one.
 `{orc_limit}` and `{orc_remaining}` render `unlimited` for unlimited-quota
 keys — the API's `100000000` sentinel is collapsed to "no limit" rather than a
 $100M wallet, and `{orc_consumed_pct}` renders `—`. `{orc_expires}` counts

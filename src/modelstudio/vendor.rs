@@ -1,14 +1,21 @@
-//! Model Studio renderer — bar text + bordered Pango tooltip. A dual-window
-//! vendor (the Codex/Kimi shape): a 5-hour and a weekly window, each with its
-//! own percent and reset, either of which the account may not report. An
+//! Model Studio renderer — bar text + bordered Pango tooltip. A three-window
+//! vendor: a 5-hour, a weekly and a monthly window, each with its own percent
+//! and reset, any of which the account may not report (accounts differ — some
+//! carry all three, the individual Token Plan reports only the monthly). An
 //! absent window is rendered absent — never as 0%, which would invent an
-//! exhaustion the wire never claimed (it may even mean unlimited).
+//! exhaustion the wire never claimed (it may even mean unlimited). Like OpenCode
+//! Go's monthly, the monthly window keeps its reset countdown but no pace
+//! glyphs: the cycle length is plan-dependent (28–31 days), so there is no
+//! exact denominator to pace against.
 
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::format::{placeholders, substitute, updated_at_hm, window_placeholders};
+use crate::countdown;
+use crate::format::{
+    WindowPlaceholders, placeholders, substitute, updated_at_hm, window_placeholders,
+};
 use crate::pacing::PaceSeverity;
 use crate::pango::{color_span, escape, severity_color, severity_for};
 use crate::theme::Theme;
@@ -24,7 +31,13 @@ use super::fetch::FetchOutcome;
 pub const PLAN_LABEL: &str = "Model Studio";
 
 pub const DEFAULT_FORMAT: &str = "5h {mst_session_pct}% · 7d {mst_weekly_pct}%";
+const SESSION_ONLY_FORMAT: &str = "5h {mst_session_pct}%";
 const WEEKLY_ONLY_FORMAT: &str = "7d {mst_weekly_pct}% · {mst_weekly_reset}";
+const MONTHLY_ONLY_FORMAT: &str = "30d {mst_monthly_pct}%";
+const SESSION_AND_MONTHLY_FORMAT: &str = "5h {mst_session_pct}% · 30d {mst_monthly_pct}%";
+const WEEKLY_AND_MONTHLY_FORMAT: &str = "7d {mst_weekly_pct}% · 30d {mst_monthly_pct}%";
+const THREE_WINDOWS_FORMAT: &str =
+    "5h {mst_session_pct}% · 7d {mst_weekly_pct}% · 30d {mst_monthly_pct}%";
 const NO_WINDOWS_FORMAT: &str = "{plan}";
 
 pub fn build_placeholders(
@@ -34,6 +47,7 @@ pub fn build_placeholders(
 ) -> HashMap<&'static str, String> {
     let session = window_placeholders(snap.session.as_ref(), opts, now);
     let weekly = window_placeholders(snap.weekly.as_ref(), opts, now);
+    let monthly = monthly_placeholders(snap.monthly.as_ref(), now);
 
     placeholders(vec![
         ("icon", VendorId::ModelStudio.bar_icon().to_string()),
@@ -64,17 +78,47 @@ pub fn build_placeholders(
         ("mst_weekly_elapsed", weekly.elapsed),
         ("mst_weekly_pace", weekly.ratio_pace),
         ("mst_weekly_pace_indicator", weekly.point_pace),
+        // Monthly. Elapsed/pace stay empty on purpose — see
+        // `monthly_placeholders`.
+        ("mst_monthly_pct", monthly.pct),
+        ("mst_monthly_reset", monthly.reset),
+        ("mst_monthly_elapsed", monthly.elapsed),
+        ("mst_monthly_pace", monthly.ratio_pace),
+        ("mst_monthly_pace_indicator", monthly.point_pace),
     ])
+}
+
+/// Monthly window placeholder values. The percentage and reset countdown ride
+/// as usual; the elapsed/pace figures are deliberately empty, mirroring OpenCode
+/// Go's monthly: the Token Plan's monthly cycle length is plan-dependent (28–31
+/// days), so pacing would guess a denominator rather than measure one. Absent
+/// monthly windows yield empty strings, the missing-placeholder convention.
+fn monthly_placeholders(
+    window: Option<&crate::usage::UsageWindow>,
+    now: DateTime<Utc>,
+) -> WindowPlaceholders {
+    match window {
+        None => WindowPlaceholders::default(),
+        Some(window) => WindowPlaceholders {
+            pct: window.utilization_pct.to_string(),
+            reset: countdown::format(window.resets_at, now),
+            ..WindowPlaceholders::default()
+        },
+    }
 }
 
 /// Worst of the windows the account actually reports.
 pub fn severity(snap: &ModelStudioSnapshot) -> PaceSeverity {
-    let max = [snap.session.as_ref(), snap.weekly.as_ref()]
-        .into_iter()
-        .flatten()
-        .map(|window| window.utilization_pct)
-        .max()
-        .unwrap_or(0);
+    let max = [
+        snap.session.as_ref(),
+        snap.weekly.as_ref(),
+        snap.monthly.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|window| window.utilization_pct)
+    .max()
+    .unwrap_or(0);
     severity_for(max)
 }
 
@@ -118,13 +162,20 @@ pub fn render(
 }
 
 fn default_format(snap: &ModelStudioSnapshot) -> &'static str {
-    if snap.session.is_some() {
-        return DEFAULT_FORMAT;
+    match (
+        snap.session.is_some(),
+        snap.weekly.is_some(),
+        snap.monthly.is_some(),
+    ) {
+        (true, true, true) => THREE_WINDOWS_FORMAT,
+        (true, false, true) => SESSION_AND_MONTHLY_FORMAT,
+        (false, true, true) => WEEKLY_AND_MONTHLY_FORMAT,
+        (false, false, true) => MONTHLY_ONLY_FORMAT,
+        (true, true, false) => DEFAULT_FORMAT,
+        (true, false, false) => SESSION_ONLY_FORMAT,
+        (false, true, false) => WEEKLY_ONLY_FORMAT,
+        (false, false, false) => NO_WINDOWS_FORMAT,
     }
-    if snap.weekly.is_some() {
-        return WEEKLY_ONLY_FORMAT;
-    }
-    NO_WINDOWS_FORMAT
 }
 
 fn render_tooltip(
@@ -153,7 +204,16 @@ fn render_tooltip(
         }
         push_window(&mut lines, "  󰃰  Token Plan 7d", weekly, theme, now, None);
     }
-    if snap.session.is_none() && snap.weekly.is_none() {
+    if let Some(monthly) = snap.monthly.as_ref() {
+        if snap.session.is_some() || snap.weekly.is_some() {
+            lines.push(TooltipLine::Body("".into()));
+        }
+        // A plain bar, no pace marker or glyph: the monthly cycle length is
+        // plan-dependent (like OpenCode Go's), so there is no exact window to
+        // pace against.
+        push_window(&mut lines, "  󰃯  Token Plan 30d", monthly, theme, now, None);
+    }
+    if snap.session.is_none() && snap.weekly.is_none() && snap.monthly.is_none() {
         lines.push(TooltipLine::Body(format!(
             " <span foreground='{dim}'>  no usage windows reported</span>"
         )));
@@ -221,6 +281,7 @@ mod tests {
                 resets_at: Some(now() + chrono::Duration::days(3)),
                 window_duration: chrono::Duration::days(7),
             }),
+            monthly: None,
         }
     }
 
@@ -270,6 +331,7 @@ mod tests {
         let s = ModelStudioSnapshot {
             session: None,
             weekly: Some(window(74, 200)),
+            monthly: None,
         };
         let out = render(&outcome(&s), &s, &Theme::default(), &opts(), now());
         assert!(out.text.contains("74%"), "{}", out.text);
@@ -295,6 +357,7 @@ mod tests {
         let s = ModelStudioSnapshot {
             session: None,
             weekly: None,
+            monthly: None,
         };
         let out = render(&outcome(&s), &s, &Theme::default(), &opts(), now());
         assert!(!out.text.contains("0%"), "{}", out.text);
@@ -304,14 +367,86 @@ mod tests {
         assert_eq!(severity(&s), PaceSeverity::Low);
     }
 
+    /// An account that reports only the monthly window (the individual Token
+    /// Plan shape — no 5h/weekly quotas) renders the monthly bar with its
+    /// reset, not "no usage windows reported".
+    #[test]
+    fn a_monthly_only_account_renders_the_monthly_window() {
+        let s = ModelStudioSnapshot {
+            session: None,
+            weekly: None,
+            monthly: Some(window(100, 20_000)),
+        };
+        let out = render(&outcome(&s), &s, &Theme::default(), &opts(), now());
+        assert!(out.text.contains("30d 100%"), "{}", out.text);
+        assert!(!out.text.contains("5h"), "{}", out.text);
+        assert!(!out.text.contains("7d"), "{}", out.text);
+        let tip = render_tooltip(&outcome(&s), &s, &Theme::default(), now());
+        assert!(tip.contains("Token Plan 30d"), "{tip}");
+        assert!(!tip.contains("no usage windows reported"), "{tip}");
+
+        let values = build_placeholders(&s, &opts(), now());
+        assert_eq!(
+            values.get("mst_monthly_pct").map(String::as_str),
+            Some("100")
+        );
+        assert_eq!(
+            values.get("mst_monthly_elapsed").map(String::as_str),
+            Some(""),
+            "no pace against a guessed monthly denominator"
+        );
+        assert_eq!(values.get("mst_monthly_pace").map(String::as_str), Some(""));
+        assert_eq!(
+            values.get("mst_monthly_pace_indicator").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(severity(&s), severity_for(100));
+    }
+
+    /// All three windows present: the default bar shows 5h · 7d · 30d in
+    /// window order, and the tooltip draws a plain bar per window.
+    #[test]
+    fn all_three_windows_render_in_order() {
+        let s = ModelStudioSnapshot {
+            session: Some(window(42, 90)),
+            weekly: Some(UsageWindow {
+                utilization_pct: 74,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            }),
+            monthly: Some(window(100, 20_000)),
+        };
+        let out = render(&outcome(&s), &s, &Theme::default(), &opts(), now());
+        assert!(out.text.contains("5h 42%"), "{}", out.text);
+        assert!(out.text.contains("7d 74%"), "{}", out.text);
+        assert!(out.text.contains("30d 100%"), "{}", out.text);
+        let tip = render_tooltip(&outcome(&s), &s, &Theme::default(), now());
+        let cells = tip.matches('░').count() + tip.matches('█').count();
+        assert_eq!(cells, 3 * crate::pango::BAR_LEN as usize, "{tip}");
+        assert!(
+            tip.contains("Token Plan 5h")
+                && tip.contains("Token Plan 7d")
+                && tip.contains("Token Plan 30d"),
+            "{tip}"
+        );
+        assert_eq!(severity(&s), severity_for(100));
+    }
+
     #[test]
     fn severity_is_the_worst_reported_window() {
         assert_eq!(severity(&snap()), severity_for(74));
         let s = ModelStudioSnapshot {
             session: Some(window(97, 10)),
             weekly: Some(window(12, 300)),
+            monthly: None,
         };
         assert_eq!(severity(&s), severity_for(97));
+        let s = ModelStudioSnapshot {
+            session: None,
+            weekly: None,
+            monthly: Some(window(100, 20_000)),
+        };
+        assert_eq!(severity(&s), severity_for(100));
     }
 
     #[test]

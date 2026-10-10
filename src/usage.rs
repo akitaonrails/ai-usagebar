@@ -1048,8 +1048,8 @@ impl OrcaRouterSnapshot {
     }
 }
 
-/// Alibaba Cloud Model Studio Token Plan — a 5-hour and a weekly ratio
-/// window, either of which the console account may not report. An absent
+/// Alibaba Cloud Model Studio Token Plan — a 5-hour, a weekly and a monthly
+/// ratio window, any of which the console account may not report. An absent
 /// window is no-data (possibly unlimited), never 0%.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelStudioSnapshot {
@@ -1057,6 +1057,11 @@ pub struct ModelStudioSnapshot {
     pub session: Option<UsageWindow>,
     /// Weekly window. `None` when `per1WeekPercentage` was absent.
     pub weekly: Option<UsageWindow>,
+    /// Monthly window. `None` when `per1MonthPercentage` was absent. The
+    /// reset is exact; the cycle length is plan-dependent, so no exact
+    /// window duration is declared for it (same rule as Ollama's calendar
+    /// month) and pacing is omitted wherever it would guess a denominator.
+    pub monthly: Option<UsageWindow>,
 }
 
 /// Devin CLI quota snapshot. The CLI reports remaining percentages, while
