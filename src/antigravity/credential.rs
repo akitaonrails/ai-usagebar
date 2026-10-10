@@ -293,6 +293,10 @@ fn keyring_lookup_command() -> std::process::Command {
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    // A credential lookup must not inherit this process's provider keys.
+    for var in crate::vendor::vendor_secret_env_vars_to_remove(&[]) {
+        command.env_remove(var);
+    }
     command
 }
 
@@ -323,6 +327,10 @@ fn keyring_lookup_command() -> std::process::Command {
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    // A credential lookup must not inherit this process's provider keys.
+    for var in crate::vendor::vendor_secret_env_vars_to_remove(&[]) {
+        command.env_remove(var);
+    }
     command
 }
 
