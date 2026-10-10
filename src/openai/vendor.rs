@@ -143,14 +143,15 @@ pub fn render(
         .unwrap_or_else(|| default_format(snap).to_string());
     let mut values = build_placeholders(snap, opts, now);
     // Both sinks fed by this map (bar text and --tooltip-format) are Pango
-    // markup. The plan label and model names are API-controlled, so escape
-    // their aliases at the projection boundary. The default tooltip escapes
-    // the raw snapshot.
+    // markup. The plan label, model names and the credit balance string are
+    // API-controlled, so escape their aliases at the projection boundary. The
+    // default tooltip escapes the raw snapshot.
     for key in [
         "plan",
         "oai_plan",
         "oai_extra_limits",
         "oai_unavailable_models",
+        "oai_credit_balance",
     ] {
         if let Some(value) = values.get_mut(key) {
             *value = escape(value);
@@ -590,5 +591,28 @@ mod tests {
                 .contains("ChatGPT Pro &amp; Enterprise &lt;preview&gt;")
         );
         assert_eq!(out.tooltip, "ChatGPT Pro &amp; Enterprise &lt;preview&gt;");
+    }
+
+    #[test]
+    fn api_credit_balance_is_pango_escaped_in_custom_formats() {
+        // The balance stays the string OpenAI sent whenever it is not a plain
+        // number, so it is API-controlled text like the plan.
+        let mut s = sample();
+        s.credits = Some(crate::usage::OpenAiCredits {
+            balance: "<n/a> & unknown".into(),
+            has_credits: false,
+            unlimited: false,
+            approx_local_messages: None,
+            approx_cloud_messages: None,
+        });
+        let mut o = opts();
+        o.format = Some("{oai_credit_balance}".into());
+        o.tooltip_format = Some("{oai_credit_balance}".into());
+
+        let out = render(&oc(s.clone()), &s, &Theme::default(), &o, Utc::now());
+        let escaped = "&lt;n/a&gt; &amp; unknown";
+        assert!(out.text.contains(escaped), "{}", out.text);
+        assert!(!out.text.contains("<n/a>"), "{}", out.text);
+        assert_eq!(out.tooltip, escaped);
     }
 }
