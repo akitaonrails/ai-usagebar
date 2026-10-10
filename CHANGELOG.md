@@ -28,6 +28,12 @@
 
 ### Fixed
 
+- **Nous Research credit amounts no longer display a trailing decimal point.**
+  When a credit balance had a fractional remainder that rounded to zero within
+  six decimal places (such as floating-point residue near a whole number),
+  trimming trailing zeros stripped the digits but retained the decimal point,
+  displaying values like "1." or "0.". Trailing dots are now stripped so whole
+  and rounded credit values format cleanly.
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
