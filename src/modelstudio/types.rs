@@ -9,8 +9,9 @@
 //! - The response wraps the payload in a **double "DataV2" envelope** with
 //!   several tolerated depths; the CLI's unwrap order is reproduced exactly
 //!   in [`unwrap_payload`].
-//! - `per5HourPercentage` / `per1WeekPercentage` are **ratios in [0, 1]**,
-//!   not percents — `0.4217` means 42%. Reset times are epoch **milliseconds**.
+//! - `per5HourPercentage` / `per1WeekPercentage` / `per1MonthPercentage` are
+//!   **ratios in [0, 1]**, not percents — `0.4217` means 42%. Reset times are
+//!   epoch **milliseconds**.
 
 use chrono::DateTime;
 use serde_json::Value;
@@ -157,18 +158,30 @@ pub fn form_body(region: ConsoleRegion) -> String {
 pub struct UsageFields {
     pub per5_hour_percentage: Option<f64>,
     pub per1_week_percentage: Option<f64>,
+    pub per1_month_percentage: Option<f64>,
     pub per5_hour_reset_ms: Option<i64>,
     pub per1_week_reset_ms: Option<i64>,
+    pub per1_month_reset_ms: Option<i64>,
 }
 
 /// The CLI's tolerant unwrap, verbatim:
 /// `data.DataV2?.data?.data ?? data.DataV2?.data ?? data.DataV2 ?? data.data ?? data`.
+///
+/// The live gateway dispatcher always wraps the response in the mandated
+/// outer `data` object — real captures read `{code, data: {DataV2: {data:
+/// {data: {…fields…}}}}}` — so every CLI path starts from that `data` key.
+/// (An unwrap that only searched for a top-level `DataV2` fell through to the
+/// `data` fallback and never reached the fields: the provider rendered "no
+/// usage windows reported" even on healthy sessions.) The bare
+/// `DataV2`-first spellings are kept as a second pass for gateway cells that
+/// answer without the outer wrapper.
+///
 /// JSON `null` counts as absent, like JS `null`/`undefined` under `??`.
 pub fn unwrap_payload(root: &Value) -> &Value {
     fn present(v: Option<&Value>) -> Option<&Value> {
         v.filter(|v| !v.is_null())
     }
-    let datav2 = root.get("DataV2");
+    let datav2 = root.get("data").and_then(|d| d.get("DataV2"));
     present(
         datav2
             .and_then(|d| d.get("data"))
@@ -176,7 +189,15 @@ pub fn unwrap_payload(root: &Value) -> &Value {
     )
     .or_else(|| present(datav2.and_then(|d| d.get("data"))))
     .or_else(|| present(datav2))
+    .or_else(|| present(root.get("data").and_then(|d| d.get("data"))))
     .or_else(|| present(root.get("data")))
+    // Older spellings without the outer `data` wrapper.
+    .or_else(|| {
+        let bare = root.get("DataV2");
+        present(bare.and_then(|d| d.get("data")).and_then(|d| d.get("data")))
+            .or_else(|| present(bare.and_then(|d| d.get("data"))))
+            .or_else(|| present(bare))
+    })
     .unwrap_or(root)
 }
 
@@ -202,8 +223,10 @@ pub fn parse_response(bytes: &[u8]) -> Result<UsageFields> {
     Ok(UsageFields {
         per5_hour_percentage: ratio(payload, "per5HourPercentage")?,
         per1_week_percentage: ratio(payload, "per1WeekPercentage")?,
+        per1_month_percentage: ratio(payload, "per1MonthPercentage")?,
         per5_hour_reset_ms: epoch_ms(payload, "per5HourResetTime")?,
         per1_week_reset_ms: epoch_ms(payload, "per1WeekResetTime")?,
+        per1_month_reset_ms: epoch_ms(payload, "per1MonthResetTime")?,
     })
 }
 
@@ -260,6 +283,12 @@ fn drift(field: &str, why: &str) -> AppError {
 pub const FIVE_HOUR_WINDOW: chrono::Duration = chrono::Duration::hours(5);
 /// The weekly window's length.
 pub const WEEKLY_WINDOW: chrono::Duration = chrono::Duration::days(7);
+/// The monthly window's *nominal* length. The real cycle is plan-dependent
+/// (anywhere from 28 to 31 days — the reset travels on `resets_at`), so like
+/// Ollama's calendar month and OpenCode Go's monthly, this drives nothing that
+/// would be wrong when the cycle runs short or long: bars, triggers and resets
+/// all come from the reported reset, and pacing is deliberately omitted.
+pub const MONTHLY_WINDOW: chrono::Duration = chrono::Duration::days(30);
 
 impl UsageFields {
     pub fn to_snapshot(&self) -> Result<ModelStudioSnapshot> {
@@ -292,6 +321,11 @@ impl UsageFields {
                 self.per1_week_reset_ms,
                 WEEKLY_WINDOW,
             )?,
+            monthly: window(
+                self.per1_month_percentage,
+                self.per1_month_reset_ms,
+                MONTHLY_WINDOW,
+            )?,
         })
     }
 }
@@ -323,6 +357,8 @@ mod tests {
                         "per5HourResetTime": 1789200000000_i64,
                         "per1WeekPercentage": 0.7356,
                         "per1WeekResetTime": 1789600000000_i64,
+                        "per1MonthPercentage": 1.0,
+                        "per1MonthResetTime": 1794067200000_i64,
                     }
                 }
             }
@@ -432,12 +468,15 @@ mod tests {
         let fields = parse_response(full_envelope().as_bytes()).unwrap();
         assert_eq!(fields.per5_hour_percentage, Some(0.4217));
         assert_eq!(fields.per1_week_percentage, Some(0.7356));
+        assert_eq!(fields.per1_month_percentage, Some(1.0));
         assert_eq!(fields.per5_hour_reset_ms, Some(1_789_200_000_000));
         assert_eq!(fields.per1_week_reset_ms, Some(1_789_600_000_000));
+        assert_eq!(fields.per1_month_reset_ms, Some(1_794_067_200_000));
 
         let snap = fields.to_snapshot().unwrap();
         assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 42);
         assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 74);
+        assert_eq!(snap.monthly.as_ref().unwrap().utilization_pct, 100);
         assert_eq!(
             snap.session.as_ref().unwrap().resets_at,
             DateTime::from_timestamp_millis(1_789_200_000_000)
@@ -447,6 +486,66 @@ mod tests {
             FIVE_HOUR_WINDOW
         );
         assert_eq!(snap.weekly.as_ref().unwrap().window_duration, WEEKLY_WINDOW);
+        assert_eq!(
+            snap.monthly.as_ref().unwrap().resets_at,
+            DateTime::from_timestamp_millis(1_794_067_200_000)
+        );
+    }
+
+    /// The live gateway wraps the dispatch in the mandated outer `data` object
+    /// (`{code, data: {DataV2: …}}`) — the spelling real captures carry. The
+    /// CLI's unwrap starts from that `data` key; an unwrap that only searched
+    /// for a top-level `DataV2` fell through to the `data` fallback and never
+    /// reached any field, rendering "no usage windows reported" on healthy
+    /// sessions.
+    #[test]
+    fn the_real_gateway_data_envelope_unwraps_to_the_fields() {
+        let fields = parse_response(
+            br#"{"code":"200","data":{"DataV2":{"ret":["SUCCESS::ok"],"data":{
+                "msg":"Success.","code":"SUCCESS","data":{
+                    "per5HourPercentage":0.4217,
+                    "per5HourResetTime":1789200000000,
+                    "per1WeekPercentage":0.7356,
+                    "per1WeekResetTime":1789600000000,
+                    "per1MonthPercentage":1.0,
+                    "per1MonthResetTime":1794067200000
+                },"requestId":"rid-test","success":true}}},
+                "httpStatusCode":"200","successResponse":true}"#,
+        )
+        .unwrap();
+        assert_eq!(fields.per5_hour_percentage, Some(0.4217));
+        assert_eq!(fields.per1_week_percentage, Some(0.7356));
+        assert_eq!(fields.per1_month_percentage, Some(1.0));
+        assert_eq!(fields.per5_hour_reset_ms, Some(1_789_200_000_000));
+        assert_eq!(fields.per1_week_reset_ms, Some(1_789_600_000_000));
+        assert_eq!(fields.per1_month_reset_ms, Some(1_794_067_200_000));
+
+        let snap = fields.to_snapshot().unwrap();
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 42);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 74);
+        assert_eq!(snap.monthly.as_ref().unwrap().utilization_pct, 100);
+    }
+
+    /// An account that reports only the monthly window (the individual Token
+    /// Plan shape — no 5h/weekly quotas) still yields a usable snapshot: the
+    /// monthly window, exactly as the console shows it.
+    #[test]
+    fn a_monthly_only_envelope_is_a_monthly_window() {
+        let fields = parse_response(
+            br#"{"data":{"per1MonthPercentage":1.0,"per1MonthResetTime":1794067200000}}"#,
+        )
+        .unwrap();
+        assert_eq!(fields.per5_hour_percentage, None);
+        assert_eq!(fields.per1_week_percentage, None);
+        assert_eq!(fields.per1_month_percentage, Some(1.0));
+        let snap = fields.to_snapshot().unwrap();
+        assert!(snap.session.is_none(), "{snap:?}");
+        assert!(snap.weekly.is_none(), "{snap:?}");
+        assert_eq!(snap.monthly.as_ref().unwrap().utilization_pct, 100);
+        assert_eq!(
+            snap.monthly.as_ref().unwrap().resets_at,
+            DateTime::from_timestamp_millis(1_794_067_200_000)
+        );
     }
 
     #[test]
@@ -482,16 +581,18 @@ mod tests {
         assert_eq!(fields.per1_week_percentage, Some(0.25));
     }
 
-    /// `DataV2?.data?.data` wins over the shallower spellings, exactly like
-    /// the CLI's left-to-right `??` chain.
+    /// `data.DataV2?.data?.data` wins over the shallower spellings, exactly
+    /// like the CLI's left-to-right `??` chain — starting from the outer
+    /// `data` wrapper the live dispatcher always emits.
     #[test]
     fn deeper_envelope_beats_the_shallower_ones() {
+        // Real gateway spelling: the mandated outer `data` wrapper.
         let v = serde_json::json!({
-            "DataV2": { "data": { "data": { "per5HourPercentage": 0.11 },
-                                   "per5HourPercentage": 0.22 },
-                        "per5HourPercentage": 0.33 },
-            "data": { "per5HourPercentage": 0.44 },
-            "per5HourPercentage": 0.55
+            "code": "200",
+            "data": { "DataV2": { "data": { "data": { "per5HourPercentage": 0.11 },
+                                            "per5HourPercentage": 0.22 },
+                                  "per5HourPercentage": 0.33 },
+                      "per5HourPercentage": 0.44 }
         });
         assert_eq!(
             unwrap_payload(&v)
@@ -500,10 +601,11 @@ mod tests {
             Some(0.11)
         );
 
-        // `DataV2?.data` is null: the chain skips to `DataV2` itself.
+        // `data.DataV2?.data` is null: the chain skips to `data.DataV2`
+        // itself.
         let v = serde_json::json!({
-            "DataV2": { "data": null, "per5HourPercentage": 0.33 },
-            "data": { "per5HourPercentage": 0.44 }
+            "data": { "DataV2": { "data": null, "per5HourPercentage": 0.33 },
+                      "per5HourPercentage": 0.44 }
         });
         assert_eq!(
             unwrap_payload(&v)
@@ -523,8 +625,12 @@ mod tests {
             Some(0.66)
         );
         let v = serde_json::json!({ "data": { "data": { "per5HourPercentage": 0.77 } } });
-        assert_eq!(unwrap_payload(&v), v.get("data").unwrap());
-        assert_eq!(unwrap_payload(&v).get("per5HourPercentage"), None);
+        assert_eq!(
+            unwrap_payload(&v)
+                .get("per5HourPercentage")
+                .and_then(Value::as_f64),
+            Some(0.77)
+        );
         // The final `?? data` is the root object itself.
         let v = serde_json::json!({ "per5HourPercentage": 0.55 });
         assert_eq!(
@@ -555,8 +661,10 @@ mod tests {
             let fields = UsageFields {
                 per5_hour_percentage: Some(ratio),
                 per1_week_percentage: None,
+                per1_month_percentage: None,
                 per5_hour_reset_ms: None,
                 per1_week_reset_ms: None,
+                per1_month_reset_ms: None,
             };
             assert_eq!(
                 fields

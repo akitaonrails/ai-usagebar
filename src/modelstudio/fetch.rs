@@ -15,8 +15,8 @@ use crate::vendor::{MAX_BODY_BYTES, read_body_capped};
 
 use super::creds::Credentials;
 use super::types::{
-    ConsoleRegion, ConsoleSite, FIVE_HOUR_WINDOW, WEEKLY_WINDOW, form_body, gateway_for,
-    parse_response, usage_path,
+    ConsoleRegion, ConsoleSite, FIVE_HOUR_WINDOW, MONTHLY_WINDOW, WEEKLY_WINDOW, form_body,
+    gateway_for, parse_response, usage_path,
 };
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -191,6 +191,7 @@ fn snap_to_json(snap: &ModelStudioSnapshot, fingerprint: &str) -> serde_json::Va
         "account": fingerprint,
         "session": window(&snap.session),
         "weekly": window(&snap.weekly),
+        "monthly": window(&snap.monthly),
     })
 }
 
@@ -234,6 +235,7 @@ fn parse_cache_at(bytes: &[u8], fingerprint: &str) -> Result<ModelStudioSnapshot
     Ok(ModelStudioSnapshot {
         session: window("session", FIVE_HOUR_WINDOW)?,
         weekly: window("weekly", WEEKLY_WINDOW)?,
+        monthly: window("monthly", MONTHLY_WINDOW)?,
     })
 }
 
@@ -273,14 +275,28 @@ mod tests {
     }
 
     fn usage_body() -> String {
+        // The real gateway envelope: the outer dispatcher `data` wrapper
+        // (`{code, data: {DataV2: {data: {data: {…fields…}}}}}`, as captured
+        // from the live endpoint). An unwrap that only looked for a top-level
+        // `DataV2` misses every window at this depth.
         serde_json::json!({
-            "success": true,
-            "DataV2": { "data": { "data": {
-                "per5HourPercentage": 0.4217,
-                "per5HourResetTime": 1789200000000_i64,
-                "per1WeekPercentage": 0.7356,
-                "per1WeekResetTime": 1789600000000_i64,
-            }}}
+            "code": "200",
+            "data": { "DataV2": { "ret": ["SUCCESS::接口调用成功"], "data": {
+                "msg": "Success.",
+                "code": "SUCCESS",
+                "data": {
+                    "per5HourPercentage": 0.4217,
+                    "per5HourResetTime": 1789200000000_i64,
+                    "per1WeekPercentage": 0.7356,
+                    "per1WeekResetTime": 1789600000000_i64,
+                    "per1MonthPercentage": 0.44,
+                    "per1MonthResetTime": 1794067200000_i64,
+                },
+                "requestId": "rid-t",
+                "success": true,
+            }}},
+            "httpStatusCode": "200",
+            "successResponse": true,
         })
         .to_string()
     }
@@ -370,6 +386,21 @@ mod tests {
                 .timestamp_millis(),
             1_789_600_000_000
         );
+        assert_eq!(
+            out.snapshot.monthly.as_ref().unwrap().utilization_pct,
+            44,
+            "the monthly window rides beside the 5h/weekly ones"
+        );
+        assert_eq!(
+            out.snapshot
+                .monthly
+                .as_ref()
+                .unwrap()
+                .resets_at
+                .unwrap()
+                .timestamp_millis(),
+            1_794_067_200_000
+        );
 
         // What was written is what the cache serves back.
         let stored = std::fs::read(cache.payload_path()).unwrap();
@@ -426,6 +457,7 @@ mod tests {
                 window_duration: FIVE_HOUR_WINDOW,
             }),
             weekly: None,
+            monthly: None,
         };
         cache
             .write_payload(&serde_json::to_vec(&snap_to_json(&snap, &c.fingerprint)).unwrap())
@@ -494,6 +526,7 @@ mod tests {
                 resets_at: None,
                 window_duration: WEEKLY_WINDOW,
             }),
+            monthly: None,
         };
         cache
             .write_payload(&serde_json::to_vec(&snap_to_json(&snap, &c.fingerprint)).unwrap())
@@ -526,6 +559,7 @@ mod tests {
                 resets_at: chrono::DateTime::from_timestamp_millis(1_789_600_000_000),
                 window_duration: WEEKLY_WINDOW,
             }),
+            monthly: None,
         };
         cache
             .write_payload(&serde_json::to_vec(&snap_to_json(&snap, &c.fingerprint)).unwrap())
@@ -567,6 +601,7 @@ mod tests {
                 window_duration: FIVE_HOUR_WINDOW,
             }),
             weekly: None,
+            monthly: None,
         };
         cache
             .write_payload(
@@ -605,6 +640,7 @@ mod tests {
                 window_duration: FIVE_HOUR_WINDOW,
             }),
             weekly: None,
+            monthly: None,
         };
         cache
             .write_payload(&serde_json::to_vec(&snap_to_json(&snap, &c.fingerprint)).unwrap())
@@ -639,6 +675,11 @@ mod tests {
                 resets_at: None,
                 window_duration: WEEKLY_WINDOW,
             }),
+            monthly: Some(UsageWindow {
+                utilization_pct: 100,
+                resets_at: chrono::DateTime::from_timestamp_millis(1_794_067_200_000),
+                window_duration: MONTHLY_WINDOW,
+            }),
         };
         let bytes = serde_json::to_vec(&snap_to_json(&snap, "fp")).unwrap();
         assert_eq!(parse_cache_at(&bytes, "fp").unwrap(), snap);
@@ -647,6 +688,7 @@ mod tests {
         let absent = ModelStudioSnapshot {
             session: None,
             weekly: None,
+            monthly: None,
         };
         let bytes = serde_json::to_vec(&snap_to_json(&absent, "fp")).unwrap();
         assert_eq!(parse_cache_at(&bytes, "fp").unwrap(), absent);

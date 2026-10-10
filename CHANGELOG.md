@@ -49,6 +49,21 @@
   utilization from included credits, and preserve billing resets and actual
   period lengths. Historical quota caches remain readable; usage-history
   payloads are rejected rather than silently accepted as empty limits.
+- **Model Studio reads the Token Plan's monthly window, not just the 5-hour
+  and weekly ones.** The gateway's `per1MonthPercentage`/`per1MonthResetTime`
+  fields were already present on accounts that report no 5-hour or weekly
+  quota (the individual Token Plan is one such shape), but neither
+  ai-usagebar nor the upstream `bl` CLI parsed them, leaving those accounts
+  on "no usage windows reported". Two things were wrong and both are fixed:
+  the tolerant unwrap reproduced the CLI verbatim (`data.DataV2?.data?.data
+  ?? …` — starting from the outer `data` the dispatcher always emits, never
+  a bare top-level `DataV2`), and the monthly window is parsed, cached,
+  rendered and documented. The monthly window draws its own bar with the
+  exact reset countdown in the widget, TUI, report JSON and popover cards.
+  Like OpenCode Go's monthly, it keeps the reset but no pace glyph — the
+  cycle length is plan-dependent (28–31 days), so pacing would guess a
+  denominator. New `30d {mst_monthly_pct}%` default bar text and
+  `{mst_monthly_pct|reset|elapsed|pace|pace_indicator}` placeholders.
 ## [1.34.0] — 2026-10-08
 
 ### Added

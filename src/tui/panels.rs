@@ -364,10 +364,14 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         }
         VendorSnapshot::ModelStudio(s) => {
             // Absent windows drop their cell — no-data is not 0%.
-            let cells = [("5h", s.session.as_ref()), ("wk", s.weekly.as_ref())]
-                .into_iter()
-                .filter_map(|(label, window)| window.map(|w| pct(label, w.utilization_pct)))
-                .collect::<Vec<_>>();
+            let cells = [
+                ("5h", s.session.as_ref()),
+                ("wk", s.weekly.as_ref()),
+                ("mo", s.monthly.as_ref()),
+            ]
+            .into_iter()
+            .filter_map(|(label, window)| window.map(|w| pct(label, w.utilization_pct)))
+            .collect::<Vec<_>>();
             (
                 crate::vendor::VendorId::ModelStudio
                     .display_name()
@@ -538,11 +542,13 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .max(),
         VendorSnapshot::SuperGrok(s) => Some(s.weekly_pct),
         VendorSnapshot::Grokbot(s) => s.has_included_allowance.then_some(s.weekly_pct),
-        VendorSnapshot::ModelStudio(s) => [s.session.as_ref(), s.weekly.as_ref()]
-            .into_iter()
-            .flatten()
-            .map(|w| w.utilization_pct)
-            .max(),
+        VendorSnapshot::ModelStudio(s) => {
+            [s.session.as_ref(), s.weekly.as_ref(), s.monthly.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|w| w.utilization_pct)
+                .max()
+        }
         VendorSnapshot::Devin(s) => [
             s.daily.as_ref().map(|window| window.utilization_pct),
             s.weekly.as_ref().map(|window| window.utilization_pct),
@@ -2018,10 +2024,12 @@ fn grokbot_sections(
     v
 }
 
-/// Model Studio Token Plan: a 5h and a weekly window, each of which the
-/// console account may not report. Present windows ride the shared
+/// Model Studio Token Plan: a 5h, a weekly and a monthly window, each of
+/// which the console account may not report. Present windows ride the shared
 /// `push_window`; an absent one is no-data (possibly unlimited), drawn as a
-/// text row — never a 0% meter.
+/// text row — never a 0% meter. The monthly window rides `push_metric`,
+/// without a declared window length: the cycle is plan-dependent (28–31
+/// days), so a frontend must not pace against a guessed denominator.
 fn modelstudio_sections(
     s: &crate::usage::ModelStudioSnapshot,
     now: DateTime<Utc>,
@@ -2038,7 +2046,23 @@ fn modelstudio_sections(
     if let Some(weekly) = s.weekly.as_ref() {
         push_window(&mut v, "Token Plan 7d", weekly, now, tol, true);
     }
-    if s.session.is_none() && s.weekly.is_none() {
+    if let Some(monthly) = s.monthly.as_ref() {
+        if s.session.is_some() || s.weekly.is_some() {
+            v.push(Section::Spacer);
+        }
+        let reset_text = countdown::format(monthly.resets_at, now);
+        v.push_metric(
+            Section::Metric {
+                label: "Token Plan 30d".into(),
+                pct: monthly.utilization_pct.clamp(0, 100) as u16,
+                severity: severity_for(monthly.utilization_pct),
+                value_label: format!("{}%", monthly.utilization_pct),
+                footnote: format!("Resets in {reset_text}"),
+            },
+            monthly.resets_at,
+        );
+    }
+    if s.session.is_none() && s.weekly.is_none() && s.monthly.is_none() {
         v.push(Section::Text {
             label: "Usage".into(),
             value: "no usage windows reported".into(),
@@ -3818,6 +3842,7 @@ mod tests {
                 resets_at: Some(now() + chrono::Duration::days(3)),
                 window_duration: chrono::Duration::days(7),
             }),
+            monthly: None,
         }
     }
 
@@ -3874,6 +3899,7 @@ mod tests {
         let snap = crate::usage::ModelStudioSnapshot {
             session: None,
             weekly: None,
+            monthly: None,
         };
         let sections = sections_for(&ready(VendorSnapshot::ModelStudio(snap.clone())), now(), 5);
         assert!(
@@ -3897,11 +3923,67 @@ mod tests {
         let snap = crate::usage::ModelStudioSnapshot {
             session: None,
             weekly: modelstudio_snap().weekly,
+            monthly: None,
         };
         let (_, cells) = compact_cells(&VendorSnapshot::ModelStudio(snap.clone()));
         assert_eq!(cells.len(), 1);
         assert!(cells[0].0.contains("74%"), "{cells:?}");
         assert_eq!(headline_pct(&VendorSnapshot::ModelStudio(snap)), Some(74));
+    }
+
+    /// The monthly window — the individual Token Plan's only reported window —
+    /// gets its own meter with the exact reset, but no declared window length
+    /// (the cycle is plan-dependent), so no frontend paces against a guessed
+    /// denominator.
+    #[test]
+    fn modelstudio_monthly_only_renders_a_meter_with_reset_and_no_window_length() {
+        let snap = crate::usage::ModelStudioSnapshot {
+            session: None,
+            weekly: None,
+            monthly: Some(crate::usage::UsageWindow {
+                utilization_pct: 100,
+                resets_at: Some(now() + chrono::Duration::days(21)),
+                window_duration: chrono::Duration::days(30),
+            }),
+        };
+        let sections =
+            sections_with_metadata_for(&ready(VendorSnapshot::ModelStudio(snap.clone())), now(), 5);
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter_map(|projected| match &projected.section {
+                Section::Metric { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metrics, vec!["Token Plan 30d".to_string()]);
+        let metric = sections
+            .iter()
+            .find(|p| matches!(p.section, Section::Metric { .. }))
+            .unwrap();
+        assert_eq!(
+            metric.reset_at,
+            Some(now() + chrono::Duration::days(21)),
+            "the exact reset travels with the row"
+        );
+        assert_eq!(
+            metric.window, None,
+            "a plan-dependent monthly cycle declares no window length"
+        );
+        assert_eq!(headline_pct(&VendorSnapshot::ModelStudio(snap)), Some(100));
+
+        // The absent 5h/weekly windows stay text rows, never zero meters.
+        let (_, cells) = compact_cells(&crate::usage::VendorSnapshot::ModelStudio(
+            crate::usage::ModelStudioSnapshot {
+                session: None,
+                weekly: None,
+                monthly: Some(crate::usage::UsageWindow {
+                    utilization_pct: 100,
+                    resets_at: Some(now() + chrono::Duration::days(21)),
+                    window_duration: chrono::Duration::days(30),
+                }),
+            },
+        ));
+        assert_eq!(cells.len(), 1, "{cells:?}");
     }
 
     #[test]
