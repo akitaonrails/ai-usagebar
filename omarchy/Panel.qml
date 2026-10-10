@@ -1483,13 +1483,19 @@ Panel {
     }
 
     Text {
+      // Bar-graph body lines (■/█ rows) are drawn in the panel's
+      // proportional font, where a per-character bar wraps mid-row and the
+      // different glyph widths skew the columns. Render them monospace and
+      // unwrapped; prose rows keep the wrapping body font.
+      readonly property bool isGraph: blockRow.row && blockRow.row.body
+        && blockRow.row.body.some(function(l) { return l.indexOf("■") !== -1 || l.indexOf("█") !== -1 })
       width: parent.width
       text: blockRow.row && blockRow.row.body ? blockRow.row.body.join("\n") : ""
       textFormat: Text.PlainText
       color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      wrapMode: Text.WordWrap
+      font.family: isGraph ? "monospace" : root.fontFamily
+      font.pixelSize: isGraph ? Style.font.caption - 1 : Style.font.caption
+      wrapMode: isGraph ? Text.NoWrap : Text.WordWrap
     }
   }
 }
