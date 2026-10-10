@@ -137,6 +137,11 @@ function normalizeAccounts(value) {
       target: clean(raw.target, 4096),
       switching: raw.switching === true,
       error: clean(raw.error, 300),
+      prepareEnabled: vendor === "anthropic-desktop" && raw.prepare_enabled === true,
+      prepareTarget: clean(raw.prepare_target, 4096),
+      preparing: vendor === "anthropic-desktop" && raw.preparing === true,
+      prepareError: clean(raw.prepare_error, 300),
+      preparedReset: clean(raw.prepared_reset, 64),
     };
   }
   return out;
@@ -181,9 +186,30 @@ export function accountSwitchFor(cardId, accounts) {
     label,
     active: info.active === label,
     switching: info.switching && mine,
-    busy: !(info.switching && mine) && Object.values(accounts).some((scope) => scope.switching),
+    busy: !(info.switching && mine) && Object.values(accounts).some((scope) => scope.switching || scope.preparing),
     error: mine && !info.switching ? info.error : "",
+    prepareEnabled: vendor === "anthropic-desktop" && info.prepareEnabled === true,
+    preparing: info.preparing && info.prepareTarget === label,
+    prepareError: info.prepareTarget === label && !info.preparing ? info.prepareError : "",
+    preparedReset: info.prepareTarget === label ? info.preparedReset : "",
   };
+}
+
+/** A Prepare click is one optional turn, not an automatic quota polling loop. */
+export function desktopPreparation(card, account, nowMs) {
+  if (!account || account.vendor !== "anthropic-desktop" || !account.prepareEnabled || account.active) return null;
+  if (account.preparing) return { label: "Preparing…", disabled: true, hint: "Preparing this inactive account without switching Claude Desktop." };
+  const session = card.rows.find((row) => row.kind === "metric" && row.window === 18000);
+  const weekly = card.rows.find((row) => row.kind === "metric" && row.window === 604800);
+  const reset = Date.parse(session?.resetAt || "");
+  const confirmed = Date.parse(account.preparedReset || "");
+  const blocked = card.stale || Boolean(card.errorTitle) || (reset > nowMs && session?.usedPercent >= 100) || weekly?.usedPercent >= 100;
+  if (!blocked && (reset > nowMs && session.usedPercent < 100 || confirmed > nowMs)) {
+    return { label: "Ready", disabled: true, hint: "The five-hour window is already running. No additional message is needed." };
+  }
+  return { label: "Prepare", disabled: account.busy || account.switching || blocked, hint: account.prepareError || (blocked
+    ? "Wait for the limit to reset and refresh live usage before preparing."
+    : "Send one short Haiku message using this inactive account. Uses a little quota; no saved conversation or Desktop restart.") };
 }
 
 function githubPage(value) {

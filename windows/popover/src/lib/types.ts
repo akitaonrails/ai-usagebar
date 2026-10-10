@@ -213,6 +213,11 @@ export interface AccountSwitchInfo {
   switching: boolean;
   /** Why that switch failed, or "". */
   error: string;
+  prepareEnabled?: boolean;
+  prepareTarget?: string;
+  preparing?: boolean;
+  prepareError?: string;
+  preparedReset?: string;
 }
 
 /** The switch control on one account's card. */
@@ -226,6 +231,10 @@ export interface CardAccount {
   busy: boolean;
   /** Why the last switch to this account failed, or "". */
   error: string;
+  prepareEnabled?: boolean;
+  preparing?: boolean;
+  prepareError?: string;
+  preparedReset?: string;
 }
 
 /** What an update affordance does on click: a host command, or open `url`. */

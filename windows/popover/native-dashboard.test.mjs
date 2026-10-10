@@ -92,6 +92,22 @@ try {
     assert.match(pending, /Switching…/);
     const busy = sectionMarkup(layout, 'en', desktopCard, { ...desktopAccount, busy: true });
     assert.match(busy, /disabled="" aria-label="Switch Claude Desktop/);
+    const unusedCard = { ...desktopCard, rows: desktopCard.rows.map((row) => ({ ...row, resetAt: '', usedPercent: 0 })) };
+    const prepareAccount = { ...desktopAccount, prepareEnabled: true };
+    const prepare = sectionMarkup(layout, 'en', unusedCard, prepareAccount);
+    assert.match(prepare, /aria-label="Prepare Claude Desktop account desktop-2"/);
+    assert.match(prepare, />Prepare<\/button>/);
+    assert.match(prepare, />Switch<\/button>/);
+    assert.match(prepare, />Session</);
+    assert.match(prepare, />Weekly</);
+    assert.doesNotMatch(sectionMarkup(layout, 'en', unusedCard, { ...prepareAccount, active: true }), /Prepare Claude Desktop/);
+    const preparing = sectionMarkup(layout, 'en', unusedCard, { ...prepareAccount, preparing: true, busy: true });
+    assert.match(preparing, /disabled="" aria-label="Preparing… Claude Desktop/);
+    assert.match(preparing, /disabled="" aria-label="Switch Claude Desktop/);
+    const ready = sectionMarkup(layout, 'en', desktopCard, prepareAccount);
+    assert.match(ready, /disabled="" aria-label="Ready Claude Desktop/);
+    const retry = sectionMarkup(layout, 'en', unusedCard, { ...prepareAccount, prepareError: 'Proxy unavailable' });
+    assert.match(retry, /desktop-account-control is-failed/);
   }
   assert.match(sectionMarkup({ ...emptyLayout(), resetTimes: 'exact', timeFormat: '24' }), /Redefine hoje às 12:00/);
   assert.match(sectionMarkup({ ...emptyLayout(), resetTimes: 'countdown', timeFormat: '24' }), /Redefine em 1h 0m/);

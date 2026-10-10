@@ -57,6 +57,13 @@ pub struct AccountSwitchFact {
     pub switching: bool,
     /// Why that switch failed, or empty.
     pub error: String,
+    /// An explicit trusted preparation CLI is configured (Desktop only).
+    pub prepare_enabled: bool,
+    pub prepare_target: String,
+    pub preparing: bool,
+    pub prepare_error: String,
+    /// Server-confirmed reset, never a local five-hour estimate.
+    pub prepared_reset: String,
 }
 
 /// State of a newer release as the popover renders it.
@@ -178,6 +185,11 @@ pub fn wrap_report(
                     "target": sanitize_untrusted_field(&fact.target),
                     "switching": fact.switching,
                     "error": sanitize_untrusted_field(&fact.error),
+                    "prepare_enabled": fact.prepare_enabled,
+                    "prepare_target": sanitize_untrusted_field(&fact.prepare_target),
+                    "preparing": fact.preparing,
+                    "prepare_error": sanitize_untrusted_field(&fact.prepare_error),
+                    "prepared_reset": fact.prepared_reset,
                 }),
             )
         })
@@ -616,6 +628,7 @@ mod tests {
             target: "work".into(),
             switching: false,
             error: "no stored Codex login".into(),
+            ..AccountSwitchFact::default()
         }];
         let payload = wrap_report(&sample_report(), &host, 0, None);
         let openai = &payload["accounts"]["openai"];
@@ -626,6 +639,34 @@ mod tests {
         assert_eq!(openai["switching"], false);
         assert_eq!(openai["error"], "no stored Codex login");
         assert!(payload["accounts"].get("anthropic").is_none());
+    }
+
+    #[test]
+    fn desktop_prepare_facts_are_explicit_and_sanitized() {
+        let mut host = facts("1.34.0", false);
+        host.accounts = vec![AccountSwitchFact {
+            vendor: "anthropic-desktop".into(),
+            active: Some("one".into()),
+            labels: vec!["one".into(), "two".into()],
+            prepare_enabled: true,
+            prepare_target: "two".into(),
+            preparing: true,
+            prepare_error: "offline\u{1b}[31m".into(),
+            prepared_reset: "2026-10-10T19:00:00Z".into(),
+            ..AccountSwitchFact::default()
+        }];
+        let payload = wrap_report(&sample_report(), &host, 0, None);
+        let desktop = &payload["accounts"]["anthropic-desktop"];
+        assert_eq!(desktop["prepare_enabled"], true);
+        assert_eq!(desktop["prepare_target"], "two");
+        assert_eq!(desktop["preparing"], true);
+        assert!(
+            !desktop["prepare_error"]
+                .as_str()
+                .unwrap()
+                .contains('\u{1b}')
+        );
+        assert_eq!(desktop["prepared_reset"], "2026-10-10T19:00:00Z");
     }
 
     #[test]

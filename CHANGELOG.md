@@ -2,6 +2,11 @@
 
 ### Added
 
+- **Manual preparation of inactive Claude Desktop accounts.** With an explicit
+  trusted Claude Code binary configured, Prepare sends one short isolated turn
+  only when a new five-hour window is needed. It confirms the reset time with
+  the server, saves no conversation, and never switches or restarts Desktop.
+
 - **Claude Desktop switching in the macOS card popover.** Saved Desktop
   profiles have an Active badge or a compact Switch button. A confirmation
   explains the app restart; the existing transactional switch preserves

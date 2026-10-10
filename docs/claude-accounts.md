@@ -341,6 +341,35 @@ account lists conversations and routines started under the others, because the
 point is that every profile opens on the union. Do not use it across accounts
 that must stay visually separate.
 
+### Preparing an inactive Desktop account (macOS)
+
+Optionally configure the absolute path to your official Claude Code executable
+or trusted proxy/firewall wrapper:
+
+```toml
+[anthropic]
+desktop_prepare_binary = "~/.local/bin/claude"
+```
+
+An inactive Desktop card then shows **Prepare**. A click checks live usage
+first. A running window is **Ready** without another message; an exhausted
+session or weekly limit blocks preparation. Otherwise, it runs one short
+Haiku turn with that profile's OAuth access token in an isolated temporary
+home. Tools, MCP, customizations and history persistence are disabled. The
+temporary directory is deleted afterward. No project context or existing
+conversation is loaded, and the Desktop app is neither switched nor restarted.
+The server's returned reset time confirms readiness; a successful CLI exit
+alone does not. This consumes a little session/weekly allowance and does not
+increase either limit. There are no automatic preparation requests.
+
+The action is disabled by default and never searches `PATH` for a binary.
+It needs a recent official CLI supporting `--safe-mode` and
+`--no-session-persistence`. Transport environment variables are preserved;
+use a trusted wrapper when the CLI must stay on a particular protected proxy.
+API keys and alternate API endpoints are not inherited. A timeout or uncertain
+result asks you to refresh usage before retrying, since the turn may have
+completed. Preparation and switching are mutually exclusive while running.
+
 ### Storage and history conflicts
 
 CLI accounts use `[[anthropic.accounts]]` or `accounts_dir`. Desktop profiles
