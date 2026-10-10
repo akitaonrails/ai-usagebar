@@ -294,8 +294,17 @@ pub fn worst_severity(payload: &Value) -> Severity {
         let Some(sections) = entry.get("sections").and_then(Value::as_array) else {
             continue;
         };
-        for section in sections {
-            if section.get("type").and_then(Value::as_str) != Some("metric") {
+        let metrics: Vec<&Value> = sections
+            .iter()
+            .filter(|section| section.get("type").and_then(Value::as_str) == Some("metric"))
+            .collect();
+        // A grouped row (the Claude entry's context sessions, SuperGrok's
+        // product slices) sits under its own heading below the meters and is
+        // not a quota window: it counts only when the entry has nothing else,
+        // the partition `strip::quota_group` already applies.
+        let has_window = metrics.iter().any(|section| !is_grouped(section));
+        for section in metrics {
+            if has_window && is_grouped(section) {
                 continue;
             }
             if let Some(sev) = section
@@ -309,6 +318,15 @@ pub fn worst_severity(payload: &Value) -> Severity {
         }
     }
     worst
+}
+
+/// Whether a metric sits under a group heading, which the report marks with a
+/// non-empty `group`.
+fn is_grouped(section: &Value) -> bool {
+    section
+        .get("group")
+        .and_then(Value::as_str)
+        .is_some_and(|group| !group.is_empty())
 }
 
 #[cfg(test)]
@@ -565,6 +583,74 @@ mod tests {
     #[test]
     fn worst_severity_is_the_hottest_metric_not_the_primary() {
         let payload = wrap_report(&sample_report(), &facts("1.10.0", false), 0, None);
+        assert_eq!(worst_severity(&payload), Severity::Critical);
+    }
+
+    /// A context session row (`group: "Sessions"`) is a breakdown under its
+    /// own heading, not a quota window: a session at 90% of its context must
+    /// not paint the tray icon critical while the quota sits at 29%.
+    #[test]
+    fn worst_severity_ignores_grouped_rows_behind_a_window() {
+        let report = json!({
+            "primary": "anthropic",
+            "entries": [{
+                "id": "anthropic",
+                "short_name": "cld",
+                "status": "ready",
+                "error": null,
+                "sections": [
+                    {
+                        "type": "metric",
+                        "label": "Session (5h)",
+                        "percent": 29,
+                        "value": "29%",
+                        "detail": "",
+                        "severity": "low",
+                        "reset_at": null
+                    },
+                    {
+                        "type": "metric",
+                        "label": "ship the release",
+                        "group": "Sessions",
+                        "percent": 90,
+                        "value": "90%",
+                        "detail": "",
+                        "severity": "critical",
+                        "reset_at": null
+                    }
+                ]
+            }]
+        })
+        .to_string();
+        let payload = wrap_report(&report, &facts("1.10.0", false), 0, None);
+        assert_eq!(worst_severity(&payload), Severity::Low);
+    }
+
+    /// With no ungrouped metric the grouped rows still stand in, as they do
+    /// for the menu bar's quota group.
+    #[test]
+    fn worst_severity_falls_back_to_grouped_rows_without_a_window() {
+        let report = json!({
+            "primary": "anthropic",
+            "entries": [{
+                "id": "anthropic",
+                "short_name": "cld",
+                "status": "ready",
+                "error": null,
+                "sections": [{
+                    "type": "metric",
+                    "label": "ship the release",
+                    "group": "Sessions",
+                    "percent": 90,
+                    "value": "90%",
+                    "detail": "",
+                    "severity": "critical",
+                    "reset_at": null
+                }]
+            }]
+        })
+        .to_string();
+        let payload = wrap_report(&report, &facts("1.10.0", false), 0, None);
         assert_eq!(worst_severity(&payload), Severity::Critical);
     }
 
