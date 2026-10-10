@@ -28,6 +28,14 @@
 
 ### Fixed
 
+- **Windows tray icon no longer turns red for a Claude Code session row.**
+  The icon takes the hottest metric of every entry, and that count
+  included the context session rows under the Claude entry's "Sessions"
+  heading, so a session at 90% of its context window painted the tray
+  critical while the quota windows sat at 29%. The icon now ranks the
+  ungrouped quota windows first, grouped rows standing in only when an
+  entry has nothing else, the partition the Omarchy, Mint and KDE
+  frontends and the macOS menu bar already apply.
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
