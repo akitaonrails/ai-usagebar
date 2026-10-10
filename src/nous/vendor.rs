@@ -155,6 +155,9 @@ fn format_credit(value: Option<f64>) -> String {
         while text.ends_with('0') {
             text.pop();
         }
+        if text.ends_with('.') {
+            text.pop();
+        }
         text
     }
 }
