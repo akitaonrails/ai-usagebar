@@ -1,0 +1,9 @@
+{
+  "name": "desktop-accounts",
+  "version": "0.1.0",
+  "description": "Switch the Claude Desktop app's signed-in account (via ai-usagebar) from a Claude Code session",
+  "author": {
+    "name": "Augusto Claro"
+  },
+  "types": "./types/index.d.ts"
+}
