@@ -558,4 +558,30 @@ mod tests {
     fn reading_the_real_windows_credential_never_errors() {
         assert!(read().is_ok());
     }
+
+    /// The keyring lookup is a spawn on the user's PATH (Linux) or an Apple
+    /// binary (macOS); either way it must not inherit this process's provider
+    /// keys, the rule the Grok Bot lookups already follow.
+    #[cfg(not(windows))]
+    #[test]
+    fn keyring_lookup_scrubs_vendor_secret_env_vars() {
+        let command = keyring_lookup_command();
+        let expected = if cfg!(target_os = "macos") {
+            "/usr/bin/security"
+        } else {
+            "secret-tool"
+        };
+        assert_eq!(command.get_program(), expected);
+        let removed: Vec<String> = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        for var in crate::vendor::vendor_secret_env_vars_to_remove(&[]) {
+            assert!(
+                removed.iter().any(|key| key == var),
+                "expected {var} to be scrubbed from the keyring lookup"
+            );
+        }
+    }
 }
