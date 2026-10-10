@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn extra_usage_placeholders_and_tooltip_use_the_blocks_currency() {
         // Non-vacuous currency pin: with BRL in the snapshot, formatting
-        // through fmt_dollars again ("$141.57") must fail this test — that is
+        // with a bare `$` again ("$141.57") must fail this test — that is
         // the wrong-currency claim the wiring exists to prevent.
         let mut oc = sample_outcome();
         if let Some(e) = oc.snapshot.extra.as_mut() {

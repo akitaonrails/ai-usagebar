@@ -62,19 +62,6 @@ pub struct UsageWindow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cents(pub i64);
 
-impl Cents {
-    /// Format as `[-]$D.CC`. Negative values render `-$D.CC` (not `$-D.CC`),
-    /// matching claudebar's `_fmt_dollars` (claudebar:532-537).
-    pub fn fmt_dollars(self) -> String {
-        let (sign, abs) = if self.0 < 0 {
-            ("-", -self.0)
-        } else {
-            ("", self.0)
-        };
-        format!("{sign}${}.{:02}", abs / 100, abs % 100)
-    }
-}
-
 /// Anthropic-specific snapshot — three rolling windows plus optional
 /// pay-as-you-go credit balance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1145,7 +1132,7 @@ mod tests {
         assert_eq!(fmt_minor(14157, 2, Some("USD")), "$141.57");
         // Zero-exponent currency: no decimal point, no /100.
         assert_eq!(fmt_minor(500, 0, Some("JPY")), "¥500");
-        // Sign precedes the symbol, matching `fmt_dollars`.
+        // Sign precedes the symbol, as `format::money` spells it.
         assert_eq!(fmt_minor(-150, 2, Some("BRL")), "-R$1.50");
         // Unknown code stays truthful as a suffix rather than guessing a symbol.
         assert_eq!(fmt_minor(1234, 2, Some("CHF")), "12.34 CHF");
@@ -1170,21 +1157,6 @@ mod tests {
         };
         assert_eq!(capped.fmt_spent(), "$2.50");
         assert_eq!(capped.fmt_limit().as_deref(), Some("$50.00"));
-    }
-
-    #[test]
-    fn cents_format_positive() {
-        assert_eq!(Cents(0).fmt_dollars(), "$0.00");
-        assert_eq!(Cents(50).fmt_dollars(), "$0.50");
-        assert_eq!(Cents(250).fmt_dollars(), "$2.50");
-        assert_eq!(Cents(5000).fmt_dollars(), "$50.00");
-    }
-
-    #[test]
-    fn cents_format_negative_uses_leading_sign() {
-        // claudebar bug-fix: never "$-1.-50" — sign goes before the dollar sign.
-        assert_eq!(Cents(-150).fmt_dollars(), "-$1.50");
-        assert_eq!(Cents(-1).fmt_dollars(), "-$0.01");
     }
 
     #[test]
