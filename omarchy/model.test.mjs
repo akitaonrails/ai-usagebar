@@ -131,6 +131,26 @@ assert.equal(
   i18n.displayNote('ru', 'billing balance and monthly spend'),
   'баланс и месячные траты',
 );
+assert.equal(
+  i18n.displayNote('ru', 'billing credits'),
+  'биллинговые кредиты',
+);
+assert.equal(
+  i18n.displayNote('pt-BR', 'billing credits'),
+  'créditos de faturamento',
+);
+assert.equal(
+  i18n.displayNote('ko', 'billing credits'),
+  '결제 크레딧',
+);
+assert.equal(
+  i18n.displayNote('es', 'billing credits'),
+  'créditos de facturación',
+);
+assert.equal(
+  i18n.displayNote('en', 'billing credits'),
+  'billing credits',
+);
 assert.equal(i18n.displayNote('en', 'ollama.com/settings/keys'), 'ollama.com/settings/keys');
 assert.equal(
   i18n.t('ru', 'hero.settings_detail'),
