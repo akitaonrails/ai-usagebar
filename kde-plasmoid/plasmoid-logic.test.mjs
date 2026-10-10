@@ -333,6 +333,11 @@ assert.equal(headline(onlyGrouped).text, '90%');
 assert.equal(headline(onlyGrouped).severity, 'critical');
 assert.equal(isAlarming(onlyGrouped), true);
 
+// The card accent follows the same partition: a session row never colours the
+// card while a quota window is there, and still stands in without one.
+assert.equal(cardFor(sessionBreakdown).accent, 'low');
+assert.equal(cardFor(onlyGrouped).accent, 'critical');
+
 // Spacers are dropped: Column spacing sets the rhythm, so keeping them would
 // double it.
 assert.equal(detailRows(anthropic).length, 2);
