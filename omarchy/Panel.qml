@@ -1113,7 +1113,7 @@ Panel {
             id: providerList
             visible: !root.settingsOpen && root.visibleEntries.length > 1
             width: parent.width
-            height: visible ? childrenRect.height : 0
+            height: visible ? implicitHeight : 0
             flow: Flow.LeftToRight
             spacing: Style.spacing.md
 
@@ -1147,7 +1147,7 @@ Panel {
             id: cursorPoolToggles
             visible: !root.settingsOpen && (root.cursorEntry || root.antigravityEntry)
             width: parent.width
-            height: visible ? childrenRect.height : 0
+            height: visible ? implicitHeight : 0
             flow: Flow.LeftToRight
             spacing: Style.spacing.md
 
