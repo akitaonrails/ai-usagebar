@@ -279,6 +279,15 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
             theme,
         );
     }
+    // Both sinks fed by this map (bar text and --tooltip-format) are Pango
+    // markup. The plan label comes from the credentials file and the scoped
+    // model name from the API, so escape them at the projection boundary.
+    // The default tooltip escapes the raw snapshot.
+    for key in ["plan", "scoped_model"] {
+        if let Some(value) = v.get_mut(key) {
+            *value = escape(value);
+        }
+    }
     v
 }
 
