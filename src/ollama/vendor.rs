@@ -596,4 +596,24 @@ mod tests {
         );
         assert_eq!(out.tooltip, "Cloud Pro &amp; Enterprise &lt;preview&gt;");
     }
+
+    #[test]
+    fn activity_cost_and_period_are_pango_escaped() {
+        // Both strings are kept exactly as the server sent them (historical
+        // /api/usage caches still carry them), so they are vendor text.
+        let mut snap = sample_snap();
+        snap.activity_cost = Some("0.5 <est> & up".into());
+        snap.activity_period = Some("last <4> weeks & more".into());
+        let outcome = sample_outcome(snap.clone());
+        let mut o = opts();
+        o.format = Some("{oll_cost}".into());
+
+        let out = render(&outcome, &snap, &Theme::default(), &o, Utc::now());
+        assert!(out.text.contains("0.5 &lt;est&gt; &amp; up"), "{}", out.text);
+        assert!(!out.text.contains("<est>"), "{}", out.text);
+        // The default tooltip names the period beside the cost.
+        let period = "last &lt;4&gt; weeks &amp; more";
+        assert!(out.tooltip.contains(period), "{}", out.tooltip);
+        assert!(!out.tooltip.contains("<4>"), "{}", out.tooltip);
+    }
 }
