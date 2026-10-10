@@ -418,11 +418,26 @@ fn host_facts(config: &Config) -> HostFacts {
     facts
 }
 
-/// Which Claude CLI and Codex logins are active, for the switch control on
-/// each account's card. Read fresh on every report, so a switch made from the
-/// terminal shows up too.
+/// The `accounts` key of the Claude Desktop app's own logins: the switch on a
+/// Claude card the CLI does not know, which moves the app alone.
+const DESKTOP_VENDOR: &str = "claude-desktop";
+
+/// Which Claude CLI, Claude Desktop and Codex logins are active, for the switch
+/// control on each account's card. Read fresh on every report, so a switch made
+/// from the terminal shows up too.
 fn account_facts(config: &Config) -> Vec<AccountSwitchFact> {
     let mut out = Vec::new();
+    if let Some((labels, active)) = crate::claude_desktop::Paths::resolve(&config.anthropic)
+        .ok()
+        .and_then(|paths| crate::claude_desktop::switchable(&paths))
+    {
+        out.push(AccountSwitchFact {
+            vendor: DESKTOP_VENDOR.into(),
+            active,
+            labels,
+            ..AccountSwitchFact::default()
+        });
+    }
     let claude = config.anthropic.all_accounts();
     if config.anthropic.enabled && !claude.is_empty() {
         let active = crate::anthropic::cli_account::home_claude_json()
@@ -496,8 +511,14 @@ fn run_account_switch(facts: &SharedFacts, vendor: &str, label: &str) {
 fn switch_with(tray: &std::path::Path, vendor: &str, label: &str) -> String {
     let mut command = std::process::Command::new(tray);
     command.args(["account", "switch", "--yes"]);
-    if vendor == "openai" {
-        command.arg("--codex");
+    match vendor {
+        "openai" => {
+            command.arg("--codex");
+        }
+        DESKTOP_VENDOR => {
+            command.arg("--desktop");
+        }
+        _ => {}
     }
     command.arg("--").arg(label);
     match command.stdin(std::process::Stdio::null()).output() {

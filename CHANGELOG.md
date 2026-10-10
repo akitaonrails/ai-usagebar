@@ -2,6 +2,16 @@
 
 ### Added
 
+- **Claude Desktop accounts switch from their card in the macOS tray.** A
+  Claude card for an account only the Desktop app knows (saved with
+  `ai-usagebar account add <label> --desktop`) now carries the same star as a
+  Claude Code account's card. The star switches the app alone through
+  `account switch --desktop`: Claude.app quits, the local history moves to
+  that account, and the app reopens. Because the app restarts, it takes a
+  second click. The tray offered the star only for Claude Code and Codex
+  logins, so a Desktop-only account could not be switched from the menu bar
+  as the old Swift app's Preferences allowed.
+
 - **Ollama Cloud provider mark in the Omarchy bar and panel.** Ship the
   monochrome Lobe Icons SVG under MIT, with source provenance and the
   existing LobeHub licence notice. The same mark is used for custom

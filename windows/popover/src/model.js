@@ -117,7 +117,7 @@ function normalizeAccent(value) {
   return { light: value.light.toLowerCase(), dark: value.dark.toLowerCase() };
 }
 
-const SWITCHABLE_VENDORS = ["anthropic", "openai"];
+const SWITCHABLE_VENDORS = ["anthropic", "openai", "claude-desktop"];
 
 // Switchable logins per vendor. Only the macOS host sends any; anything absent
 // or malformed means no switch control at all rather than a guessed one.
@@ -157,22 +157,30 @@ export function accountSwitchFor(cardId, accounts) {
   const at = id.indexOf("@");
   if (at <= 0) return null;
   const vendor = id.slice(0, at);
-  const info = accounts && Object.prototype.hasOwnProperty.call(accounts, vendor) ? accounts[vendor] : null;
-  if (!info) return null;
-  // Two labels that only differ past the cut share one card; neither is
-  // offered, since the control could not say which one it switches to.
-  const matches = info.labels.filter((label) => cardIdOf(vendor, label) === id);
-  if (matches.length !== 1) return null;
-  const label = matches[0];
-  const mine = info.target === label;
-  return {
-    vendor,
-    label,
-    active: info.active === label,
-    switching: info.switching && mine,
-    busy: info.switching && !mine,
-    error: mine && !info.switching && info.active !== label ? info.error : "",
-  };
+  // A Claude card the CLI does not know can still be a Claude Desktop login,
+  // whose switch moves the app alone.
+  const sources = vendor === "anthropic" ? [vendor, "claude-desktop"] : vendor === "claude-desktop" ? [] : [vendor];
+  for (const source of sources) {
+    const info = accounts && Object.prototype.hasOwnProperty.call(accounts, source) ? accounts[source] : null;
+    if (!info) continue;
+    // Two labels that only differ past the cut share one card; neither is
+    // offered, since the control could not say which one it switches to.
+    const matches = info.labels.filter((label) => cardIdOf(vendor, label) === id);
+    if (matches.length > 1) return null;
+    if (matches.length === 0) continue;
+    const label = matches[0];
+    const mine = info.target === label;
+    return {
+      vendor: source,
+      label,
+      desktop: source === "claude-desktop",
+      active: info.active === label,
+      switching: info.switching && mine,
+      busy: info.switching && !mine,
+      error: mine && !info.switching && info.active !== label ? info.error : "",
+    };
+  }
+  return null;
 }
 
 function githubPage(value) {

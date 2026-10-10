@@ -252,6 +252,12 @@ or neither, does not carry two permanent menu rows. A dim line under the
 dropdown header still shows both active accounts at a glance —
 `Desktop: work · Code: personal`.
 
+In the tray (AI Usage.app), each Claude account's card has a star: filled for
+the signed-in account, an outline on the others that makes that one active.
+A card for an account that only the Desktop app knows switches the app alone
+(`account switch --desktop`); because Claude.app quits and reopens, the first
+click arms it and the second switches.
+
 Switching the Desktop app **quits and reopens Claude.app**, so Preferences
 confirms first; your local history is merged into the target account and a
 rollback archive is written before anything changes. The Claude Code switch has

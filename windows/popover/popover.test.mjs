@@ -1789,6 +1789,30 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.deepEqual(parseHostPayload(JSON.stringify({ entries: [] })).accounts, {});
 }
 
+// A Claude card the CLI does not know falls back to the Claude Desktop login
+// of the same label, whose switch moves the app alone and asks twice; a label
+// the CLI knows keeps the CLI switch.
+{
+  const payload = parseHostPayload(JSON.stringify({
+    entries: [],
+    accounts: {
+      anthropic: { active: 'work', labels: ['work'] },
+      'claude-desktop': { active: 'home', labels: ['home', 'work', 'club'], target: 'club', switching: true },
+    },
+  }));
+  assert.equal(accountSwitchFor('anthropic@work', payload.accounts).vendor, 'anthropic');
+  assert.equal(accountSwitchFor('anthropic@work', payload.accounts).desktop, false);
+  const home = accountSwitchFor('anthropic@home', payload.accounts);
+  assert.equal(home.vendor, 'claude-desktop');
+  assert.equal(home.desktop, true);
+  assert.equal(home.active, true);
+  const club = accountSwitchFor('anthropic@club', payload.accounts);
+  assert.equal(club.switching, true);
+  assert.equal(accountSwitchFor('anthropic@other', payload.accounts), null);
+  assert.equal(accountSwitchFor('openai@home', payload.accounts), null);
+  assert.equal(accountSwitchFor('claude-desktop@home', payload.accounts), null);
+}
+
 // Every card that renders keeps its switch control: as many accounts as there
 // are cards, and a label longer than a card id matched through the id's cut.
 {
