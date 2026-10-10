@@ -586,6 +586,74 @@ mod tests {
         assert_eq!(worst_severity(&payload), Severity::Critical);
     }
 
+    /// A context session row (`group: "Sessions"`) is a breakdown under its
+    /// own heading, not a quota window: a session at 90% of its context must
+    /// not paint the tray icon critical while the quota sits at 29%.
+    #[test]
+    fn worst_severity_ignores_grouped_rows_behind_a_window() {
+        let report = json!({
+            "primary": "anthropic",
+            "entries": [{
+                "id": "anthropic",
+                "short_name": "cld",
+                "status": "ready",
+                "error": null,
+                "sections": [
+                    {
+                        "type": "metric",
+                        "label": "Session (5h)",
+                        "percent": 29,
+                        "value": "29%",
+                        "detail": "",
+                        "severity": "low",
+                        "reset_at": null
+                    },
+                    {
+                        "type": "metric",
+                        "label": "ship the release",
+                        "group": "Sessions",
+                        "percent": 90,
+                        "value": "90%",
+                        "detail": "",
+                        "severity": "critical",
+                        "reset_at": null
+                    }
+                ]
+            }]
+        })
+        .to_string();
+        let payload = wrap_report(&report, &facts("1.10.0", false), 0, None);
+        assert_eq!(worst_severity(&payload), Severity::Low);
+    }
+
+    /// With no ungrouped metric the grouped rows still stand in, as they do
+    /// for the menu bar's quota group.
+    #[test]
+    fn worst_severity_falls_back_to_grouped_rows_without_a_window() {
+        let report = json!({
+            "primary": "anthropic",
+            "entries": [{
+                "id": "anthropic",
+                "short_name": "cld",
+                "status": "ready",
+                "error": null,
+                "sections": [{
+                    "type": "metric",
+                    "label": "ship the release",
+                    "group": "Sessions",
+                    "percent": 90,
+                    "value": "90%",
+                    "detail": "",
+                    "severity": "critical",
+                    "reset_at": null
+                }]
+            }]
+        })
+        .to_string();
+        let payload = wrap_report(&report, &facts("1.10.0", false), 0, None);
+        assert_eq!(worst_severity(&payload), Severity::Critical);
+    }
+
     #[test]
     fn entry_error_is_critical_and_lands_in_the_tooltip() {
         let report = json!({
