@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   accountSwitchFor,
+  desktopPreparation,
   formatDuration,
   nextUpdateLabel,
   parseHostPayload,
@@ -1789,6 +1790,49 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.deepEqual(parseHostPayload(JSON.stringify({ entries: [] })).accounts, {});
 }
 
+// Desktop cards share report ids with CLI cards, but commands must not switch
+// the wrong surface, including when a label exists in both stores.
+{
+  const accounts = parseHostPayload(JSON.stringify({entries: [], accounts: {
+    anthropic: {active: 'same', labels: ['same', 'cli-only']},
+    'anthropic-desktop': {active: 'desktop-1', labels: ['desktop-1', 'same'], target: 'same', error: 'switch rejected'},
+  }})).accounts;
+  assert.equal(accountSwitchFor('anthropic@desktop-1', accounts).active, true);
+  const desktop = accountSwitchFor('anthropic@same', accounts);
+  assert.equal(desktop.vendor, 'anthropic-desktop');
+  assert.equal(desktop.active, false);
+  assert.equal(desktop.error, 'switch rejected');
+  assert.equal(accountSwitchFor('anthropic@cli-only', accounts).vendor, 'anthropic');
+  assert.equal(accountSwitchFor('anthropic@missing', accounts), null);
+  accounts.anthropic.switching = true;
+  assert.equal(accountSwitchFor('anthropic@same', accounts).busy, true);
+  accounts.anthropic.switching = false;
+  accounts['anthropic-desktop'].switching = true;
+  assert.equal(accountSwitchFor('anthropic@same', accounts).switching, true);
+  assert.equal(accountSwitchFor('anthropic@same', accounts).busy, false);
+  assert.equal(accountSwitchFor('anthropic@cli-only', accounts).busy, true);
+  const long = 'x'.repeat(200);
+  const ambiguous = parseHostPayload({entries: [{id: `anthropic@${long}a`}], accounts: {
+    'anthropic-desktop': {labels: [`${long}a`, `${long}b`]},
+    anthropic: {labels: [long]},
+  }});
+  assert.equal(accountSwitchFor(ambiguous.entries[0].id, ambiguous.accounts), null);
+  const crossScope = parseHostPayload({entries: [
+    {id: `anthropic@${long}cli`}, {id: `anthropic@${long}desktop`},
+  ], accounts: {
+    'anthropic-desktop': {labels: [`${long}desktop`]},
+    anthropic: {labels: [`${long}cli`]},
+  }});
+  assert.equal(crossScope.entries[0].id, crossScope.entries[1].id);
+  for (const entry of crossScope.entries) {
+    assert.equal(accountSwitchFor(entry.id, crossScope.accounts), null);
+  }
+  accounts['anthropic-desktop'].switching = false;
+  accounts['anthropic-desktop'].active = 'same';
+  accounts['anthropic-desktop'].error = 'Claude could not be reopened';
+  assert.equal(accountSwitchFor('anthropic@same', accounts).error, 'Claude could not be reopened');
+}
+
 // Every card that renders keeps its switch control: as many accounts as there
 // are cards, and a label longer than a card id matched through the id's cut.
 {
@@ -1915,3 +1959,37 @@ assert.equal(resolvedTheme('system'), 'light');
 }
 
 console.log('ok');
+
+// Manual preparation belongs only to inactive Desktop cards. Fresh server
+// windows suppress repeated messages even while tiny usage rounds to 0%.
+{
+  const now = Date.parse('2026-10-10T14:00:01Z');
+  const card = { stale: false, errorTitle: '', rows: [
+    { kind: 'metric', window: 18000, usedPercent: 0, resetAt: '' },
+    { kind: 'metric', window: 604800, usedPercent: 20, resetAt: '' },
+  ] };
+  const account = { vendor: 'anthropic-desktop', label: 'two', active: false, prepareEnabled: true, busy: false };
+  assert.equal(desktopPreparation(card, { ...account, active: true }, now), null);
+  assert.equal(desktopPreparation(card, { ...account, vendor: 'anthropic' }, now), null);
+  assert.equal(desktopPreparation(card, { ...account, prepareEnabled: false }, now), null);
+  assert.equal(desktopPreparation(card, account, now).label, 'Prepare');
+  assert.equal(desktopPreparation(card, account, now).disabled, false);
+  assert.equal(desktopPreparation(card, { ...account, busy: true }, now).disabled, true);
+  assert.equal(desktopPreparation(card, { ...account, preparing: true }, now).label, 'Preparing…');
+  const running = { ...card, rows: [{ ...card.rows[0], resetAt: '2026-10-10T19:00:00Z' }, card.rows[1]] };
+  assert.equal(desktopPreparation(running, account, now).label, 'Ready');
+  assert.equal(desktopPreparation(running, account, now).disabled, true);
+  const exhausted = { ...running, rows: [{ ...running.rows[0], usedPercent: 100 }, card.rows[1]] };
+  assert.equal(desktopPreparation(exhausted, { ...account, preparedReset: '2026-10-10T19:00:00Z' }, now).label, 'Prepare');
+  assert.equal(desktopPreparation(exhausted, account, now).disabled, true);
+  assert.equal(desktopPreparation({ ...card, stale: true }, account, now).disabled, true);
+  assert.equal(desktopPreparation({ ...card, errorTitle: 'Offline' }, account, now).disabled, true);
+  assert.equal(desktopPreparation({ ...card, rows: [card.rows[0], { ...card.rows[1], usedPercent: 100 }] }, account, now).disabled, true);
+  assert.equal(desktopPreparation(card, { ...account, prepareError: 'Proxy unavailable' }, now).hint, 'Proxy unavailable');
+  const payload = parseHostPayload({ accounts: { 'anthropic-desktop': {
+    active: 'one', labels: ['one', 'two'], prepare_enabled: true, prepare_target: 'two', preparing: true,
+  } } });
+  assert.equal(accountSwitchFor('anthropic@two', payload.accounts).preparing, true);
+  assert.equal(accountSwitchFor('anthropic@one', payload.accounts).busy, true);
+  assert.equal(accountSwitchFor('anthropic@one', payload.accounts).active, true);
+}

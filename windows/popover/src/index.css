@@ -1191,6 +1191,32 @@ body:has(.native-panel[data-os="windows"]) {
   color: var(--red);
 }
 
+.desktop-account-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--control-fill);
+  color: var(--label-2);
+  font: inherit;
+  font-size: var(--sz-support);
+  white-space: nowrap;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.desktop-account-control svg { width: 13px; height: 13px; }
+button.desktop-account-control:hover:not(:disabled),
+button.desktop-account-control:focus-visible {
+  background: var(--control-fill-hover);
+  color: var(--label-1);
+}
+.desktop-account-control.is-current { background: transparent; color: var(--green); }
+.desktop-account-control.is-failed { color: var(--red); }
+.desktop-account-control:disabled { opacity: 0.5; }
+
 /* Plain text buttons (headline / reset toggles): no chrome at all. */
 .plain-btn {
   background: none;

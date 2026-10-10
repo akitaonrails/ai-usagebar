@@ -313,6 +313,14 @@ fn run_loop() -> Result<(), String> {
             Event::UserEvent(UserEvent::Report(payload)) => apply_payload(&mut state, payload),
             Event::UserEvent(UserEvent::Facts) => apply_facts(&mut state),
             Event::UserEvent(UserEvent::Hotkey) => toggle_popover_from_keyboard(&mut state),
+            Event::Reopen { .. } => {
+                if !state.popover_open {
+                    toggle_popover_from_keyboard(&mut state);
+                } else {
+                    guard_blur(&mut state);
+                    state.window.set_focus();
+                }
+            }
             Event::UserEvent(UserEvent::Restart(exe)) => {
                 if let Some(exe) = exe {
                     relaunch(&exe);
@@ -418,12 +426,40 @@ fn host_facts(config: &Config) -> HostFacts {
     facts
 }
 
-/// Which Claude CLI and Codex logins are active, for the switch control on
+/// Which Claude Desktop, Claude CLI and Codex logins are active, for the switch control on
 /// each account's card. Read fresh on every report, so a switch made from the
 /// terminal shows up too.
 fn account_facts(config: &Config) -> Vec<AccountSwitchFact> {
     let mut out = Vec::new();
-    let claude = config.anthropic.all_accounts();
+    let profiles = crate::claude_desktop::Paths::resolve(&config.anthropic)
+        .ok()
+        .filter(|paths| paths.available())
+        .map(|paths| {
+            let profiles = crate::claude_desktop::load_profiles(&paths.profiles_dir);
+            let active =
+                crate::claude_desktop::active_account_uuid(&paths.config_json()).and_then(|uuid| {
+                    crate::claude_desktop::label_for_uuid(&profiles, &uuid).map(str::to_string)
+                });
+            (profiles, active)
+        });
+    let desktop_labels: Vec<_> = profiles
+        .as_ref()
+        .map(|(profiles, _)| {
+            profiles
+                .iter()
+                .filter(|profile| profile.has_credentials)
+                .map(|profile| profile.label.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    // Reports prefer Desktop when the same label exists in both stores.
+    // Never attach the CLI switch to that Desktop-sourced card.
+    let claude: Vec<_> = config
+        .anthropic
+        .all_accounts()
+        .into_iter()
+        .filter(|account| !desktop_labels.contains(&account.label.as_str()))
+        .collect();
     if config.anthropic.enabled && !claude.is_empty() {
         let active = crate::anthropic::cli_account::home_claude_json()
             .ok()
@@ -434,6 +470,28 @@ fn account_facts(config: &Config) -> Vec<AccountSwitchFact> {
             labels: claude.iter().map(|account| account.label.clone()).collect(),
             ..AccountSwitchFact::default()
         });
+    }
+    if config.anthropic.enabled
+        && let Some((profiles, active)) = profiles
+    {
+        let labels: Vec<_> = profiles
+            .into_iter()
+            .filter(|profile| profile.has_credentials && profile.has_desktop_state)
+            .map(|profile| profile.label)
+            .collect();
+        if !labels.is_empty() {
+            out.push(AccountSwitchFact {
+                vendor: "anthropic-desktop".into(),
+                active,
+                labels,
+                prepare_enabled: config
+                    .anthropic
+                    .desktop_prepare_binary
+                    .as_ref()
+                    .is_some_and(|path| path.is_absolute() && path.is_file()),
+                ..AccountSwitchFact::default()
+            });
+        }
     }
     let codex = &config.openai.accounts;
     if config.openai.enabled && !codex.is_empty() {
@@ -464,6 +522,10 @@ fn refresh_account_facts(facts: &SharedFacts) {
                     fact.target.clone_from(&old.target);
                     fact.switching = old.switching;
                     fact.error.clone_from(&old.error);
+                    fact.prepare_target.clone_from(&old.prepare_target);
+                    fact.preparing = old.preparing;
+                    fact.prepare_error.clone_from(&old.prepare_error);
+                    fact.prepared_reset.clone_from(&old.prepared_reset);
                 }
                 fact
             })
@@ -482,6 +544,9 @@ fn run_account_switch(facts: &SharedFacts, vendor: &str, label: &str) {
         Ok(tray) => switch_with(&tray, vendor, label),
         Err(error) => format!("could not locate the running tray binary: {error}"),
     };
+    // Update the active badge before enabling another switch, even if the
+    // subsequent quota fetch is slow or unavailable.
+    refresh_account_facts(facts);
     with_facts(facts, |f| {
         for fact in f.accounts.iter_mut().filter(|fact| fact.vendor == vendor) {
             fact.switching = false;
@@ -494,11 +559,11 @@ fn run_account_switch(facts: &SharedFacts, vendor: &str, label: &str) {
 /// `src/bin/ai-usagebar-tray.rs`); returns the error to show, or empty on
 /// success.
 fn switch_with(tray: &std::path::Path, vendor: &str, label: &str) -> String {
+    let Some(flag) = account_switch_flag(vendor) else {
+        return "unsupported account type".into();
+    };
     let mut command = std::process::Command::new(tray);
-    command.args(["account", "switch", "--yes"]);
-    if vendor == "openai" {
-        command.arg("--codex");
-    }
+    command.args(["account", "switch", "--yes", flag]);
     command.arg("--").arg(label);
     match command.stdin(std::process::Stdio::null()).output() {
         Ok(output) if output.status.success() => String::new(),
@@ -513,6 +578,24 @@ fn switch_with(tray: &std::path::Path, vendor: &str, label: &str) -> String {
             .unwrap_or_else(|| format!("account switch exited with {}", output.status)),
         Err(error) => format!("could not run the account switch: {error}"),
     }
+}
+
+fn account_switch_flag(vendor: &str) -> Option<&'static str> {
+    match vendor {
+        "anthropic-desktop" => Some("--desktop"),
+        "anthropic" => Some("--cli"),
+        "openai" => Some("--codex"),
+        _ => None,
+    }
+}
+
+fn account_switch_allowed(accounts: &[AccountSwitchFact], vendor: &str, label: &str) -> bool {
+    !accounts.iter().any(|fact| fact.switching || fact.preparing)
+        && accounts.iter().any(|fact| {
+            fact.vendor == vendor
+                && fact.active.as_deref() != Some(label)
+                && fact.labels.iter().any(|known| known == label)
+        })
 }
 
 async fn push_report(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
@@ -559,6 +642,7 @@ fn stamp_facts(state: &mut TrayState) {
 
 fn apply_facts(state: &mut TrayState) {
     stamp_facts(state);
+    apply_strip_icon(state);
     if state.js_ready {
         push_to_webview(state);
     }
@@ -858,12 +942,7 @@ fn persist_menu_bar_value(key: &str, value: toml_edit::Value) {
 fn request_account_switch(state: &mut TrayState, value: &Value) {
     let vendor = value.get("vendor").and_then(Value::as_str).unwrap_or("");
     let label = value.get("label").and_then(Value::as_str).unwrap_or("");
-    let allowed = facts_snapshot(&state.facts).accounts.iter().any(|fact| {
-        fact.vendor == vendor
-            && !fact.switching
-            && fact.active.as_deref() != Some(label)
-            && fact.labels.iter().any(|known| known == label)
-    });
+    let allowed = account_switch_allowed(&facts_snapshot(&state.facts).accounts, vendor, label);
     if !allowed {
         return;
     }
@@ -902,6 +981,85 @@ fn request_account_switch(state: &mut TrayState, value: &Value) {
     }
 }
 
+fn account_prepare_allowed(accounts: &[AccountSwitchFact], vendor: &str, label: &str) -> bool {
+    vendor == "anthropic-desktop"
+        && !accounts.iter().any(|fact| fact.switching || fact.preparing)
+        && accounts.iter().any(|fact| {
+            fact.vendor == vendor
+                && fact.prepare_enabled
+                && fact.active.is_some()
+                && fact.active.as_deref() != Some(label)
+                && fact.labels.iter().any(|known| known == label)
+        })
+}
+
+fn request_account_prepare(state: &mut TrayState, value: &Value) {
+    let vendor = value.get("vendor").and_then(Value::as_str).unwrap_or("");
+    let label = value.get("label").and_then(Value::as_str).unwrap_or("");
+    if !account_prepare_allowed(&facts_snapshot(&state.facts).accounts, vendor, label) {
+        return;
+    }
+    with_facts(&state.facts, |f| {
+        if let Some(fact) = f
+            .accounts
+            .iter_mut()
+            .find(|fact| fact.vendor == "anthropic-desktop")
+        {
+            fact.prepare_target = label.into();
+            fact.preparing = true;
+            fact.prepare_error.clear();
+            fact.prepared_reset.clear();
+        }
+    });
+    apply_facts(state);
+    let facts = state.facts.clone();
+    let proxy = state.proxy.clone();
+    let worker = state.worker.clone();
+    let label = label.to_string();
+    let spawned = std::thread::Builder::new()
+        .name("ai-usagebar-desktop-prepare".into())
+        .spawn(move || {
+            let result = (|| -> crate::Result<crate::claude_desktop::prepare::Preparation> {
+                let config = Config::load()?;
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|_| {
+                        crate::AppError::Other("Could not start preparation worker.".into())
+                    })?
+                    .block_on(crate::claude_desktop::prepare::run(&config, &label))
+            })();
+            with_facts(&facts, |f| {
+                if let Some(fact) = f
+                    .accounts
+                    .iter_mut()
+                    .find(|fact| fact.vendor == "anthropic-desktop")
+                {
+                    fact.preparing = false;
+                    match result {
+                        Ok(done) => fact.prepared_reset = done.reset_at.to_rfc3339(),
+                        Err(error) => fact.prepare_error = error.to_string(),
+                    }
+                }
+            });
+            let _ = proxy.send_event(UserEvent::Facts);
+            let _ = worker.send(WorkerCmd::Refresh);
+        });
+    if spawned.is_err() {
+        with_facts(&state.facts, |f| {
+            if let Some(fact) = f
+                .accounts
+                .iter_mut()
+                .find(|fact| fact.vendor == "anthropic-desktop")
+            {
+                fact.preparing = false;
+                fact.prepare_error = "Could not start preparation worker.".into();
+            }
+        });
+        apply_facts(state);
+    }
+}
+
 fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow) {
     let Ok(value) = serde_json::from_str::<Value>(body) else {
         return;
@@ -927,6 +1085,7 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
         "toggle-startup" => toggle_startup(state),
         "menu-labels" => state.menu_labels = state.menu_labels.merged(&value),
         "switch-account" => request_account_switch(state, &value),
+        "prepare-account" => request_account_prepare(state, &value),
         "resize" => handle_resize(state, &value),
         "set-shortcut" => {
             let text = value.get("value").and_then(Value::as_str).unwrap_or("");
@@ -1821,5 +1980,115 @@ impl SingleInstance {
         file.try_lock_exclusive().ok()?;
         let _ = writeln!(&file, "{}", std::process::id());
         Some(Self { _lock: file })
+    }
+}
+
+#[cfg(test)]
+mod account_switch_tests {
+    use super::*;
+
+    #[test]
+    fn switches_only_the_requested_surface() {
+        assert_eq!(account_switch_flag("anthropic-desktop"), Some("--desktop"));
+        assert_eq!(account_switch_flag("anthropic"), Some("--cli"));
+        assert_eq!(account_switch_flag("openai"), Some("--codex"));
+        assert_eq!(account_switch_flag("unknown"), None);
+    }
+
+    #[test]
+    fn prepares_only_explicit_inactive_desktop_profiles_and_blocks_concurrent_switches() {
+        let mut accounts = vec![AccountSwitchFact {
+            vendor: "anthropic-desktop".into(),
+            active: Some("one".into()),
+            labels: vec!["one".into(), "two".into()],
+            prepare_enabled: true,
+            ..AccountSwitchFact::default()
+        }];
+        assert!(account_prepare_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
+        assert!(!account_prepare_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "one"
+        ));
+        assert!(!account_prepare_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "unknown"
+        ));
+        assert!(!account_prepare_allowed(&accounts, "anthropic", "two"));
+        accounts[0].preparing = true;
+        assert!(!account_prepare_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
+        assert!(!account_switch_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
+        accounts[0].preparing = false;
+        accounts[0].switching = true;
+        assert!(!account_prepare_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
+        accounts[0].switching = false;
+        accounts[0].prepare_enabled = false;
+        assert!(!account_prepare_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
+        accounts[0].prepare_enabled = true;
+        accounts[0].active = None;
+        assert!(!account_prepare_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
+    }
+
+    #[test]
+    fn requires_known_inactive_account_and_serializes_switches() {
+        let mut accounts = vec![
+            AccountSwitchFact {
+                vendor: "anthropic-desktop".into(),
+                active: Some("one".into()),
+                labels: vec!["one".into(), "two".into()],
+                ..AccountSwitchFact::default()
+            },
+            AccountSwitchFact {
+                vendor: "anthropic".into(),
+                ..AccountSwitchFact::default()
+            },
+        ];
+        assert!(account_switch_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
+        assert!(!account_switch_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "one"
+        ));
+        assert!(!account_switch_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "unknown"
+        ));
+        assert!(!account_switch_allowed(&accounts, "anthropic", "two"));
+        accounts[1].switching = true;
+        assert!(!account_switch_allowed(
+            &accounts,
+            "anthropic-desktop",
+            "two"
+        ));
     }
 }

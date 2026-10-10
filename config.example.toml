@@ -174,6 +174,11 @@ enabled = true
 # Defaults to the store claude-acc creates (https://github.com/ohmaseclaro/claude-acc);
 # unrelated to accounts_dir above, which is the `claude` CLI's own accounts.
 # desktop_profiles_dir = "~/.claude-acc/profiles"
+# Optional macOS-only Prepare button. Use the official Claude Code executable
+# or a trusted wrapper that preserves your proxy/firewall restrictions.
+# No PATH lookup, automatic requests, or Desktop restart. Requires a recent
+# CLI supporting --safe-mode and --no-session-persistence.
+# desktop_prepare_binary = "~/.local/bin/claude"
 # Or list accounts explicitly:
 # [[anthropic.accounts]]
 # label = "work"

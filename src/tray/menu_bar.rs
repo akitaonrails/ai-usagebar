@@ -206,7 +206,8 @@ pub(super) fn logo_segments(
 }
 
 /// The Quattro look's one chip, for the popover's selected provider, else the
-/// report's `primary`, else the first starred group, skipping any without a
+/// active Desktop profile when Claude is primary, else the report's `primary`
+/// and the first starred group, skipping any without a
 /// value. Its value comes from every quota window of that provider, stars
 /// aside and hidden metrics left out, like the Quattro bar and the popover
 /// tab that selects it. A provider whose every metric is hidden has no value
@@ -220,16 +221,35 @@ fn name_segment(
     hidden: &HiddenRows,
 ) -> Option<LogoSegment> {
     let primary = report.get("primary").and_then(Value::as_str);
+    let chip = |id: &str| {
+        let hidden_keys = hidden.get(id).map(Vec::as_slice).unwrap_or_default();
+        let (id, _, metrics) = quota_group(report, id, hidden_keys)?;
+        quota_chip(&id, &metrics, report, show_short_name, reading)
+    };
+    if let Some(selected) = selected
+        && let Some(segment) = chip(selected)
+    {
+        return Some(segment);
+    }
+    let desktop = &report["accounts"]["anthropic-desktop"];
+    let labels = desktop.get("labels").and_then(Value::as_array);
+    let is_desktop_primary = primary.is_none()
+        || labels.is_some_and(|labels| {
+            labels
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|label| primary == Some(format!("anthropic@{label}").as_str()))
+        });
+    if is_desktop_primary
+        && let Some(active) = desktop.get("active").and_then(Value::as_str)
+        && labels.is_some_and(|labels| labels.iter().any(|label| label.as_str() == Some(active)))
+    {
+        // A failed fetch for the active profile must not show another
+        // profile's healthy quota as if it belonged to the current login.
+        return chip(&format!("anthropic@{active}"));
+    }
     let starred = content.groups.iter().map(|(id, _, _)| id.as_str());
-    [selected, primary]
-        .into_iter()
-        .flatten()
-        .chain(starred)
-        .find_map(|id| {
-            let hidden_keys = hidden.get(id).map(Vec::as_slice).unwrap_or_default();
-            let (id, _, metrics) = quota_group(report, id, hidden_keys)?;
-            quota_chip(&id, &metrics, report, show_short_name, reading)
-        })
+    primary.into_iter().chain(starred).find_map(chip)
 }
 
 /// The chip shows the provider's highest-percent metric, like the Quattro
@@ -815,6 +835,69 @@ mod tests {
         assert_eq!(slug(&two_entries(Some("openai")), Some("gone")), "openai");
         assert_eq!(slug(&two_entries(None), None), "anthropic");
         assert_eq!(slug(&two_entries(None), Some("gone")), "anthropic");
+    }
+
+    #[test]
+    fn name_look_follows_active_desktop_unless_a_provider_was_selected() {
+        let mut report = json!({
+            "primary":"anthropic@one",
+            "accounts":{"anthropic-desktop":{"active":"two", "labels":["one", "two"]}},
+            "entries":[
+                entry("anthropic@one", "cld", &[("Session", 0.0)]),
+                entry("anthropic@two", "cld", &[("Session", 78.0), ("Weekly", 23.0)]),
+                entry("openai", "cdx", &[("Session", 35.0)]),
+            ]
+        });
+        let content = starred(&["anthropic@one", "anthropic@two", "openai"]);
+        let chip = |report: &Value, selected| {
+            logo_segments(
+                &content,
+                report,
+                MenuBarLook::Quattro,
+                selected,
+                true,
+                UsageReading::Left,
+                &HiddenRows::new(),
+            )
+        };
+        assert_eq!(chip(&report, None)[0].values, vec!["22%"]);
+        report["accounts"]["anthropic-desktop"]["active"] = json!("one");
+        assert_eq!(chip(&report, None)[0].values, vec!["100%"]);
+        report["accounts"]["anthropic-desktop"]["active"] = json!("two");
+        assert_eq!(chip(&report, None)[0].values, vec!["22%"]);
+        assert_eq!(chip(&report, Some("openai"))[0].values, vec!["65%"]);
+        assert_eq!(chip(&report, Some("anthropic@one"))[0].values, vec!["100%"]);
+        report["primary"] = json!("openai");
+        assert_eq!(chip(&report, None)[0].slug, "openai");
+        report["primary"] = Value::Null;
+        assert_eq!(chip(&report, None)[0].values, vec!["22%"]);
+    }
+
+    #[test]
+    fn name_look_never_substitutes_inactive_quota_for_an_unavailable_active_desktop() {
+        let mut report = json!({
+            "primary":"anthropic@one",
+            "accounts":{"anthropic-desktop":{"active":"two", "labels":["one", "two"]}},
+            "entries":[
+                entry("anthropic@one", "cld", &[("Session", 0.0)]),
+                {"id":"anthropic@two", "status":"error", "sections":[]},
+            ]
+        });
+        let content = starred(&["anthropic@one", "anthropic@two"]);
+        let chip = |report: &Value| {
+            logo_segments(
+                &content,
+                report,
+                MenuBarLook::Quattro,
+                None,
+                true,
+                UsageReading::Left,
+                &HiddenRows::new(),
+            )
+        };
+        assert!(chip(&report).is_empty());
+        report["accounts"]["anthropic-desktop"]["active"] = json!("unmanaged");
+        assert_eq!(chip(&report)[0].values, vec!["100%"]);
     }
 
     /// Stars do not decide the Quattro look: a selected provider with nothing

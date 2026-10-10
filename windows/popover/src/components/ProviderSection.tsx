@@ -1,5 +1,5 @@
 import type { DraggableAttributes, DraggableSyntheticListeners } from "@dnd-kit/core";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import MdiAlert from "~icons/mdi/alert";
 import MdiChevronDown from "~icons/mdi/chevron-down";
 import MdiChevronUp from "~icons/mdi/chevron-up";
@@ -9,6 +9,10 @@ import MdiStar from "~icons/mdi/star";
 import MdiStarOutline from "~icons/mdi/star-outline";
 import MdiTune from "~icons/mdi/tune-variant";
 import MdiArrowTopRight from "~icons/mdi/arrow-top-right";
+import MdiSwapHorizontal from "~icons/mdi/swap-horizontal";
+import MdiClockStart from "~icons/mdi/clock-start";
+import MdiCheck from "~icons/mdi/check";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import { Chip } from "@/components/Chip";
 import { Hint } from "@/components/Hint";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -34,6 +38,7 @@ import {
   cardHasExtras,
   condensedTextRowIndexes,
   displayPlan,
+  desktopPreparation,
   explainError,
   headlineAlternate,
   headlineLabel,
@@ -160,6 +165,7 @@ export function ProviderSection({
         account={account}
         card={card}
         handle={handle}
+        nowMs={nowMs}
         onCustomize={onCustomize}
         onSwitchAccount={onSwitchAccount}
       />
@@ -229,6 +235,7 @@ interface ProviderSectionHeaderProps {
   account?: CardAccount | null;
   card: Card;
   handle?: SectionHandle;
+  nowMs?: number;
   onCustomize?: () => void;
   onSwitchAccount?: () => void;
 }
@@ -244,10 +251,16 @@ export function ProviderSectionHeader({
   account,
   card,
   handle,
+  nowMs = 0,
   onCustomize,
   onSwitchAccount,
 }: ProviderSectionHeaderProps) {
   const plan = displayPlan(card.title, card.plan);
+  const desktop = account?.vendor === "anthropic-desktop";
+  // Put the distinguishing label first; a repeated provider/surface prefix
+  // otherwise truncates account-1 and account-2 to the same text.
+  const title = desktop ? account.label : card.title;
+  const planLabel = desktop ? plan.replace(/^Claude\s+/, "") : plan;
   return (
     <header
       className="group/header flex items-center gap-[var(--gap-inline)] px-[var(--card-pad)] py-[var(--space-2xs)]"
@@ -256,8 +269,8 @@ export function ProviderSectionHeader({
     >
       <ProviderIcon className="text-label-2" size="var(--sz-icon)" slug={providerIconId(card.id)} title={card.title} />
       <div className="flex min-w-0 items-baseline gap-[var(--gap-inline)]">
-        <TruncatedText className="min-w-0 text-[length:var(--sz-header)] font-semibold">{card.title}</TruncatedText>
-        {plan ? <span className="shrink-0 text-[length:var(--sz-badge)] text-label-2">{plan}</span> : null}
+        <TruncatedText className="min-w-0 text-[length:var(--sz-header)] font-semibold">{title}</TruncatedText>
+        {planLabel ? <span className="shrink-0 text-[length:var(--sz-badge)] text-label-2">{planLabel}</span> : null}
         {card.stale ? <span className="text-[length:var(--sz-badge)] text-label-3">{m.stale()}</span> : null}
       </div>
       {card.errorTitle ? (
@@ -270,6 +283,7 @@ export function ProviderSectionHeader({
         </MdiAlert>
       ) : null}
       <span className="min-w-[var(--gap-controls)] flex-1" />
+      {account ? <DesktopPrepareControl account={account} card={card} nowMs={nowMs} /> : null}
       {account ? <AccountControl account={account} title={card.title} onSwitch={onSwitchAccount} /> : null}
       {onCustomize ? (
         <HeaderAction icon={<MdiTune />} label={`${m.customize()} ${card.title}`} onClick={onCustomize} />
@@ -284,6 +298,25 @@ interface AccountControlProps {
   onSwitch?: () => void;
 }
 
+/** No account swap: a separate official CLI turn and server-confirmed window. */
+function DesktopPrepareControl({ account, card, nowMs }: { account: CardAccount; card: Card; nowMs: number }) {
+  const state = desktopPreparation(card, account, nowMs);
+  if (!state) return null;
+  return (
+    <Hint content={state.hint}>
+      <span>
+        <button type="button" className={cn("desktop-account-control", account.prepareError && state.label === "Prepare" && "is-failed")}
+          disabled={state.disabled} aria-label={`${state.label} Claude Desktop account ${account.label}`}
+          onClick={() => sendCommand("prepare-account", { vendor: "anthropic-desktop", label: account.label })}
+          onKeyDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+          {account.preparing ? <MdiLoading className="animate-spin" /> : state.label === "Ready" ? <MdiCheck /> : <MdiClockStart />}
+          {state.label}
+        </button>
+      </span>
+    </Hint>
+  );
+}
+
 /**
  * The account switch beside the header shortcuts, in the star language the row menu already
  * uses: the active login is a static filled star, not a button, since there is nothing to do
@@ -291,6 +324,9 @@ interface AccountControlProps {
  * spins in place; a failed one keeps the outline star, tinted red, with the reason as its tooltip.
  */
 function AccountControl({ account, title, onSwitch }: AccountControlProps) {
+  if (account.vendor === "anthropic-desktop") {
+    return <DesktopAccountControl account={account} onSwitch={onSwitch} />;
+  }
   if (account.active) {
     const label = `${title} is the active account`;
     return (
@@ -310,7 +346,7 @@ function AccountControl({ account, title, onSwitch }: AccountControlProps) {
   if (!onSwitch || account.busy) return null;
   const label = account.error
     ? `Switch to ${title} failed: ${account.error}`
-    : `Use ${title} (switches the CLI, desktop app and IDE extension)`;
+    : `Use ${title} (${account.vendor === "anthropic" ? "switches Claude CLI" : "switches Codex"})`;
   return (
     <HeaderAction
       className={account.error ? "is-failed" : undefined}
@@ -318,6 +354,57 @@ function AccountControl({ account, title, onSwitch }: AccountControlProps) {
       label={label}
       onClick={onSwitch}
     />
+  );
+}
+
+/** Desktop identity and its restart action stay explicit beside the usage meters. */
+function DesktopAccountControl({ account, onSwitch }: Omit<AccountControlProps, "title">) {
+  const [confirming, setConfirming] = useState(false);
+  if (account.active) {
+    const label = account.error
+      ? `${account.label} is active, but the switch did not finish: ${account.error}. Open Claude Desktop manually.`
+      : `${account.label} is active`;
+    return (
+      <Hint content={label}>
+        <span className={cn("desktop-account-control is-current", account.error && "is-failed")} aria-label={label}>
+          {account.error ? <MdiAlert /> : null}Active
+        </span>
+      </Hint>
+    );
+  }
+  if (account.switching) {
+    return <span className="desktop-account-control" role="status"><MdiLoading className="animate-spin" />Switching…</span>;
+  }
+  if (!onSwitch) return null;
+  return (
+    <>
+      <Hint content={account.error ? `Switch failed: ${account.error}` : `Switch Claude Desktop to ${account.label}`}>
+        <button
+          type="button"
+          className={cn("desktop-account-control", account.error && "is-failed")}
+          disabled={account.busy}
+          aria-label={`Switch Claude Desktop to ${account.label}`}
+          onClick={() => setConfirming(true)}
+          onKeyDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <MdiSwapHorizontal />Switch
+        </button>
+      </Hint>
+      <Dialog open={confirming} onOpenChange={setConfirming}>
+        <DialogContent onKeyDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+          <DialogTitle>Switch to {account.label}?</DialogTitle>
+          <DialogDescription>Claude Desktop will restart. Wait until its current task has finished.</DialogDescription>
+          <DialogFooter>
+            <button type="button" className="action-btn" onClick={() => setConfirming(false)}>Cancel</button>
+            <button type="button" className="action-btn" data-variant="primary" disabled={account.busy} onClick={() => {
+              setConfirming(false);
+              onSwitch();
+            }}>Switch</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

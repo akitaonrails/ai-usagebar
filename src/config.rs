@@ -300,6 +300,9 @@ pub struct AnthropicConfig {
     /// reads and writes that layout so the two tools stay interchangeable.
     /// Unrelated to `accounts_dir`, which is the `claude` CLI's own accounts.
     pub desktop_profiles_dir: Option<PathBuf>,
+    /// Explicit trusted official Claude Code CLI/wrapper for a manual, isolated
+    /// preparation turn. None disables the action; never resolved via PATH.
+    pub desktop_prepare_binary: Option<PathBuf>,
 }
 
 impl Default for AnthropicConfig {
@@ -311,6 +314,7 @@ impl Default for AnthropicConfig {
             accounts_dir: None,
             show_default_account: true,
             desktop_profiles_dir: None,
+            desktop_prepare_binary: None,
         }
     }
 }
@@ -2287,6 +2291,7 @@ impl Config {
         expand_tilde_opt(&mut self.anthropic.credentials_path);
         expand_tilde_opt(&mut self.anthropic.accounts_dir);
         expand_tilde_opt(&mut self.anthropic.desktop_profiles_dir);
+        expand_tilde_opt(&mut self.anthropic.desktop_prepare_binary);
         expand_tilde_opt(&mut self.openai.codex_auth_path);
         expand_tilde_opt(&mut self.cursor.db_path);
         expand_tilde_opt(&mut self.cursor.agent_auth_path);

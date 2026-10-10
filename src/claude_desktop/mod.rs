@@ -22,6 +22,8 @@
 pub mod app;
 pub mod capture;
 pub mod merge;
+#[cfg(any(target_os = "macos", test))]
+pub mod prepare;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

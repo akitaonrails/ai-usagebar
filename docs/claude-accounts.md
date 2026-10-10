@@ -272,13 +272,31 @@ Codex sessions after switching.
 
 ### Switch from the macOS menu bar
 
-With named accounts configured, each account's card in the `ai-usagebar-tray`
-popover shows a switch control beside Customize and Reset. The active login has
-a filled star; any other account has an outline star that runs the same
-`ai-usagebar account switch` (with `--codex` for a Codex card). A Claude switch
-quits and reopens Claude Desktop when that account also has a Desktop profile.
-The star spins while the switch runs, and a failed switch turns it red with
-the reason in its tooltip.
+Each saved Claude Desktop profile with credentials and browser state has a
+switch control on its card in the macOS `ai-usagebar-tray` popover, in either
+Classic or Native style. The current Desktop login is marked **Active**; another
+profile has a compact **Switch** button. After confirming, the existing
+`ai-usagebar account switch --desktop` transaction quits and reopens Claude,
+merges local history, and keeps its rollback backup. Finish any running Claude
+task before switching. The button shows **Switching…** while busy; failures
+remain on the button's tooltip and can be retried.
+
+If the login changed but Claude could not be reopened, **Active** carries a
+warning and the error; open Claude Desktop manually instead of switching again.
+Local Code message history can be continued after a switch. Preserved thinking
+may be bound to the originating account or organization and cannot always be
+reused; Claude may reread the conversation and use more tokens. See Anthropic's
+[preserved thinking documentation](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking).
+
+Named CLI and Codex cards retain their filled/outline star controls. Claude CLI
+cards explicitly use `--cli`; Codex cards use `--codex`. When a label exists in
+both the Desktop and CLI stores, the report's Desktop source wins and that card
+switches Desktop only. A running switch disables other switches until it finishes.
+
+The Quattro menu-bar readout defaults to the active Desktop profile when Claude
+is primary, and updates after a switch. An explicitly selected Native provider
+tab still takes precedence. If the active profile's quota cannot be loaded, the
+readout does not substitute another profile's quota.
 
 ### Side-by-side profiles
 
@@ -322,6 +340,35 @@ absent from one profile would later read as intentional deletions.
 account lists conversations and routines started under the others, because the
 point is that every profile opens on the union. Do not use it across accounts
 that must stay visually separate.
+
+### Preparing an inactive Desktop account (macOS)
+
+Optionally configure the absolute path to your official Claude Code executable
+or trusted proxy/firewall wrapper:
+
+```toml
+[anthropic]
+desktop_prepare_binary = "~/.local/bin/claude"
+```
+
+An inactive Desktop card then shows **Prepare**. A click checks live usage
+first. A running window is **Ready** without another message; an exhausted
+session or weekly limit blocks preparation. Otherwise, it runs one short
+Haiku turn with that profile's OAuth access token in an isolated temporary
+home. Tools, MCP, customizations and history persistence are disabled. The
+temporary directory is deleted afterward. No project context or existing
+conversation is loaded, and the Desktop app is neither switched nor restarted.
+The server's returned reset time confirms readiness; a successful CLI exit
+alone does not. This consumes a little session/weekly allowance and does not
+increase either limit. There are no automatic preparation requests.
+
+The action is disabled by default and never searches `PATH` for a binary.
+It needs a recent official CLI supporting `--safe-mode` and
+`--no-session-persistence`. Transport environment variables are preserved;
+use a trusted wrapper when the CLI must stay on a particular protected proxy.
+API keys and alternate API endpoints are not inherited. A timeout or uncertain
+result asks you to refresh usage before retrying, since the turn may have
+completed. Preparation and switching are mutually exclusive while running.
 
 ### Storage and history conflicts
 
