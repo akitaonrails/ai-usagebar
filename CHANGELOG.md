@@ -28,6 +28,11 @@
 
 ### Fixed
 
+- **KDE plasmoid displays value headlines as their value.** A metric declaring
+  `headline: "value"` with a non-null consumed percentage (such as prepaid
+  balances or credit spend) previously rendered as a percentage across panel
+  cells, card gauges, and popup rows. It now honors the headline and displays
+  the value string, falling back to the percentage only when the value is empty.
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
