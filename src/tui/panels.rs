@@ -2712,7 +2712,7 @@ mod tests {
             })
             .expect("uncapped extra usage must still render a section");
         assert_eq!(extra.0, 0);
-        // Non-vacuous currency pin: fmt_dollars would say "$141.57" here.
+        // Non-vacuous currency pin: a bare `$` formatter would say "$141.57" here.
         assert_eq!(extra.1, "R$141.57");
         assert!(
             !extra.1.contains(" of "),
