@@ -270,7 +270,19 @@ fn read_platform() -> Option<String> {
 
 #[cfg(target_os = "macos")]
 fn read_platform() -> Option<String> {
-    let out = std::process::Command::new("/usr/bin/security")
+    let out = keyring_lookup_command().output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    decode_blob_bytes(&out.stdout)
+}
+
+/// `security find-generic-password -s <service> -a <account> -w`, read-only;
+/// the secret arrives on stdout, never in argv.
+#[cfg(target_os = "macos")]
+fn keyring_lookup_command() -> std::process::Command {
+    let mut command = std::process::Command::new("/usr/bin/security");
+    command
         .args([
             "find-generic-password",
             "-s",
@@ -280,13 +292,12 @@ fn read_platform() -> Option<String> {
             "-w",
         ])
         .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+        .stderr(std::process::Stdio::null());
+    // A credential lookup must not inherit this process's provider keys.
+    for var in crate::vendor::vendor_secret_env_vars_to_remove(&[]) {
+        command.env_remove(var);
     }
-    decode_blob_bytes(&out.stdout)
+    command
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -294,7 +305,19 @@ fn read_platform() -> Option<String> {
     // `secret-tool` (libsecret) speaks to whichever Secret Service is running.
     // A missing binary or no running daemon both exit non-zero / fail to
     // spawn, and both mean "no session available here".
-    let out = std::process::Command::new("secret-tool")
+    let out = keyring_lookup_command().output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    decode_blob_bytes(&out.stdout)
+}
+
+/// `secret-tool lookup service <service> username <account>`, read-only; the
+/// secret arrives on stdout, never in argv.
+#[cfg(not(any(windows, target_os = "macos")))]
+fn keyring_lookup_command() -> std::process::Command {
+    let mut command = std::process::Command::new("secret-tool");
+    command
         .args([
             "lookup",
             "service",
@@ -303,13 +326,12 @@ fn read_platform() -> Option<String> {
             KEYRING_ACCOUNT,
         ])
         .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+        .stderr(std::process::Stdio::null());
+    // A credential lookup must not inherit this process's provider keys.
+    for var in crate::vendor::vendor_secret_env_vars_to_remove(&[]) {
+        command.env_remove(var);
     }
-    decode_blob_bytes(&out.stdout)
+    command
 }
 
 #[cfg(test)]
@@ -535,5 +557,31 @@ mod tests {
     #[ignore = "reads the real Windows credential store"]
     fn reading_the_real_windows_credential_never_errors() {
         assert!(read().is_ok());
+    }
+
+    /// The keyring lookup is a spawn on the user's PATH (Linux) or an Apple
+    /// binary (macOS); either way it must not inherit this process's provider
+    /// keys, the rule the Grok Bot lookups already follow.
+    #[cfg(not(windows))]
+    #[test]
+    fn keyring_lookup_scrubs_vendor_secret_env_vars() {
+        let command = keyring_lookup_command();
+        let expected = if cfg!(target_os = "macos") {
+            "/usr/bin/security"
+        } else {
+            "secret-tool"
+        };
+        assert_eq!(command.get_program(), expected);
+        let removed: Vec<String> = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        for var in crate::vendor::vendor_secret_env_vars_to_remove(&[]) {
+            assert!(
+                removed.iter().any(|key| key == var),
+                "expected {var} to be scrubbed from the keyring lookup"
+            );
+        }
     }
 }
