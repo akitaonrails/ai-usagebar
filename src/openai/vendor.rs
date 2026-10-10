@@ -592,4 +592,27 @@ mod tests {
         );
         assert_eq!(out.tooltip, "ChatGPT Pro &amp; Enterprise &lt;preview&gt;");
     }
+
+    #[test]
+    fn api_credit_balance_is_pango_escaped_in_custom_formats() {
+        // The balance stays the string OpenAI sent whenever it is not a plain
+        // number, so it is API-controlled text like the plan.
+        let mut s = sample();
+        s.credits = Some(crate::usage::OpenAiCredits {
+            balance: "<n/a> & unknown".into(),
+            has_credits: false,
+            unlimited: false,
+            approx_local_messages: None,
+            approx_cloud_messages: None,
+        });
+        let mut o = opts();
+        o.format = Some("{oai_credit_balance}".into());
+        o.tooltip_format = Some("{oai_credit_balance}".into());
+
+        let out = render(&oc(s.clone()), &s, &Theme::default(), &o, Utc::now());
+        let escaped = "&lt;n/a&gt; &amp; unknown";
+        assert!(out.text.contains(escaped), "{}", out.text);
+        assert!(!out.text.contains("<n/a>"), "{}", out.text);
+        assert_eq!(out.tooltip, escaped);
+    }
 }
