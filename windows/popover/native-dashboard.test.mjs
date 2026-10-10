@@ -40,11 +40,11 @@ try {
     hostError: '', version: 'test',
   };
 
-  function sectionMarkup(layout, language = 'pt-BR', section = card) {
+  function sectionMarkup(layout, language = 'pt-BR', section = card, account = undefined) {
     return renderToStaticMarkup(React.createElement(TooltipProvider, {},
       React.createElement(LanguageProvider, { language },
         React.createElement(ProviderSection, {
-          card: section, layout, nowMs,
+          card: section, layout, nowMs, account,
           onCustomize() {}, onRowAction() {}, onRowMenuOpenChange() {},
           onSwitchAccount() {}, onToggleCollapse() {}, onToggleShowAs() {},
         }))));
@@ -65,6 +65,33 @@ try {
     assert.match(withGoal, /class="usage-goal-meter[^\"]*" role="progressbar"/);
     const withoutGoal = sectionMarkup({ ...emptyLayout(), popoverStyle, usageGoal: false });
     assert.doesNotMatch(withoutGoal, /usage-goal-meter|Meta agora/);
+  }
+  // Desktop switches use explicit text; row stars retain their independent
+  // meter-selection meaning. Both usage windows survive all switch states.
+  const desktopCard = { ...card, id: 'anthropic@desktop-2', title: 'Claude · desktop-2 (desktop)',
+    rows: [card.rows[0], { ...card.rows[0], key: 'weekly', label: 'Weekly', window: 604800 }] };
+  const desktopAccount = { vendor: 'anthropic-desktop', label: 'desktop-2', active: false, switching: false, busy: false, error: '' };
+  for (const popoverStyle of ['classic', 'native']) {
+    const layout = { ...emptyLayout(), popoverStyle };
+    const inactive = sectionMarkup(layout, 'en', desktopCard, desktopAccount);
+    assert.match(inactive, /aria-label="Switch Claude Desktop to desktop-2"/);
+    assert.match(inactive, />Switch<\/button>/);
+    assert.match(inactive, />Session</);
+    assert.match(inactive, />Weekly</);
+    const active = sectionMarkup(layout, 'en', desktopCard, { ...desktopAccount, active: true });
+    assert.match(active, />Active<\/span>/);
+    assert.doesNotMatch(active, /aria-label="Switch Claude Desktop/);
+    const activeFailed = sectionMarkup(layout, 'en', desktopCard, {
+      ...desktopAccount, active: true, error: 'Claude could not be reopened',
+    });
+    assert.match(activeFailed, /desktop-account-control is-current is-failed/);
+    assert.match(activeFailed, /Claude could not be reopened\. Open Claude Desktop manually/);
+    assert.match(activeFailed, />Active<\/span>/);
+    const pending = sectionMarkup(layout, 'en', desktopCard, { ...desktopAccount, switching: true });
+    assert.match(pending, /role="status"/);
+    assert.match(pending, /Switching…/);
+    const busy = sectionMarkup(layout, 'en', desktopCard, { ...desktopAccount, busy: true });
+    assert.match(busy, /disabled="" aria-label="Switch Claude Desktop/);
   }
   assert.match(sectionMarkup({ ...emptyLayout(), resetTimes: 'exact', timeFormat: '24' }), /Redefine hoje às 12:00/);
   assert.match(sectionMarkup({ ...emptyLayout(), resetTimes: 'countdown', timeFormat: '24' }), /Redefine em 1h 0m/);

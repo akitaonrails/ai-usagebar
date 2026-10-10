@@ -1789,6 +1789,49 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.deepEqual(parseHostPayload(JSON.stringify({ entries: [] })).accounts, {});
 }
 
+// Desktop cards share report ids with CLI cards, but commands must not switch
+// the wrong surface, including when a label exists in both stores.
+{
+  const accounts = parseHostPayload(JSON.stringify({entries: [], accounts: {
+    anthropic: {active: 'same', labels: ['same', 'cli-only']},
+    'anthropic-desktop': {active: 'desktop-1', labels: ['desktop-1', 'same'], target: 'same', error: 'switch rejected'},
+  }})).accounts;
+  assert.equal(accountSwitchFor('anthropic@desktop-1', accounts).active, true);
+  const desktop = accountSwitchFor('anthropic@same', accounts);
+  assert.equal(desktop.vendor, 'anthropic-desktop');
+  assert.equal(desktop.active, false);
+  assert.equal(desktop.error, 'switch rejected');
+  assert.equal(accountSwitchFor('anthropic@cli-only', accounts).vendor, 'anthropic');
+  assert.equal(accountSwitchFor('anthropic@missing', accounts), null);
+  accounts.anthropic.switching = true;
+  assert.equal(accountSwitchFor('anthropic@same', accounts).busy, true);
+  accounts.anthropic.switching = false;
+  accounts['anthropic-desktop'].switching = true;
+  assert.equal(accountSwitchFor('anthropic@same', accounts).switching, true);
+  assert.equal(accountSwitchFor('anthropic@same', accounts).busy, false);
+  assert.equal(accountSwitchFor('anthropic@cli-only', accounts).busy, true);
+  const long = 'x'.repeat(200);
+  const ambiguous = parseHostPayload({entries: [{id: `anthropic@${long}a`}], accounts: {
+    'anthropic-desktop': {labels: [`${long}a`, `${long}b`]},
+    anthropic: {labels: [long]},
+  }});
+  assert.equal(accountSwitchFor(ambiguous.entries[0].id, ambiguous.accounts), null);
+  const crossScope = parseHostPayload({entries: [
+    {id: `anthropic@${long}cli`}, {id: `anthropic@${long}desktop`},
+  ], accounts: {
+    'anthropic-desktop': {labels: [`${long}desktop`]},
+    anthropic: {labels: [`${long}cli`]},
+  }});
+  assert.equal(crossScope.entries[0].id, crossScope.entries[1].id);
+  for (const entry of crossScope.entries) {
+    assert.equal(accountSwitchFor(entry.id, crossScope.accounts), null);
+  }
+  accounts['anthropic-desktop'].switching = false;
+  accounts['anthropic-desktop'].active = 'same';
+  accounts['anthropic-desktop'].error = 'Claude could not be reopened';
+  assert.equal(accountSwitchFor('anthropic@same', accounts).error, 'Claude could not be reopened');
+}
+
 // Every card that renders keeps its switch control: as many accounts as there
 // are cards, and a label longer than a card id matched through the id's cut.
 {

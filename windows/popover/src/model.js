@@ -117,7 +117,7 @@ function normalizeAccent(value) {
   return { light: value.light.toLowerCase(), dark: value.dark.toLowerCase() };
 }
 
-const SWITCHABLE_VENDORS = ["anthropic", "openai"];
+const SWITCHABLE_VENDORS = ["anthropic", "anthropic-desktop", "openai"];
 
 // Switchable logins per vendor. Only the macOS host sends any; anything absent
 // or malformed means no switch control at all rather than a guessed one.
@@ -156,12 +156,23 @@ export function accountSwitchFor(cardId, accounts) {
   const id = String(cardId || "");
   const at = id.indexOf("@");
   if (at <= 0) return null;
-  const vendor = id.slice(0, at);
+  let vendor = id.slice(0, at);
+  // Desktop and CLI share report ids; the report's Desktop source wins a
+  // label collision. Keep the command scope explicit rather than switching both.
+  const desktop = accounts?.["anthropic-desktop"];
+  if (vendor === "anthropic") {
+    const candidates = [...(accounts?.anthropic?.labels || []), ...(desktop?.labels || [])]
+      .filter((label) => cardIdOf("anthropic", label) === id);
+    if (new Set(candidates).size > 1) return null;
+  }
+  if (vendor === "anthropic" && desktop?.labels?.some((label) => cardIdOf("anthropic", label) === id)) {
+    vendor = "anthropic-desktop";
+  }
   const info = accounts && Object.prototype.hasOwnProperty.call(accounts, vendor) ? accounts[vendor] : null;
   if (!info) return null;
   // Two labels that only differ past the cut share one card; neither is
   // offered, since the control could not say which one it switches to.
-  const matches = info.labels.filter((label) => cardIdOf(vendor, label) === id);
+  const matches = info.labels.filter((label) => cardIdOf(vendor === "anthropic-desktop" ? "anthropic" : vendor, label) === id);
   if (matches.length !== 1) return null;
   const label = matches[0];
   const mine = info.target === label;
@@ -170,8 +181,8 @@ export function accountSwitchFor(cardId, accounts) {
     label,
     active: info.active === label,
     switching: info.switching && mine,
-    busy: info.switching && !mine,
-    error: mine && !info.switching && info.active !== label ? info.error : "",
+    busy: !(info.switching && mine) && Object.values(accounts).some((scope) => scope.switching),
+    error: mine && !info.switching ? info.error : "",
   };
 }
 

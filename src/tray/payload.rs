@@ -43,7 +43,7 @@ pub struct HostFacts {
 /// account's card.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AccountSwitchFact {
-    /// Report entry slug: "anthropic" or "openai".
+    /// Switch scope: "anthropic", "anthropic-desktop" or "openai".
     pub vendor: String,
     /// Label the vendor's default login belongs to; `None` when it is not a
     /// managed account.
