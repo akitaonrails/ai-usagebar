@@ -28,6 +28,12 @@
 
 ### Fixed
 
+- **The placeholder reference covers Nous Research.** `docs/format-placeholders.md`
+  had a section for every provider except Nous, so `{nous_pct}`,
+  `{nous_renewal}`, `{nous_plan}` and the six credit placeholders were
+  discoverable only in the source. The new section states what each carries,
+  how credits are formatted, the default format, and which shared placeholders
+  alias them.
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the
