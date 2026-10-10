@@ -816,6 +816,32 @@ mod tests {
     }
 
     #[test]
+    fn plan_and_scoped_model_are_pango_escaped_in_custom_formats() {
+        // The plan label comes from the credentials file and the scoped model
+        // name from the API's `limits[].scope.model.display_name`; both feed
+        // the bar text and a custom --tooltip-format, which are Pango markup.
+        let mut oc = sample_outcome();
+        oc.snapshot.plan = "Max <5x> & Team".into();
+        oc.snapshot.scoped = vec![crate::usage::ScopedWindow {
+            label: "Fable & <Opus>".into(),
+            window: UsageWindow {
+                utilization_pct: 84,
+                resets_at: Some(now() + chrono::Duration::days(5)),
+                window_duration: chrono::Duration::days(7),
+            },
+        }];
+        let theme = Theme::default();
+        let mut inp = input(&oc, &theme);
+        inp.format = "{plan} · {scoped_model}";
+        inp.tooltip_format = Some("{plan} · {scoped_model}");
+        let out = render_anthropic(&inp);
+        let escaped = "Max &lt;5x&gt; &amp; Team · Fable &amp; &lt;Opus&gt;";
+        assert!(out.text.contains(escaped), "{}", out.text);
+        assert!(!out.text.contains("<5x>"), "{}", out.text);
+        assert_eq!(out.tooltip, escaped);
+    }
+
+    #[test]
     fn default_tooltip_contains_all_sections() {
         let oc = sample_outcome();
         let theme = Theme::default();
