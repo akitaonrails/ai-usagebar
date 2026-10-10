@@ -262,13 +262,15 @@ pub fn label_for_uuid<'a>(profiles: &'a [ProfileMeta], account_uuid: &str) -> Op
 }
 
 /// The saved accounts the Desktop app can switch to, and the one it is signed
-/// in as; `None` without the app's data. No saved account is an empty list,
-/// where adding the first one is what matters.
+/// in as; `None` without the app's data or a saved account.
 pub fn switchable(paths: &Paths) -> Option<(Vec<String>, Option<String>)> {
     if !paths.available() {
         return None;
     }
     let profiles = load_profiles(&paths.profiles_dir);
+    if profiles.is_empty() {
+        return None;
+    }
     let active = active_account_uuid(&paths.config_json())
         .and_then(|uuid| label_for_uuid(&profiles, &uuid).map(str::to_string));
     Some((
@@ -1441,7 +1443,7 @@ mod tests {
     }
 
     #[test]
-    fn switchable_is_none_without_the_app_and_empty_without_a_saved_account() {
+    fn switchable_is_none_without_the_app_or_a_saved_account() {
         let f = fixture();
         let no_app = Paths::at(
             f.paths.data_dir.join("missing"),
@@ -1454,7 +1456,7 @@ mod tests {
             f.paths.profiles_dir.join("missing"),
             f.paths.backups_dir.clone(),
         );
-        assert_eq!(switchable(&no_profiles), Some((Vec::new(), None)));
+        assert_eq!(switchable(&no_profiles), None);
     }
 
     /// `(relative path, length)` for every file under a root, so a test can

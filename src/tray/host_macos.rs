@@ -418,14 +418,13 @@ fn host_facts(config: &Config) -> HostFacts {
     facts
 }
 
-/// The `accounts` key of the Claude Desktop app's own switch, apart from the
-/// `anthropic` card switch, which moves the CLI too.
+/// The `accounts` key of the Claude Desktop app's own logins: the switch on a
+/// Claude card the CLI does not know, which moves the app alone.
 const DESKTOP_VENDOR: &str = "claude-desktop";
 
-/// Which Claude CLI and Codex logins are active, for the switch control on
-/// each account's card, and which Claude Desktop account the app is signed in
-/// as, for Settings' Claude Desktop section. Read fresh on every report, so a
-/// switch made from the terminal shows up too.
+/// Which Claude CLI, Claude Desktop and Codex logins are active, for the switch
+/// control on each account's card. Read fresh on every report, so a switch made
+/// from the terminal shows up too.
 fn account_facts(config: &Config) -> Vec<AccountSwitchFact> {
     let mut out = Vec::new();
     if let Some((labels, active)) = crate::claude_desktop::Paths::resolve(&config.anthropic)
@@ -875,20 +874,6 @@ fn persist_menu_bar_value(key: &str, value: toml_edit::Value) {
     }
 }
 
-/// Capture a Claude Desktop account the popover named; its label obeys the
-/// same rule as `account add`, since that is what runs.
-fn request_add_desktop_account(value: &Value) {
-    let label = value
-        .get("label")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim();
-    if label.chars().count() > 64 || crate::config::validate_account_label(label).is_err() {
-        return;
-    }
-    tui_launch::add_desktop_account(label);
-}
-
 /// Start a switch the popover asked for. Only a vendor and label the host
 /// itself reported are accepted, and never while one is already running.
 fn request_account_switch(state: &mut TrayState, value: &Value) {
@@ -963,7 +948,6 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
         "toggle-startup" => toggle_startup(state),
         "menu-labels" => state.menu_labels = state.menu_labels.merged(&value),
         "switch-account" => request_account_switch(state, &value),
-        "add-desktop-account" => request_add_desktop_account(&value),
         "resize" => handle_resize(state, &value),
         "set-shortcut" => {
             let text = value.get("value").and_then(Value::as_str).unwrap_or("");

@@ -43,17 +43,6 @@
 /** @typedef {{}} Checking_For_UpdatesInputs */
 /** @typedef {{}} Choose_What_S_Visible_And_WhereInputs */
 /** @typedef {{}} ClassicInputs */
-/** @typedef {{}} Claude_DesktopInputs */
-/** @typedef {{}} Claude_Desktop_ActiveInputs */
-/** @typedef {{}} Claude_Desktop_AddInputs */
-/** @typedef {{}} Claude_Desktop_Add_ButtonInputs */
-/** @typedef {{}} Claude_Desktop_Add_HintInputs */
-/** @typedef {{}} Claude_Desktop_Add_PlaceholderInputs */
-/** @typedef {{}} Claude_Desktop_NoneInputs */
-/** @typedef {{}} Claude_Desktop_SwitchInputs */
-/** @typedef {{ error: NonNullable<unknown> }} Claude_Desktop_Switch_FailedInputs */
-/** @typedef {{}} Claude_Desktop_Switch_NoteInputs */
-/** @typedef {{}} Claude_Desktop_SwitchingInputs */
 /** @typedef {{}} Clear_ShortcutInputs */
 /** @typedef {{}} Click_Again_To_ConfirmInputs */
 /** @typedef {{}} Click_To_Record_A_ShortcutInputs */
@@ -446,50 +435,6 @@ export const choose_what_s_visible_and_where = /** @type {(inputs: Choose_What_S
 
 export const classic = /** @type {(inputs: ClassicInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`Clásico`)
-};
-
-export const claude_desktop = /** @type {(inputs: Claude_DesktopInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Claude Desktop`)
-};
-
-export const claude_desktop_active = /** @type {(inputs: Claude_Desktop_ActiveInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Activa`)
-};
-
-export const claude_desktop_add = /** @type {(inputs: Claude_Desktop_AddInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Añadir cuenta`)
-};
-
-export const claude_desktop_add_button = /** @type {(inputs: Claude_Desktop_Add_ButtonInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Añadir`)
-};
-
-export const claude_desktop_add_hint = /** @type {(inputs: Claude_Desktop_Add_HintInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Abre la Terminal para guardar una cuenta con este nombre. Claude se cierra y se vuelve a abrir en su pantalla de inicio de sesión para que entres con ella; la cuenta actual vuelve si cancelas.`)
-};
-
-export const claude_desktop_add_placeholder = /** @type {(inputs: Claude_Desktop_Add_PlaceholderInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`trabajo`)
-};
-
-export const claude_desktop_none = /** @type {(inputs: Claude_Desktop_NoneInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Aún no hay cuentas de Claude Desktop guardadas. Añade la que tiene la app abierta y luego las demás.`)
-};
-
-export const claude_desktop_switch = /** @type {(inputs: Claude_Desktop_SwitchInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Cambiar`)
-};
-
-export const claude_desktop_switch_failed = /** @type {(inputs: Claude_Desktop_Switch_FailedInputs) => LocalizedString} */ (i) => {
-	return /** @type {LocalizedString} */ (`El cambio falló: ${i?.error}`)
-};
-
-export const claude_desktop_switch_note = /** @type {(inputs: Claude_Desktop_Switch_NoteInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Cambiar cierra y vuelve a abrir la app de Claude; tu historial local pasa a la cuenta elegida.`)
-};
-
-export const claude_desktop_switching = /** @type {(inputs: Claude_Desktop_SwitchingInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Cambiando…`)
 };
 
 export const clear_shortcut = /** @type {(inputs: Clear_ShortcutInputs) => LocalizedString} */ () => {

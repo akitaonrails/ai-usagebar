@@ -5,13 +5,13 @@ import { ScreenCrossLinkRow } from "@/components/Chrome";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { AccountSwitchInfo, Card, Language, Layout, Payload } from "@/lib/types";
+import type { Card, Language, Layout, Payload } from "@/lib/types";
 import { m } from "@/paraglide/messages.js";
 import { useI18n } from "@/lib/i18n";
 import { wheelScrollRef } from "@/lib/wheelScroll";
 import { Hint } from "@/components/Hint";
 import { TruncatedText } from "@/components/TruncatedText";
-import { sendCommand, updateModeLabel, updateStatusLabel, validAccountLabel } from "../model.js";
+import { sendCommand, updateModeLabel, updateStatusLabel } from "../model.js";
 import { Customize } from "./Customize";
 
 export type SettingsTab = "general" | "providers" | "menu" | "preferences" | "alerts";
@@ -315,9 +315,6 @@ export function Settings({
       </Section>
       </div>
       ) : null}
-      {payload.os === "macos" && payload.accounts["claude-desktop"] && (!native || tab === "general") ? (
-        <ClaudeDesktopSection account={payload.accounts["claude-desktop"]} />
-      ) : null}
       {/* Native shows Updates under General only; Classic keeps it at the end of the page. */}
       {!native || tab === "general" ? (
       <Section title={m.updates()}>
@@ -352,92 +349,6 @@ export function Settings({
         onClick={onOpenCustomize}
       /> : null}
     </div>
-  );
-}
-
-/**
- * The Claude Desktop app's accounts, as the old menu bar's Preferences listed
- * them: the signed-in one marked, a Switch on each other. A switch quits and
- * reopens the app, so it takes a second click.
- */
-function ClaudeDesktopSection({ account }: { account: AccountSwitchInfo }) {
-  const [armed, setArmed] = useState("");
-  const [name, setName] = useState("");
-  useEffect(() => {
-    if (account.switching) setArmed("");
-  }, [account.switching]);
-
-  function add() {
-    sendCommand("add-desktop-account", { label: name.trim() });
-    setName("");
-  }
-
-  function press(label: string) {
-    if (armed !== label) {
-      setArmed(label);
-      return;
-    }
-    setArmed("");
-    sendCommand("switch-account", { vendor: "claude-desktop", label });
-  }
-
-  return (
-    <Section title={m.claude_desktop()}>
-      {account.labels.map((label) => {
-        const active = account.active === label;
-        const running = account.switching && account.target === label;
-        const failed = !account.switching && !active && account.target === label ? account.error : "";
-        return (
-          <div key={label} className="flex items-center gap-[var(--row-gap)] px-[var(--card-pad)] py-[var(--pad-control)]">
-            <span className="flex min-w-0 flex-1 flex-col">
-              <TruncatedText className="min-w-0">{label}</TruncatedText>
-              {failed ? (
-                <span className="text-[length:var(--sz-badge)] leading-[var(--leading-note)] break-words text-label-2 [overflow-wrap:anywhere]">
-                  {m.claude_desktop_switch_failed({ error: failed })}
-                </span>
-              ) : null}
-            </span>
-            {active ? (
-              <span className="text-label-2">{m.claude_desktop_active()}</span>
-            ) : running ? (
-              <span className="text-label-2" role="status">{m.claude_desktop_switching()}</span>
-            ) : (
-              <button
-                type="button"
-                className="action-btn"
-                disabled={account.switching}
-                onClick={() => press(label)}
-              >
-                {armed === label ? m.click_again_to_confirm() : m.claude_desktop_switch()}
-              </button>
-            )}
-          </div>
-        );
-      })}
-      {account.labels.length === 0 ? (
-        <div className="px-[var(--card-pad)] py-[var(--pad-control)] text-label-2">{m.claude_desktop_none()}</div>
-      ) : null}
-      <SettingRow hint={m.claude_desktop_add_hint()} label={m.claude_desktop_add()}>
-        <input
-          type="text"
-          className="threshold-input"
-          style={{ width: "7.5rem", textAlign: "left" }}
-          aria-label={m.claude_desktop_add()}
-          placeholder={m.claude_desktop_add_placeholder()}
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && validAccountLabel(name)) add();
-          }}
-        />
-        <button type="button" className="action-btn" disabled={!validAccountLabel(name)} onClick={add}>
-          {m.claude_desktop_add_button()}
-        </button>
-      </SettingRow>
-      <div className="px-[var(--card-pad)] pb-[var(--pad-control)] text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">
-        {m.claude_desktop_switch_note()}
-      </div>
-    </Section>
   );
 }
 

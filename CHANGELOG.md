@@ -2,16 +2,15 @@
 
 ### Added
 
-- **Claude Desktop account switch in the macOS tray.** Settings has a
-  Claude Desktop section listing the accounts saved with
-  `ai-usagebar account add <label> --desktop`, the signed-in one marked and a
-  Switch on each other. A switch takes a second click, since it runs
-  `account switch --desktop`: Claude.app quits, the local history moves to the
-  target account, and the app reopens as it. **Add account** takes a name and
-  runs that capture in Terminal, where its sign-in can be answered. The old Swift menu bar had this
-  in its Preferences; the tray only offered the card switch for Claude Code
-  and Codex logins, so an account the Desktop app alone knew could not be
-  reached from it.
+- **Claude Desktop accounts switch from their card in the macOS tray.** A
+  Claude card for an account only the Desktop app knows (saved with
+  `ai-usagebar account add <label> --desktop`) now carries the same star as a
+  Claude Code account's card. The star switches the app alone through
+  `account switch --desktop`: Claude.app quits, the local history moves to
+  that account, and the app reopens. Because the app restarts, it takes a
+  second click. The tray offered the star only for Claude Code and Codex
+  logins, so a Desktop-only account could not be switched from the menu bar
+  as the old Swift app's Preferences allowed.
 
 - **Ollama Cloud provider mark in the Omarchy bar and panel.** Ship the
   monochrome Lobe Icons SVG under MIT, with source provenance and the

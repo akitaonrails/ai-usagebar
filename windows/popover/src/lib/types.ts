@@ -219,6 +219,8 @@ export interface AccountSwitchInfo {
 export interface CardAccount {
   vendor: string;
   label: string;
+  /** A Claude Desktop login: switching quits and reopens the app, so it asks twice. */
+  desktop: boolean;
   active: boolean;
   /** A switch to this account is running. */
   switching: boolean;

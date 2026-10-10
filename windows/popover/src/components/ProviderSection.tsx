@@ -1,11 +1,12 @@
 import type { DraggableAttributes, DraggableSyntheticListeners } from "@dnd-kit/core";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import MdiAlert from "~icons/mdi/alert";
 import MdiChevronDown from "~icons/mdi/chevron-down";
 import MdiChevronUp from "~icons/mdi/chevron-up";
 import MdiFire from "~icons/mdi/fire";
 import MdiLoading from "~icons/mdi/loading";
 import MdiStar from "~icons/mdi/star";
+import MdiStarHalfFull from "~icons/mdi/star-half-full";
 import MdiStarOutline from "~icons/mdi/star-outline";
 import MdiTune from "~icons/mdi/tune-variant";
 import MdiArrowTopRight from "~icons/mdi/arrow-top-right";
@@ -291,6 +292,13 @@ interface AccountControlProps {
  * spins in place; a failed one keeps the outline star, tinted red, with the reason as its tooltip.
  */
 function AccountControl({ account, title, onSwitch }: AccountControlProps) {
+  // A Desktop switch quits and reopens Claude.app: the first click arms it.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [armed]);
   if (account.active) {
     const label = `${title} is the active account`;
     return (
@@ -310,13 +318,24 @@ function AccountControl({ account, title, onSwitch }: AccountControlProps) {
   if (!onSwitch || account.busy) return null;
   const label = account.error
     ? `Switch to ${title} failed: ${account.error}`
-    : `Use ${title} (switches the CLI, desktop app and IDE extension)`;
+    : account.desktop && armed
+      ? `Click again to switch the Claude Desktop app to ${title}; it quits and reopens`
+      : account.desktop
+        ? `Use ${title} in the Claude Desktop app (quits and reopens it)`
+        : `Use ${title} (switches the CLI, desktop app and IDE extension)`;
   return (
     <HeaderAction
       className={account.error ? "is-failed" : undefined}
-      icon={<MdiStarOutline />}
+      icon={armed ? <MdiStarHalfFull /> : <MdiStarOutline />}
       label={label}
-      onClick={onSwitch}
+      onClick={() => {
+        if (account.desktop && !armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        onSwitch();
+      }}
     />
   );
 }

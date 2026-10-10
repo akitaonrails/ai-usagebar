@@ -130,8 +130,7 @@ function normalizeAccounts(value) {
     // Labels are kept whole, since the whole label is what a switch sends;
     // matching a card goes through the card id's own cut (see `cardIdOf`).
     const labels = raw.labels.slice(0, MAX_ENTRIES).map((label) => clean(label, 4096)).filter(Boolean);
-    // The Desktop app with nothing saved yet still gets its section, to add one.
-    if (labels.length === 0 && vendor !== "claude-desktop") continue;
+    if (labels.length === 0) continue;
     out[vendor] = {
       active: clean(raw.active, 4096),
       labels,
@@ -141,14 +140,6 @@ function normalizeAccounts(value) {
     };
   }
   return out;
-}
-
-/** Whether `account add` takes `label`: the rule `validate_account_label` keeps. */
-export function validAccountLabel(label) {
-  const text = String(label || "").trim();
-  if (!text || text === "." || text === ".." || [...text].length > 64) return false;
-  if (/[\\/:]/.test(text) || /[\u0000-\u001f\u007f-\u009f]/.test(text)) return false;
-  return !["usage.json", ".stale", ".last_error", ".fetch.lock"].includes(text);
 }
 
 /** The id the card for `vendor`'s `label` account gets, cut as entry ids are. */
@@ -166,22 +157,30 @@ export function accountSwitchFor(cardId, accounts) {
   const at = id.indexOf("@");
   if (at <= 0) return null;
   const vendor = id.slice(0, at);
-  const info = accounts && Object.prototype.hasOwnProperty.call(accounts, vendor) ? accounts[vendor] : null;
-  if (!info) return null;
-  // Two labels that only differ past the cut share one card; neither is
-  // offered, since the control could not say which one it switches to.
-  const matches = info.labels.filter((label) => cardIdOf(vendor, label) === id);
-  if (matches.length !== 1) return null;
-  const label = matches[0];
-  const mine = info.target === label;
-  return {
-    vendor,
-    label,
-    active: info.active === label,
-    switching: info.switching && mine,
-    busy: info.switching && !mine,
-    error: mine && !info.switching && info.active !== label ? info.error : "",
-  };
+  // A Claude card the CLI does not know can still be a Claude Desktop login,
+  // whose switch moves the app alone.
+  const sources = vendor === "anthropic" ? [vendor, "claude-desktop"] : vendor === "claude-desktop" ? [] : [vendor];
+  for (const source of sources) {
+    const info = accounts && Object.prototype.hasOwnProperty.call(accounts, source) ? accounts[source] : null;
+    if (!info) continue;
+    // Two labels that only differ past the cut share one card; neither is
+    // offered, since the control could not say which one it switches to.
+    const matches = info.labels.filter((label) => cardIdOf(vendor, label) === id);
+    if (matches.length > 1) return null;
+    if (matches.length === 0) continue;
+    const label = matches[0];
+    const mine = info.target === label;
+    return {
+      vendor: source,
+      label,
+      desktop: source === "claude-desktop",
+      active: info.active === label,
+      switching: info.switching && mine,
+      busy: info.switching && !mine,
+      error: mine && !info.switching && info.active !== label ? info.error : "",
+    };
+  }
+  return null;
 }
 
 function githubPage(value) {
