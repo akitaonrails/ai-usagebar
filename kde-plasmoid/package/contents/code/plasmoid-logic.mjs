@@ -393,11 +393,23 @@ export function cardState(entry) {
 export function cardFor(entry) {
     if (!entry)
         return null;
-    let worst = -1;
-    let accent = 'low';
+    // The same partition headline() and panelCells() apply: a grouped row sits
+    // under its own heading below the meters and is not a quota window, so it
+    // colours the card only when the entry has nothing else.
+    const metrics = [];
+    const grouped = [];
     for (const s of entry.sections) {
         if (s.type !== 'metric')
             continue;
+        if (s.group)
+            grouped.push(s);
+        else
+            metrics.push(s);
+    }
+    let worst = -1;
+    let accent = 'low';
+    const chosen = metrics.length ? metrics : grouped;
+    for (const s of chosen) {
         const rank = severityRank(s.severity);
         if (rank > worst) {
             worst = rank;
