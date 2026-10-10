@@ -633,6 +633,7 @@ fn stamp_facts(state: &mut TrayState) {
 
 fn apply_facts(state: &mut TrayState) {
     stamp_facts(state);
+    apply_strip_icon(state);
     if state.js_ready {
         push_to_webview(state);
     }

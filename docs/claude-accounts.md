@@ -293,6 +293,11 @@ cards explicitly use `--cli`; Codex cards use `--codex`. When a label exists in
 both the Desktop and CLI stores, the report's Desktop source wins and that card
 switches Desktop only. A running switch disables other switches until it finishes.
 
+The Quattro menu-bar readout defaults to the active Desktop profile when Claude
+is primary, and updates after a switch. An explicitly selected Native provider
+tab still takes precedence. If the active profile's quota cannot be loaded, the
+readout does not substitute another profile's quota.
+
 ### Side-by-side profiles
 
 Claude Desktop can be launched against an alternative profile with

@@ -6,6 +6,7 @@
   profiles have an Active badge or a compact Switch button. A confirmation
   explains the app restart; the existing transactional switch preserves
   history and rollback backups. Desktop and CLI switch scopes remain separate.
+  The default Quattro readout follows the active Desktop profile.
 
 - **Ollama Cloud provider mark in the Omarchy bar and panel.** Ship the
   monochrome Lobe Icons SVG under MIT, with source provenance and the
