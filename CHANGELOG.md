@@ -28,6 +28,10 @@
 
 ### Fixed
 
+- **Omarchy settings view localizes Lyceum's billing credits note.**
+  The Lyceum API key card note ("billing credits") was missing from the
+  Omarchy I18n dictionary and fell back to raw English. It is now mapped
+  and localized across all supported languages (ru, pt-BR, ko, es, and en).
 - **An empty menu-bar bar draws a visible capsule.** A 0% row used to
   vanish against the dark menu bar — its bare track was all but invisible
   there. It now draws the whole track at the remainder's strength, like the

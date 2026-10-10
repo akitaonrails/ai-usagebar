@@ -85,7 +85,8 @@ var NOTE_KEYS = {
   "management key, not the inference key": "credentials.note.management_key",
   "Token Plan subscription key": "credentials.note.token_plan",
   "usage quota": "credentials.note.usage_quota",
-  "credit balance": "credentials.note.credit_balance"
+  "credit balance": "credentials.note.credit_balance",
+  "billing credits": "credentials.note.billing_credits"
 }
 
 var MESSAGES = {
@@ -188,6 +189,7 @@ var MESSAGES = {
     "credentials.note.token_plan": "Token Plan subscription key",
     "credentials.note.usage_quota": "usage quota",
     "credentials.note.credit_balance": "credit balance",
+    "credentials.note.billing_credits": "billing credits",
     "error.binary_old": "This installed ai-usagebar binary predates native settings. Update the package, or use the terminal settings fallback.",
     "error.apply": "The settings command did not confirm the save.",
     "pool.models": "Cursor Models",
@@ -317,6 +319,7 @@ var MESSAGES = {
     "credentials.note.token_plan": "ключ подписки Token Plan",
     "credentials.note.usage_quota": "квота использования",
     "credentials.note.credit_balance": "кредитный баланс",
+    "credentials.note.billing_credits": "биллинговые кредиты",
     "error.binary_old": "Установленный ai-usagebar слишком старый для нативных настроек. Обновите пакет или откройте настройки в терминале.",
     "error.apply": "Команда настроек не подтвердила сохранение.",
     "pool.models": "Модели Cursor",
@@ -446,6 +449,7 @@ var MESSAGES = {
     "credentials.note.token_plan": "chave da assinatura Token Plan",
     "credentials.note.usage_quota": "cota de uso",
     "credentials.note.credit_balance": "saldo de créditos",
+    "credentials.note.billing_credits": "créditos de faturamento",
     "error.binary_old": "O binário ai-usagebar instalado é anterior às configurações nativas. Atualize o pacote ou use as configurações no terminal.",
     "error.apply": "O comando de configurações não confirmou o salvamento.",
     "pool.models": "Modelos Cursor",
@@ -582,6 +586,7 @@ var MESSAGES = {
     "credentials.note.token_plan": "Token Plan 구독 키",
     "credentials.note.usage_quota": "사용 할당량",
     "credentials.note.credit_balance": "크레딧 잔액",
+    "credentials.note.billing_credits": "결제 크레딧",
     "error.binary_old": "설치된 ai-usagebar 바이너리가 네이티브 설정보다 오래된 버전입니다. 패키지를 업데이트하거나 터미널 설정을 사용하세요.",
     "error.apply": "설정 명령이 저장을 확인하지 않았습니다.",
     "pool.models": "Cursor 모델",
@@ -704,6 +709,7 @@ var MESSAGES = {
     "credentials.note.token_plan": "clave de la suscripción Token Plan",
     "credentials.note.usage_quota": "cuota de uso",
     "credentials.note.credit_balance": "saldo de créditos",
+    "credentials.note.billing_credits": "créditos de facturación",
     "error.binary_old": "El binario de ai-usagebar instalado es anterior a los ajustes nativos. Actualiza el paquete o usa los ajustes en la terminal.",
     "error.apply": "El comando de ajustes no confirmó que se guardaran.",
     "pool.models": "Modelos de Cursor",
