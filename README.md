@@ -312,6 +312,7 @@ come from environment variables or `config.toml`.
 | Model Studio | Existing `bl auth login --console` (Alibaba Cloud) | Opt in (`[modelstudio]`), install the official `bl` CLI, and run `bl auth login --console` once. Reports the Token Plan's 5-hour, weekly and monthly percentage windows with resets, through the same console gateway the CLI uses; the credential file `~/.bailian/config.json` is only ever read. |
 | Devin | Existing official Devin CLI login | Opt in (`[devin]`) after signing in with the Devin CLI. Reuses its existing `credentials.toml` read-only; ai-usagebar never logs in, refreshes, or writes credentials. Reports daily and weekly quota usage and an optional overage balance. |
 | Cline / ClinePass | Existing `cline` CLI login | Enable `[cline]`. No key to paste; the CLI's own credential is reused. `CLINE_API_KEY` overrides it. |
+| Muse Code (local) | Retained local completion logs; no login needed by the counter | Run the bundled [local usage counter](docs/muse-code.md) and enable the `[[custom]]` recipe. Reports token/call counts in the TUI and `usage --json`; subscription quota and billed spend are not available through this integration. |
 
 ### Nous credits and OpenCode Go
 

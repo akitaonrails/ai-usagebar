@@ -51,6 +51,11 @@ test:
 	$(MAKE) plugin-test
 	$(MAKE) mint-test
 	$(MAKE) macos-package-test
+	$(MAKE) muse-test
+
+.PHONY: muse-test
+muse-test:
+	python3 -m unittest discover -s scripts -p 'test_muse_usage.py'
 
 .PHONY: macos-package-test
 macos-package-test:

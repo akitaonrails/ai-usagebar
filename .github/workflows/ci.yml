@@ -59,6 +59,9 @@ jobs:
       - name: Test desktop integration models
         run: make desktop-test
 
+      - name: Test Muse local usage exporter
+        run: make muse-test
+
       # The NativeDashboard SSR contract test needs vite, so it runs here (npm is
       # guaranteed on ubuntu) rather than in the bare-node desktop-test gate.
       - name: Test the popover SSR screens

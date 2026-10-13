@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Added
+
+- **Muse Code local usage counter**: `scripts/muse_usage.py` reads retained
+  completion logs, including subagents, and supplies today's UTC token/call
+  counts and rolling 30-day token counts to the existing custom-provider
+  support. Includes a ready-to-use recipe and setup guide; no credentials or
+  model calls are needed. These are local recorded counters, not subscription
+  quota or billed spend. The current SDK quota protocol is documented alongside
+  the fresh-host retrieval limitation.
+
 ## [1.36.0] — 2026-10-12
 
 ### Added

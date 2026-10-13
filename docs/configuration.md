@@ -5,6 +5,11 @@ Claude, Codex, Z.AI, and OpenRouter are enabled by default; other providers are
 opt-in. The commented example shows the defaults and provider-specific
 settings.
 
+For Muse Code's local token/call counters, use the `[[custom]]` recipe in
+`config.example.toml` with the bundled loopback counter. See
+[Muse Code setup](muse-code.md) for log paths and limitations. This integration
+reports recorded local usage, not subscription percentages or billed spend.
+
 Both binaries accept `--config <PATH>` to use an alternate file instead of the
 default location (`%APPDATA%\ai-usagebar\config\config.toml` on Windows). The file
 must already exist; loads and the Settings overlay then read and write that
