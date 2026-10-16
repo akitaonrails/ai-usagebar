@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### Added
+
+- **Antigravity Gemini 4 Argon quota windows.** Antigravity CLI 1.4+ reports
+  dedicated `gemini-4-argon-weekly` and `gemini-4-argon-5h` buckets alongside
+  the general `gemini-weekly` and `gemini-5h` pools. Both the `agy` status-line
+  ingestion path and `retrieveUserQuotaSummary` now surface `Gemini 4 Argon` as
+  its own Session and Weekly quota rows in the TUI, JSON report, native tray
+  popover, and tooltip, rather than letting `gemini-4-argon-weekly` overwrite
+  `gemini-weekly` in alphabetical key order or fail quota parsing as a duplicate
+  Gemini bucket (#441).
+
 ## [1.39.0] — 2026-10-16
 
 ### Added

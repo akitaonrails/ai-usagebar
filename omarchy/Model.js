@@ -952,7 +952,7 @@ function toggleCursorPool(flags, id) {
  */
 function antigravityPoolOf(section) {
   if (!section || section.type !== "metric") return ""
-  if (section.label === "Gemini") return "gemini"
+  if (section.label === "Gemini" || section.label === "Gemini 4 Argon") return "gemini"
   if (section.label === "Claude & GPT OSS") return "third_party"
   return ""
 }

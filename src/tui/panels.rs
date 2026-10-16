@@ -532,6 +532,8 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         VendorSnapshot::Antigravity(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
+            s.argon_session.as_ref().map(|w| w.utilization_pct),
+            s.argon_weekly.as_ref().map(|w| w.utilization_pct),
             s.third_party_session.as_ref().map(|w| w.utilization_pct),
             s.third_party_weekly.as_ref().map(|w| w.utilization_pct),
         ]
@@ -1154,23 +1156,29 @@ fn antigravity_sections(
     s: &crate::usage::AntigravitySnapshot,
     now: DateTime<Utc>,
 ) -> SectionBuilder {
-    use crate::antigravity::vendor::{GROUP_PRIMARY, GROUP_THIRD_PARTY};
+    use crate::antigravity::vendor::{GROUP_ARGON, GROUP_PRIMARY, GROUP_THIRD_PARTY};
 
     let mut v = SectionBuilder::new(vec![Section::Title {
         left: s.plan.clone(),
         right: None,
     }]);
-    for (heading, primary, third_party) in [
+    for (heading, primary, argon, third_party) in [
         (
             "Session",
             s.session.as_ref(),
+            s.argon_session.as_ref(),
             s.third_party_session.as_ref(),
         ),
-        ("Weekly", s.weekly.as_ref(), s.third_party_weekly.as_ref()),
+        (
+            "Weekly",
+            s.weekly.as_ref(),
+            s.argon_weekly.as_ref(),
+            s.third_party_weekly.as_ref(),
+        ),
     ] {
         // A cadence no bucket reported gets no heading either — an empty
         // "Session" with nothing under it reads as a failed fetch.
-        if primary.is_none() && third_party.is_none() {
+        if primary.is_none() && argon.is_none() && third_party.is_none() {
             continue;
         }
         v.push(Section::Spacer);
@@ -1180,6 +1188,9 @@ fn antigravity_sections(
         });
         if let Some(w) = primary {
             push_window(&mut v, GROUP_PRIMARY, w, now, 5, false);
+        }
+        if let Some(w) = argon {
+            push_window(&mut v, GROUP_ARGON, w, now, 5, false);
         }
         if let Some(w) = third_party {
             push_window(&mut v, GROUP_THIRD_PARTY, w, now, 5, false);
@@ -4373,9 +4384,43 @@ mod tests {
                 window_duration: chrono::Duration::hours(5),
             }),
             weekly: None,
+            argon_session: None,
+            argon_weekly: None,
             third_party_session: None,
             third_party_weekly: None,
         })
+    }
+
+    #[test]
+    fn antigravity_renders_gemini_4_argon_under_weekly() {
+        let snap = VendorSnapshot::Antigravity(crate::usage::AntigravitySnapshot {
+            plan: "Pro".into(),
+            account: "acct:test".into(),
+            source: crate::usage::AntigravitySource::Statusline,
+            session: None,
+            weekly: Some(UsageWindow {
+                utilization_pct: 29,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            }),
+            argon_session: None,
+            argon_weekly: Some(UsageWindow {
+                utilization_pct: 21,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            }),
+            third_party_session: None,
+            third_party_weekly: None,
+        });
+        let sections = sections_for(&ready(snap), now(), 5);
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Metric { label, pct, .. } if label == "Gemini" && *pct == 29
+        )));
+        assert!(sections.iter().any(|s| matches!(
+            s,
+            Section::Metric { label, pct, .. } if label == "Gemini 4 Argon" && *pct == 21
+        )));
     }
 
     /// Figures read off the API while nothing runs say so; a running product's

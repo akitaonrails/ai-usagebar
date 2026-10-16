@@ -812,6 +812,8 @@ async fn antigravity_remote_live() {
     for (label, window) in [
         ("antigravity.session", snap.session.as_ref()),
         ("antigravity.weekly", snap.weekly.as_ref()),
+        ("antigravity.argon_session", snap.argon_session.as_ref()),
+        ("antigravity.argon_weekly", snap.argon_weekly.as_ref()),
         (
             "antigravity.third_party_session",
             snap.third_party_session.as_ref(),
@@ -826,10 +828,12 @@ async fn antigravity_remote_live() {
         }
     }
     println!(
-        "✅ antigravity (app closed) — plan={}, session={:?}, weekly={:?}, third-party session={:?}, third-party weekly={:?}",
+        "✅ antigravity (app closed) — plan={}, session={:?}, weekly={:?}, argon session={:?}, argon weekly={:?}, third-party session={:?}, third-party weekly={:?}",
         snap.plan,
         snap.session.as_ref().map(|w| w.utilization_pct),
         snap.weekly.as_ref().map(|w| w.utilization_pct),
+        snap.argon_session.as_ref().map(|w| w.utilization_pct),
+        snap.argon_weekly.as_ref().map(|w| w.utilization_pct),
         snap.third_party_session.as_ref().map(|w| w.utilization_pct),
         snap.third_party_weekly.as_ref().map(|w| w.utilization_pct),
     );

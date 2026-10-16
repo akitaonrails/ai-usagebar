@@ -847,8 +847,17 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
         .or_else(|| v["groups"].as_array())
         .ok_or_else(|| AppError::Other("antigravity: quota summary has no groups".into()))?;
 
+    #[derive(Clone, Copy)]
+    enum Pool {
+        Gemini,
+        Argon,
+        ThirdParty,
+    }
+
     let mut gemini_5h = None;
     let mut gemini_weekly = None;
+    let mut argon_5h = None;
+    let mut argon_weekly = None;
     let mut tp_5h = None;
     let mut tp_weekly = None;
     // What the response actually offered, so a summary we cannot use says so
@@ -863,6 +872,7 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
         };
         for bucket in buckets {
             let id = bucket["bucketId"].as_str().unwrap_or_default();
+            let bucket_name = bucket["displayName"].as_str().unwrap_or_default();
             seen.push(describe_bucket(group_name, id, bucket["window"].as_str()));
             let window = bucket["window"].as_str().unwrap_or_default();
             let is_weekly = if id.ends_with("weekly") || window == "weekly" {
@@ -874,25 +884,32 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
                 // so it cannot overwrite a known slot.
                 continue;
             };
-            let is_gemini = if id.starts_with("gemini") {
-                true
+            let pool = if (id.starts_with("gemini") && id.contains("argon"))
+                || group_name.contains("Argon")
+                || bucket_name.contains("Argon")
+            {
+                Pool::Argon
+            } else if id.starts_with("gemini") {
+                Pool::Gemini
             } else if id.starts_with("3p") {
-                false
+                Pool::ThirdParty
             } else if group_name.contains("Gemini") {
-                true
+                Pool::Gemini
             } else if group_name.contains("Claude") || group_name.contains("GPT") {
-                false
+                Pool::ThirdParty
             } else {
                 // Likewise, an unrelated future group is not implicitly the
                 // third-party pool.
                 continue;
             };
 
-            let (slot, slot_name) = match (is_gemini, is_weekly) {
-                (true, false) => (&mut gemini_5h, "Gemini 5h"),
-                (true, true) => (&mut gemini_weekly, "Gemini weekly"),
-                (false, false) => (&mut tp_5h, "Claude/GPT 5h"),
-                (false, true) => (&mut tp_weekly, "Claude/GPT weekly"),
+            let (slot, slot_name) = match (pool, is_weekly) {
+                (Pool::Gemini, false) => (&mut gemini_5h, "Gemini 5h"),
+                (Pool::Gemini, true) => (&mut gemini_weekly, "Gemini weekly"),
+                (Pool::Argon, false) => (&mut argon_5h, "Gemini 4 Argon 5h"),
+                (Pool::Argon, true) => (&mut argon_weekly, "Gemini 4 Argon weekly"),
+                (Pool::ThirdParty, false) => (&mut tp_5h, "Claude/GPT 5h"),
+                (Pool::ThirdParty, true) => (&mut tp_weekly, "Claude/GPT weekly"),
             };
             let parsed = usage_window(bucket, is_weekly)?;
             if slot.replace(parsed).is_some() {
@@ -906,7 +923,13 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
     // Not every product offers every window: Antigravity CLI 1.1.22 returns
     // weekly buckets only. One recognised window is enough to render — what
     // must never happen is showing a figure for a window that did not arrive.
-    if gemini_5h.is_none() && gemini_weekly.is_none() && tp_5h.is_none() && tp_weekly.is_none() {
+    if gemini_5h.is_none()
+        && gemini_weekly.is_none()
+        && argon_5h.is_none()
+        && argon_weekly.is_none()
+        && tp_5h.is_none()
+        && tp_weekly.is_none()
+    {
         return Err(no_usable_bucket(&seen));
     }
 
@@ -918,6 +941,8 @@ pub fn parse_quota_summary(v: &serde_json::Value, plan: String) -> Result<Antigr
         source: AntigravitySource::Local,
         session: gemini_5h,
         weekly: gemini_weekly,
+        argon_session: argon_5h,
+        argon_weekly,
         third_party_session: tp_5h,
         third_party_weekly: tp_weekly,
     })
@@ -1633,6 +1658,8 @@ fn expired_window(snap: &AntigravitySnapshot, now: DateTime<Utc>) -> Option<&'st
     [
         ("Gemini 5h", snap.session.as_ref()),
         ("Gemini weekly", snap.weekly.as_ref()),
+        ("Gemini 4 Argon 5h", snap.argon_session.as_ref()),
+        ("Gemini 4 Argon weekly", snap.argon_weekly.as_ref()),
         ("Claude & GPT OSS 5h", snap.third_party_session.as_ref()),
         ("Claude & GPT OSS weekly", snap.third_party_weekly.as_ref()),
     ]
@@ -1709,6 +1736,8 @@ pub fn parse_cache_at(
             .unwrap_or_default(),
         session: optional("session_pct", "session_reset", false)?,
         weekly: optional("weekly_pct", "weekly_reset", true)?,
+        argon_session: optional("argon_session_pct", "argon_session_reset", false)?,
+        argon_weekly: optional("argon_weekly_pct", "argon_weekly_reset", true)?,
         third_party_session: optional("tp_session_pct", "tp_session_reset", false)?,
         third_party_weekly: optional("tp_weekly_pct", "tp_weekly_reset", true)?,
     };
@@ -1717,6 +1746,8 @@ pub fn parse_cache_at(
     // an empty panel from it. Mirrors the live parse.
     if snap.session.is_none()
         && snap.weekly.is_none()
+        && snap.argon_session.is_none()
+        && snap.argon_weekly.is_none()
         && snap.third_party_session.is_none()
         && snap.third_party_weekly.is_none()
     {
@@ -1742,6 +1773,10 @@ pub fn snap_to_json(snap: &AntigravitySnapshot) -> serde_json::Value {
         "session_reset": snap.session.as_ref().and_then(|w| w.resets_at.map(|dt| dt.to_rfc3339())),
         "weekly_pct": snap.weekly.as_ref().map(|w| w.utilization_pct),
         "weekly_reset": snap.weekly.as_ref().and_then(|w| w.resets_at.map(|dt| dt.to_rfc3339())),
+        "argon_session_pct": snap.argon_session.as_ref().map(|w| w.utilization_pct),
+        "argon_session_reset": snap.argon_session.as_ref().and_then(|w| w.resets_at.map(|dt| dt.to_rfc3339())),
+        "argon_weekly_pct": snap.argon_weekly.as_ref().map(|w| w.utilization_pct),
+        "argon_weekly_reset": snap.argon_weekly.as_ref().and_then(|w| w.resets_at.map(|dt| dt.to_rfc3339())),
         "tp_session_pct": snap.third_party_session.as_ref().map(|w| w.utilization_pct),
         "tp_session_reset": snap.third_party_session.as_ref().and_then(|w| w.resets_at.map(|dt| dt.to_rfc3339())),
         "tp_weekly_pct": snap.third_party_weekly.as_ref().map(|w| w.utilization_pct),
@@ -1900,6 +1935,36 @@ mod tests {
         let snap = parse_quota_summary(&unrelated, "Pro".into()).unwrap();
         assert!(snap.third_party_session.is_none());
         assert!(snap.third_party_weekly.is_none());
+    }
+
+    #[test]
+    fn gemini_4_argon_buckets_route_to_their_own_pool_and_round_trip() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"response":{"groups":[
+              {"displayName":"Gemini Models","buckets":[
+                {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.60,"resetTime":"2026-07-22T17:47:00Z"},
+                {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.71,"resetTime":"2026-07-28T17:39:58Z"},
+                {"bucketId":"gemini-4-argon-5h","window":"5h","remainingFraction":0.90,"resetTime":"2026-07-22T17:47:00Z"},
+                {"bucketId":"gemini-4-argon-weekly","window":"weekly","remainingFraction":0.79,"resetTime":"2026-07-28T17:39:58Z"}
+              ]},
+              {"displayName":"Claude and GPT models","buckets":[
+                {"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.04,"resetTime":"2026-07-29T12:47:00Z"}
+              ]}
+            ]}}"#,
+        )
+        .unwrap();
+        let snap = parse_quota_summary(&v, "Pro".into()).unwrap();
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 40);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 29);
+        assert_eq!(snap.argon_session.as_ref().unwrap().utilization_pct, 10);
+        assert_eq!(snap.argon_weekly.as_ref().unwrap().utilization_pct, 21);
+        assert_eq!(
+            snap.third_party_weekly.as_ref().unwrap().utilization_pct,
+            96
+        );
+
+        let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
+        assert_eq!(parse_cache_at(&bytes, None, now()).unwrap(), snap);
     }
 
     /// A drifted bucket must fail the parse rather than report a reassuring

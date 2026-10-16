@@ -1097,6 +1097,8 @@ mod tests {
                 source: crate::usage::AntigravitySource::Statusline,
                 session: None,
                 weekly: None,
+                argon_session: None,
+                argon_weekly: None,
                 third_party_session: None,
                 third_party_weekly: None,
             },

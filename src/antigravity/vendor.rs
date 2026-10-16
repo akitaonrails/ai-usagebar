@@ -27,15 +27,18 @@ pub const DEFAULT_FORMAT: &str = "{icon} {session_pct}% · {weekly_pct}%";
 /// Both surfaces put these under a "Session"/"Weekly" heading, so the rows
 /// carry no window suffix of their own.
 pub const GROUP_PRIMARY: &str = "Gemini";
+pub const GROUP_ARGON: &str = "Gemini 4 Argon";
 pub const GROUP_THIRD_PARTY: &str = "Claude & GPT OSS";
 
-/// Every window this vendor reports, in dropdown order: the two 5-hour windows
-/// under "Session", then the two weekly ones under "Weekly".
-fn windows(snap: &AntigravitySnapshot) -> [(&'static str, Option<&UsageWindow>); 4] {
+/// Every window this vendor reports, in dropdown order: the 5-hour windows
+/// under "Session", then the weekly ones under "Weekly".
+fn windows(snap: &AntigravitySnapshot) -> [(&'static str, Option<&UsageWindow>); 6] {
     [
         (GROUP_PRIMARY, snap.session.as_ref()),
+        (GROUP_ARGON, snap.argon_session.as_ref()),
         (GROUP_THIRD_PARTY, snap.third_party_session.as_ref()),
         (GROUP_PRIMARY, snap.weekly.as_ref()),
+        (GROUP_ARGON, snap.argon_weekly.as_ref()),
         (GROUP_THIRD_PARTY, snap.third_party_weekly.as_ref()),
     ]
 }
@@ -210,7 +213,7 @@ fn render_tooltip(
             .then(|| elapsed_pct(w, now, opts.pace_tolerance))
     };
 
-    // Two groups, each holding the same pair of pools. A Sep between them marks
+    // Two groups, each holding the pools in that cadence. A Sep between them marks
     // the pools as independent budgets (same device Z.AI uses before its MCP
     // block) without implying they share a reset.
     for (group_idx, (heading, icon)) in [("Session", "󰔟"), ("Weekly", "󰃰")].iter().enumerate()
@@ -222,11 +225,13 @@ fn render_tooltip(
         lines.push(TooltipLine::Body(format!(
             " <span font_weight='bold' foreground='{fg}'>  {icon}  {heading}</span>"
         )));
-        for (slot, (label, window)) in all.iter().enumerate().skip(group_idx * 2).take(2) {
+        let mut wrote_any = false;
+        for (label, window) in all.iter().skip(group_idx * 3).take(3) {
             let Some(w) = window else { continue };
-            if slot % 2 == 1 {
+            if wrote_any {
                 lines.push(TooltipLine::Body("".into()));
             }
+            wrote_any = true;
             push_window(
                 &mut lines,
                 &format!("  󰆧  {}", escape(label)),
@@ -298,6 +303,8 @@ mod tests {
             source: crate::usage::AntigravitySource::Local,
             session: Some(window(43, "2026-07-22T14:00:00Z", false)),
             weekly: Some(window(8, "2026-07-28T17:39:58Z", true)),
+            argon_session: None,
+            argon_weekly: None,
             third_party_session: Some(window(75, "2026-07-22T16:30:00Z", false)),
             third_party_weekly: Some(window(0, "2026-07-29T12:47:00Z", true)),
         }

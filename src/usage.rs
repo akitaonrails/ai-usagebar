@@ -500,6 +500,10 @@ pub struct AntigravitySnapshot {
     pub session: Option<UsageWindow>,
     /// Gemini group, weekly window.
     pub weekly: Option<UsageWindow>,
+    /// Gemini 4 Argon pool, 5-hour window.
+    pub argon_session: Option<UsageWindow>,
+    /// Gemini 4 Argon pool, weekly window.
+    pub argon_weekly: Option<UsageWindow>,
     /// Claude/GPT group, 5-hour window.
     pub third_party_session: Option<UsageWindow>,
     /// Claude/GPT group, weekly window.

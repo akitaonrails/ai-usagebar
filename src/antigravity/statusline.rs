@@ -36,6 +36,10 @@ pub struct SessionSnapshot {
     pub plan: String,
     pub session: Option<SnapshotWindow>,
     pub weekly: Option<SnapshotWindow>,
+    #[serde(default)]
+    pub argon_session: Option<SnapshotWindow>,
+    #[serde(default)]
+    pub argon_weekly: Option<SnapshotWindow>,
     pub third_party_session: Option<SnapshotWindow>,
     pub third_party_weekly: Option<SnapshotWindow>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -395,18 +399,36 @@ fn snapshot_from_payload(
         plan,
         session: None,
         weekly: None,
+        argon_session: None,
+        argon_weekly: None,
         third_party_session: None,
         third_party_weekly: None,
         updated_at: now,
     };
+    #[derive(Clone, Copy)]
+    enum Pool {
+        Gemini,
+        Argon,
+        ThirdParty,
+    }
+    let mut session_priority = 0u8;
+    let mut weekly_priority = 0u8;
+    let mut argon_session_priority = 0u8;
+    let mut argon_weekly_priority = 0u8;
+    let mut tp_session_priority = 0u8;
+    let mut tp_weekly_priority = 0u8;
+
     for (bucket, data) in quota {
-        let (third_party, weekly) = match bucket.as_str() {
-            name if name.starts_with("gemini-") => (false, name.ends_with("-weekly")),
+        let (pool, weekly) = match bucket.as_str() {
+            name if name.starts_with("gemini-") && name.contains("argon") => {
+                (Pool::Argon, name.ends_with("-weekly"))
+            }
+            name if name.starts_with("gemini-") => (Pool::Gemini, name.ends_with("-weekly")),
             name if name.starts_with("claude-")
                 || name.starts_with("gpt-")
                 || name.starts_with("3p-") =>
             {
-                (true, name.ends_with("-weekly"))
+                (Pool::ThirdParty, name.ends_with("-weekly"))
             }
             _ => continue,
         };
@@ -417,21 +439,48 @@ fn snapshot_from_payload(
         let Some(window) = quota_window(data, weekly, now) else {
             continue;
         };
-        let target = match (third_party, weekly) {
-            (false, false) => &mut snapshot.session,
-            (false, true) => &mut snapshot.weekly,
-            (true, false) => &mut snapshot.third_party_session,
-            (true, true) => &mut snapshot.third_party_weekly,
+        let priority = bucket_priority(bucket.as_str());
+        let (target, current_priority) = match (pool, weekly) {
+            (Pool::Gemini, false) => (&mut snapshot.session, &mut session_priority),
+            (Pool::Gemini, true) => (&mut snapshot.weekly, &mut weekly_priority),
+            (Pool::Argon, false) => (&mut snapshot.argon_session, &mut argon_session_priority),
+            (Pool::Argon, true) => (&mut snapshot.argon_weekly, &mut argon_weekly_priority),
+            (Pool::ThirdParty, false) => {
+                (&mut snapshot.third_party_session, &mut tp_session_priority)
+            }
+            (Pool::ThirdParty, true) => (&mut snapshot.third_party_weekly, &mut tp_weekly_priority),
         };
-        if target.is_none() {
+        if target.is_none() || priority > *current_priority {
             *target = Some(window);
+            *current_priority = priority;
         }
     }
     (snapshot.session.is_some()
         || snapshot.weekly.is_some()
+        || snapshot.argon_session.is_some()
+        || snapshot.argon_weekly.is_some()
         || snapshot.third_party_session.is_some()
         || snapshot.third_party_weekly.is_some())
     .then_some(snapshot)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn bucket_priority(name: &str) -> u8 {
+    match name {
+        "gemini-weekly"
+        | "gemini-5h"
+        | "gemini-session"
+        | "gemini-4-argon-weekly"
+        | "gemini-4-argon-5h"
+        | "gemini-4-argon-session"
+        | "3p-weekly"
+        | "3p-5h"
+        | "3p-session"
+        | "claude-weekly"
+        | "claude-5h"
+        | "claude-session" => 2,
+        _ => 1,
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -672,6 +721,8 @@ fn aggregate_active_with_key(
                 source: crate::usage::AntigravitySource::Statusline,
                 session: session.session.map(Into::into),
                 weekly: session.weekly.map(Into::into),
+                argon_session: session.argon_session.map(Into::into),
+                argon_weekly: session.argon_weekly.map(Into::into),
                 third_party_session: session.third_party_session.map(Into::into),
                 third_party_weekly: session.third_party_weekly.map(Into::into),
             };
@@ -1263,5 +1314,46 @@ mod tests {
         let before = fs::read(&settings).unwrap();
         assert!(setup(&settings, Path::new("/bin/ai-usagebar")).is_err());
         assert_eq!(fs::read(&settings).unwrap(), before);
+    }
+
+    #[test]
+    fn gemini_4_argon_buckets_map_to_argon_pool_without_shadowing_gemini() {
+        let snap = snapshot_from_payload(
+            &payload(
+                "user@example.com",
+                json!({
+                    "gemini-4-argon-5h": {"remaining_fraction": 0.90},
+                    "gemini-4-argon-weekly": {"remaining_fraction": 0.79},
+                    "gemini-5h": {"remaining_fraction": 0.60},
+                    "gemini-weekly": {"remaining_fraction": 0.71},
+                    "3p-weekly": {"remaining_fraction": 0.04}
+                }),
+            ),
+            42,
+            now(),
+        )
+        .expect("payload yields snapshot");
+        assert_eq!(snap.session.unwrap().utilization_pct, 40);
+        assert_eq!(snap.weekly.unwrap().utilization_pct, 29);
+        assert_eq!(snap.argon_session.unwrap().utilization_pct, 10);
+        assert_eq!(snap.argon_weekly.unwrap().utilization_pct, 21);
+        assert_eq!(snap.third_party_weekly.unwrap().utilization_pct, 96);
+    }
+
+    #[test]
+    fn argon_only_statusline_payload_is_accepted() {
+        let snap = snapshot_from_payload(
+            &payload(
+                "user@example.com",
+                json!({
+                    "gemini-4-argon-weekly": {"remaining_fraction": 0.79}
+                }),
+            ),
+            42,
+            now(),
+        )
+        .expect("argon-only payload is still a usable snapshot");
+        assert!(snap.weekly.is_none());
+        assert_eq!(snap.argon_weekly.unwrap().utilization_pct, 21);
     }
 }
