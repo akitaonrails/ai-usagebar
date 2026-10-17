@@ -1221,25 +1221,58 @@ export function saveLayout(storage, layout) {
   storage.setItem(LAYOUT_KEY, JSON.stringify(normalizeLayout(layout)));
 }
 
-/** @returns {Layout} */
+/** The provider an entry id belongs to: `antigravity@3f2a` is an account of `antigravity`. */
+function providerOf(id) {
+  const at = id.indexOf("@");
+  return at < 0 ? id : id.slice(0, at);
+}
+
+/**
+ * Reconcile the stored layout with the ids a payload carries.
+ *
+ * Settings outlive a payload that lacks their id: a provider switched off, or
+ * an account whose entry is gone for a while, keeps its place, stars, rows and
+ * flags for when it returns. An id seen for the first time takes over the place
+ * and settings of an absent sibling — another id of the same provider — instead
+ * of starting over at the end. Antigravity is why: its entry is `antigravity`
+ * without a live `agy` status-line session and `antigravity@<account>` with
+ * one, so every reboot switches it, and pruning the absent id reset the card's
+ * place and stars on each switch (#452). The settings move rather than copy,
+ * so the two forms never diverge.
+ * @returns {Layout}
+ */
 export function syncLayout(layout, cardIds) {
   const ids = Array.isArray(cardIds) ? cardIds.filter(Boolean) : [];
-  const known = new Set(ids);
-  const order = (layout.cardOrder || []).filter((id) => known.has(id));
-  for (const id of ids) {
-    if (order.indexOf(id) < 0) order.push(id);
-  }
+  const present = new Set(ids);
+  const order = (layout.cardOrder || []).filter(Boolean);
   const hidden = {};
   const collapsed = {};
-  const rows = {};
+  const rows = Object.assign({}, layout.rows || {});
+  const stars = {};
   for (const id of Object.keys(layout.hidden || {})) {
-    if (known.has(id) && layout.hidden[id]) hidden[id] = true;
+    if (layout.hidden[id]) hidden[id] = true;
   }
   for (const id of Object.keys(layout.collapsed || {})) {
-    if (known.has(id) && layout.collapsed[id]) collapsed[id] = true;
+    if (layout.collapsed[id]) collapsed[id] = true;
   }
-  for (const id of Object.keys(layout.rows || {})) {
-    if (known.has(id)) rows[id] = layout.rows[id];
+  const starSource = layout.stars && typeof layout.stars === "object" ? layout.stars : {};
+  for (const id of Object.keys(starSource)) {
+    if (Array.isArray(starSource[id])) stars[id] = starSource[id].slice(0, MAX_STARS_PER_PROVIDER);
+  }
+  for (const id of ids) {
+    if (order.indexOf(id) >= 0) continue;
+    const sibling = order.find((other) => other !== id && !present.has(other) && providerOf(other) === providerOf(id));
+    if (sibling === undefined) {
+      order.push(id);
+      continue;
+    }
+    order[order.indexOf(sibling)] = id;
+    for (const settings of [hidden, collapsed, rows, stars]) {
+      if (Object.prototype.hasOwnProperty.call(settings, sibling)) {
+        settings[id] = settings[sibling];
+        delete settings[sibling];
+      }
+    }
   }
   return {
     alwaysShowPace: layout.alwaysShowPace === true,
@@ -1255,21 +1288,11 @@ export function syncLayout(layout, cardIds) {
     seeded: layout.seeded === true,
     rows,
     showAs: normalizeShowAs(layout.showAs),
-    stars: pruneStars(layout.stars, known),
+    stars,
     stripStyle: "bars",
     theme: normalizeTheme(layout.theme),
     timeFormat: normalizeTimeFormat(layout.timeFormat),
   };
-}
-
-function pruneStars(source, known) {
-  const stars = {};
-  if (!source || typeof source !== "object") return stars;
-  for (const id of Object.keys(source)) {
-    if (!known.has(id) || !Array.isArray(source[id])) continue;
-    stars[id] = source[id].slice(0, MAX_STARS_PER_PROVIDER);
-  }
-  return stars;
 }
 
 export function metricCount(card) {

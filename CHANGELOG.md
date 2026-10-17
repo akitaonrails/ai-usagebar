@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The macOS tray keeps Antigravity's place and stars across reboots.** The
+  popover dropped the saved settings of any card a payload lacked, and
+  Antigravity's entry switches id — `antigravity` with no `agy` status-line
+  session, `antigravity@<account>` with one — on every reboot and whenever the
+  last session closes. Its place in Customize, its starred metrics and its
+  rows went back to the defaults each time. A card missing from a payload now
+  keeps its settings for when it returns, and an id seen for the first time
+  takes over the place and settings of an absent sibling of the same provider
+  (#452).
+
 ## [1.40.0] — 2026-10-17
 
 ### Added

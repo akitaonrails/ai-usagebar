@@ -1715,6 +1715,77 @@ assert.equal(resolvedTheme('system'), 'light');
 }
 
 {
+  // ARRANGE: the user's own place, stars, rows and flags for Antigravity's
+  // per-account entry, among other providers (#452)
+  const mine = {
+    ...emptyLayout(),
+    seeded: true,
+    cardOrder: ['anthropic', 'supergrok', 'antigravity@abc123', 'zai'],
+    hidden: { zai: true },
+    collapsed: { 'antigravity@abc123': true },
+    rows: { 'antigravity@abc123': { always: ['metric:Gemini (Weekly)'], demand: [], off: {} } },
+    stars: {
+      anthropic: ['metric:Session (5h)'],
+      'antigravity@abc123': ['metric:Gemini (Session)', 'metric:Gemini (Weekly)'],
+    },
+  };
+
+  // ACT: a reboot leaves no agy session, so the plain id comes back; then one starts
+  const plain = syncLayout(mine, ['anthropic', 'supergrok', 'antigravity', 'zai']);
+  const again = syncLayout(plain, ['anthropic', 'supergrok', 'antigravity@abc123', 'zai']);
+
+  // ASSERT: the plain id takes the card's place and settings over, and hands them back
+  assert.deepEqual(plain.cardOrder, ['anthropic', 'supergrok', 'antigravity', 'zai']);
+  assert.deepEqual(plain.stars.antigravity, ['metric:Gemini (Session)', 'metric:Gemini (Weekly)']);
+  assert.equal(plain.collapsed.antigravity, true);
+  assert.deepEqual(plain.rows.antigravity, mine.rows['antigravity@abc123']);
+  assert.equal(plain.stars['antigravity@abc123'], undefined, 'moved, not copied');
+  assert.deepEqual(again.cardOrder, mine.cardOrder);
+  assert.deepEqual(again.stars, mine.stars);
+  assert.deepEqual(again.collapsed, mine.collapsed);
+  assert.deepEqual(again.rows, mine.rows);
+  assert.deepEqual(again.hidden, { zai: true });
+}
+
+{
+  // ARRANGE: a provider missing from one payload — switched off, or failing to list
+  const mine = {
+    ...emptyLayout(),
+    cardOrder: ['openai', 'anthropic', 'zai'],
+    hidden: { zai: true },
+    stars: { openai: ['metric:Codex weekly'], zai: [] },
+  };
+
+  // ACT
+  const without = syncLayout(mine, ['anthropic', 'openai']);
+  const back = syncLayout(without, ['anthropic', 'openai', 'zai']);
+
+  // ASSERT: its place, stars (even "off the menu bar") and flags wait for it
+  assert.deepEqual(without.cardOrder, ['openai', 'anthropic', 'zai']);
+  assert.deepEqual(back.cardOrder, ['openai', 'anthropic', 'zai']);
+  assert.deepEqual(back.hidden, { zai: true });
+  assert.deepEqual(back.stars.zai, []);
+}
+
+{
+  // ARRANGE: two accounts on screen at once, each with its own settings
+  const mine = {
+    ...emptyLayout(),
+    cardOrder: ['antigravity@a', 'anthropic', 'antigravity@b'],
+    stars: { 'antigravity@a': ['metric:Gemini (Session)'], 'antigravity@b': ['metric:Gemini (Weekly)'] },
+  };
+
+  // ACT: both present, then a third account appears beside them
+  const both = syncLayout(mine, ['antigravity@a', 'anthropic', 'antigravity@b', 'antigravity@c']);
+
+  // ASSERT: a present sibling is never taken over; the newcomer starts at the end
+  assert.deepEqual(both.cardOrder, ['antigravity@a', 'anthropic', 'antigravity@b', 'antigravity@c']);
+  assert.deepEqual(both.stars['antigravity@a'], ['metric:Gemini (Session)']);
+  assert.deepEqual(both.stars['antigravity@b'], ['metric:Gemini (Weekly)']);
+  assert.equal(both.stars['antigravity@c'], undefined);
+}
+
+{
   const payload = parseHostPayload({
     entries: [
       { id: 'anthropic', display_name: 'Claude', sections: [{ type: 'metric', label: 'Weekly', percent: 10 }] },
