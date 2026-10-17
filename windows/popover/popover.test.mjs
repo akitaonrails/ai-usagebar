@@ -1317,6 +1317,24 @@ assert.equal(quotaAlternate(null, 'left'), '');
   assert.equal(new Set(card.rows.map(rowKey)).size, card.rows.length);
   assert.equal(visibleRowsFor(card, { collapsed: false }).length, 4);
   assert.equal(metricCount(card), 4);
+  assert.ok(card.rows.every((r) => r.modelPool === false), 'no row claims to be a model pool');
+
+  // ASSERT: the report's `model_pool` reaches the row it marks, and only that one (#453)
+  const pooled = parseHostPayload({
+    entries: [{
+      id: 'antigravity',
+      display_name: 'Antigravity',
+      sections: [
+        { type: 'text', label: 'Weekly', value: '' },
+        { type: 'metric', label: 'Gemini', percent: 39, severity: 'low' },
+        { type: 'metric', label: 'Gemini 4 Argon', percent: 100, severity: 'critical', model_pool: true },
+      ],
+    }],
+  });
+  assert.deepEqual(
+    projectCards(pooled, 0)[0].rows.map((r) => [r.label, r.modelPool]),
+    [['Gemini (Weekly)', false], ['Gemini 4 Argon (Weekly)', true]],
+  );
 
   // ASSERT: a vendor repeating a label outright still yields distinct rows
   const repeated = parseHostPayload({

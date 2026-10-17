@@ -144,6 +144,23 @@ try {
   assert.match(leftDashboard, /aria-label="Z.AI 0%"/);
   assert.match(leftDashboard, /aria-label="SuperGrok 93%"/);
   assert.match(leftDashboard, /aria-label="Claude 100%"/);
+  // #453: an exhausted per-model pool (Gemini 4 Argon) is one model's limit, not the provider's:
+  // the tab reads the busiest shared window, and the pool stands in only when it is all there is.
+  // Antigravity's rows sit under its Session / Weekly headings, so all of them are grouped.
+  const antigravityTab = (rows) => renderToStaticMarkup(React.createElement(TooltipProvider, {},
+    React.createElement(LanguageProvider, { language: 'pt-BR' },
+      React.createElement(NativeDashboard, {
+        cards: [{ ...card, id: 'antigravity', title: 'Antigravity', rows }],
+        hint: false, layout: { ...emptyLayout(), popoverStyle: 'native', showAs: 'used' }, nowMs, payload,
+        onCustomizeProvider() {}, onDismissHint() {}, onOpenCustomize() {}, onOpenSettings() {},
+        onRowAction() {}, onRowMenuOpenChange() {}, onSwitchAccount() {},
+        onToggleCollapse() {}, onToggleShowAs() {},
+      }))));
+  const argon = quotaRow('Gemini 4 Argon', 100, { grouped: true, modelPool: true });
+  assert.match(antigravityTab([
+    quotaRow('Gemini', 55, { grouped: true }), quotaRow('Gemini', 39, { grouped: true }), argon,
+  ]), /aria-label="Antigravity 55%"/);
+  assert.match(antigravityTab([argon]), /aria-label="Antigravity 100%"/);
   // A value headline (a prepaid balance meter) is a figure, not a quota window: the tab keeps
   // ranking percent windows in either reading — the rule the menu-bar chip follows — and a
   // provider with only a balance chips its figure, the same either way.

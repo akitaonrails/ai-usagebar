@@ -863,6 +863,7 @@ mod tests {
             left_value: None,
             value_headline: false,
             grouped: false,
+            model_pool: false,
         }
     }
 
@@ -933,6 +934,58 @@ mod tests {
 
         assert_eq!(value("anthropic"), vec![String::from("0%")]);
         assert_eq!(value("supergrok"), vec![String::from("7%")]);
+    }
+
+    /// #453: an exhausted per-model pool (Antigravity's Gemini 4 Argon) is one
+    /// model's limit: Flash, Pro, Claude and GPT-OSS still have room, so the
+    /// chip reads the busiest window the provider shares. The pool stands in
+    /// only when nothing shared is left to show.
+    #[test]
+    fn logos_rank_a_model_pool_below_the_shared_windows() {
+        let antigravity = |sections: Value| json!({"primary":null, "entries":[{"id":"antigravity", "status":"ready", "sections": sections}]});
+        let heading = |label: &str| json!({"type":"text", "label": label, "value":""});
+        let metric = |label: &str, percent: u32| json!({"type":"metric", "label": label, "percent": percent, "value": format!("{percent}%")});
+        let pool = |label: &str, percent: u32| {
+            json!({"type":"metric", "label": label, "percent": percent,
+                   "value": format!("{percent}%"), "model_pool": true})
+        };
+        let chip = |report: &Value, hidden: &HiddenRows| {
+            logo_segments(
+                &starred(&["antigravity"]),
+                report,
+                MenuBarLook::Logos,
+                None,
+                false,
+                UsageReading::Used,
+                hidden,
+            )[0]
+            .values
+            .clone()
+        };
+        let report = antigravity(json!([
+            heading("Session"),
+            metric("Gemini", 55),
+            metric("Claude & GPT OSS", 0),
+            heading("Weekly"),
+            metric("Gemini", 39),
+            pool("Gemini 4 Argon", 100),
+            metric("Claude & GPT OSS", 0),
+        ]));
+        assert_eq!(chip(&report, &HiddenRows::new()), vec![String::from("55%")]);
+
+        // With every shared window hidden, the pool is what is left to show.
+        let hidden = HiddenRows::from([(
+            String::from("antigravity"),
+            [
+                "metric:Gemini (Session)",
+                "metric:Claude & GPT OSS (Session)",
+                "metric:Gemini (Weekly)",
+                "metric:Claude & GPT OSS (Weekly)",
+            ]
+            .map(String::from)
+            .to_vec(),
+        )]);
+        assert_eq!(chip(&report, &hidden), vec![String::from("100%")]);
     }
 
     /// A value headline that carries a percent (a prepaid balance meter, a

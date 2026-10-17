@@ -43,6 +43,9 @@ export interface MetricRow {
   grouped?: boolean;
   key?: string;
   kind: "metric";
+  /** One model's own limit (Antigravity's "Gemini 4 Argon") rather than a
+   * window the whole provider shares; the report's `model_pool`. */
+  modelPool?: boolean;
   label: string;
   leftPercent: number;
   reset: string;

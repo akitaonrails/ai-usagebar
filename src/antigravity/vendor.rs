@@ -43,10 +43,19 @@ fn windows(snap: &AntigravitySnapshot) -> [(&'static str, Option<&UsageWindow>);
     ]
 }
 
+/// One row under a cadence heading.
+pub struct Row<'a> {
+    pub label: &'a str,
+    pub window: &'a UsageWindow,
+    /// A limit of one model (Pro's "Gemini 4 Argon"), not one of the shared
+    /// groups every model of the provider draws on.
+    pub model_pool: bool,
+}
+
 /// The rows under one cadence heading, in display order: Gemini, the
 /// per-model pools named after it (Pro's "Gemini 4 Argon"), Claude & GPT OSS,
 /// then any other pool.
-pub fn rows(snap: &AntigravitySnapshot, weekly: bool) -> Vec<(&str, &UsageWindow)> {
+pub fn rows(snap: &AntigravitySnapshot, weekly: bool) -> Vec<Row<'_>> {
     let (primary, third_party) = if weekly {
         (snap.weekly.as_ref(), snap.third_party_weekly.as_ref())
     } else {
@@ -57,16 +66,26 @@ pub fn rows(snap: &AntigravitySnapshot, weekly: bool) -> Vec<(&str, &UsageWindow
         .iter()
         .filter(|pool| pool.is_weekly() == weekly)
         .partition(|pool| pool.name.starts_with(GROUP_PRIMARY));
-    fn pool_rows(pools: Vec<&ModelPoolWindow>) -> impl Iterator<Item = (&str, &UsageWindow)> {
-        pools
-            .into_iter()
-            .map(|pool| (pool.name.as_str(), &pool.window))
+    fn pool_rows(pools: Vec<&ModelPoolWindow>) -> impl Iterator<Item = Row<'_>> {
+        pools.into_iter().map(|pool| Row {
+            label: pool.name.as_str(),
+            window: &pool.window,
+            model_pool: true,
+        })
     }
     primary
-        .map(|w| (GROUP_PRIMARY, w))
+        .map(|window| Row {
+            label: GROUP_PRIMARY,
+            window,
+            model_pool: false,
+        })
         .into_iter()
         .chain(pool_rows(gemini_pools))
-        .chain(third_party.map(|w| (GROUP_THIRD_PARTY, w)))
+        .chain(third_party.map(|window| Row {
+            label: GROUP_THIRD_PARTY,
+            window,
+            model_pool: false,
+        }))
         .chain(pool_rows(other_pools))
         .collect()
 }
@@ -255,17 +274,17 @@ fn render_tooltip(
         lines.push(TooltipLine::Body(format!(
             " <span font_weight='bold' foreground='{fg}'>  {icon}  {heading}</span>"
         )));
-        for (row, (label, w)) in rows(snap, group_idx == 1).into_iter().enumerate() {
-            if row > 0 {
+        for (index, row) in rows(snap, group_idx == 1).into_iter().enumerate() {
+            if index > 0 {
                 lines.push(TooltipLine::Body("".into()));
             }
             push_window(
                 &mut lines,
-                &format!("  󰆧  {}", escape(label)),
-                w,
+                &format!("  󰆧  {}", escape(row.label)),
+                row.window,
                 theme,
                 now,
-                pace(w),
+                pace(row.window),
             );
         }
     }
@@ -487,7 +506,8 @@ mod tests {
                 window: window(10, "2026-07-28T17:00:00Z", true),
             });
         }
-        let labels: Vec<&str> = rows(&snap, true).into_iter().map(|(l, _)| l).collect();
+        let weekly = rows(&snap, true);
+        let labels: Vec<&str> = weekly.iter().map(|row| row.label).collect();
         assert_eq!(
             labels,
             [
@@ -497,7 +517,13 @@ mod tests {
                 "Future Pool"
             ]
         );
-        let labels: Vec<&str> = rows(&snap, false).into_iter().map(|(l, _)| l).collect();
+        // Only the per-model pools are marked as such (#453).
+        let pools: Vec<bool> = weekly.iter().map(|row| row.model_pool).collect();
+        assert_eq!(pools, [false, true, false, true]);
+        let labels: Vec<&str> = rows(&snap, false)
+            .into_iter()
+            .map(|row| row.label)
+            .collect();
         assert_eq!(labels, [GROUP_PRIMARY, GROUP_THIRD_PARTY]);
     }
 

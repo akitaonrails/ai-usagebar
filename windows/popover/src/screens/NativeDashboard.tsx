@@ -38,15 +38,19 @@ function primaryMetric(card: Card): MetricRow | undefined {
  * The tab's number: the highest-percent quota window, like the Quattro bar's
  * default `auto` window (`maxPercent` in `omarchy/Model.js`), so a spent weekly
  * limit is not hidden behind an idle 5h session reading 0%. Grouped rows stand
- * in only when the card has no other percentage. A metric hidden in Customize
+ * in only when the card has no other percentage, and a per-model pool only
+ * when nothing the provider shares is left: an exhausted Gemini 4 Argon is one
+ * model's limit, not the provider's (#453). A metric hidden in Customize
  * never counts, so the tab cannot show a number the card below leaves out.
  */
 function previewMetric(card: Card, layout: Layout): MetricRow | undefined {
   const hidden = new Set(hiddenMetricKeys(card, layout));
   const shown = { ...card, rows: card.rows.filter((row) => !hidden.has(rowKey(row))) };
   const percents = shown.rows.filter((row): row is MetricRow => row.kind === "metric" && row.headline === "percent");
-  const windows = percents.filter((row) => !row.grouped);
-  const candidates = windows.length ? windows : percents;
+  const shared = percents.filter((row) => !row.modelPool);
+  const ranked = shared.length ? shared : percents;
+  const windows = ranked.filter((row) => !row.grouped);
+  const candidates = windows.length ? windows : ranked;
   if (!candidates.length) return primaryMetric(shown);
   return candidates.reduce((best, row) => (row.usedPercent > best.usedPercent ? row : best));
 }

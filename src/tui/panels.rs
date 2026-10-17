@@ -72,6 +72,11 @@ pub(crate) struct SectionProjection {
     /// row beneath a heading instead of a peer of the overall meter. The TUI
     /// renders grouped metrics like any other; only the report carries this.
     pub group: Option<&'static str>,
+    /// A per-model quota pool (Antigravity's "Gemini 4 Argon"): the limit of
+    /// one model, not one of the windows every model of the provider shares.
+    /// A frontend that sums the provider up in one figure ranks it below
+    /// those, so an exhausted model does not read as an exhausted provider.
+    pub model_pool: bool,
     /// Which of the metric's two numbers a report-driven frontend puts on the
     /// bar. Every metric is a percentage unless its vendor says otherwise, so
     /// this is [`MetricHeadline::Percent`] by default — the bar draws it and
@@ -98,6 +103,7 @@ impl SectionBuilder {
             reset_at: None,
             window: None,
             group: None,
+            model_pool: false,
             headline: MetricHeadline::Percent,
             used_cents: None,
             limit_cents: None,
@@ -177,6 +183,13 @@ impl SectionBuilder {
         let mut row = Self::projection(section);
         row.group = Some(group);
         self.0.push(row);
+    }
+    /// Mark the metric just pushed as a per-model quota pool; see
+    /// [`SectionProjection::model_pool`].
+    fn mark_model_pool(&mut self) {
+        let row = self.0.last_mut().expect("a metric was just pushed");
+        assert!(matches!(row.section, Section::Metric { .. }));
+        row.model_pool = true;
     }
 
     /// Cursor's prepaid on-demand row. `value` stays the formatted pair the
@@ -1173,8 +1186,11 @@ fn antigravity_sections(
             label: heading.into(),
             value: String::new(),
         });
-        for (label, w) in rows {
-            push_window(&mut v, label, w, now, 5, false);
+        for row in rows {
+            push_window(&mut v, row.label, row.window, now, 5, false);
+            if row.model_pool {
+                v.mark_model_pool();
+            }
         }
     }
     // Figures read from the Cloud Code API fallback can lag what the local

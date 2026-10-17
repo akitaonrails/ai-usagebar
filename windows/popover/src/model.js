@@ -384,6 +384,9 @@ function normalizeSection(raw) {
       // The sub-group the report assigned this metric ("Breakdown" slices,
       // Claude CLI "Sessions"); "" when it stands on its own.
       group: clean(raw.group, 80),
+      // One model's own limit (Antigravity's "Gemini 4 Argon"), not a window
+      // the whole provider shares.
+      modelPool: raw.model_pool === true,
     };
   }
   // A text row that meters a cap (Cursor's On-Demand spend) carries `percent`
@@ -879,6 +882,7 @@ export function projectCards(payload, nowMs, locale) {
           resetAt: section.resetAt || "",
           window: section.window || 0,
           grouped: Boolean(metricGroup),
+          modelPool: Boolean(section.modelPool),
         };
         row.key = metricRowKey(entry.id, section.label, metricGroup);
         rows.push(row);

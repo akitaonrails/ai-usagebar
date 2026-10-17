@@ -738,7 +738,11 @@ of the reset window in seconds. `window_secs` is present only when the vendor
 states the window (rolling 5h/7d windows; Cursor's billing cycle from
 `billingCycleStart`/`billingCycleEnd`, never guessed as a month when the start
 is missing) and is omitted, not `null`, otherwise — a calendar month or an
-unstated window gives a frontend nothing to pace against. Cursor's On-Demand text row
+unstated window gives a frontend nothing to pace against. A per-model quota
+pool's metric (Antigravity's "Gemini 4 Argon") carries `model_pool: true`, and
+the field is omitted otherwise: it is one model's own limit rather than a
+window the whole provider shares, so a frontend that sums a provider up in one
+figure ranks it below the shared windows. Cursor's On-Demand text row
 may also carry `used_cents`, `limit_cents`, and `percent`: the spend and the
 prepaid cap in USD cents, and how much of that cap is already used (rounded
 half up, and above 100 when spend passes the cap). Those fields are omitted,

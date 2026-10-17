@@ -153,6 +153,13 @@ enum ReportSection {
         /// Absent for metrics that stand on their own.
         #[serde(skip_serializing_if = "Option::is_none")]
         group: Option<String>,
+        /// A per-model quota pool rather than one of the provider's shared
+        /// windows (Antigravity's "Gemini 4 Argon"): a frontend that shows one
+        /// figure for the provider ranks it below the shared windows, so an
+        /// exhausted model does not read as an exhausted provider. Present
+        /// only when true.
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        model_pool: bool,
     },
     Text {
         label: String,
@@ -435,6 +442,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
                         .filter(|window| window.num_seconds() > 0)
                         .map(|window| window.num_seconds() as u64),
                     group: projected.group.map(str::to_string),
+                    model_pool: projected.model_pool,
                 });
             }
             Section::Text { label, value } => {
@@ -754,6 +762,7 @@ fn session_section(session: &ContextSession) -> ReportSection {
         reset_at: None,
         window_secs: None,
         group: Some(SESSIONS_GROUP.into()),
+        model_pool: false,
     }
 }
 
@@ -909,6 +918,7 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         reset_at,
                         window_secs,
                         group,
+                        model_pool,
                     } => {
                         let mut metric = json!({
                             "label": label,
@@ -925,6 +935,9 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         }
                         if let Some(group) = group {
                             metric["group"] = json!(group);
+                        }
+                        if *model_pool {
+                            metric["model_pool"] = json!(true);
                         }
                         Some(metric)
                     }
@@ -1083,6 +1096,7 @@ mod tests {
             reset_at: None,
             window_secs: None,
             group: None,
+            model_pool: false,
         }
     }
 
@@ -1196,6 +1210,50 @@ mod tests {
         let json = render_json_entries(&[entry]);
         assert!(!json.contains("account0@example.com"));
         assert!(json.contains("a***@example.com"));
+    }
+
+    /// #453: a per-model pool's row says so, in `sections` and in the
+    /// `metrics` view alike; a shared window carries no such field at all.
+    #[test]
+    fn usage_json_marks_only_the_model_pool_row() {
+        let tab = TabId::vendor(VendorId::Antigravity);
+        let mut account = antigravity_account(0);
+        let window = |utilization_pct, window_duration| crate::usage::UsageWindow {
+            utilization_pct,
+            resets_at: Some(Utc::now() + chrono::Duration::hours(2)),
+            window_duration,
+        };
+        let week = chrono::Duration::days(7);
+        account.snapshot.session = Some(window(55, chrono::Duration::hours(5)));
+        account.snapshot.weekly = Some(window(39, week));
+        account
+            .snapshot
+            .model_pools
+            .push(crate::usage::ModelPoolWindow {
+                name: "Gemini 4 Argon".into(),
+                window: window(100, week),
+            });
+        let entry = entry_from_antigravity_account(&tab, &account, Utc::now());
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[entry])).unwrap();
+
+        let entry = &value["entries"][0];
+        let metrics: Vec<&serde_json::Value> = entry["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|section| section["type"] == "metric")
+            .chain(entry["metrics"].as_array().unwrap())
+            .collect();
+        assert_eq!(metrics.len(), 6);
+        for metric in metrics {
+            let pool = metric["label"] == "Gemini 4 Argon";
+            assert_eq!(
+                metric.get("model_pool"),
+                pool.then_some(&serde_json::Value::Bool(true)),
+                "{metric}"
+            );
+        }
     }
 
     #[test]

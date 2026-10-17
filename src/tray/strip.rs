@@ -76,6 +76,9 @@ pub struct StripMetric {
     /// Under a group heading (SuperGrok's product slices, the Claude entry's
     /// CLI sessions): a breakdown, not a quota window of its own.
     pub grouped: bool,
+    /// The report's `model_pool`: one model's own limit (Antigravity's
+    /// "Gemini 4 Argon"), not a window the whole provider shares.
+    pub model_pool: bool,
 }
 
 /// One provider's visible metrics: entry id, display name, and metrics.
@@ -376,7 +379,9 @@ pub fn content_from_payload(payload: &Value, stars: &Stars, order: &[String]) ->
 
 /// Every quota window of one payload entry that has a value, stars aside,
 /// the set the Quattro bar's `selectMetric` picks from: grouped rows only
-/// when the entry has nothing else. The Quattro look draws its chip from this,
+/// when the entry has nothing else, and a per-model pool only when nothing
+/// the provider shares is left — an exhausted Gemini 4 Argon is one model's
+/// limit, not the provider's (#453). The Quattro look draws its chip from this,
 /// so it agrees with the popover tab that selects it, whichever window is
 /// the busiest (Z.AI's third, monthly MCP window counts like its 5h and
 /// weekly ones). A metric whose key is in `hidden` (switched off in the
@@ -398,6 +403,8 @@ pub fn quota_group(payload: &Value, id: &str, hidden: &[String]) -> Option<Strip
         .into_iter()
         .filter(|m| !m.value.trim().is_empty() && !hidden.contains(&m.key))
         .collect();
+    let shared: Vec<StripMetric> = shown.iter().filter(|m| !m.model_pool).cloned().collect();
+    let shown = if shared.is_empty() { shown } else { shared };
     let windows: Vec<StripMetric> = shown.iter().filter(|m| !m.grouped).cloned().collect();
     let metrics = if windows.is_empty() { shown } else { windows };
     (!metrics.is_empty()).then(|| (id.to_string(), name, metrics))
@@ -509,6 +516,7 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             left_value,
             value_headline,
             grouped: !effective_group.is_empty(),
+            model_pool: section.get("model_pool").and_then(Value::as_bool) == Some(true),
         });
     }
     rows

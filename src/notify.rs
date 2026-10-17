@@ -1432,6 +1432,7 @@ mod tests {
             reset_at: None,
             window: None,
             group: None,
+            model_pool: false,
             headline: MetricHeadline::Percent,
             used_cents: None,
             limit_cents: None,
