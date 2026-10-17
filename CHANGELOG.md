@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+### Fixed
+
+- **With several `agy` sessions open, the macOS Antigravity entry shows the
+  latest reading of the quota, not the latest redraw.** Each `agy` process
+  re-sends the quota it last fetched every time it redraws its status line,
+  and it fetches only after a turn of its own, so an idle session keeps
+  sending its startup figures under a fresh timestamp. The entry used
+  whichever session redrew last, so it flipped between their figures and
+  often showed the oldest. Readings are now ordered by the figures themselves
+  — a window's reset only moves later, and within a window usage only grows —
+  and the arrival time decides only when the figures cannot. Closing the busy
+  session no longer drops the entry back to an idle one's older figures
+  either: a closed session's reading stands while it is still the latest and
+  another session of the account is running.
+
 ## [1.40.0] — 2026-10-17
 
 ### Added
