@@ -700,6 +700,41 @@ func testParserBalances() {
     assertNil(mstNoQuota?.session, "modelstudio unquoted session is nil")
     assertNil(mstNoQuota?.weekly, "modelstudio unquoted weekly is nil")
     assertNil(mstNoQuota?.sonnet, "modelstudio unquoted monthly is nil")
+
+    // Synthetic: subscription request quota at 65-66.
+    let syn = snapshot(FORMAT, vendor: "synthetic",
+                       fields: fields(through: 66, set: [
+                          0: "Synthetic", 1: "42", 2: "15d", 16: "syn",
+                          65: "42", 66: "15d"
+                       ]))
+    assertEqual(syn?.hasUsageWindows, true, "synthetic shows windows")
+    assertNil(syn?.creditBalance, "synthetic has no balance-only creditBalance")
+    assertEqual(syn?.session?.pct, 42, "synthetic subscription pct")
+    assertEqual(syn?.session?.reset, "15d", "synthetic subscription reset")
+    assertEqual(syn?.sessionLabel, "Subscription", "synthetic session label is Subscription")
+    assertEqual(syn?.sessionTag, "sub", "synthetic session tag is sub")
+    assertNil(syn?.weekly, "synthetic has no weekly window")
+    assertNil(syn?.sonnet, "synthetic has no third window")
+
+    // Old binary fallback: slots 65-66 absent, reads session slots 1-2.
+    let synOldBinary = snapshot(FORMAT, vendor: "synthetic",
+                                fields: fields(through: 16, set: [
+                                   0: "Synthetic", 1: "25", 2: "10d", 16: "syn"
+                                ]))
+    assertEqual(synOldBinary?.hasUsageWindows, true, "synthetic old binary shows windows")
+    assertEqual(synOldBinary?.session?.pct, 25, "synthetic old binary falls back to session slot")
+    assertEqual(synOldBinary?.sessionLabel, "Subscription", "synthetic old binary keeps Subscription label")
+    assertEqual(synOldBinary?.sessionTag, "sub", "synthetic old binary keeps sub tag")
+    assertNil(synOldBinary?.weekly, "synthetic old binary has no weekly window")
+
+    // No-quota / unquoted plan:
+    let synNoQuota = snapshot(FORMAT, vendor: "synthetic",
+                              fields: fields(through: 66, set: [
+                                 0: "Synthetic", 16: "syn",
+                                 1: "—", 2: "—", 65: "—", 66: "—"
+                              ]))
+    assertNil(synNoQuota?.session, "synthetic unquoted session is nil")
+    assertNil(synNoQuota?.weekly, "synthetic unquoted weekly is nil")
 }
 
 // ─── Run ─────────────────────────────────────────────────────────────────

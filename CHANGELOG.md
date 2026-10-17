@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **macOS menu bar parses and displays Synthetic subscription quota.**
+  Selecting Synthetic in the menu bar now displays its subscription request
+  quota with a dedicated label and hides the unused weekly window, while the
+  format string mirrors the `{synthetic_pct}` and `{synthetic_reset}`
+  placeholders.
+
 ## [1.40.0] — 2026-10-17
 
 ### Added

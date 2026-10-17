@@ -99,7 +99,8 @@ let POINT_CRITICAL_MIN = 10
 // carry Cline's 5-hour, 7-day, and 30-day quota pools (empty when not selected).
 // `{mst_monthly_pct}` / `{mst_monthly_reset}` (63-64) carry Model Studio's
 // monthly Token Plan pool (empty when not selected or not reported).
-// A final literal
+// `{synthetic_pct}` / `{synthetic_reset}` (65-66) carry Synthetic's
+// subscription request quota (empty when not selected). A final literal
 // sentinel absorbs the widget's stale suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
@@ -119,7 +120,8 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{devin_daily_pct};;{devin_daily_reset};;{devin_daily_elapsed};;" +
              "{cline_5h_pct};;{cline_5h_reset};;{cline_7d_pct};;{cline_7d_reset};;" +
              "{cline_30d_pct};;{cline_30d_reset};;" +
-             "{mst_monthly_pct};;{mst_monthly_reset}"
+             "{mst_monthly_pct};;{mst_monthly_reset};;" +
+             "{synthetic_pct};;{synthetic_reset}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -770,6 +772,13 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
             sessionLabel = "Session"
             weeklyLabel = "Weekly"
         }
+    case "synthetic":
+        sessionWindow = quotaWindow(65, 66, -1) ?? sessionWindow
+        weeklyWindow = nil
+        sessionTag = "sub"
+        weeklyTag = "7d"
+        sessionLabel = "Subscription"
+        weeklyLabel = ""
     default:
         weeklyWindow = quotaWindow(3, 4, 14)
         sessionTag = "5h"

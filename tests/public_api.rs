@@ -135,6 +135,42 @@ fn the_modelstudio_monthly_placeholders_the_macos_menu_bar_reads_keep_their_name
     assert_eq!(v.get("mst_monthly_reset").map(String::as_str), Some(""));
 }
 
+/// The macOS menu bar reads Synthetic's subscription quota through these
+/// placeholders in its `--format` string (`macos/ai-usagebar-menubar.swift`,
+/// fields 65-66). Renaming one here would silently drop that row, so pin the
+/// names and pin placeholder values.
+#[test]
+fn the_synthetic_placeholders_the_macos_menu_bar_reads_keep_their_names() {
+    let now = Utc.with_ymd_and_hms(2026, 8, 19, 12, 0, 0).unwrap();
+    let subscription = UsageWindow {
+        utilization_pct: 60,
+        resets_at: Some(now + chrono::Duration::days(15)),
+        window_duration: chrono::Duration::days(30),
+    };
+    let snapshot = ai_usagebar::usage::SyntheticSnapshot {
+        requests: 600.0,
+        limit: 1000.0,
+        subscription,
+    };
+    let opts = ai_usagebar::vendor::RenderOpts {
+        format: None,
+        tooltip_format: None,
+        icon: None,
+        pace_tolerance: 5,
+        format_pace_color: false,
+        tooltip_pace_pts: false,
+    };
+    let v = ai_usagebar::synthetic::vendor::build_placeholders(&snapshot, &opts, now);
+    assert_eq!(v.get("synthetic_pct").map(String::as_str), Some("60"));
+    assert_eq!(v.get("synthetic_reset").map(String::as_str), Some("15d 0h"));
+    assert_eq!(
+        v.get("session_pct").map(String::as_str),
+        Some("60"),
+        "the generic session alias must remain populated for backward compatibility"
+    );
+    assert_eq!(v.get("session_reset").map(String::as_str), Some("15d 0h"));
+}
+
 /// `push_window` is the shared tooltip row helper. Its sixth argument stayed an
 /// `Option<i32>` marker when the row gained a pace glyph: that lives on
 /// `WindowRow` behind `push_window_with_row`, so a library caller written
