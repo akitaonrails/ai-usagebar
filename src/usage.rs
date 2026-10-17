@@ -539,6 +539,9 @@ pub enum AntigravitySource {
     Remote,
     /// The running `agy` CLI's official status-line payload.
     Statusline,
+    /// `agy`'s own reading, through `agy -p "/quota"`: the figures its Models
+    /// & Quota page shows, so the panel has nothing to qualify.
+    Agy,
 }
 
 impl AntigravitySource {
@@ -547,6 +550,7 @@ impl AntigravitySource {
             AntigravitySource::Local => "local",
             AntigravitySource::Remote => "remote",
             AntigravitySource::Statusline => "statusline",
+            AntigravitySource::Agy => "agy",
         }
     }
 
@@ -557,6 +561,7 @@ impl AntigravitySource {
             "local" => Some(AntigravitySource::Local),
             "remote" => Some(AntigravitySource::Remote),
             "statusline" => Some(AntigravitySource::Statusline),
+            "agy" => Some(AntigravitySource::Agy),
             _ => None,
         }
     }

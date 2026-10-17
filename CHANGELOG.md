@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Antigravity reads `agy`'s own quota when `agy` is installed.** With only
+  the `agy` CLI signed in, the remote fallback asked the Cloud Code API, which
+  answers an `agy` account with a different reading: prod's Gemini group is
+  another tracker (an untouched week showed 0% while `agy` showed 37%), and
+  daily leaves the Gemini group out. The fallback now asks
+  `agy -p "/quota"` first — the figures `agy`'s own Models & Quota page shows,
+  Argon included — and goes to the Cloud Code API only when `agy` cannot
+  answer. A reading starts `agy`, so it is taken at most every two minutes,
+  and a failed one is not retried for ten (#450).
+
 ## [1.40.0] — 2026-10-17
 
 ### Added

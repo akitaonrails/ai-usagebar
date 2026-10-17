@@ -503,8 +503,10 @@ enabled = false
 [antigravity]
 enabled = false
 # With no local product — or when `agy` cannot supply its CSRF token — quota
-# comes from Google's Cloud Code API using the session Antigravity saved in the
-# OS keyring or in `~/.gemini/antigravity-cli/antigravity-oauth-token`.
+# comes from `agy` itself when it is installed (`agy -p "/quota"`, at most every
+# two minutes), and otherwise from Google's Cloud Code API using the session
+# Antigravity saved in the OS keyring or in
+# `~/.gemini/antigravity-cli/antigravity-oauth-token`.
 # Renewing that session needs Antigravity's own OAuth client (a public
 # installed-app client; it is not shipped in source). Without it the fallback
 # works only while the saved access token lasts (about an hour after the CLI

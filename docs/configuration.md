@@ -225,7 +225,8 @@ enabled = false            # opt in after signing in with Antigravity
 # Antigravity is read locally first: the running desktop product or `agy`
 # language server supplies quota over its loopback RPC. When that source is
 # unavailable — including `agy` sessions whose CSRF token is not published —
-# ai-usagebar uses the saved Google session and the Cloud Code API instead.
+# ai-usagebar asks `agy -p "/quota"` when `agy` is installed (at most every two
+# minutes), and otherwise uses the saved Google session and the Cloud Code API.
 # The session is read-only from either the OS keyring or the CLI file:
 # ~/.gemini/antigravity-cli/antigravity-oauth-token
 # oauth_client_id = "<public installed-app client id>"

@@ -4428,16 +4428,15 @@ mod tests {
                 .any(|s| matches!(s, Section::Text { label, .. } if label == "Source"))
         );
 
-        let statusline = sections_for(
-            &ready(antigravity_snap(AntigravitySource::Statusline)),
-            now(),
-            5,
-        );
-        assert!(
-            !statusline
-                .iter()
-                .any(|s| matches!(s, Section::Text { label, .. } if label == "Source"))
-        );
+        for source in [AntigravitySource::Statusline, AntigravitySource::Agy] {
+            let sections = sections_for(&ready(antigravity_snap(source)), now(), 5);
+            assert!(
+                !sections
+                    .iter()
+                    .any(|s| matches!(s, Section::Text { label, .. } if label == "Source")),
+                "{source:?}"
+            );
+        }
     }
 
     /// A custom provider's rows come out in declaration order: title, gauges,

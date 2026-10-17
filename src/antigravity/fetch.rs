@@ -23,6 +23,11 @@
 //! server that is signed out or answering on the wrong protocol — keeps its
 //! own diagnosis.
 //!
+//! The fallback asks `agy` before Google when `agy` is installed: its
+//! `-p "/quota"` reading is what its own Models & Quota page shows, which the
+//! Cloud Code request cannot reproduce for an `agy` account (#450). Only when
+//! `agy` cannot answer does the saved session go to the Cloud Code API.
+//!
 //! That ranking has one sharp edge (#405): a signed-out product's 401/403 is
 //! actionable, so it outranks the `agy` answer that would unlock the fallback
 //! — the running product masks a working saved session. When that product is
@@ -220,6 +225,14 @@ pub async fn fetch_snapshot_at(
     };
     let account = origin.account();
 
+    // The remote path starts `agy` when there is one; see
+    // [`super::agy::QUOTA_INTERVAL`] for why it is not run on every TTL.
+    let cache_ttl = match origin {
+        Origin::Remote(Ok(_)) if remote.agy.is_available() => {
+            cache_ttl.max(super::agy::QUOTA_INTERVAL)
+        }
+        _ => cache_ttl,
+    };
     if let Some(bytes) = cache.fresh_payload(cache_ttl)?
         && let Ok(outcome) = reuse_cache(bytes, cache, false, account.as_deref(), now)
     {
@@ -559,10 +572,27 @@ struct AccessToken {
     just_refreshed: bool,
 }
 
-/// Pick the freshest usable access token without going to the network: the
-/// one this program persisted after its last refresh, if it outlives the
+/// The freshest usable access token there is without going to the network:
+/// the one this program persisted after its last refresh, if it outlives the
 /// keyring's and is not about to expire; else the keyring's own while it
-/// lasts. Only when both are spent does this refresh.
+/// lasts.
+fn current_access_token(
+    oauth_path: &std::path::Path,
+    token: &StoredToken,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    if let Some(persisted) = cloud::read_persisted(oauth_path, &token.fingerprint)
+        && token
+            .expires_at
+            .is_none_or(|keyring| persisted.expires_at > keyring)
+        && !cloud::needs_refresh(Some(persisted.expires_at), now)
+    {
+        return Some(persisted.access_token);
+    }
+    (!cloud::needs_refresh(token.expires_at, now)).then(|| token.access_token.clone())
+}
+
+/// [`current_access_token`], and only when both are spent, a refresh.
 async fn resolve_access_token(
     client: &reqwest::Client,
     oauth: Option<&cloud::OauthClient>,
@@ -571,20 +601,9 @@ async fn resolve_access_token(
     token: &StoredToken,
     now: DateTime<Utc>,
 ) -> Result<AccessToken> {
-    if let Some(persisted) = cloud::read_persisted(oauth_path, &token.fingerprint)
-        && token
-            .expires_at
-            .is_none_or(|keyring| persisted.expires_at > keyring)
-        && !cloud::needs_refresh(Some(persisted.expires_at), now)
-    {
+    if let Some(value) = current_access_token(oauth_path, token, now) {
         return Ok(AccessToken {
-            value: persisted.access_token,
-            just_refreshed: false,
-        });
-    }
-    if !cloud::needs_refresh(token.expires_at, now) {
-        return Ok(AccessToken {
-            value: token.access_token.clone(),
+            value,
             just_refreshed: false,
         });
     }
@@ -647,14 +666,21 @@ impl Renewal<'_> {
     }
 }
 
-/// Quota through the Cloud Code API, as the signed-in Google account.
+/// Quota as the signed-in Google account: `agy`'s own reading when it can
+/// give one, else the Cloud Code API.
 ///
-/// A rejected token gets one refresh and one retry, unless it was refreshed a
-/// moment ago — then the rejection is Google's verdict on the session, and
-/// the user has to sign in again. A plan-verdict 403 (`SUBSCRIPTION_REQUIRED`,
-/// #405) is not a rejection: it is passed through untouched, without spending
-/// a refresh or an `agy` run on a session that is fine. The plan name is
-/// best-effort: the summary is the figure, and a missing name must not cost it.
+/// `agy` answers first (#450). It reads as the saved session's account — the
+/// session is `agy`'s own login — so its snapshot is attributed the same way.
+/// Its output names no plan; a plan is looked up only with a token that is
+/// still good, never at the price of a refresh.
+///
+/// On the Cloud Code path, a rejected token gets one refresh and one retry,
+/// unless it was refreshed a moment ago — then the rejection is Google's
+/// verdict on the session, and the user has to sign in again. A plan-verdict
+/// 403 (`SUBSCRIPTION_REQUIRED`, #405) is not a rejection: it is passed through
+/// untouched, without spending a refresh or an `agy` run on a session that is
+/// fine. The plan name is best-effort: the summary is the figure, and a
+/// missing name must not cost it.
 async fn fetch_remote(
     client: &reqwest::Client,
     cache: &Cache,
@@ -666,6 +692,16 @@ async fn fetch_remote(
 ) -> Result<AntigravitySnapshot> {
     let mut token = token?;
     let oauth_path = cloud::oauth_cache_path(cache);
+    if let Some(mut snap) = super::agy::quota_snapshot(renewal.agy, cache, now).await {
+        snap.plan = match current_access_token(&oauth_path, &token, now) {
+            Some(access) => cloud::fetch_plan(client, endpoints, &access).await,
+            None => None,
+        }
+        .unwrap_or_else(|| DEFAULT_PLAN.to_string());
+        snap.account = remote_account(&token.fingerprint);
+        snap.source = AntigravitySource::Agy;
+        return Ok(snap);
+    }
     let mut access =
         match resolve_access_token(client, oauth, endpoints, &oauth_path, &token, now).await {
             Ok(access) => access,
@@ -3954,7 +3990,9 @@ mod tests {
     }
 
     /// An `agy` stand-in: appends to `runs`, then writes `blob` into `file`
-    /// the way the real CLI rewrites the keyring entry.
+    /// the way the real CLI rewrites the keyring entry. Its print mode fails
+    /// without a trace, like an `agy` that predates `-p "/quota"`, so these
+    /// tests exercise the Cloud Code path and count only renewals.
     #[cfg(unix)]
     fn fake_agy(
         dir: &std::path::Path,
@@ -3962,19 +4000,16 @@ mod tests {
         file: &std::path::Path,
         blob: &str,
     ) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let path = dir.join("agy");
-        std::fs::write(
+        super::super::agy::test_support::write_script(
             &path,
-            format!(
-                "#!/bin/sh\necho \"$@\" >> '{}'\nprintf '%s' '{}' > '{}'\n",
+            &format!(
+                "[ \"$1\" = -p ] && exit 1\necho \"$@\" >> '{}'\nprintf '%s' '{}' > '{}'",
                 runs.display(),
                 blob,
                 file.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         path
     }
 
@@ -4058,6 +4093,205 @@ mod tests {
             .await
             .expect_err("nothing renews it");
         assert!(err.to_string().contains("no OAuth client"), "{err}");
+    }
+
+    /// What `agy -p "/quota" --output-format json` prints, cut down to the
+    /// fields read, on the fixture's clock.
+    #[cfg(unix)]
+    const AGY_QUOTA: &str = r#"{"status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[
+{"name":"Gemini Models","buckets":[
+ {"id":"gemini-weekly","name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":0.63,"reset_time":"2026-07-28T01:11:19Z"},
+ {"id":"gemini-5h","name":"Five Hour Limit Remaining","window":"5h","remaining_fraction":0.49,"reset_time":"2026-07-22T15:25:45Z"}]},
+{"name":"Claude and GPT models","buckets":[
+ {"id":"3p-weekly","name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":1,"reset_time":"2026-07-29T12:00:00Z"},
+ {"id":"3p-5h","name":"Five Hour Limit Remaining","window":"5h","remaining_fraction":1,"reset_time":"2026-07-22T17:00:00Z"}]},
+{"name":"Gemini 4 Argon","buckets":[
+ {"id":"gemini-argon-wtu-weekly","name":"Gemini 4 Argon Weekly Limit","window":"weekly","remaining_fraction":0,"reset_time":"2026-07-28T01:10:47Z"}]}]}}}"#;
+
+    /// An `agy` that appends its arguments to `runs` and answers print mode
+    /// with [`AGY_QUOTA`]; any other command fails.
+    #[cfg(unix)]
+    fn agy_reading(dir: &std::path::Path, runs: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("agy");
+        super::super::agy::test_support::write_script(
+            &path,
+            &format!(
+                "echo \"$@\" >> '{}'\n[ \"$1\" = -p ] || exit 1\ncat <<'EOF'\n{AGY_QUOTA}\nEOF",
+                runs.display()
+            ),
+        );
+        path
+    }
+
+    /// #450: `agy`'s own reading answers before the Cloud Code API is asked,
+    /// attributed to the saved session like any remote snapshot; the plan
+    /// still comes from `loadCodeAssist` while the token is good.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agys_own_reading_answers_before_the_cloud_code_api() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let daily = server
+            .mock("POST", "/daily/quota")
+            .expect(0)
+            .create_async()
+            .await;
+        let prod = server
+            .mock("POST", "/prod/quota")
+            .expect(0)
+            .create_async()
+            .await;
+        let plan = server
+            .mock("POST", "/daily/plan")
+            .match_header("authorization", "Bearer KEYRING-AT")
+            .with_status(200)
+            .with_body(r#"{"currentTier":{"name":"google_ai_pro"}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let blob = keyring_blob(VALID, true);
+        let (td, cache) = fixture();
+        let runs = td.path().join("runs");
+        let agy = agy_reading(td.path(), &runs);
+
+        let out = run(
+            &cache,
+            RemoteOverride {
+                agy: super::super::agy::AgyCommand::At(agy),
+                ..remote(&blob, &eps)
+            },
+            Duration::from_secs(60),
+        )
+        .await
+        .expect("agy answered");
+
+        daily.assert_async().await;
+        prod.assert_async().await;
+        plan.assert_async().await;
+        let snap = out.snapshot;
+        assert_eq!(snap.source, AntigravitySource::Agy);
+        assert_eq!(snap.plan, "Pro");
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 51);
+        assert_eq!(snap.weekly.as_ref().unwrap().utilization_pct, 37);
+        assert_eq!(
+            snap.third_party_session.as_ref().unwrap().utilization_pct,
+            0
+        );
+        assert_eq!(snap.model_pools[0].window.utilization_pct, 100);
+        let fingerprint = credential::parse_keyring_blob(&blob).unwrap().fingerprint;
+        assert_eq!(snap.account, format!("acct:{fingerprint}"));
+        let cached = parse_cache_at(
+            &cache
+                .fresh_payload(Duration::from_secs(60))
+                .unwrap()
+                .unwrap(),
+            None,
+            now(),
+        )
+        .unwrap();
+        assert_eq!(cached.source, AntigravitySource::Agy);
+        assert_eq!(
+            std::fs::read_to_string(runs).unwrap().trim(),
+            "-p /quota --output-format json --log-file /dev/null"
+        );
+    }
+
+    /// An expired session costs `agy`'s reading nothing: no refresh, no
+    /// renewal run, and no plan lookup with a token that is no longer good.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agys_reading_needs_no_good_token() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let plan = server
+            .mock("POST", "/daily/plan")
+            .expect(0)
+            .create_async()
+            .await;
+        let token = token_mock(&mut server).expect(0).create_async().await;
+        let blob = keyring_blob(EXPIRED, true);
+        let (td, cache) = fixture();
+        let runs = td.path().join("runs");
+        let agy = agy_reading(td.path(), &runs);
+
+        let out = run_without_oauth(
+            &cache,
+            RemoteOverride {
+                agy: super::super::agy::AgyCommand::At(agy),
+                ..remote(&blob, &eps)
+            },
+        )
+        .await
+        .expect("agy answered");
+
+        plan.assert_async().await;
+        token.assert_async().await;
+        assert_eq!(out.snapshot.source, AntigravitySource::Agy);
+        assert_eq!(out.snapshot.plan, "Antigravity");
+        assert_eq!(std::fs::read_to_string(runs).unwrap().lines().count(), 1);
+    }
+
+    /// When `agy` cannot answer, the Cloud Code API still does, and the
+    /// failed reading is not repeated on the next poll.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn when_agy_cannot_read_the_quota_the_cloud_code_api_answers() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let quota = quota_mock(&mut server, "KEYRING-AT")
+            .expect(2)
+            .create_async()
+            .await;
+        let blob = keyring_blob(VALID, true);
+        let (td, cache) = fixture();
+        let runs = td.path().join("runs");
+        let agy = td.path().join("agy");
+        super::super::agy::test_support::write_script(
+            &agy,
+            &format!("echo \"$@\" >> '{}'\nexit 1", runs.display()),
+        );
+        let remote = || RemoteOverride {
+            agy: super::super::agy::AgyCommand::At(agy.clone()),
+            ..remote(&blob, &eps)
+        };
+
+        for _ in 0..2 {
+            let out = run(&cache, remote(), Duration::ZERO)
+                .await
+                .expect("the Cloud Code API answered");
+            assert_eq!(out.snapshot.source, AntigravitySource::Remote);
+            // As if the reading floor had passed, so the next poll fetches.
+            std::fs::remove_file(cache.payload_path()).unwrap();
+        }
+        quota.assert_async().await;
+        assert_eq!(std::fs::read_to_string(runs).unwrap().lines().count(), 1);
+    }
+
+    /// A reading starts a process, so it is taken at most every
+    /// [`super::super::agy::QUOTA_INTERVAL`], however short the TTL.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agys_reading_is_taken_at_most_every_quota_interval() {
+        let server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let blob = keyring_blob(VALID, true);
+        let (td, cache) = fixture();
+        let runs = td.path().join("runs");
+        let agy = agy_reading(td.path(), &runs);
+        for _ in 0..2 {
+            let out = run(
+                &cache,
+                RemoteOverride {
+                    agy: super::super::agy::AgyCommand::At(agy.clone()),
+                    ..remote(&blob, &eps)
+                },
+                Duration::ZERO,
+            )
+            .await
+            .expect("a snapshot");
+            assert_eq!(out.snapshot.source, AntigravitySource::Agy);
+        }
+        assert_eq!(std::fs::read_to_string(runs).unwrap().lines().count(), 1);
     }
 
     /// A session saved without a refresh token cannot be renewed here.
@@ -4392,6 +4626,13 @@ mod tests {
         assert_eq!(
             parse_cache_at(&bytes, None, now()).unwrap().source,
             AntigravitySource::Statusline
+        );
+
+        snap.source = AntigravitySource::Agy;
+        let bytes = serde_json::to_vec(&snap_to_json(&snap)).unwrap();
+        assert_eq!(
+            parse_cache_at(&bytes, None, now()).unwrap().source,
+            AntigravitySource::Agy
         );
 
         // A payload from before the field existed is a local one.

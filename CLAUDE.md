@@ -287,14 +287,19 @@ vendor's response shape drifts:
   `~/.gemini/antigravity-cli/antigravity-oauth-token` (`credential.rs`:
   Credential Manager on Windows, `security` on macOS, `secret-tool` on
   Linux; read-only) and asks the Cloud Code API (`cloud.rs`) for the same
-  quota summary. A refreshed token goes to the vendor cache's
+  quota summary. Before Google it asks `agy` itself when `agy` is installed:
+  `agy -p "/quota" --output-format json` (`agy.rs`) is the reading `agy`'s own
+  Models & Quota page shows, which the Cloud Code request cannot reproduce for
+  an `agy` account (#450); it starts a process, so it runs at most every
+  `agy::QUOTA_INTERVAL`. A refreshed token goes to the vendor cache's
   `oauth.json`, keyed by a fingerprint of the refresh token, never back to
   the keyring. The OAuth client that refresh needs is config-only.
   Tests must never probe `/proc`, `lsof`, the keyring, the CLI token file, Google or the wall
-  clock — use `candidate_bases_with`, `probe_order`,
+  clock, nor run the real `agy` — use `candidate_bases_with`, `probe_order`,
   `matching_windows_ports`, `parse_lsof_pcn`, `parse_cache_at`, and
   `fetch_snapshot_at` with a `RemoteOverride` (`SavedCredential::Blob` /
-  `Absent`, mockito `Endpoints`, `local_bases: Some(vec![])`), not their
+  `Absent`, mockito `Endpoints`, `local_bases: Some(vec![])`, and `agy` left at
+  `AgyCommand::Off` or set to `AgyCommand::At` a script), not their
   production wrappers. The two tests that touch the real keyring
   (`reading_the_real_windows_credential_never_errors`, `antigravity_remote_live`)
   are `#[ignore]`d.
