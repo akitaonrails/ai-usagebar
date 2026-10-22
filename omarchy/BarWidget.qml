@@ -71,7 +71,7 @@ BarWidget {
   }
 
   function nextEntry() {
-    if (panelItem) panelItem.selectEntry(panelItem.entryIndex + 1)
+    if (panelItem) panelItem.selectAdjacentBarEntry(1)
   }
 
   function launchDashboard() {
@@ -297,7 +297,7 @@ BarWidget {
 
     onWheelMoved: function(delta) {
       if (delta !== 0 && root.panelItem)
-        root.panelItem.selectEntry(root.panelItem.entryIndex + (delta < 0 ? 1 : -1))
+        root.panelItem.selectAdjacentBarEntry(delta < 0 ? 1 : -1)
     }
 
     Row {

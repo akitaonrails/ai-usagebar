@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Omarchy's bar scroll and middle-click skip providers hidden from the bar.**
+  Hiding an entry leaves it in the usage panel, but the bar's wheel and
+  middle-click walked every panel entry. Landing on a hidden one snapped the
+  bar back to the first provider still on display instead of the next one.
+  Those gestures now move among the providers the bar is showing (#489).
+
 ## [1.43.0] — 2026-10-22
 
 ### Added

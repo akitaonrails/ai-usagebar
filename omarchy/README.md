@@ -40,9 +40,11 @@ omarchy plugin remove akitaonrails.ai-usagebar
 
 - Bar: left-click opens the native Quattro usage panel; right-click
   intentionally launches `ai-usagebar-tui` in a terminal; middle-click or the
-  mouse wheel switches provider. With **Show all providers** on the bar draws
-  one chip per entry, and left-clicking a chip opens the panel on the entry
-  that chip stands for (clicking the chip the panel already shows closes it).
+  mouse wheel switches to the next provider the bar is showing. A provider
+  hidden from the bar stays in the panel. With **Show all providers** on the
+  bar draws one chip per entry, and left-clicking a chip opens the panel on
+  the entry that chip stands for (clicking the chip the panel already shows
+  closes it).
   While the panel is open the chips it is not showing dim to 45%, so the bar
   says which entry the panel belongs to.
   The exact provider or named account is saved

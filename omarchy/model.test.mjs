@@ -2112,6 +2112,17 @@ assert.equal(model.cursorPoolOf(null), '');
   assert.deepEqual(ids(model.barVisibleEntries(entries,saved.hiddenBarEntries)),['openai','openai@work']);
   assert.equal(model.providerDisplaySummary(entries),'3/3');
   assert.equal(model.providerDisplaySummary([{...entries[0],checked:false},entries[1],entries[2]]),'2/3');
+  const bar = [{id:'a'},{id:'b'},{id:'c'}];
+  assert.equal(model.adjacentBarEntryId(bar, 'a', 1), 'b');
+  assert.equal(model.adjacentBarEntryId(bar, 'b', -1), 'a');
+  assert.equal(model.adjacentBarEntryId(bar, 'c', 1), 'a');
+  assert.equal(model.adjacentBarEntryId(bar, 'a', -1), 'c');
+  // The bar is showing `a` while the panel selection is a hidden entry.
+  assert.equal(model.adjacentBarEntryId(bar, 'hidden', 1), 'b');
+  assert.equal(model.adjacentBarEntryId(bar, 'hidden', -1), 'c');
+  assert.equal(model.adjacentBarEntryId([], 'a', 1), '');
+  assert.equal(model.adjacentBarEntryId(bar, 'a', 0), '');
+  assert.equal(model.adjacentBarEntryId(null, 'a', 1), '');
 
 }
 
@@ -2124,6 +2135,12 @@ assert.equal(model.cursorPoolOf(null), '');
   assert.match(form, /badge: root\.vendorSummary\(\)/, 'fetching retains its independent enabled count');
   assert.match(form, /property bool fetchingOpen: false/);
   assert.match(form, /onClicked: root\.barProviderToggleRequested\(modelData.id\)/);
+  assert.match(panel, /function selectAdjacentBarEntry\(delta\)/);
+  assert.match(panel, /Model\.adjacentBarEntryId\(barEntries, selectedEntryId, delta\)/);
+  assert.match(panel, /selectEntry\(root\.entryIndex \+ dx\)/, 'panel keys still walk every tab');
+  assert.match(barWidgetSource, /function nextEntry\(\) \{\n\s*if \(panelItem\) panelItem\.selectAdjacentBarEntry\(1\)/);
+  assert.match(barWidgetSource, /selectAdjacentBarEntry\(delta < 0 \? 1 : -1\)/);
+  assert.doesNotMatch(barWidgetSource, /selectEntry\(/);
   const chips=model.barChips([],null,true,true,true,false,false,false,'auto','used',true);
   assert.equal(chips.length,1,'all hidden retains a generic clickable icon');
   assert.equal(chips[0].label,'');

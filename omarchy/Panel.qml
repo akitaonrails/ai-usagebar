@@ -480,6 +480,25 @@ Panel {
     if (panelFlick) panelFlick.contentY = 0
   }
 
+  // Wheel and middle-click belong to the bar, so they step through the
+  // entries the bar is showing. The panel's left/right keys still walk every
+  // tab, including a provider hidden from the bar. With nothing left on the
+  // bar, the gesture keeps walking the panel.
+  function selectAdjacentBarEntry(delta) {
+    if (!delta || visibleEntries.length === 0) return
+    if (barEntries.length === 0) {
+      selectEntry(entryIndex + delta)
+      return
+    }
+    var id = Model.adjacentBarEntryId(barEntries, selectedEntryId, delta)
+    for (var i = 0; i < visibleEntries.length; i++) {
+      if (visibleEntries[i].id === id) {
+        selectEntry(i)
+        return
+      }
+    }
+  }
+
   // A bar chip stands for one entry when the bar shows several: select it,
   // then open the panel on it. The chip the panel already shows toggles
   // closed, the way the bar button does.
