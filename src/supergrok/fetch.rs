@@ -137,6 +137,12 @@ struct CachedSnapshot {
     reset_credits: crate::usage::ResetCredits,
     #[serde(default)]
     products: Vec<crate::usage::SuperGrokProduct>,
+    /// Absent on caches written before additional usage was recorded. Those
+    /// still load; the line stays hidden until the next refresh.
+    #[serde(default)]
+    on_demand_used_cents: Option<i64>,
+    #[serde(default)]
+    on_demand_cap_cents: Option<i64>,
 }
 
 impl CachedEnvelope {
@@ -157,6 +163,8 @@ impl CachedEnvelope {
                 prepaid_balance: snapshot.prepaid_balance,
                 reset_credits: snapshot.reset_credits.clone(),
                 products: snapshot.products.clone(),
+                on_demand_used_cents: snapshot.on_demand_used_cents,
+                on_demand_cap_cents: snapshot.on_demand_cap_cents,
             },
         }
     }
@@ -225,6 +233,16 @@ fn parse_cache(bytes: &[u8], account_scope: &str) -> Result<SuperGrokSnapshot> {
             ));
         }
     }
+    for (name, cents) in [
+        ("on-demand spend", cached.snapshot.on_demand_used_cents),
+        ("on-demand cap", cached.snapshot.on_demand_cap_cents),
+    ] {
+        if cents.is_some_and(|cents| cents < 0) {
+            return Err(AppError::Schema(format!(
+                "SuperGrok cached {name} is invalid"
+            )));
+        }
+    }
 
     Ok(SuperGrokSnapshot {
         plan: cached.snapshot.plan,
@@ -235,6 +253,8 @@ fn parse_cache(bytes: &[u8], account_scope: &str) -> Result<SuperGrokSnapshot> {
         prepaid_balance: cached.snapshot.prepaid_balance,
         reset_credits: cached.snapshot.reset_credits,
         products: cached.snapshot.products,
+        on_demand_used_cents: cached.snapshot.on_demand_used_cents,
+        on_demand_cap_cents: cached.snapshot.on_demand_cap_cents,
     })
 }
 
@@ -399,6 +419,59 @@ mod tests {
         });
         let snapshot = parse_cache(cached.to_string().as_bytes(), "scope-a").unwrap();
         assert!(snapshot.reset_credits.is_empty());
+        assert!(snapshot.additional_usage_text().is_none());
+    }
+
+    /// Additional usage is part of the billing snapshot, so a cache hit has to
+    /// keep it. A cache from before the field existed stays valid and silent.
+    #[tokio::test]
+    async fn additional_usage_survives_the_cache_round_trip() {
+        let (_td, cache) = fixture();
+        let mut response = weekly_response(10.0);
+        response.config.as_mut().unwrap().on_demand_used = Some(types::Cent { val: 250 });
+        response.config.as_mut().unwrap().on_demand_cap = Some(types::Cent { val: 5000 });
+        let fresh = fetch_snapshot_with(
+            &cache,
+            Duration::from_secs(3600),
+            now(),
+            || Some("scope-a".into()),
+            || async { Ok(response) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fresh.snapshot.additional_usage_text().as_deref(),
+            Some("$2.50 / $50.00")
+        );
+
+        let cached = fetch_snapshot_with(
+            &cache,
+            Duration::from_secs(3600),
+            now(),
+            || Some("scope-a".into()),
+            || async { panic!("a fresh cache must not refetch") },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cached.snapshot.on_demand_used_cents, Some(250));
+        assert_eq!(cached.snapshot.on_demand_cap_cents, Some(5000));
+    }
+
+    #[test]
+    fn a_negative_cached_on_demand_amount_is_rejected() {
+        let cached = serde_json::json!({
+            "schema": CACHE_SCHEMA,
+            "scope": "scope-a",
+            "snapshot": {
+                "plan": "SuperGrok",
+                "percent": 5,
+                "period": "weekly",
+                "reset_at": null,
+                "prepaid_balance": null,
+                "on_demand_used_cents": -1
+            }
+        });
+        assert!(parse_cache(cached.to_string().as_bytes(), "scope-a").is_err());
     }
 
     #[tokio::test]

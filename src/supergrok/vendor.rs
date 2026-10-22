@@ -46,6 +46,11 @@ pub fn build_placeholders(
         ("sgk_period", snap.period.label().to_string()),
         ("sgk_prepaid", prepaid),
         (
+            "sgk_on_demand",
+            snap.additional_usage_text()
+                .unwrap_or_else(|| "—".to_string()),
+        ),
+        (
             "sgk_resets_available",
             snap.reset_credits.available.to_string(),
         ),
@@ -189,6 +194,17 @@ fn render_tooltip(
         }
     }
 
+    // Spend past the included pool. The official CLI's `/usage` reads the
+    // same on-demand cents; a zero pair is the proto default and stays hidden,
+    // the way a $0.00 prepaid balance does.
+    if let Some(extra) = snap.additional_usage_text() {
+        lines.push(TooltipLine::Body("".into()));
+        lines.push(TooltipLine::Body(format!(
+            " <span foreground='{dim}'>  󰄑  Additional usage  {}</span>",
+            escape(&extra)
+        )));
+    }
+
     // Same rule as the panel: a $0.00 prepaid line is noise, not information
     // (unified billing accounts keep their dollars in the Management API
     // wallet, which the `[grok]` vendor reports).
@@ -272,6 +288,8 @@ mod tests {
             prepaid_balance: Some(0.0),
             reset_credits: Default::default(),
             products: Vec::new(),
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
         }
     }
 
@@ -462,5 +480,44 @@ mod tests {
         assert_eq!(ph.get("session_pct").map(String::as_str), Some("34"));
         assert_eq!(ph.get("sgk_period").map(String::as_str), Some("Weekly"));
         assert_eq!(ph.get("sgk_prepaid").map(String::as_str), Some("$0.00"));
+        assert_eq!(ph.get("sgk_on_demand").map(String::as_str), Some("—"));
+    }
+
+    /// Additional usage is the on-demand pair from the same billing document.
+    /// Zero or absent stays off the tooltip; a cap is shown as used / cap.
+    #[test]
+    fn tooltip_lists_additional_usage_only_when_present() {
+        let snap = sample_snap();
+        let quiet = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(
+            !quiet.tooltip.contains("Additional usage"),
+            "{}",
+            quiet.tooltip
+        );
+
+        let mut snap = snap;
+        snap.on_demand_used_cents = Some(150);
+        snap.on_demand_cap_cents = Some(2000);
+        let out = render(
+            &sample_outcome(snap.clone()),
+            &snap,
+            &Theme::default(),
+            &opts(),
+            now(),
+        );
+        assert!(out.tooltip.contains("Additional usage"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("$1.50 / $20.00"), "{}", out.tooltip);
+        assert_eq!(
+            build_placeholders(&snap, now())
+                .get("sgk_on_demand")
+                .map(String::as_str),
+            Some("$1.50 / $20.00")
+        );
     }
 }

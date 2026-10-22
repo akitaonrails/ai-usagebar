@@ -1892,6 +1892,13 @@ fn supergrok_sections(
     // says no credit was purchased on top of the subscription — and a unified
     // billing account keeps its real dollars in the Management API wallet
     // (`[grok]`), not here. Show the row only when there is credit to show.
+    if let Some(extra) = s.additional_usage_text() {
+        v.push(Section::Spacer);
+        v.push(Section::Text {
+            label: "Additional usage".into(),
+            value: extra,
+        });
+    }
     if let Some(bal) = s.prepaid_balance.filter(|bal| *bal > 0.0) {
         v.push(Section::Spacer);
         v.push(Section::Text {
@@ -2637,6 +2644,8 @@ mod tests {
             period,
             reset_at: Some(now() + chrono::Duration::days(2)),
             prepaid_balance: None,
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: crate::usage::ResetCredits::default(),
             products: Vec::new(),
         })
@@ -3377,6 +3386,8 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: Some(now + chrono::Duration::days(3)),
             prepaid_balance: None,
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: credits.clone(),
             products: Vec::new(),
         };
@@ -3471,6 +3482,8 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: Some(now + chrono::Duration::days(6)),
             prepaid_balance: Some(0.0),
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: ResetCredits::default(),
             products: Vec::new(),
         };
@@ -3500,6 +3513,8 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: Some(now + chrono::Duration::days(6)),
             prepaid_balance: prepaid,
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: ResetCredits::default(),
             products: Vec::new(),
         };
@@ -3523,6 +3538,41 @@ mod tests {
         );
     }
 
+    /// Additional usage is the on-demand pair from the same billing document.
+    /// A zero pair draws no row; a cap is shown as dollars used of dollars allowed.
+    #[test]
+    fn supergrok_lists_additional_usage_when_the_billing_document_has_it() {
+        let now = now();
+        let mut snap = crate::usage::SuperGrokSnapshot {
+            plan: "SuperGrok".into(),
+            account: "scope".into(),
+            weekly_pct: 40,
+            period: crate::usage::SuperGrokPeriod::Weekly,
+            reset_at: Some(now + chrono::Duration::days(6)),
+            prepaid_balance: None,
+            reset_credits: ResetCredits::default(),
+            products: Vec::new(),
+            on_demand_used_cents: Some(0),
+            on_demand_cap_cents: Some(0),
+        };
+        let labels = |snap: crate::usage::SuperGrokSnapshot| {
+            sections_for(&ready(VendorSnapshot::SuperGrok(snap)), now, 5)
+                .into_iter()
+                .filter_map(|section| match section {
+                    Section::Text { label, value, .. } => Some((label, value)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(labels(snap.clone()).is_empty());
+        snap.on_demand_used_cents = Some(150);
+        snap.on_demand_cap_cents = Some(2000);
+        assert_eq!(
+            labels(snap),
+            vec![("Additional usage".to_string(), "$1.50 / $20.00".to_string())]
+        );
+    }
+
     #[test]
     fn supergrok_lists_product_slices_beside_the_overall_meter() {
         let now = now();
@@ -3533,6 +3583,8 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: Some(now + chrono::Duration::days(3)),
             prepaid_balance: None,
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: ResetCredits::default(),
             products: vec![
                 crate::usage::SuperGrokProduct {
@@ -3575,6 +3627,8 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: Some(now + chrono::Duration::days(3)),
             prepaid_balance: None,
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: ResetCredits::default(),
             products: vec![crate::usage::SuperGrokProduct {
                 label: "Grok Build".into(),
@@ -3638,6 +3692,8 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: None,
             prepaid_balance: None,
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: ResetCredits::default(),
             products: Vec::new(),
         };
@@ -3660,6 +3716,8 @@ mod tests {
             period: crate::usage::SuperGrokPeriod::Weekly,
             reset_at: Some(now + chrono::Duration::days(3)),
             prepaid_balance: None,
+            on_demand_used_cents: None,
+            on_demand_cap_cents: None,
             reset_credits: ResetCredits::default(),
             products: vec![crate::usage::SuperGrokProduct {
                 label: "Grok Build".into(),

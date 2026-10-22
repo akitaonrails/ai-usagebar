@@ -463,16 +463,18 @@ api_key_env = "XAI_MANAGEMENT_KEY" # checked first; if set + non-empty, used
 # headline = "amount"              # "amount" | "percent"
 
 # SuperGrok subscription usage — distinct from [grok] above. No API key of
-# its own: the official Grok Build CLI owns login, OIDC/provider refresh,
-# account scope, proxy settings, and credential locking. Billing and banked
-# resets use the `key` already in auth.json (read-only, sent in an
-# Authorization header, never copied or rewritten). The ACP `x.ai/billing`
-# extension is a fallback when the HTTPS billing endpoint is unavailable.
+# its own: the official Grok CLI owns login, OIDC refresh, account scope,
+# and credential locking. Billing uses the `key` already in auth.json
+# (read-only, sent in an Authorization header, never copied or rewritten).
+# The HTTPS call is the one the CLI makes for `/usage`; the ACP `x.ai/billing`
+# extension is the fallback. See docs/grok.md. docs.x.ai has no route for
+# this weekly pool.
 [supergrok]
-# Disabled by default — enable after installing official Grok Build and running
-# `grok login` at least once. This is included *usage* (overall % plus
-# Build/Chat/Imagine slices from the billing document), not the `[grok]`
-# Management API prepaid dollar balance.
+# Disabled by default — enable after installing the official Grok CLI and
+# running `grok login` once. This is included usage (overall % plus
+# Build/Chat/Imagine slices, and additional usage when the billing document
+# reports on-demand spend or a cap). The `[grok]` row is Management API
+# prepaid dollars, a different bill.
 enabled = false
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok, avoiding unrelated PATH
 # programs with the same name. Override only for a trusted official install.

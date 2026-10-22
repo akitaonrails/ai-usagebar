@@ -195,12 +195,14 @@ api_key_env = "XAI_MANAGEMENT_KEY"
 
 [supergrok]
 enabled = true             # disabled by default; enable once you've run `grok login`
-# Included usage from Grok Build billing (overall % plus productUsage slices).
-# Distinct from `[grok]`, which is Management API prepaid dollars.
-# No API key of its own: billing and banked resets use the `key` already in
-# its auth.json (read-only, sent in an Authorization header, never copied or
-# rewritten). Billing is Grok Build's documented HTTPS endpoint, or its ACP
-# process as fallback; remaining resets are a separate grok.com RPC.
+# Included usage from the official Grok CLI's `/usage` billing call (overall
+# % plus product slices, and additional usage when the document reports it).
+# Distinct from `[grok]`, which is Management API prepaid dollars — that API
+# does not report the SuperGrok weekly pool. See docs/grok.md.
+# No API key of its own: billing uses the `key` already in auth.json
+# (read-only, sent in an Authorization header, never copied or rewritten).
+# Billing is the CLI's HTTPS endpoint, or its ACP process as fallback;
+# remaining resets are a separate grok.com RPC that can fail on its own.
 # Defaults to $GROK_HOME/bin/grok or ~/.grok/bin/grok. Override only when the
 # trusted official binary was installed elsewhere.
 # grok_binary = "/opt/grok/bin/grok"

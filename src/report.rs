@@ -2001,6 +2001,8 @@ mod tests {
                 period: SuperGrokPeriod::Weekly,
                 reset_at: Some(Utc::now() + chrono::Duration::days(3)),
                 prepaid_balance: None,
+                on_demand_used_cents: None,
+                on_demand_cap_cents: None,
                 reset_credits: ResetCredits::default(),
                 products: vec![SuperGrokProduct {
                     label: "Grok Build".into(),
@@ -2186,6 +2188,8 @@ mod tests {
                 period: SuperGrokPeriod::Weekly,
                 reset_at: None,
                 prepaid_balance: None,
+                on_demand_used_cents: None,
+                on_demand_cap_cents: None,
                 reset_credits: ResetCredits {
                     available: 1,
                     credits: vec![ResetCredit {

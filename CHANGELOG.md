@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Added
+
+- **SuperGrok shows additional usage past the included pool.** When the Grok
+  CLI billing document reports on-demand spend or a cap, the tooltip, TUI, and
+  `usage --json` show it as "Additional usage" (`{sgk_on_demand}`). A zero pair
+  stays hidden. This is the same figure the CLI's `/usage` command reads. xAI
+  does not publish a docs.x.ai endpoint for the SuperGrok weekly pool; the
+  widget still uses an existing `grok login`. See `docs/grok.md`.
+
 ## [1.43.0] — 2026-10-22
 
 ### Added

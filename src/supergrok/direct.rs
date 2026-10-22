@@ -2,10 +2,11 @@
 //! no longer exposes the `x.ai/billing` extension (observed on grok 1.0.13).
 //!
 //! Reads the CLI's own `auth.json` and uses only its long-lived `key` entry,
-//! placing it solely inside the `Authorization` header of one request to the
-//! documented `cli-chat-proxy.grok.com/v1/billing` endpoint. The key is never
-//! copied, cached, logged, or echoed in an error message; login files remain
-//! the CLI's property and are not written back.
+//! placing it solely inside the `Authorization` header of one request to
+//! `cli-chat-proxy.grok.com/v1/billing` — the endpoint the official Grok CLI
+//! uses for `/usage`. It is not a docs.x.ai Management API route. The key is
+//! never copied, cached, logged, or echoed in an error message; login files
+//! remain the CLI's property and are not written back.
 
 use std::path::Path;
 

@@ -2,9 +2,10 @@
 //! CLI's billing surface.
 //!
 //! Two transports for the usage figures, plus one for banked resets:
-//! - `direct` — one HTTPS call to the documented `cli-chat-proxy.grok.com`
-//!   billing endpoint using the login's `key` (needed since grok CLI 1.0.13
-//!   dropped the ACP extension; primary path).
+//! - `direct` — one HTTPS call to `cli-chat-proxy.grok.com/v1/billing`, the
+//!   billing endpoint the official Grok CLI uses for `/usage`, with the
+//!   login's `key` (needed since grok CLI 1.0.13 dropped the ACP extension;
+//!   primary path). This route is not published on docs.x.ai.
 //! - `acp` — the CLI's `x.ai/billing` ACP extension (fallback for CLI builds
 //!   where the proxy endpoint is unreachable or reshaped).
 //! - `resets` — `grok.com` `ConsumerUiSvc/GetRemainingResets`, a gRPC-Web

@@ -753,6 +753,35 @@ pub struct SuperGrokSnapshot {
     /// `GrokChat`, `GrokImagine`, …). Empty when the billing document omits
     /// `productUsage`.
     pub products: Vec<SuperGrokProduct>,
+    /// On-demand spend beyond the included pool, in USD cents. From the Grok
+    /// CLI billing document's `onDemandUsed`. `None` when the field is absent.
+    pub on_demand_used_cents: Option<i64>,
+    /// On-demand spending cap for that same pool, in USD cents
+    /// (`onDemandCap`). `None` when the field is absent.
+    pub on_demand_cap_cents: Option<i64>,
+}
+
+impl SuperGrokSnapshot {
+    /// Additional usage beyond the included pool, as dollars.
+    ///
+    /// A cap renders as `$used / $cap`. Spend with no cap renders as the
+    /// amount alone. Both absent or zero is the proto default — nothing was
+    /// configured — so the line stays hidden.
+    pub fn additional_usage_text(&self) -> Option<String> {
+        let used = self.on_demand_used_cents.unwrap_or(0);
+        let cap = self.on_demand_cap_cents;
+        if used == 0 && cap.unwrap_or(0) == 0 {
+            return None;
+        }
+        let used_s = crate::format::usd(used as f64 / 100.0);
+        match cap {
+            Some(cap) if cap > 0 => Some(format!(
+                "{used_s} / {}",
+                crate::format::usd(cap as f64 / 100.0)
+            )),
+            _ => Some(used_s),
+        }
+    }
 }
 
 /// One SuperGrok product's share of the current included-credit window.

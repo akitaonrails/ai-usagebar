@@ -106,6 +106,8 @@ pub fn to_snapshot(resp: BillingResponse, account_scope: &str) -> Result<SuperGr
         .as_ref()
         .map(|cents| checked_prepaid(cents.val))
         .transpose()?;
+    let on_demand_used_cents = optional_cents(cfg.on_demand_used.as_ref(), "onDemandUsed")?;
+    let on_demand_cap_cents = optional_cents(cfg.on_demand_cap.as_ref(), "onDemandCap")?;
 
     Ok(SuperGrokSnapshot {
         plan,
@@ -116,6 +118,8 @@ pub fn to_snapshot(resp: BillingResponse, account_scope: &str) -> Result<SuperGr
         prepaid_balance,
         reset_credits: resp.reset_credits,
         products,
+        on_demand_used_cents,
+        on_demand_cap_cents,
     })
 }
 
@@ -266,12 +270,28 @@ fn parse_optional_datetime(value: Option<&str>, field: &str) -> Result<Option<Da
 }
 
 fn checked_prepaid(cents: i64) -> Result<f64> {
-    if !(0..=MAX_EXACT_F64_INTEGER).contains(&cents) {
-        return Err(AppError::Schema(
-            "Grok Build prepaid balance is negative or too large to represent exactly".into(),
-        ));
-    }
+    checked_non_negative_cents(cents, "prepaid balance")?;
     Ok(cents as f64 / 100.0)
+}
+
+/// On-demand spend and cap are USD cents, same as prepaid. A missing field
+/// stays `None`; an explicit zero stays zero so a configured `$0` cap is not
+/// confused with a field the server omitted.
+fn optional_cents(cents: Option<&Cent>, field: &str) -> Result<Option<i64>> {
+    let Some(cents) = cents else {
+        return Ok(None);
+    };
+    checked_non_negative_cents(cents.val, field)?;
+    Ok(Some(cents.val))
+}
+
+fn checked_non_negative_cents(cents: i64, field: &str) -> Result<()> {
+    if !(0..=MAX_EXACT_F64_INTEGER).contains(&cents) {
+        return Err(AppError::Schema(format!(
+            "Grok Build {field} is negative or too large to represent exactly"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -300,6 +320,47 @@ mod tests {
         assert_eq!(snapshot.plan, "SuperGrok Heavy");
         assert_eq!(snapshot.prepaid_balance, Some(12.5));
         assert!(snapshot.products.is_empty());
+        assert_eq!(snapshot.on_demand_used_cents, None);
+        assert_eq!(snapshot.on_demand_cap_cents, None);
+    }
+
+    /// Additional usage is the on-demand pair the official CLI's `/usage`
+    /// panel reads from the same billing document. Cents stay cents.
+    #[test]
+    fn on_demand_cents_are_kept_and_must_be_non_negative() {
+        let response: BillingResponse = serde_json::from_str(
+            r#"{
+              "config": {
+                "creditUsagePercent": 80,
+                "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY"},
+                "onDemandUsed": {"val": 150},
+                "onDemandCap": {"val": "2000"}
+              }
+            }"#,
+        )
+        .unwrap();
+        let snapshot = to_snapshot(response, "scope").unwrap();
+        assert_eq!(snapshot.on_demand_used_cents, Some(150));
+        assert_eq!(snapshot.on_demand_cap_cents, Some(2000));
+        assert_eq!(
+            snapshot.additional_usage_text().as_deref(),
+            Some("$1.50 / $20.00")
+        );
+
+        let zero_cap: BillingResponse = serde_json::from_str(
+            r#"{"config":{"creditUsagePercent":1,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY"},"onDemandUsed":{},"onDemandCap":{}}}"#,
+        )
+        .unwrap();
+        let zero = to_snapshot(zero_cap, "scope").unwrap();
+        assert_eq!(zero.on_demand_used_cents, Some(0));
+        assert_eq!(zero.on_demand_cap_cents, Some(0));
+        assert!(zero.additional_usage_text().is_none());
+
+        let negative: BillingResponse = serde_json::from_str(
+            r#"{"config":{"creditUsagePercent":1,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY"},"onDemandUsed":{"val":-1}}}"#,
+        )
+        .unwrap();
+        assert!(to_snapshot(negative, "scope").is_err());
     }
 
     #[test]

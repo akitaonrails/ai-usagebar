@@ -1435,6 +1435,8 @@ mod tests {
                 period: SuperGrokPeriod::Weekly,
                 reset_at: Some(at(26, 0, 0)),
                 prepaid_balance: None,
+                on_demand_used_cents: None,
+                on_demand_cap_cents: None,
                 // available == 0: the report would not surface these either.
                 reset_credits: ResetCredits {
                     available: 0,
