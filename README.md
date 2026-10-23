@@ -453,7 +453,8 @@ installs are unaffected until you opt in. Use either method:
 - Use the gear or `s` in the Omarchy panel, or run
   `ai-usagebar-tui` and press `s`. Saving a non-empty API key sets that vendor's
   `enabled = true` for you. Clearing it removes the inline key from
-  `config.toml`.
+  `config.toml`, including when the provider uses a TOML inline table such as
+  `zai = { api_key = "..." }`.
 - Add `enabled = true` to the vendor's config section alongside the key.
 
 The primary-vendor selector only offers enabled vendors, except GitHub Copilot:

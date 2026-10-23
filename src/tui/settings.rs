@@ -794,7 +794,7 @@ fn update_key(doc: &mut DocumentMut, vendor: &KeyVendor, input: &KeyInput) -> Re
     if input.buf.is_empty() {
         if let Some(table) = doc
             .get_mut(vendor.section)
-            .and_then(toml_edit::Item::as_table_mut)
+            .and_then(toml_edit::Item::as_table_like_mut)
         {
             table.remove(vendor.config_key);
         }
@@ -2492,6 +2492,30 @@ api_key_env = "OPENROUTER_WORK_API_KEY"
         assert!(!raw.contains("api_key"));
         // Unrelated fields in the same section survive.
         assert!(raw.contains("plan_tier = \"pro\""));
+    }
+
+    #[test]
+    fn save_clears_a_key_from_a_toml_inline_table() {
+        let (_dir, path) = temp_config(Some(
+            "zai = { enabled = false, api_key = \"remove-me\", plan_tier = \"pro\" } # keep me\n\
+             [ui]\nprimary = \"anthropic\"\n",
+        ));
+        let cfg = Config::load_from(&path).unwrap();
+        let mut state = SettingsState::from_config_with(&cfg, |_| false);
+        let input = &mut state.keys[key_index(VendorId::Zai)];
+        *input = KeyInput::default();
+        input.dirty = true;
+
+        save_to_path(&state, &path).unwrap();
+
+        let reloaded = Config::load_from(&path).unwrap();
+        assert!(reloaded.zai.api_key.is_none());
+        assert!(!reloaded.zai.enabled);
+        assert_eq!(reloaded.zai.plan_tier.as_deref(), Some("pro"));
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("remove-me"));
+        assert!(raw.contains("zai = {"));
+        assert!(raw.contains("# keep me"));
     }
 
     #[test]

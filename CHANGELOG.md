@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Clearing an API key also removes it from a TOML inline table.** The TUI
+  settings overlay and native settings bridge previously reported success
+  while leaving the key in a provider configured as `zai = { ... }`.
+  Clearing now preserves the table's other fields and comments while removing
+  the saved key.
+
 ## [1.43.0] — 2026-10-22
 
 ### Added
