@@ -1,5 +1,59 @@
 ## [Unreleased]
 
+### Added
+
+- **Usage priorities: which AI to use first.** `usage --json --priorities`
+  adds a `ranking` of every configured provider, ordered by the weekly quota
+  projected to reset unused, with the recent consumption pace blended into the
+  cycle average. `--recent-hours N` (1 to 24, default 3) sets that look-back;
+  a local history keeps only provider/metric ids, percentages and timestamps
+  for 25 hours. Without the flag the report is unchanged.
+- **Omarchy: usage priorities in the native popup.** The popup lists compact
+  cards with the rationale on hover or click. A native switcher between the
+  usage and priorities views stays pinned to the panel footer, and Settings →
+  Priorities toggles the view, an optional bar shortcut and the window. Off
+  by default (`showPriorities`); while off nothing is recorded. Translated in
+  all five locales.
+- **Omarchy: a quota at risk of going unused turns red in the bar.** A quota
+  whose weekly window resets within `alertHours` (default 24) with at least
+  `alertUnusedPercent` (default 50) projected unused shows as a red `󰀦
+  Provider` chip after the usage chips, even with the shortcut off;
+  `priorityAlert` turns it off; providers hidden from the bar do not alert.
+  The CLI takes the same thresholds as `--alert-unused-percent` and
+  `--alert-hours`. Each provider is measured on its weekly window (the most
+  used one when there are several), so a 5-hour session never alerts, and the
+  projected unused share never exceeds what is left of the week. A cached
+  reading up to six hours old is still ranked and labelled as cached.
+- **Omarchy: provider tabs line up.** The usage tabs share one width, show
+  each provider's brand mark, and balance their rows so they line up in
+  columns, still wrapping instead of clipping (#173). Each tab shows the logo
+  and the name; turning `tabNames` off leaves logos only, with the name on
+  hover, and names always show when provider logos are off.
+- **Omarchy: errors read as a structured notice.** A status or provider
+  error shows an icon and a plain title (sign-in needed, connection problem,
+  rate limited, refresh failed, cached data), the message without its
+  internal prefix, and the fix as a command with a Copy button; transient
+  failures offer Try again. Unavailable priority cards explain why. Text from
+  a message is only ever copied, never run. Beside refresh and settings, a red
+  badge with the category's icon and a one-word label replaces the grey,
+  untranslated "Error" pill, and the hero subtitle names the problem.
+- **Omarchy: usage figures read first.** Each meter's value shows the
+  figure larger and bold in its severity colour, with the % beside it and
+  words such as "left" in a secondary tone, on the label's baseline. The
+  header's headline value leaves its bordered pill and sits beside refresh
+  and settings, centred on their line.
+- **Omarchy: priority cards read as facts and a conclusion.** The status is
+  a tag beside the provider name; the summary states the projected unused
+  share of what is left; the expanded card lists the window, what is left,
+  projected unused, your pace, recent and cycle rates and the rate needed to
+  use it all, then a plain-language conclusion and its qualifiers. Rates use
+  the locale's decimal separator. Generic window names (Session, Weekly,
+  Monthly) follow the interface language in the usage rows and the cards.
+- **Omarchy: clearer view icons.** Usage uses a percent badge and Priorities a
+  numbered list, in the switcher, the priorities title and the bar shortcut.
+- **Omarchy: `reportBinary` and `tuiBinary` settings** point the plugin at a
+  local build instead of the binaries on `PATH`.
+
 ## [1.43.0] — 2026-10-22
 
 ### Added

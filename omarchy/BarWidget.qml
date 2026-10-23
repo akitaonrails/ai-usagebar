@@ -18,6 +18,8 @@ BarWidget {
     : false
   readonly property bool colorCodeUsage: panelItem ? panelItem.colorCodeUsage === true : false
   readonly property bool alarming: panelItem ? panelItem.alarming === true : false
+  readonly property var urgentPriority: panelItem ? panelItem.urgentPriority : null
+  readonly property color priorityAlertColor: panelItem ? panelItem.urgent : button.foreground
 
   // Quickshell window that hosts this bar slot (not the usage panel popup).
   readonly property var barWindow: button.QsWindow ? button.QsWindow.window : null
@@ -46,6 +48,7 @@ BarWidget {
     var chips = chipItems()
     // A lone chip, a vertical bar or an empty report keeps the button as the
     // only target, and its press toggles the panel the way it always did.
+    if (priorityHit.visible) host.registerClickTarget(priorityHit)
     if (chips.length <= 1) return
     for (var j = 0; j < chips.length; j++) host.registerClickTarget(chips[j])
   }
@@ -75,7 +78,7 @@ BarWidget {
   }
 
   function launchDashboard() {
-    if (root.bar) root.bar.run("omarchy-launch-floating-terminal-with-presentation ai-usagebar-tui")
+    if (root.bar) root.bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(root.panelItem ? root.panelItem.tuiBinary : "ai-usagebar-tui"))
     root.close()
   }
 
@@ -411,14 +414,45 @@ BarWidget {
           }
         }
       }
+
+      // Priority indicator after the usage chips: usage reads first.
+      Item {
+        id: priorityHit
+        visible: !!(root.panelItem && (root.panelItem.showPriorityShortcut || root.urgentPriority))
+        width: visible ? priorityLabel.implicitWidth : 0
+        height: button.height
+        onVisibleChanged: Qt.callLater(root.syncChipTargets)
+        // Same buttons as a provider chip: right launches the dashboard,
+        // middle switches provider, left toggles the priorities view.
+        function triggerPress(buttonCode) {
+          root.armClickLock()
+          if (buttonCode === Qt.RightButton) root.launchDashboard()
+          else if (buttonCode === Qt.MiddleButton) root.nextEntry()
+          else if (root.panelItem) root.panelItem.togglePriorities()
+        }
+        Text {
+          id: priorityLabel
+          textFormat: Text.PlainText
+          text: !root.panelItem ? ""
+            : root.urgentPriority ? "  󰀦 " + root.urgentPriority.name + "  "
+            : root.panelItem.barRecommendation ? "  󰉻 " + root.panelItem.barRecommendation.name + "  "
+            : "  " + root.panelItem.tr("priority.title") + "  "
+          color: root.urgentPriority ? root.priorityAlertColor : button.foreground
+          font.bold: !!root.urgentPriority
+          font.family: button.fontFamily
+          font.pixelSize: button.fontSize
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
     }
 
     Text {
       visible: root.bar && root.bar.vertical
       anchors.centerIn: parent
       textFormat: Text.PlainText
-      text: root.alarming ? "󰅙" : "󰚩"
-      color: button.active && button.useActiveColor ? button.activeColor : button.foreground
+      text: root.urgentPriority ? "󰀦" : root.alarming ? "󰅙" : "󰚩"
+      color: root.urgentPriority ? root.priorityAlertColor
+        : button.active && button.useActiveColor ? button.activeColor : button.foreground
       font.family: button.fontFamily
       font.pixelSize: button.fontSize
       rotation: button.textRotation

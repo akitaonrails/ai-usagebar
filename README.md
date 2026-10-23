@@ -686,6 +686,10 @@ ai-usagebar --json
 ai-usagebar usage
 ai-usagebar usage --json | jq '.entries[] | {id, metrics, sections}'
 
+# Opt-in: rank providers by the weekly quota projected to reset unused, using
+# the recent pace (1-24h window) from a small local history of percentages.
+ai-usagebar usage --json --priorities | jq '.ranking[] | {name, status, urgent, unused_percent}'
+
 # Turn on every vendor that already has a credential on this machine
 # (local files, keychains, saved keys, env vars — never the network).
 # Only vendors never checked before are probed; --all re-checks everything.
@@ -908,10 +912,12 @@ The widget reads the providers and accounts already enabled in
 The [Omarchy plugin guide](omarchy/README.md) covers keyboard controls,
 credential handling, updates, and development checks.
 
-The plugin depends only on the `ai-usagebar` executable. It runs the fixed
-`ai-usagebar usage --json` command for reports and starts `ai-usagebar-tui`
-only after a right-click. It installs no service, asks for no elevated
-privileges, and does not overwrite user configuration.
+The plugin depends only on the `ai-usagebar` executable. It runs
+`ai-usagebar usage --json` for reports (adding `--priorities` while the
+optional usage-priorities view is on) and starts `ai-usagebar-tui` only after a
+right-click. Both executables can be pointed at a local build with the
+`reportBinary` and `tuiBinary` settings. It installs no service, asks for no
+elevated privileges, and does not overwrite user configuration.
 
 ### macOS menu bar and Windows tray
 

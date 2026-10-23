@@ -264,7 +264,7 @@ assert.match(barWidgetSource, /function\s+triggerPress\s*\(buttonCode\)/);
 assert.match(barWidgetSource, /root\.panelItem\.openEntry\(chipHit\.chip\.id\s*\|\|\s*""\)/);
 // Classic alarm chrome when colour-coding is off; RAG colours replace it when on.
 assert.match(barWidgetSource, /active:\s*!root\.colorCodeUsage\s*&&\s*root\.alarming/);
-assert.match(barWidgetSource, /text:\s*root\.alarming\s*\?\s*"󰅙"\s*:\s*"󰚩"/);
+assert.match(barWidgetSource, /text:\s*root\.urgentPriority\s*\?\s*"󰀦"\s*:\s*root\.alarming\s*\?\s*"󰅙"\s*:\s*"󰚩"/);
 assert.doesNotMatch(barWidgetSource, /\bIpcHandler\s*\{/);
 
 const panelSource = fs.readFileSync(new URL('./Panel.qml', import.meta.url), 'utf8');
@@ -313,6 +313,19 @@ assert.doesNotMatch(panelSource, /childrenRect\.height/, 'childrenRect feeds the
 assert.match(panelSource, /width:\s*implicitWidth/);
 assert.doesNotMatch(panelSource, /orientation:\s*ListView\.Horizontal/);
 assert.match(panelSource, /providerList\.forceLayout\(\)/);
+// Provider tabs share one width, show the brand mark beside the name, and
+// balance their rows (3 + 2 rather than 4 + 1).
+assert.match(panelSource, /width: providerList\.tabWidth/);
+assert.match(panelSource, /var rows = Math\.ceil\(n \/ Math\.min\(n, fit\)\)/);
+assert.match(panelSource, /brand: Model\.brandIconFile\(providerTab\.modelData\)/);
+assert.match(panelSource, /Accessible\.name: Model\.providerName\(modelData\)/);
+// Logos only by default, names opt-in, and never an empty tab without logos.
+assert.equal(manifest.barWidget.defaults.tabNames, true);
+// Usage priorities are opt-in: off by default, so nothing changes for anyone who does not turn them on.
+assert.equal(manifest.barWidget.defaults.showPriorities, false);
+assert.match(panelSource, /Model\.booleanSetting\(setting\("showPriorities", false\), false\)/);
+assert.match(panelSource, /readonly property bool tabNames: tabNamesSetting \|\| !brandIcons/);
+assert.match(panelSource, /tooltipText: root\.tabNames \? "" : Model\.providerName\(modelData\)/);
 // The scroll content keeps a hairline of slack on both sides of the
 // Flickable's clip edge. The first provider tab is a bordered button, and at
 // fractional device scales (a 1.25 monitor scale) Qt drops the 1px left
@@ -367,8 +380,8 @@ assert.match(panelSource, /return withCreditGrants\(pools, item\)/);
 assert.match(panelSource, /function panelHeadline\(item\) \{[\s\S]*?providerDualHeadline\(item\)/);
 
 const settingsViewSource = fs.readFileSync(new URL('./SettingsView.qml', import.meta.url), 'utf8');
-assert.match(settingsViewSource, /command:\s*\["ai-usagebar",\s*"settings",\s*"show"\]/);
-assert.match(settingsViewSource, /command:\s*\["ai-usagebar",\s*"settings",\s*"apply"\]/);
+assert.match(settingsViewSource, /command:\s*\[root\.binaryPath,\s*"settings",\s*"show"\]/);
+assert.match(settingsViewSource, /command:\s*\[root\.binaryPath,\s*"settings",\s*"apply"\]/);
 assert.match(settingsViewSource, /stdinEnabled:\s*true/);
 assert.match(settingsViewSource, /write\(root\.pendingPayload\s*\+\s*"\\n"\)/);
 assert.match(settingsViewSource, /password:\s*true/);
@@ -411,7 +424,7 @@ assert.match(panelSource, /I18n\.displayLabel\(/);
 assert.match(panelSource, /I18n\.displayDetail\(/);
 assert.match(panelSource, /I18n\.tipPoolLine\(/);
 // Settings hero: long copy wraps under the hero, not inside the detail pill.
-assert.match(panelSource, /detail:\s*root\.settingsOpen\s*\?\s*""/);
+assert.match(panelSource, /detail:\s*root\.settingsOpen\s*\|\|\s*root\.priorityOpen\s*\?\s*""/);
 assert.match(panelSource, /root\.tr\("hero\.settings_detail"\)/);
 assert.match(panelSource, /I18n\.displayLabel\(root\.uiLocale,\s*detailRow\.row\.label\)/);
 assert.match(settingsViewSource, /I18n\.displaySecretLabel\(/);
@@ -445,7 +458,7 @@ assert.match(
 );
 assert.match(settingsViewSource, /root\.tr\("credentials\.paste"/);
 assert.match(panelSource, /function\s+openNousLogin\s*\(/);
-assert.match(panelSource, /ai-usagebar auth nous login/);
+assert.match(panelSource, /Util\.shellQuote\(root\.reportBinary\) \+ " auth nous login"/);
 assert.match(panelSource, /onNousLoginRequested/);
 assert.match(panelSource, /function\s+openCopilotLogin\s*\(/);
 assert.match(panelSource, /gh auth login --web/);
@@ -957,7 +970,7 @@ assert.equal(model.launchErrorMessage(0, ''), 'The usage command failed without 
 // The usage command must stay behind a helper that can emit exit 127 when the
 // binary is absent, without opening a shell-injection boundary.
 assert.match(panelSource,
-  /command:\s*\["\/usr\/bin\/env",\s*"ai-usagebar",\s*"usage",\s*"--json"\]/);
+  /command:\s*\["\/usr\/bin\/env",\s*root\.reportBinary,\s*"usage",\s*"--json"\]\.concat\(root\.showPriorities\s*\?\s*\["--priorities",\s*"--recent-hours",\s*String\(root\.recentHours\),\s*"--alert-unused-percent",\s*String\(root\.alertUnusedPercent\),\s*"--alert-hours",\s*String\(root\.alertHours\)\]\s*:\s*\[\]\)/);
 assert.doesNotMatch(panelSource, /command:\s*\["(?:\/usr\/bin\/)?(?:ba)?sh"/);
 assert.match(panelSource, /onExited:\s*function\(exitCode\)/);
 assert.match(panelSource, /Model\.launchErrorMessage\(/);
@@ -2057,8 +2070,8 @@ assert.equal(model.cursorPoolOf(null), '');
   assert.match(panel, /readonly property var valueView:\s*Model\.metricValueView\(row,\s*root\.showAs\)/);
   assert.match(settingsForm, /property string openSection:\s*"display"/);
   assert.match(settingsForm, /function toggleSection\(id\) \{\s*openSection = openSection === id \? "" : id\s*\}/);
-  assert.equal((settingsForm.match(/^    Disclosure \{/gm) || []).length, 8);
-  for (const id of ['display', 'language', 'barWindow', 'showAs', 'metrics', 'primary', 'providers', 'credentials']) {
+  assert.equal((settingsForm.match(/^    Disclosure \{/gm) || []).length, 9);
+  for (const id of ['display', 'priorities', 'language', 'barWindow', 'showAs', 'metrics', 'primary', 'providers', 'credentials']) {
     assert.match(settingsForm, new RegExp(`onToggled: root\\.toggleSection\\("${id}"\\)`), `${id} folds`);
     assert.match(settingsForm, new RegExp(`visible: root\\.openSection === "${id}"`), `${id} body`);
   }
@@ -2076,15 +2089,15 @@ assert.equal(model.cursorPoolOf(null), '');
   assert.match(panel, /Model\.booleanSetting\(setting\("brandIcons",\s*true\),\s*true\)/);
   assert.match(panel, /barWindow,\s*showAs,\s*brandIcons\)/);
   assert.match(panel, /persistWidgetSettings\(\{\s*brandIcons:\s*next\s*\}\)/);
-  assert.match(panel, /brand: root\.settingsOpen \|\| !root\.brandIcons \? "" : Model\.brandIconFile\(root\.entry\)/);
+  assert.match(panel, /brand: root\.priorityOpen \|\| root\.settingsOpen \|\| !root\.brandIcons \? "" : Model\.brandIconFile\(root\.entry\)/);
   assert.match(settingsForm, /signal brandIconsRequested\(bool enabled\)/);
-  const displayKeys = ['showValue', 'brandIcons', 'showProvider', 'colorCodeUsage', 'showAll'];
-  assert.deepEqual(displayKeys.map(key => manifest.barWidget.defaults[key]), [true, true, false, false, false]);
+  const displayKeys = ['showValue', 'brandIcons', 'tabNames', 'showProvider', 'colorCodeUsage', 'showAll'];
+  assert.deepEqual(displayKeys.map(key => manifest.barWidget.defaults[key]), [true, true, true, false, false, false]);
   assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.key), displayKeys);
-  assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.defaultValue), [true, true, false, false, false]);
+  assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.defaultValue), [true, true, true, false, false, false]);
   assert.deepEqual(
     Array.from(settingsForm.matchAll(/label: root\.tr\("toggle\.(\w+)"\)/g), match => match[1]),
-    ['show_value', 'brand_icons', 'show_provider', 'color_code', 'show_all']);
+    ['show_value', 'brand_icons', 'tab_names', 'show_provider', 'color_code', 'show_all']);
   assert.equal(manifest.barWidget.defaults.brandIcons, true);
   assert.equal(manifest.barWidget.schema.find(row => row.key === 'brandIcons').type, 'boolean');
   assert.equal(manifest.barWidget.defaults.showAs, 'used');
@@ -2144,3 +2157,83 @@ assert.equal(model.cursorPoolOf(null), '');
 }
 
 console.log('Omarchy model tests passed');
+
+// Priority navigation stays inside the same native popup and remains optional.
+assert.match(panelSource, /readonly property bool showPriorities:/);
+assert.match(panelSource, /visible: root\.priorityOpen && !root\.settingsOpen/);
+assert.match(panelSource, /Keys\.onEscapePressed: root\.priorityOpen = false/);
+assert.match(panelSource, /\(text === "p" \|\| text === "P"\)\) root\.openPriorities\(\)/);
+assert.doesNotMatch(panelSource, /ai-priorities|execDetached/);
+assert.match(settingsViewSource, /signal showPrioritiesRequested\(bool enabled\)/);
+// A quota at risk of being lost turns the bar red even without the shortcut.
+assert.match(panelSource, /readonly property var urgentPriority:[\s\S]*?Priority\.stateKey\(ranking\[i\]\) === "urgent"/);
+assert.match(barWidgetSource, /showPriorityShortcut \|\| root\.urgentPriority/);
+assert.match(barWidgetSource, /color: root\.urgentPriority \? root\.priorityAlertColor : button\.foreground/);
+// Priorities are a second view, switched natively under the hero; the header
+// keeps only the upstream refresh/settings actions. The bar alert is optional.
+// The switcher is a footer pinned outside the scrolling content, always visible.
+assert.match(panelSource, /id: viewFooter[\s\S]*?visible: root\.showPriorities && !root\.settingsOpen[\s\S]*?anchors\.bottom: parent\.bottom/);
+assert.ok(panelSource.indexOf('id: viewSwitcher') < panelSource.indexOf('id: panelFlick'), 'footer is not inside the Flickable');
+assert.match(panelSource, /anchors\.bottom: viewFooter\.visible \? viewFooter\.top : parent\.bottom/);
+assert.match(panelSource, /fittedContentHeight\(column\.implicitHeight \+ viewFooter\.reserved/);
+assert.doesNotMatch(panelSource, /tooltipText: root\.priorityOpen/);
+assert.match(panelSource, /if \(!showPriorities \|\| !priorityAlert\) return null/);
+assert.match(panelSource, /alert\.unused_percent === alertUnusedPercent && alert\.hours === alertHours/);
+for (const key of ['priorityAlert', 'alertUnusedPercent', 'alertHours'])
+  assert.ok(manifest.barWidget.schema.some(row => row.key === key), `${key} is a documented setting`);
+assert.deepEqual(['priorityAlert', 'alertUnusedPercent', 'alertHours'].map(k => manifest.barWidget.defaults[k]), [true, 50, 24]);
+assert.match(settingsViewSource, /signal tabNamesRequested\(bool enabled\)/);
+assert.match(settingsViewSource, /enabled: root\.brandIcons && !root\.saving/);
+// Errors render as a structured NoticeCard: copy only (wl-copy through the
+// bar's runner, argument quoted), never executing text parsed from a message.
+assert.match(panelSource, /NoticeCard \{\s*readonly property var current: root\.statusNotice\(\)/);
+assert.match(panelSource, /bar\.run\("printf %s " \+ Util\.shellQuote\(String\(text\)\) \+ " \| wl-copy"\)/);
+assert.match(panelSource, /onRetryRequested: root\.refresh\(\)/);
+assert.doesNotMatch(fs.readFileSync(new URL('./NoticeCard.qml', import.meta.url), 'utf8'), /bar\.run|execDetached|Process/);
+// Header: a translated, coloured error badge replaces the grey "Error" pill.
+assert.match(panelSource, /entry && entry\.error === ""\s*&& summary\.text !== "Ready"/);
+// The headline value sits beside the header actions, not in the bordered pill.
+assert.match(panelSource, /detail: root\.settingsOpen \|\| root\.priorityOpen \? "" : ""/);
+assert.match(panelSource, /readonly property var parts: Model\.valueParts\(root\.heroValue\)/);
+assert.match(panelSource, /font\.pixelSize: valueFigure\.font\.pixelSize/);
+assert.match(panelSource, /id: errorBadge[\s\S]*?root\.tr\("notice\.short\." \+ errorBadge\.notice\.category\)/);
+assert.match(panelSource, /return why \? root\.tr\("notice\." \+ why\.category\)/);
+// One glyph per view everywhere: speedometer for usage, numbered list for the
+// ranked priorities, alert while a quota is urgent.
+assert.match(panelSource, /value: "usage", label: root\.tr\("view\.usage"\), icon: "󱨅"/);
+assert.match(panelSource, /icon: root\.urgentPriority \? "󰀦" : "󰉻"/);
+assert.match(panelSource, /fallback: root\.priorityOpen \? "󰉻"/);
+assert.match(barWidgetSource, /"  󰉻 " \+ root\.panelItem\.barRecommendation\.name/);
+// Metric values: figure emphasised, % and surrounding words secondary, all on
+// the label's baseline. Locale word order is preserved.
+{
+  const parts = value => JSON.parse(JSON.stringify(model.valueParts(value)));
+  assert.deepEqual(parts('47%'), {prefix: '', figure: '47', unit: '%', suffix: ''});
+  assert.deepEqual(parts('53% left'), {prefix: '', figure: '53', unit: '%', suffix: ' left'});
+  assert.deepEqual(parts('осталось 53%'), {prefix: 'осталось ', figure: '53', unit: '%', suffix: ''});
+  assert.deepEqual(parts('12.5%'), {prefix: '', figure: '12.5', unit: '%', suffix: ''});
+  assert.deepEqual(parts('$75.00'), {prefix: '', figure: '$75.00', unit: '', suffix: ''});
+  assert.deepEqual(parts(null), {prefix: '', figure: '', unit: '', suffix: ''});
+  assert.match(panelSource, /anchors\.baseline: metricValue\.baseline/);
+  assert.match(panelSource, /baselineOffset: valueFigure\.y \+ valueFigure\.baselineOffset/);
+  assert.match(panelSource, /readonly property var valueParts: Model\.valueParts\(valueText\)/);
+}
+// Priority cards: status as a tag, expanded detail as facts then notes.
+{
+  const card = fs.readFileSync(new URL('./PriorityCard.qml', import.meta.url), 'utf8');
+  assert.match(panelSource, /facts: root\.priorityFacts\(modelData\)\s*notes: root\.priorityNotes\(modelData\)/);
+  assert.match(card, /model: root\.facts/);
+  assert.match(card, /model: root\.notes/);
+  assert.match(card, /text: root\.statusText/);
+  assert.doesNotMatch(card, /text: root\.rank \+ "\. " \+ String\(root\.row\.name \|\| ""\) \+ " · "/);
+}
+// Bar: usage chips first, the priority indicator after them.
+assert.ok(barWidgetSource.indexOf('id: chipRepeater') < barWidgetSource.indexOf('id: priorityHit'), 'usage chips precede the priority indicator');
+// The bar's priority chip behaves like a provider chip, and a recommendation
+// computed with other settings is dropped together with its ranking.
+assert.match(barWidgetSource, /id: priorityHit[\s\S]*?buttonCode === Qt\.RightButton\) root\.launchDashboard\(\)[\s\S]*?root\.panelItem\.togglePriorities\(\)/);
+assert.match(panelSource, /function togglePriorities\(\) \{\s*if \(opened && priorityOpen\) close\(\)\s*else openPriorities\(\)/);
+assert.match(panelSource, /recommendation = current \? \(priorityReport\.recommendation \|\| null\) : null/);
+// Providers hidden from the bar (#487) neither alert nor get recommended there.
+assert.match(panelSource, /Priority\.stateKey\(ranking\[i\]\) === "urgent" && !hiddenFromBar\(ranking\[i\]\.entry_id\)/);
+assert.match(panelSource, /ranking\[i\]\.status === "priority" && !hiddenFromBar\(ranking\[i\]\.entry_id\)/);

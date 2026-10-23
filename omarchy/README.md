@@ -69,9 +69,10 @@ omarchy plugin remove akitaonrails.ai-usagebar
   section is open at a time and the first is open by default. A folded section
   keeps what you typed, so Save still covers it.
   `h`/`l` or Left/Right switches provider, `j`/`k` or Up/Down scrolls, `r`,
-  Enter, or Space refreshes, Tab moves to the neighboring bar panel, and Esc
-  closes. Mouse-wheel and touchpad scrolling cover long settings forms faster;
-  changes to settings take effect only after the Save button at the bottom.
+  Enter, or Space refreshes, `p` opens usage priorities (when enabled), Tab
+  moves to the neighboring bar panel, and Esc closes. Mouse-wheel and touchpad
+  scrolling cover long settings forms faster; changes to settings take effect
+  only after the Save button at the bottom.
 - Shell: `omarchy-shell shell summon akitaonrails.ai-usagebar '{}'` opens the
   panel and `omarchy-shell shell hide akitaonrails.ai-usagebar` closes it.
 
@@ -274,3 +275,68 @@ Saving files under an installed user plugin triggers Quattro's plugin hot
 reload. If the running shell keeps the old panel after a change, use
 `omarchy restart shell` to reload its QML. In a source checkout, rerun
 `omarchy plugin validate .` after changing the manifest or entry points.
+
+## Usage priorities
+
+The optional priorities view stays inside the native popup. It uses the same
+`Button`, `BorderSurface`, typography, theme colors and locale catalog as the
+provider view. It does not open another application. It is off by default: turn
+it on in Settings → Priorities. When enabled, a native `Usage | Priorities`
+switcher is pinned to the panel footer, always visible while the content
+scrolls; the header keeps only refresh and settings. Settings → Priorities
+controls visibility, the optional bar shortcut, the recent usage window, and
+the bar alert with its thresholds. Turning the module off removes the switcher,
+the alert and the shortcut.
+
+While the view is enabled the plugin runs `usage --json --priorities` with the
+settings below; turned off, it runs the plain `usage --json` and records
+nothing. `recentHours` is an integer from 1 to 24 (default 3), and changing it
+requests a fresh report at once. The Rust backend owns ranking, rates and
+urgency. The history lives in `~/.cache/ai-usagebar/priority/history.json`.
+History retains up to 25 hours / 16,384 samples, uses the existing atomic-write
+and inter-process lock helpers, and records only provider/metric identifiers,
+percentages and timestamps. A recent rate requires 30 minutes of continuous
+fresh observations from the same quota cycle; resets, falling percentages, and
+gaps over 30 minutes restart that observation chain. Until there is enough
+history, the cycle average is used. Configuring a longer window does not create
+observations from before collection began.
+
+Every provider is measured on its weekly window, because that is the quota
+lost at reset; a session or rolling window refills within hours and only adds
+a note when it is exhausted right now. With several weekly windows (Claude's
+shared week and a per-model week) the most used one binds what can still be
+spent. A provider without a weekly window falls back to its longest known
+window of at least a day; one with only short windows has no forecast.
+
+The cycle average divides the week's usage by at least one day, so the first
+hours of a cycle are not extrapolated around the clock. The recent rate
+receives up to 75% weight as the selected window fills, and that blended pace
+covers only the next 24 hours; the cycle average covers the rest. Projected
+unused quota never exceeds what is left of the week. Urgent rows come first,
+then other projected unused quota ranked by unused percentage points per hour
+until reset. A row is urgent when its week resets within `alertHours` (default
+24) with at least `alertUnusedPercent` (default 50) projected unused. Red uses
+the theme's red token and an explicit urgent label; exhausted, unavailable and
+on-track quotas are never marked urgent to consume.
+
+With `priorityAlert` on (default), an urgent quota also appears in the bar as a
+red `󰀦 Provider` chip (a red alert glyph on a vertical bar), even when the
+optional shortcut is off. Clicking it opens the priorities view. A provider
+hidden from the bar neither alerts nor is recommended there; the priorities
+view still lists it.
+
+Hover a compact block for 300ms to preview its rationale, or click/press
+Enter/Space to pin it. The expanded block has a separate View limits action.
+`p` opens the view from the usage panel; Escape returns to the consumption
+view. All priority messages are translated in the same five locales as the rest
+of the plugin.
+
+```bash
+omarchy bar set akitaonrails.ai-usagebar recentHours 6 --json
+omarchy bar set akitaonrails.ai-usagebar alertUnusedPercent 30 --json
+ai-usagebar usage --json --priorities --recent-hours 6 --alert-unused-percent 30 --alert-hours 48
+```
+
+`make plugin-test` includes the isolated presentation tests and full catalog
+parity checks. Rust tests inject timestamps and temporary history directories;
+they do not inspect user credentials or live quota/history files.

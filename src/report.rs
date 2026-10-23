@@ -409,7 +409,9 @@ async fn entry_for_report_target(
     }
 }
 
-pub async fn run(json: bool) -> i32 {
+/// `priorities` adds the opt-in ranking (`usage --json --priorities`); `None`
+/// prints the report unchanged.
+pub async fn run(json: bool, priorities: Option<crate::recommendation::Options>) -> i32 {
     let (entries, primary, overview) = match collect_entries().await {
         Ok(collected) => collected,
         Err(message) => {
@@ -419,10 +421,12 @@ pub async fn run(json: bool) -> i32 {
     };
 
     if json {
-        println!(
-            "{}",
-            render_json_document(&entries, primary, overview.as_deref())
-        );
+        let document = render_json_document(&entries, primary, overview.as_deref());
+        let document = match priorities {
+            Some(options) => crate::recommendation::attach_history(document, options).await,
+            None => document,
+        };
+        println!("{document}");
     } else {
         print!("{}", render_text(&entries));
     }

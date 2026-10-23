@@ -29,6 +29,7 @@
       "refreshIntervalSec": 300,
       "showValue": true,
       "brandIcons": true,
+      "tabNames": true,
       "showProvider": false,
       "colorCodeUsage": false,
       "showAll": false,
@@ -40,7 +41,15 @@
       "showCursorOnDemand": true,
       "showCursorCredits": true,
       "showAntigravityGemini": true,
-      "showAntigravityClaudeGpt": true
+      "showAntigravityClaudeGpt": true,
+      "showPriorities": false,
+      "showPriorityShortcut": false,
+      "recentHours": 3,
+      "priorityAlert": true,
+      "alertUnusedPercent": 50,
+      "alertHours": 24,
+      "reportBinary": "ai-usagebar",
+      "tuiBinary": "ai-usagebar-tui"
     },
     "schema": [
       {
@@ -71,6 +80,13 @@
         "type": "boolean",
         "label": "Show provider logos",
         "description": "Draw each provider's own mark in the top bar and panel. Off restores the generic icon the bar used before the marks: one robot for a single provider, and the provider's short code on each chip when Show all providers is on. On by default.",
+        "defaultValue": true
+      },
+      {
+        "key": "tabNames",
+        "type": "boolean",
+        "label": "Show provider names on tabs",
+        "description": "Show each provider's name beside its logo in the panel tabs. Off shows logos only, with the name on hover. Always on when provider logos are off. On by default.",
         "defaultValue": true
       },
       {
@@ -174,6 +190,71 @@
         "label": "Show Claude & GPT OSS",
         "description": "Show the Claude & GPT OSS pool in the top bar and tooltip. The panel list drops its Session and Weekly rows too. At least one Antigravity pool stays visible.",
         "defaultValue": true
+      },
+      {
+        "key": "showPriorities",
+        "type": "boolean",
+        "label": "Enable usage priorities",
+        "description": "Show the recommended order of use inside the same popup. A quota at risk of going unused before its reset turns red in the bar. Off by default; while off, nothing is recorded.",
+        "defaultValue": false
+      },
+      {
+        "key": "showPriorityShortcut",
+        "type": "boolean",
+        "label": "Show priority in the bar",
+        "description": "Always show the recommended provider in the bar as a shortcut to the priorities. An urgent quota appears in red even when this is off.",
+        "defaultValue": false
+      },
+      {
+        "key": "recentHours",
+        "type": "integer",
+        "label": "Recent usage window (hours)",
+        "description": "Look back 1–24 hours for the priority calculation. Applies immediately.",
+        "min": 1,
+        "max": 24,
+        "step": 1,
+        "defaultValue": 3
+      },
+      {
+        "key": "priorityAlert",
+        "type": "boolean",
+        "label": "Alert in the bar",
+        "description": "Show a provider in red in the bar when its quota is at risk of going unused (see the two thresholds below).",
+        "defaultValue": true
+      },
+      {
+        "key": "alertUnusedPercent",
+        "type": "integer",
+        "label": "Alert when projected unused quota is at least (%)",
+        "description": "Projected unused percentage at reset, at the current pace, that makes a quota urgent.",
+        "min": 1,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 50
+      },
+      {
+        "key": "alertHours",
+        "type": "integer",
+        "label": "…and the quota resets within (hours)",
+        "description": "Only quota windows longer than this qualify, so a 5-hour session never alerts.",
+        "min": 1,
+        "max": 168,
+        "step": 1,
+        "defaultValue": 24
+      },
+      {
+        "key": "reportBinary",
+        "type": "string",
+        "label": "Report command",
+        "description": "Executable used for usage --json, settings and Nous login. Leave as ai-usagebar unless you run a local build.",
+        "defaultValue": "ai-usagebar"
+      },
+      {
+        "key": "tuiBinary",
+        "type": "string",
+        "label": "Dashboard command",
+        "description": "Executable opened by right-click and the dashboard action. Leave as ai-usagebar-tui unless you run a local build.",
+        "defaultValue": "ai-usagebar-tui"
       }
     ]
   }

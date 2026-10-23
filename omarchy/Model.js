@@ -1817,3 +1817,13 @@ function providerDisplaySummary(rows) {
   for (var i = 0; i < rows.length; i++) if (rows[i].checked) on++
   return on + "/" + rows.length
 }
+
+// Splits a metric value for display: the figure is the emphasis, the unit and
+// any words around it ("47% left", "осталось 47%") are secondary. A value with
+// no percentage (a balance such as "$75.00") is all figure.
+function valueParts(text) {
+  var value = String(text === undefined || text === null ? "" : text)
+  var match = /^(.*?)(-?\d+(?:[.,]\d+)?)\s?%(.*)$/.exec(value)
+  if (!match) return { prefix: "", figure: value, unit: "", suffix: "" }
+  return { prefix: match[1], figure: match[2], unit: "%", suffix: match[3] }
+}

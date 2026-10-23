@@ -75,6 +75,8 @@ popover-ssr-test:
 
 plugin-test:
 	node omarchy/model.test.mjs
+	node omarchy/priority.test.mjs
+	node omarchy/notice.test.mjs
 
 mint-test:
 	PYTHONPATH=linux-mint python3 -m unittest discover -s linux-mint -p 'test_tray_model.py'

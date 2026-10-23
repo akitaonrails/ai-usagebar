@@ -90,8 +90,22 @@ fn main() {
     // not go through the always-exit-0 Waybar contract. A script piping this
     // deserves a real exit code when the document cannot be produced;
     // per-entry fetch/auth failures stay inside the document.
-    if let Some(Command::Usage { json }) = &cli.command {
-        std::process::exit(rt.block_on(ai_usagebar::report::run(*json)));
+    if let Some(Command::Usage {
+        json,
+        priorities,
+        recent_hours,
+        alert_unused_percent,
+        alert_hours,
+    }) = &cli.command
+    {
+        let priorities = priorities.then_some(ai_usagebar::recommendation::Options {
+            recent_hours: *recent_hours,
+            alert: ai_usagebar::recommendation::Alert {
+                unused_percent: *alert_unused_percent,
+                hours: *alert_hours,
+            },
+        });
+        std::process::exit(rt.block_on(ai_usagebar::report::run(*json, priorities)));
     }
     let code = rt.block_on(run(cli));
     std::process::exit(code);

@@ -166,6 +166,27 @@ pub enum Command {
         /// Machine-readable output.
         #[arg(long)]
         json: bool,
+        /// Add a usage-priority ranking to the JSON document: which provider's
+        /// weekly quota is projected to reset unused. Records a small local
+        /// history of quota percentages to estimate the recent pace. Off by
+        /// default, so the plain report (and every reader of it) is unchanged.
+        #[arg(long, requires = "json")]
+        priorities: bool,
+        /// Look back this many hours for the recent quota-consumption rate.
+        #[arg(long, requires = "priorities",
+            default_value_t = crate::recommendation::DEFAULT_RECENT_HOURS,
+            value_parser = clap::value_parser!(u8).range(1..=24))]
+        recent_hours: u8,
+        /// Flag a quota as urgent when at least this percent is projected unused.
+        #[arg(long, requires = "priorities",
+            default_value_t = crate::recommendation::DEFAULT_ALERT_UNUSED_PERCENT,
+            value_parser = clap::value_parser!(u8).range(1..=100))]
+        alert_unused_percent: u8,
+        /// ...and its weekly window resets within this many hours.
+        #[arg(long, requires = "priorities",
+            default_value_t = crate::recommendation::DEFAULT_ALERT_HOURS,
+            value_parser = clap::value_parser!(u8).range(1..=168))]
+        alert_hours: u8,
     },
 
     /// Serve read-only usage and provider tools over local MCP stdio.
@@ -645,9 +666,107 @@ mod tests {
     }
 
     #[test]
+    fn usage_recent_hours_are_bounded_and_explicit() {
+        for hours in ["1", "6", "24"] {
+            let cli = Cli::try_parse_from([
+                "ai-usagebar",
+                "usage",
+                "--json",
+                "--priorities",
+                "--recent-hours",
+                hours,
+            ])
+            .unwrap();
+            assert!(
+                matches!(cli.command, Some(Command::Usage { recent_hours, .. }) if recent_hours == hours.parse::<u8>().unwrap())
+            );
+        }
+        let cli = Cli::try_parse_from([
+            "ai-usagebar",
+            "usage",
+            "--json",
+            "--priorities",
+            "--alert-unused-percent",
+            "30",
+            "--alert-hours",
+            "48",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Usage {
+                alert_unused_percent: 30,
+                alert_hours: 48,
+                ..
+            })
+        ));
+        for (flag, value) in [
+            ("--alert-unused-percent", "0"),
+            ("--alert-unused-percent", "101"),
+            ("--alert-hours", "0"),
+            ("--alert-hours", "169"),
+        ] {
+            assert!(
+                Cli::try_parse_from([
+                    "ai-usagebar",
+                    "usage",
+                    "--json",
+                    "--priorities",
+                    flag,
+                    value
+                ])
+                .is_err()
+            );
+        }
+        for hours in ["0", "25", "-1", "1.5", "invalid"] {
+            assert!(
+                Cli::try_parse_from([
+                    "ai-usagebar",
+                    "usage",
+                    "--json",
+                    "--priorities",
+                    "--recent-hours",
+                    hours
+                ])
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn priorities_are_opt_in_and_only_with_json() {
+        // The plain report stays exactly what every other reader consumes.
+        let cli = Cli::parse_from(["ai-usagebar", "usage", "--json"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Usage {
+                priorities: false,
+                ..
+            })
+        ));
+        // Ranking is a JSON field, and its tuning flags mean nothing without it.
+        assert!(Cli::try_parse_from(["ai-usagebar", "usage", "--priorities"]).is_err());
+        for flag in ["--recent-hours", "--alert-unused-percent", "--alert-hours"] {
+            assert!(
+                Cli::try_parse_from(["ai-usagebar", "usage", "--json", flag, "6"]).is_err(),
+                "{flag} requires --priorities"
+            );
+        }
+    }
+
+    #[test]
     fn usage_subcommand_parses_machine_readable_mode() {
         let cli = Cli::parse_from(["ai-usagebar", "usage", "--json"]);
-        assert!(matches!(cli.command, Some(Command::Usage { json: true })));
+        assert!(matches!(
+            cli.command,
+            Some(Command::Usage {
+                json: true,
+                priorities: false,
+                recent_hours: 3,
+                alert_unused_percent: 50,
+                alert_hours: 24,
+            })
+        ));
     }
 
     #[test]
