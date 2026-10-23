@@ -160,12 +160,14 @@ quoting and argv construction. The QML holds only what needs Qt.
 
 It is an ECMAScript module imported by QML (`import "../code/x.mjs" as X`).
 That is officially supported by Qt and used by other Plasma 6 widgets, but it is
-a minority pattern in the KDE ecosystem, so two engine differences are guarded
+a minority pattern in the KDE ecosystem, so three engine differences are guarded
 by tests rather than left to review:
 
 - QML's V4 engine **rejects** the ES2019 optional catch binding (`catch {`);
 - V4 **silently evaluates Unicode property escapes (`\p{L}`) to false** instead
-  of throwing, which once made every pool tag render empty.
+  of throwing, which once made every pool tag render empty;
+- V4 **rejects** object spread (`{...obj}`) with `Unexpected token '...'`. Copy
+  properties explicitly instead.
 
 `make mjs-probe` loads `probe/` in a real applet host and asserts both, along
 with the one thing Node cannot check: that the fully single-quoted

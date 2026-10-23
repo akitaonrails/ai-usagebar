@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The KDE plasmoid no longer uses object spread in its logic module.** QML's V4
+  engine rejects the ES2018 spread syntax with "Unexpected token `...`", which
+  prevented the widget from loading. Properties are now copied explicitly, and a
+  test guards against regression.
+
 ## [1.43.0] — 2026-10-22
 
 ### Added

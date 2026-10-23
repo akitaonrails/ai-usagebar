@@ -36,13 +36,15 @@ const at = rel => fileURLToPath(new URL(rel, import.meta.url));
 }
 
 // ---------------------------------------------------------------------------
-// V4 portability. Both of these shipped as real bugs during development and
-// neither is caught by Node, which accepts them happily.
+// V4 portability. All three of these shipped as real bugs during development and
+// none is caught by Node, which accepts them happily.
 //
 //   catch {   → QML's V4 engine rejects the ES2019 optional catch binding with
 //               a bare "Syntax error" and the whole module fails to load.
 //   \p{...}   → V4 evaluates Unicode property escapes to FALSE instead of
 //               throwing. Silent wrong answers, no error anywhere.
+//   {...obj}  → V4 rejects object spread (ES2018) with "Unexpected token `...`".
+//               The whole module fails to load. Copy properties explicitly.
 //
 // Asserting on the source text keeps this in the Node-only gate, so CI catches
 // it on every platform without needing Qt installed.
@@ -59,6 +61,9 @@ assert.ok(!/\\p\{/.test(logicSrc),
 assert.ok(!/\}\s*catch\s*\{/.test(logicSrc),
     'plasmoid-logic.mjs uses the optional catch binding (catch {). QML\'s V4 engine ' +
     'rejects it — write catch (e) { instead.');
+assert.ok(!/\{\s*\.\.\./.test(logicSrc),
+    'plasmoid-logic.mjs uses object spread ({...obj}). QML\'s V4 engine rejects it ' +
+    'with "Unexpected token `...`" — copy properties explicitly instead.');
 
 // ---------------------------------------------------------------------------
 // The config schema. Both of these fail SILENTLY at runtime, which is why they
