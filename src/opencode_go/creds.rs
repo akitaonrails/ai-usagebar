@@ -2,11 +2,12 @@
 //!
 //! The CLI files every provider's credential in its own data directory:
 //! `~/.local/share/opencode/auth.json` (`$XDG_DATA_HOME` when set), shaped
-//! `{ "<provider id>": { "type": "api", "key": "..." } }`. The account
-//! OpenCode sells as Zen (pay-as-you-go) and Go (monthly quota) is stored
-//! under the provider id `opencode`, and that same account key is what the
-//! `zen/go/v1/usage` endpoint accepts — the official console calls it with
-//! the logged-in account's credential.
+//! `{ "<provider id>": { "type": "api", "key": "..." } }`. OpenCode 1 stored
+//! the account OpenCode sells as Zen (pay-as-you-go) and Go (monthly quota)
+//! under the provider id `opencode`; OpenCode 2 names the Go integration
+//! `opencode-go`. Either account key is what the `zen/go/v1/usage` endpoint
+//! accepts — the official console calls it with the logged-in account's
+//! credential.
 //!
 //! OpenCode 2 keeps credentials in `opencode.db` in the same directory. Only
 //! the active OpenCode row is used, accepting a key or an unexpired OAuth
@@ -27,8 +28,10 @@ use serde_json::Value;
 use crate::cache::home_dir;
 use crate::error::{AppError, Result};
 
-/// The provider id OpenCode uses for its own Zen/Go account in `auth.json`.
-const PROVIDER_ID: &str = "opencode";
+/// The provider ids OpenCode uses for its own Zen/Go account. Version 1 wrote
+/// `opencode`; version 2 writes `opencode-go`. Try the more specific Go id
+/// first, then the legacy one.
+const PROVIDER_IDS: &[&str] = &["opencode-go", "opencode"];
 
 /// Entry types whose `key` field is a usable API key. Anything else — in
 /// particular OpenCode's `oauth` and `wellknown` types, which hold the secret
@@ -37,7 +40,7 @@ const KEY_TYPES: &[&str] = &["api", "zen"];
 
 /// Read a legacy `auth.json` key or an OpenCode 2 SQLite credential.
 ///
-/// A missing or malformed file, a missing `opencode` entry, or an entry whose
+/// A missing or malformed file, no usable OpenCode entry, or an entry whose
 /// type does not carry a key yields `None` rather than an error: one broken
 /// shape must not mask a working path later in the search list.
 pub fn read_key_from(path: &Path) -> Option<String> {
@@ -57,16 +60,18 @@ fn read_key_from_at(path: &Path, now_ms: i64) -> Option<String> {
 fn read_legacy_key(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let value: Value = serde_json::from_str(&text).ok()?;
-    let entry = value.get(PROVIDER_ID)?.as_object()?;
-    if !entry
-        .get("type")
-        .and_then(Value::as_str)
-        .is_some_and(|t| KEY_TYPES.contains(&t))
-    {
-        return None;
-    }
-    let key = entry.get("key")?.as_str()?.trim();
-    (!key.is_empty()).then(|| key.to_string())
+    PROVIDER_IDS.iter().find_map(|provider| {
+        let entry = value.get(*provider)?.as_object()?;
+        if !entry
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|t| KEY_TYPES.contains(&t))
+        {
+            return None;
+        }
+        let key = entry.get("key")?.as_str()?.trim();
+        (!key.is_empty()).then(|| key.to_string())
+    })
 }
 
 /// The database belongs to OpenCode. Do not create it, update credentials, or
@@ -78,11 +83,32 @@ fn read_database_key(path: &Path, now_ms: i64) -> Option<String> {
             .ok()?;
     conn.busy_timeout(std::time::Duration::from_millis(500))
         .ok()?;
-    let raw: String = conn.query_row(
-        "SELECT value FROM credential WHERE integration_id = 'opencode' AND active = 1 ORDER BY time_updated DESC LIMIT 1",
-        [], |row| row.get(0),
-    ).ok()?;
-    let value: Value = serde_json::from_str(&raw).ok()?;
+    // Prefer the OpenCode 2 Go integration, then its legacy id. Iterate the
+    // active rows so an expired or malformed one cannot hide a usable sibling.
+    let mut statement = conn
+        .prepare(
+            "SELECT value FROM credential \
+             WHERE integration_id IN ('opencode-go', 'opencode') AND active = 1 \
+             ORDER BY CASE integration_id WHEN 'opencode-go' THEN 0 ELSE 1 END, \
+             time_updated DESC",
+        )
+        .ok()?;
+    let mut rows = statement.query([]).ok()?;
+    while let Some(row) = rows.next().ok()? {
+        let Ok(raw) = row.get::<_, String>(0) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+            continue;
+        };
+        if let Some(token) = database_token(&value, now_ms) {
+            return Some(token);
+        }
+    }
+    None
+}
+
+fn database_token(value: &Value, now_ms: i64) -> Option<String> {
     let token = match value.get("type")?.as_str()? {
         "key" => value.get("key")?.as_str()?,
         "oauth" if value.get("expires")?.as_i64()? > now_ms => value.get("access")?.as_str()?,
@@ -249,6 +275,56 @@ mod tests {
             resolve_from("OPENCODE_GO_API_KEY", None, None, &[path]).unwrap(),
             "active-test-key"
         );
+    }
+
+    #[test]
+    fn reads_opencode_2_go_integration_credential() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, conn) = database(dir.path());
+        insert(
+            &conn,
+            "opencode",
+            1,
+            3,
+            serde_json::json!({"type":"key", "key":"legacy-key"}),
+        );
+        insert(
+            &conn,
+            "opencode-go",
+            1,
+            2,
+            serde_json::json!({"type":"key", "key":"go-key"}),
+        );
+        assert_eq!(read_key_from_at(&path, NOW_MS).as_deref(), Some("go-key"));
+    }
+
+    #[test]
+    fn falls_back_to_legacy_row_when_go_integration_is_expired() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, conn) = database(dir.path());
+        insert(&conn, "opencode-go", 1, 3, oauth("expired-go", NOW_MS - 1));
+        insert(
+            &conn,
+            "opencode",
+            1,
+            2,
+            serde_json::json!({"type":"key", "key":"legacy-key"}),
+        );
+        assert_eq!(
+            read_key_from_at(&path, NOW_MS).as_deref(),
+            Some("legacy-key")
+        );
+    }
+
+    #[test]
+    fn reads_opencode_go_entry_from_legacy_auth_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(
+            dir.path(),
+            "auth.json",
+            serde_json::json!({"opencode-go":{"type":"api", "key":"go-json-key"}}),
+        );
+        assert_eq!(read_key_from(&path).as_deref(), Some("go-json-key"));
     }
 
     #[test]

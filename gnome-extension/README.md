@@ -13,8 +13,8 @@ GNOME screenshot is currently bundled.
 
 ## Vendor scope
 
-The **top bar** selector supports **Claude, Codex, Z.AI, OpenRouter, DeepSeek, and
-Google Antigravity**. The **click menu** does not use that list. It draws every
+The **top bar** selector supports **Claude, Codex, OpenCode Go, Z.AI, OpenRouter,
+DeepSeek, and Google Antigravity**. The **click menu** does not use that list. It draws every
 entry `ai-usagebar usage --json` returns, which is every provider enabled in
 `config.toml` — including Cursor and the others the bar selector does not offer.
 
@@ -70,7 +70,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 | Pace arrows | off | with bars off, colors each value by pace (usage minus elapsed) and adds `↓` under, `→` on, `↑` ahead; off keeps plain numbers |
 | Bar width | 8 | cells per bar (4–20) |
 | Refresh interval | 30 s | 5–3600 |
-| Top bar vendors | `anthropic` | Top bar only. One switch per provider (Claude, Codex, Z.AI, OpenRouter, DeepSeek, Antigravity, SuperGrok); each one on gets its own indicator, marked by its brand icon. Stored as a comma-separated list in `vendor`. The click menu lists every enabled provider from `usage --json`. |
+| Top bar vendors | `anthropic` | Top bar only. One switch per provider (Claude, Codex, OpenCode Go, Z.AI, OpenRouter, DeepSeek, Antigravity, SuperGrok); each one on gets its own indicator, marked by its brand icon. Stored as a comma-separated list in `vendor`. The click menu lists every enabled provider from `usage --json`. |
 | Panel pools | `both` | two-pool vendors only: `both`, first pool, second pool, or `auto` |
 | Auto threshold | 95 % | `auto` switches pools once the shown one reaches this usage |
 | Binary path | auto | empty = `PATH` then `~/.cargo/bin` |

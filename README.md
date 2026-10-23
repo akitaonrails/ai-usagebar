@@ -970,7 +970,7 @@ Quattro: one chip with the selected provider's logo, short name and highest perc
 | Integration | Supported providers | Notes |
 |---|---|---|
 | [macOS menu bar](macos/README.md) | Whatever `usage --json` reports | `ai-usagebar-tray`: WKWebView popover + each ready provider's name and usage with a chart glyph. |
-| [GNOME Shell](gnome-extension/README.md) | Menu: whatever `usage --json` reports. Top bar: Claude, Codex, Z.AI, OpenRouter, DeepSeek, Antigravity | Usage overview with native provider submenus and configurable appearance; the top bar shows one indicator per provider switched on, optionally with pace arrows instead of bars. |
+| [GNOME Shell](gnome-extension/README.md) | Menu: whatever `usage --json` reports. Top bar: Claude, Codex, OpenCode Go, Z.AI, OpenRouter, DeepSeek, Antigravity | Usage overview with native provider submenus and configurable appearance; the top bar shows one indicator per provider switched on, optionally with pace arrows instead of bars. |
 | [KDE Plasma 6](kde-plasmoid/README.md) | Whatever `usage --json` reports | Provider tabs in the popup; vendor is per applet instance. |
 | [Linux Mint / Cinnamon](linux-mint/README.md) | Whatever `usage --json` reports | Experimental GTK dashboard with provider icons; left-click the status icon. |
 | [Windows tray](windows/README.md) | Whatever `usage --json` reports | NotifyIcon + WebView2 popover; left-click the tray icon. |

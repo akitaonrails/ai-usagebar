@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Added
+
+- **The GNOME Shell preferences list OpenCode Go.** Its Vendors tab now shows the
+  provider's login state and can open `opencode auth login`; the Top bar vendors
+  section can also pin OpenCode Go's rolling and weekly windows next to the clock.
+
+### Fixed
+
+- **OpenCode 2 Go logins are detected under their current provider id.** The
+  CLI stores the Go integration as `opencode-go`; ai-usagebar only looked for
+  the legacy `opencode` row, so a signed-in user still appeared as “OpenCode Go
+  is not signed in.” Both ids are now read, preferring the Go row and falling
+  back to a usable legacy row when the Go credential is expired or malformed.
+
 ## [1.43.0] — 2026-10-22
 
 ### Added

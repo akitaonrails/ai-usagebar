@@ -12,6 +12,9 @@ import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Ex
 const VENDOR_AUTH = [
     {id: 'anthropic', name: 'Claude', kind: 'oauth', cli: 'claude', login: 'claude', pkg: '@anthropic-ai/claude-code'},
     {id: 'openai', name: 'Codex', kind: 'oauth', cli: 'codex', login: 'codex login', pkg: '@openai/codex'},
+    // OpenCode 2 keeps its credential in the CLI's own SQLite database. The
+    // binary reads that store directly; this row only opens the CLI login.
+    {id: 'opencode-go', name: 'OpenCode Go', kind: 'oauth', cli: 'opencode', login: 'opencode auth login', pkg: 'opencode-ai'},
     // Local-server vendor: there is no separate credential or npm-installable
     // login helper. If `agy` exists we can open it; the app and IDE are equally
     // valid sources and are managed outside this extension.
@@ -54,12 +57,50 @@ function configHasApiKey(section) {
     return false;
 }
 
+// OpenCode 2 stores its credential in the CLI's SQLite database, which GJS
+// cannot query. Ask the same binary the indicator uses; fall back to the
+// legacy JSON store and the explicit env/config key when it is unavailable.
+function openCodeGoConfigured() {
+    if ((GLib.getenv('OPENCODE_GO_API_KEY') || '').length > 0 || configHasApiKey('opencode-go'))
+        return true;
+    const bin = GLib.find_program_in_path('ai-usagebar') ||
+        `${GLib.get_home_dir()}/.local/bin/ai-usagebar`;
+    if (bin && GLib.file_test(bin, GLib.FileTest.IS_EXECUTABLE)) {
+        try {
+            const proc = Gio.Subprocess.new([bin, 'vendors', '--json'],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+            const [, stdout] = proc.communicate_utf8(null, null);
+            const row = JSON.parse(stdout).vendors?.find(v => v.id === 'opencode-go');
+            if (row)
+                return row.configured === true;
+        } catch (e) {}
+    }
+    const auth = `${GLib.get_user_data_dir()}/opencode/auth.json`;
+    if (!GLib.file_test(auth, GLib.FileTest.EXISTS))
+        return false;
+    try {
+        const [ok, bytes] = GLib.file_get_contents(auth);
+        if (!ok)
+            return false;
+        const value = JSON.parse(new TextDecoder().decode(bytes));
+        return ['opencode-go', 'opencode'].some(id => {
+            const entry = value?.[id];
+            return entry && ['api', 'key', 'zen'].includes(entry.type) &&
+                String(entry.key || '').trim().length > 0;
+        });
+    } catch (e) {
+        return false;
+    }
+}
+
 function vendorConfigured(v) {
     const home = GLib.get_home_dir();
     if (v.id === 'anthropic')
         return GLib.file_test(`${home}/.claude/.credentials.json`, GLib.FileTest.EXISTS);
     if (v.id === 'openai')
         return GLib.file_test(`${home}/.codex/auth.json`, GLib.FileTest.EXISTS);
+    if (v.id === 'opencode-go')
+        return openCodeGoConfigured();
     // Antigravity 2.0, the `agy` CLI and the IDE are separate products sharing
     // one quota, and any combination may be installed. Having any of their
     // state directories is enough — the binary reads usage from whichever
@@ -311,7 +352,7 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
 
         // One switch per provider; each one switched on gets its own top bar
         // indicator, in this order. Stored as the comma-separated `vendor` list.
-        const vendorList = ['anthropic', 'openai', 'zai', 'openrouter', 'deepseek', 'antigravity', 'supergrok'];
+        const vendorList = ['anthropic', 'openai', 'opencode-go', 'zai', 'openrouter', 'deepseek', 'antigravity', 'supergrok'];
         const vendors = new Adw.ExpanderRow({
             title: _('Top bar vendors'),
             subtitle: _('One indicator per provider switched on. The menu lists every enabled provider.'),
