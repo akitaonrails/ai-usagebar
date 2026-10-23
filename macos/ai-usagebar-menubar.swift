@@ -1225,16 +1225,25 @@ func copilotAccountLabels() -> [String] {
     return accountLabels(inTOML: text, vendor: "copilot")
 }
 
+/// Explicit `[[devin.accounts]]` labels; Rust resolves each credentials file.
+func devinAccountLabels() -> [String] {
+    guard let text = try? String(contentsOfFile: configPathTOML(), encoding: .utf8) else {
+        return []
+    }
+    return accountLabels(inTOML: text, vendor: "devin")
+}
+
 /// Preferences include enabled providers even before they have credentials.
 func preferenceVendorIds(catalog: [VendorCatalogEntry], claude: [String],
                          apiKeyAccounts: [String: [String]], codex: [String],
-                         copilot: [String] = []) -> [String] {
+                         copilot: [String] = [], devin: [String] = []) -> [String] {
     catalog.filter { $0.enabled }.flatMap { vendor -> [String] in
         let labels: [String]
         switch vendor.id {
         case "anthropic": labels = claude
         case "openai": labels = codex
         case "copilot": labels = copilot
+        case "devin": labels = devin
         default: labels = apiKeyAccounts[vendor.id] ?? []
         }
         return [vendor.id] + labels.map { vendor.id + "@" + $0 }
@@ -1326,6 +1335,7 @@ func vendorEntries(active: String,
                    catalog: [VendorCatalogEntry] = vendorCatalog,
                    codexLabels: () -> [String] = codexAccountLabels,
                    copilotLabels: () -> [String] = copilotAccountLabels,
+                   devinLabels: () -> [String] = devinAccountLabels,
                    apiKeyLabels: (String) -> [String] = apiKeyAccountLabels) -> [MenuEntry] {
     var out: [MenuEntry] = []
     for v in catalog where v.enabled {
@@ -1366,6 +1376,17 @@ func vendorEntries(active: String,
             }
             out.append(contentsOf: labels.map {
                 MenuEntry(id: "copilot@" + $0, name: "\(v.name) · \($0)")
+            })
+        } else if v.id == "devin" {
+            let labels = devinLabels()
+            let showDefault = showDefaultAccount(
+                configValue: configValueTOML("devin", "show_default_account"),
+                hasAccounts: !labels.isEmpty)
+            if showDefault && (v.id == active || v.configured) {
+                out.append(MenuEntry(id: v.id, name: v.name))
+            }
+            out.append(contentsOf: labels.map {
+                MenuEntry(id: "devin@" + $0, name: "\(v.name) · \($0)")
             })
         } else if API_KEY_ACCOUNT_VENDORS.contains(v.id) {
             let labels = apiKeyLabels(v.id)
@@ -1841,7 +1862,8 @@ struct SettingsView: View {
         preferenceVendorIds(catalog: vendorCatalog, claude: claudeAccountLabels(),
                             apiKeyAccounts: apiKeyAccountLabelsByVendor(),
                             codex: codexAccountLabels(),
-                            copilot: copilotAccountLabels())
+                            copilot: copilotAccountLabels(),
+                            devin: devinAccountLabels())
     }
 
     var body: some View {

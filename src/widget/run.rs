@@ -185,11 +185,14 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
 
 fn validate_vendor_options(cli: &Cli, vendor: Vendor) -> Result<()> {
     if cli.account.is_some()
-        && !matches!(vendor, Vendor::Anthropic | Vendor::Openai | Vendor::Copilot)
+        && !matches!(
+            vendor,
+            Vendor::Anthropic | Vendor::Openai | Vendor::Copilot | Vendor::Devin
+        )
         && !Config::API_KEY_ACCOUNT_VENDORS.contains(&vendor.to_id())
     {
         return Err(AppError::Other(
-            "--account is supported only for Claude, Codex (OpenAI), GitHub Copilot, and \
+            "--account is supported only for Claude, Codex (OpenAI), GitHub Copilot, Devin, and \
              the API-key vendors with a [[<vendor>.accounts]] array: Z.AI, OpenRouter, \
              DeepSeek, DeepInfra, Kilo, Novita, Moonshot, Grok, MiniMax, and OrcaRouter"
                 .into(),
@@ -1117,16 +1120,29 @@ async fn muse_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     ))
 }
 
+fn devin_cache(cli: &Cli) -> Result<Cache> {
+    Ok(match (cli.cache_dir.as_deref(), cli.account.as_deref()) {
+        (Some(root), Some(label)) => Cache::at(root.join("devin").join(label)),
+        (Some(root), None) => Cache::at(root.join("devin")),
+        (None, Some(label)) => Cache::for_vendor_account("devin", label)?,
+        (None, None) => Cache::for_vendor("devin")?,
+    })
+}
+
 async fn devin_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let cache = vendor_cache(cli, "devin")?;
-    let outcome =
-        match crate::devin::fetch::fetch_snapshot(&config.devin, &cache, DEFAULT_TTL).await {
-            Ok(outcome) => outcome,
-            Err(error) if error.is_transient() => {
-                return Ok(WaybarOutput::loading(cli.icon.as_deref()));
-            }
-            Err(error) => return Err(error),
-        };
+    let creds_path = config
+        .devin
+        .resolve_credentials_path(cli.account.as_deref())?;
+    let mut devin_cfg = config.devin.clone();
+    devin_cfg.credentials_path = Some(creds_path);
+    let cache = devin_cache(cli)?;
+    let outcome = match crate::devin::fetch::fetch_snapshot(&devin_cfg, &cache, DEFAULT_TTL).await {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
     let theme = theme_from_cli(cli);
     let snapshot = outcome.snapshot.clone();
     let vendor_outcome: VendorOutcome = outcome.into();
@@ -1656,6 +1672,8 @@ mod tests {
         assert!(validate_vendor_options(&cli, Vendor::Openai).is_ok());
         // Copilot joined the named-account vendors in #378.
         assert!(validate_vendor_options(&cli, Vendor::Copilot).is_ok());
+        // Devin named accounts select a credentials file via [[devin.accounts]].
+        assert!(validate_vendor_options(&cli, Vendor::Devin).is_ok());
     }
 
     #[test]
@@ -1668,7 +1686,7 @@ mod tests {
             .filter(|id| {
                 !matches!(
                     id,
-                    VendorId::Anthropic | VendorId::Openai | VendorId::Copilot
+                    VendorId::Anthropic | VendorId::Openai | VendorId::Copilot | VendorId::Devin
                 )
             })
             .collect();

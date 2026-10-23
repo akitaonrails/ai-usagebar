@@ -286,6 +286,11 @@ enabled = false            # disabled by default; enable after signing in with D
 # (the CLI's documented paths; macOS is untested here).
 # An explicit credentials_path needs no home directory to resolve.
 # credentials_path = "/home/you/.local/share/devin/credentials.toml"
+# show_default_account = true
+#
+# [[devin.accounts]]
+# label = "work"
+# credentials_path = "~/.zapdevin/devin/credentials.toml"
 ```
 
 Devin remains opt-in when its CLI login is present. First-run detection and
@@ -300,6 +305,22 @@ shown as fully used. Its optional
 the tested account; that currency interpretation is not a verified universal
 contract. The existing CLI token is read only for the status request and cache
 identity. ai-usagebar does not sign in, refresh, or rewrite Devin credentials.
+
+For more than one Devin CLI login, add `[[devin.accounts]]` — a label and that
+login's own `credentials.toml`:
+
+```toml
+[[devin.accounts]]
+label = "work"
+credentials_path = "~/.devin-work/devin/credentials.toml"
+```
+
+Create the second login with `XDG_DATA_HOME=~/.devin-work devin auth login` (or
+a shell function / alias wrapping `XDG_DATA_HOME`) and point `credentials_path`
+at the file it writes. Select it with `--account work`; each account keeps its own
+isolated cache under `~/.cache/ai-usagebar/devin/<label>`. The singular
+`credentials_path` remains the default account and appears alongside named
+accounts unless `show_default_account = false`.
 
 For more than one OpenRouter key, see the
 [OpenRouter account guide](openrouter-accounts.md). The existing singular

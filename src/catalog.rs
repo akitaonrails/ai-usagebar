@@ -238,7 +238,14 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         VendorId::ModelStudio => {
             any_exists(probes, [crate::modelstudio::config_path(&cfg.modelstudio)])
         }
-        VendorId::Devin => any_exists(probes, [crate::devin::credentials_path(&cfg.devin)]),
+        VendorId::Devin => {
+            any_exists(probes, [crate::devin::credentials_path(&cfg.devin)])
+                || cfg
+                    .devin
+                    .accounts
+                    .iter()
+                    .any(|a| (probes.exists)(&a.credentials_path))
+        }
         VendorId::MuseCode => any_exists(probes, [crate::muse::creds::path(&cfg.muse)]),
         // Nothing to check: handled by `needs_credential`, never reached.
         VendorId::Antigravity => true,
@@ -645,6 +652,19 @@ mod tests {
         let exists = |path: &Path| path == custom;
         let rows = statuses_with(&cfg, &probes(&|_| false, &exists, &|_| false));
         assert!(row(&rows, "openai").configured);
+    }
+
+    #[test]
+    fn a_devin_named_account_counts_as_configured() {
+        let mut cfg = Config::default();
+        let custom = PathBuf::from("/accounts/work/devin-credentials.toml");
+        cfg.devin.accounts.push(crate::config::DevinAccount {
+            label: "work".into(),
+            credentials_path: custom.clone(),
+        });
+        let exists = |path: &Path| path == custom;
+        let rows = statuses_with(&cfg, &probes(&|_| false, &exists, &|_| false));
+        assert!(row(&rows, "devin").configured);
     }
 
     /// A provider is only ever fetched when config has it on, and `enabled` is

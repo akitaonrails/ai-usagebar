@@ -1107,6 +1107,27 @@ ai-usagebar --vendor openai --account work
 Each account keeps its own cache and refreshes independently. Without
 `--account`, the default `codex_auth_path` login is used exactly as before.
 
+### Multiple Devin accounts
+
+Two Devin CLI subscriptions or logins, each in its own directory:
+
+```bash
+XDG_DATA_HOME=~/.devin-work devin auth login
+```
+
+```toml
+[[devin.accounts]]
+label = "work"
+credentials_path = "~/.devin-work/devin/credentials.toml"
+```
+
+```bash
+ai-usagebar --vendor devin --account work
+```
+
+Each account keeps its own isolated cache and refreshes independently. Without
+`--account`, the default `credentials_path` login is used.
+
 ### Multiple Claude accounts
 
 Named accounts appear as separate TUI tabs and report entries. The recommended

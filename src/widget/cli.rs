@@ -121,12 +121,12 @@ pub struct Cli {
     #[arg(long, value_name = "FILE")]
     pub creds_path: Option<std::path::PathBuf>,
 
-    /// Select a named Claude, Codex (OpenAI), or API-key vendor (Z.AI,
-    /// OpenRouter, DeepSeek, Kilo, Novita, Moonshot, Grok, MiniMax, OrcaRouter,
-    /// Lyceum) account from the matching `[[...accounts]]` config array. Without it,
-    /// the vendor's default account
-    /// and original cache path are unchanged. For Claude it conflicts with the
-    /// lower-level `--creds-path` because both select a credential source.
+    /// Select a named Claude, Codex (OpenAI), GitHub Copilot, Devin, or API-key
+    /// vendor (Z.AI, OpenRouter, DeepSeek, Kilo, Novita, Moonshot, Grok, MiniMax,
+    /// OrcaRouter, Lyceum) account from the matching `[[...accounts]]` config array.
+    /// Without it, the vendor's default account and original cache path are
+    /// unchanged. For Claude it conflicts with the lower-level `--creds-path`
+    /// because both select a credential source.
     #[arg(long, value_name = "LABEL", conflicts_with = "creds_path")]
     pub account: Option<String>,
 

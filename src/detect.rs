@@ -122,9 +122,16 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::MuseCode => crate::muse::creds::path(&config.muse)
             .map(|path| path.is_file())
             .unwrap_or(false),
-        VendorId::Devin => crate::devin::credentials_path(&config.devin)
-            .map(|path| path.is_file())
-            .unwrap_or(false),
+        VendorId::Devin => {
+            crate::devin::credentials_path(&config.devin)
+                .map(|path| path.is_file())
+                .unwrap_or(false)
+                || config
+                    .devin
+                    .accounts
+                    .iter()
+                    .any(|a| a.credentials_path.is_file())
+        }
     }
 }
 

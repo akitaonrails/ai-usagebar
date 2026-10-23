@@ -254,6 +254,13 @@ fn build_tabs(config: &Config, desktop_labels: &[String]) -> Vec<TabId> {
             for account in &config.copilot.accounts {
                 tabs.push(TabId::account_for(vendor, account.label.clone()));
             }
+        } else if vendor == VendorId::Devin {
+            if config.devin.show_default_account || config.devin.accounts.is_empty() {
+                tabs.push(TabId::vendor(vendor));
+            }
+            for account in &config.devin.accounts {
+                tabs.push(TabId::account_for(vendor, account.label.clone()));
+            }
         } else {
             tabs.push(TabId::vendor(vendor));
         }
@@ -922,9 +929,21 @@ async fn build_outcome(client: &Client, config: &Config, tab: &TabId) -> Result<
                 .into())
         }
         VendorId::Devin => {
-            let cache = crate::cache::Cache::for_vendor("devin")?;
+            let (creds_cfg, cache) = match tab.account.as_deref() {
+                Some(label) => {
+                    let creds_path = config.devin.resolve_credentials_path(Some(label))?;
+                    let mut acct_cfg = config.devin.clone();
+                    acct_cfg.credentials_path = Some(creds_path);
+                    let cache = crate::cache::Cache::for_vendor_account("devin", label)?;
+                    (acct_cfg, cache)
+                }
+                None => (
+                    config.devin.clone(),
+                    crate::cache::Cache::for_vendor("devin")?,
+                ),
+            };
             let outcome =
-                crate::devin::fetch::fetch_snapshot(&config.devin, &cache, DEFAULT_TTL).await?;
+                crate::devin::fetch::fetch_snapshot(&creds_cfg, &cache, DEFAULT_TTL).await?;
             Ok(outcome.into())
         }
         VendorId::Minimax => {
@@ -1467,6 +1486,63 @@ mod tests {
         assert_eq!(
             tabs_from_config(&empty),
             vec![TabId::vendor(VendorId::Copilot)]
+        );
+    }
+
+    #[test]
+    fn devin_named_accounts_get_their_own_tabs_and_can_hide_the_default() {
+        let base = || {
+            let mut config = Config::default();
+            config.anthropic.enabled = false;
+            config.openai.enabled = false;
+            config.zai.enabled = false;
+            config.openrouter.enabled = false;
+            config.commandcode.enabled = false;
+            config.devin.enabled = true;
+            config
+        };
+
+        // No accounts: exactly the single default tab.
+        assert_eq!(
+            tabs_from_config(&base()),
+            vec![TabId::vendor(VendorId::Devin)]
+        );
+
+        // Named accounts follow the default, in config order.
+        let mut config = base();
+        config.devin.accounts.push(crate::config::DevinAccount {
+            label: "work".into(),
+            credentials_path: "/tmp/devin-work/credentials.toml".into(),
+        });
+        config.devin.accounts.push(crate::config::DevinAccount {
+            label: "personal".into(),
+            credentials_path: "/tmp/devin-personal/credentials.toml".into(),
+        });
+        assert_eq!(
+            tabs_from_config(&config),
+            vec![
+                TabId::vendor(VendorId::Devin),
+                TabId::account_for(VendorId::Devin, "work"),
+                TabId::account_for(VendorId::Devin, "personal"),
+            ]
+        );
+
+        // Hiding the default tab leaves only the named ones.
+        config.devin.show_default_account = false;
+        assert_eq!(
+            tabs_from_config(&config),
+            vec![
+                TabId::account_for(VendorId::Devin, "work"),
+                TabId::account_for(VendorId::Devin, "personal"),
+            ]
+        );
+
+        // But never when it would leave Devin with no tab at all.
+        let mut empty = base();
+        empty.devin.show_default_account = false;
+        assert_eq!(
+            tabs_from_config(&empty),
+            vec![TabId::vendor(VendorId::Devin)]
         );
     }
 

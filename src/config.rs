@@ -1302,9 +1302,24 @@ pub struct MuseConfig {
     pub credentials_path: Option<PathBuf>,
 }
 
-/// Devin CLI quota — reuses its existing credentials file read-only. The
-/// provider is opt-in and stores only a path override in ai-usagebar config.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+/// One named Devin account.
+///
+/// ```toml
+/// [[devin.accounts]]
+/// label = "work"
+/// credentials_path = "~/.zapdevin/devin/credentials.toml"
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DevinAccount {
+    /// Stable name used on the CLI (`--account <label>`) and as the cache
+    /// subdir (`~/.cache/ai-usagebar/devin/<label>`).
+    pub label: String,
+    /// Devin CLI credentials file for this account.
+    pub credentials_path: PathBuf,
+}
+
+/// Devin CLI quota — reuses its existing credentials file read-only.
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DevinConfig {
     pub enabled: bool,
@@ -1312,6 +1327,44 @@ pub struct DevinConfig {
     /// `%APPDATA%\devin\credentials.toml` on Windows and
     /// `${XDG_DATA_HOME:-~/.local/share}/devin/credentials.toml` elsewhere.
     pub credentials_path: Option<PathBuf>,
+    /// Extra Devin logins, each its own `credentials.toml`.
+    #[serde(default)]
+    pub accounts: Vec<DevinAccount>,
+    /// Whether the default (unnamed) Devin login gets its own tab. Defaults to
+    /// `true`. Set `false` once every login is a named account. Ignored when
+    /// there are no named accounts, so Devin never loses its only tab.
+    pub show_default_account: bool,
+}
+
+impl Default for DevinConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            credentials_path: None,
+            accounts: Vec::new(),
+            show_default_account: true,
+        }
+    }
+}
+
+impl DevinConfig {
+    /// The credentials file for `label`, or the default path when `label` is
+    /// `None`.
+    pub fn resolve_credentials_path(&self, label: Option<&str>) -> Result<PathBuf> {
+        let Some(label) = label else {
+            return crate::devin::credentials_path(self);
+        };
+        self.accounts
+            .iter()
+            .find(|account| account.label == label)
+            .map(|account| account.credentials_path.clone())
+            .ok_or_else(|| {
+                AppError::Credentials(format!(
+                    "no Devin account named {label:?}. Add it under \
+                     [[devin.accounts]], or drop --account to use the default login."
+                ))
+            })
+    }
 }
 
 impl Default for OpenCodeGoConfig {
@@ -2432,6 +2485,9 @@ impl Config {
         for account in &mut self.openai.accounts {
             account.codex_auth_path = expand_tilde(&account.codex_auth_path);
         }
+        for account in &mut self.devin.accounts {
+            account.credentials_path = expand_tilde(&account.credentials_path);
+        }
         if let Some(paths) = &mut self.commandcode.auth_paths {
             for path in paths {
                 *path = expand_tilde(path);
@@ -2899,6 +2955,16 @@ impl Config {
             if !openai_labels.insert(&account.label) {
                 return Err(AppError::Credentials(format!(
                     "duplicate openai account label {:?}",
+                    account.label
+                )));
+            }
+        }
+        let mut devin_labels = HashSet::new();
+        for account in &self.devin.accounts {
+            validate_account_label_for("devin", &account.label)?;
+            if !devin_labels.insert(&account.label) {
+                return Err(AppError::Credentials(format!(
+                    "duplicate devin account label {:?}",
                     account.label
                 )));
             }
@@ -3837,6 +3903,106 @@ enabled = false
             "{}",
             path.display()
         );
+    }
+
+    #[test]
+    fn devin_without_accounts_resolves_the_singular_path() {
+        let explicit = DevinConfig {
+            credentials_path: Some(PathBuf::from("/tmp/devin/credentials.toml")),
+            ..DevinConfig::default()
+        };
+        assert_eq!(
+            explicit.resolve_credentials_path(None).unwrap(),
+            PathBuf::from("/tmp/devin/credentials.toml")
+        );
+    }
+
+    #[test]
+    fn devin_named_accounts_resolve_their_own_credentials_file() {
+        let config: Config = toml::from_str(
+            r#"
+            [devin]
+            credentials_path = "/tmp/personal/credentials.toml"
+            [[devin.accounts]]
+            label = "work"
+            credentials_path = "/tmp/work/credentials.toml"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.devin.resolve_credentials_path(Some("work")).unwrap(),
+            PathBuf::from("/tmp/work/credentials.toml")
+        );
+        assert_eq!(
+            config.devin.resolve_credentials_path(None).unwrap(),
+            PathBuf::from("/tmp/personal/credentials.toml")
+        );
+    }
+
+    #[test]
+    fn devin_named_accounts_reject_an_unregistered_label() {
+        let config = DevinConfig {
+            accounts: vec![crate::config::DevinAccount {
+                label: "work".into(),
+                credentials_path: PathBuf::from("/tmp/work/credentials.toml"),
+            }],
+            ..DevinConfig::default()
+        };
+        let err = config
+            .resolve_credentials_path(Some("nope"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("nope"), "{err}");
+        assert!(err.contains("[[devin.accounts]]"), "{err}");
+    }
+
+    #[test]
+    fn devin_account_credentials_paths_are_tilde_expanded_on_load() {
+        let f = write_toml(
+            r#"
+            [[devin.accounts]]
+            label = "work"
+            credentials_path = "~/.devin-work/credentials.toml"
+            "#,
+        );
+        let c = Config::load_from(f.path()).unwrap();
+        let home = crate::cache::home_dir().unwrap();
+        assert_eq!(
+            c.devin.accounts[0].credentials_path,
+            home.join(".devin-work/credentials.toml")
+        );
+    }
+
+    #[test]
+    fn devin_rejects_duplicate_account_labels() {
+        let f = write_toml(
+            r#"
+            [[devin.accounts]]
+            label = "work"
+            credentials_path = "/tmp/work1/credentials.toml"
+            [[devin.accounts]]
+            label = "work"
+            credentials_path = "/tmp/work2/credentials.toml"
+            "#,
+        );
+        let err = Config::load_from(f.path()).unwrap_err().to_string();
+        assert!(
+            err.contains("duplicate devin account label \"work\""),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn devin_rejects_invalid_account_labels() {
+        let f = write_toml(
+            r#"
+            [[devin.accounts]]
+            label = "../bad"
+            credentials_path = "/tmp/bad/credentials.toml"
+            "#,
+        );
+        assert!(Config::load_from(f.path()).is_err());
     }
 
     #[test]

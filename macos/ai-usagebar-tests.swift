@@ -1324,6 +1324,51 @@ func testCopilotAccounts() {
                 "Preferences includes every named Copilot account")
 }
 
+func testDevinAccounts() {
+    let config = """
+    [[devin.accounts]]
+    label = "work"
+    credentials_path = "~/.devin-work/credentials.toml"
+
+    [[devin.accounts]]
+    label = "personal"
+    credentials_path = "~/.devin-personal/credentials.toml"
+    """
+    let labels = accountLabels(inTOML: config, vendor: "devin")
+    assertEqual(labels, ["work", "personal"], "extracts the Devin account labels in file order")
+
+    func catalog(enabled: Bool, configured: Bool) -> [VendorCatalogEntry] {
+        [VendorCatalogEntry(id: "devin", name: "Devin", shortName: "dvn", kind: "local",
+            enabled: enabled, configured: configured, needsCredential: true, env: "",
+            login: "devin auth login")]
+    }
+    let ready = catalog(enabled: true, configured: true)
+
+    let entries = vendorEntries(active: "overview", catalog: ready,
+                                devinLabels: { labels })
+    assertEqual(entries.map { $0.id }, ["devin", "devin@work", "devin@personal"],
+                "selector lists the default and every named Devin account")
+    assertEqual(entries.map { $0.name }, ["Devin", "Devin · work", "Devin · personal"],
+                "account names come from the catalog name")
+
+    assertEqual(vendorEntries(active: "overview", catalog: ready, devinLabels: { [] })
+                    .map { $0.id },
+                ["devin"], "with no accounts the entry list is unchanged")
+
+    assertEqual(vendorEntries(active: "devin@work", catalog: catalog(enabled: false,
+                                                                    configured: true),
+                              devinLabels: { labels }).count,
+                0, "disabled Devin exposes no accounts")
+
+    assertEqual(vendorArgs(for: "devin@work"), ["--vendor", "devin", "--account", "work"],
+                "fetch selects the named credentials via Rust")
+
+    assertEqual(preferenceVendorIds(catalog: ready, claude: [], apiKeyAccounts: [:],
+                                    codex: [], copilot: [], devin: labels),
+                ["devin", "devin@work", "devin@personal"],
+                "Preferences includes every named Devin account")
+}
+
 func testCodexAccounts() {
     let config = """
     [[openai.accounts]]
@@ -1440,6 +1485,7 @@ func testDisabledVendorPreferences() {
 struct TestRunner {
     static func main() {
         testCopilotAccounts()
+        testDevinAccounts()
         testCodexAccounts()
         testApiKeyAccounts()
         testEnableVendorCommand()

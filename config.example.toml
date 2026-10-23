@@ -648,6 +648,11 @@ enabled = false
 [devin]
 enabled = false
 # credentials_path = "/home/you/.local/share/devin/credentials.toml"
+# show_default_account = true
+#
+# [[devin.accounts]]
+# label = "work"
+# credentials_path = "~/.zapdevin/devin/credentials.toml"
 
 # Muse Code subscription quota. Requires the official CLI's existing
 # file-based OAuth login and already-issued key; neither is rewritten.

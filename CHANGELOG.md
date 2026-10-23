@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Added
+
+- **Multiple Devin accounts via `[[devin.accounts]]`.** Named accounts appear
+  as individual tabs and cards across the TUI, reports, Waybar widget
+  (`--vendor devin --account <label>`), native Omarchy Quattro panels, and the
+  macOS menu bar. Each account runs with its own credentials file and isolated
+  cache directory (`devin/<label>/`), avoiding login-rebinding and lock
+  collisions.
+
 ## [1.43.0] — 2026-10-22
 
 ### Added
