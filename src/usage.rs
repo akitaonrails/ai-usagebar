@@ -475,6 +475,7 @@ pub enum VendorSnapshot {
     ModelStudio(ModelStudioSnapshot),
     Lyceum(LyceumSnapshot),
     Devin(DevinSnapshot),
+    Droid(DroidSnapshot),
     MuseCode(MuseSnapshot),
     /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
     /// that fetched it holds the `CustomProviderConfig`, and the cache
@@ -1155,6 +1156,29 @@ pub struct DevinSnapshot {
     /// is empirically observed for the tested account, not a universal API
     /// contract; only renderers perform that display conversion.
     pub overage_balance_micros: Option<i64>,
+}
+
+/// Factory `droid` CLI subscription quota. The limits endpoint reports a
+/// `usedPercent` per window in two buckets — Standard and Droid Core — each
+/// with a 5-hour, a weekly and a monthly window. A window the account has not
+/// started still reports a percentage with `windowEnd: null`, so it is present
+/// with no reset; an absent window stays absent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DroidSnapshot {
+    /// Standard quota, 5-hour window.
+    pub session: Option<UsageWindow>,
+    /// Standard quota, weekly (7d) window.
+    pub weekly: Option<UsageWindow>,
+    /// Standard quota, monthly (30d) window.
+    pub monthly: Option<UsageWindow>,
+    /// Droid Core quota, 5-hour window.
+    pub core_session: Option<UsageWindow>,
+    /// Droid Core quota, weekly window.
+    pub core_weekly: Option<UsageWindow>,
+    /// Droid Core quota, monthly window.
+    pub core_monthly: Option<UsageWindow>,
+    /// `extraUsageBalanceCents`, verbatim; renderers convert cents to dollars.
+    pub extra_balance_cents: Option<i64>,
 }
 
 /// Worst-of severity class for the Waybar bar text color. Mirrors

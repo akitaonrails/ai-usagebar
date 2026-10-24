@@ -125,6 +125,12 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::Devin => crate::devin::credentials_path(&config.devin)
             .map(|path| path.is_file())
             .unwrap_or(false),
+        // File-exists only: the keyring decrypt happens at fetch time, which
+        // reports the real failure honestly. Droid is opt-in, so this probe
+        // only feeds `detect` reporting, never auto-enable.
+        VendorId::Droid => crate::droid::keyring_path()
+            .map(|path| path.is_file())
+            .unwrap_or(false),
     }
 }
 
@@ -562,7 +568,10 @@ mod tests {
             assert!(plan.known.contains(&VendorId::Devin));
         }
         assert!(VendorId::all().iter().all(|vendor| vendor.auto_detectable()
-            != matches!(vendor, VendorId::Devin | VendorId::MuseCode)));
+            != matches!(
+                vendor,
+                VendorId::Devin | VendorId::MuseCode | VendorId::Droid
+            )));
     }
 
     #[test]

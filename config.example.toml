@@ -11,7 +11,7 @@
 # Valid: anthropic | anthropic_api | openai | copilot | zai | openrouter | deepseek
 #        | kimi | kilo | novita | moonshot | grok | supergrok | grokbot | antigravity
 #        | cursor | minimax | kiro | nous | opencode-go | commandcode | ollama
-#        | orcarouter | modelstudio | lyceum | devin | cline | muse-code | synthetic
+#        | orcarouter | modelstudio | lyceum | devin | cline | muse-code | droid | synthetic
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
 # open directly on a vendor's tab instead.
 # primary = "anthropic"
@@ -648,6 +648,19 @@ enabled = false
 [devin]
 enabled = false
 # credentials_path = "/home/you/.local/share/devin/credentials.toml"
+
+# Factory Droid (`droid` CLI) subscription quota. Reuses the login the
+# CLI already holds: the session in ~/.factory/auth.v2.keyring is opened
+# with the `Factory CLI/auth-encryption-key` Secret Service item, read-only.
+# Linux only — the other auth.v2.* stores and other platforms' storage are
+# not supported. ai-usagebar never refreshes or writes the token itself.
+# Near expiry it runs `droid doctor --checks auth` (no model call, at most
+# every 15 minutes), which makes the CLI renew its own login; with that off,
+# or when it fails, an expired login tells you to run `droid` once.
+[droid]
+enabled = false
+# cli_renewal = true
+# cli_path = "/home/you/.local/bin/droid"   # default: `droid` on PATH
 
 # Muse Code subscription quota. Requires the official CLI's existing
 # file-based OAuth login and already-issued key; neither is rewritten.

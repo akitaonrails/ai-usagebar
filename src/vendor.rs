@@ -193,6 +193,7 @@ pub enum VendorId {
     Cline,
     #[serde(rename = "muse-code")]
     MuseCode,
+    Droid,
 }
 
 /// How a provider authenticates. Drives what a frontend offers a provider that
@@ -253,6 +254,7 @@ impl VendorId {
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
             VendorId::Cline => "cline",
+            VendorId::Droid => "droid",
         }
     }
 
@@ -291,6 +293,7 @@ impl VendorId {
             VendorId::Lyceum => "Lyceum",
             VendorId::Devin => "Devin",
             VendorId::MuseCode => "Muse Code",
+            VendorId::Droid => "Droid",
         }
     }
 
@@ -332,6 +335,7 @@ impl VendorId {
             VendorId::Devin => VendorId::Devin.short_name(),
             VendorId::MuseCode => VendorId::MuseCode.short_name(),
             VendorId::Cline => VendorId::Cline.short_name(),
+            VendorId::Droid => VendorId::Droid.short_name(),
         }
     }
 
@@ -371,6 +375,7 @@ impl VendorId {
             VendorId::Devin => "dvn",
             VendorId::MuseCode => "msc",
             VendorId::Cline => "cln",
+            VendorId::Droid => "drd",
         }
     }
 
@@ -413,6 +418,7 @@ impl VendorId {
             VendorId::Lyceum => "lyceum",
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
+            VendorId::Droid => "droid",
         }
     }
 
@@ -452,7 +458,8 @@ impl VendorId {
             // CLI's login, Grok Bot reads the desktop app's own
             // OSCrypt-protected session file, and Model Studio reads the `bl`
             // CLI's own console-login file. Devin reads only the existing
-            // official CLI credential key in memory, without refresh/writeback.
+            // official CLI credential key in memory, without refresh/writeback;
+            // Droid does the same with the `droid` CLI's keyring-sealed login.
             VendorId::Supergrok
             | VendorId::Antigravity
             | VendorId::Cursor
@@ -460,7 +467,8 @@ impl VendorId {
             | VendorId::Grokbot
             | VendorId::ModelStudio
             | VendorId::Devin
-            | VendorId::MuseCode => AuthKind::Local,
+            | VendorId::MuseCode
+            | VendorId::Droid => AuthKind::Local,
         }
     }
 
@@ -502,7 +510,8 @@ impl VendorId {
             | VendorId::NousResearch
             | VendorId::ModelStudio
             | VendorId::Devin
-            | VendorId::MuseCode => "",
+            | VendorId::MuseCode
+            | VendorId::Droid => "",
         }
     }
 
@@ -539,6 +548,7 @@ impl VendorId {
                 "Install the official `bl` CLI and run `bl auth login --console`, then Refresh."
             }
             VendorId::Devin => "Sign in with the official Devin CLI, then Refresh.",
+            VendorId::Droid => "Sign in with `droid` on Linux, then Refresh.",
             VendorId::MuseCode => "Run `muse login` in a terminal, then Refresh.",
             // Key-only providers: there is nothing to log into, only a key to
             // put in the config. Ollama Cloud's key is minted at
@@ -574,6 +584,7 @@ impl VendorId {
             // The `bl` CLI's console login is the whole credential.
             VendorId::ModelStudio => "bl auth login --console",
             VendorId::Devin => "",
+            VendorId::Droid => "droid",
             VendorId::MuseCode => "muse login",
             // Kimi takes a key *or* the Kimi Code CLI's own OAuth login, which
             // is what a subscriber already has locally.
@@ -601,10 +612,10 @@ impl VendorId {
     }
 
     /// Whether first-run detection may enable this provider from local
-    /// credentials. Devin and Muse Code stay opt-in even when their CLI
-    /// credential files are discoverable.
+    /// credentials. Devin, Muse Code and Droid stay opt-in even when their
+    /// CLI credential files are discoverable.
     pub const fn auto_detectable(self) -> bool {
-        !matches!(self, VendorId::Devin | VendorId::MuseCode)
+        !matches!(self, VendorId::Devin | VendorId::MuseCode | VendorId::Droid)
     }
 
     pub const fn all() -> &'static [VendorId] {
@@ -639,6 +650,7 @@ impl VendorId {
             VendorId::Devin,
             VendorId::Cline,
             VendorId::MuseCode,
+            VendorId::Droid,
         ]
     }
 
@@ -775,6 +787,10 @@ mod tests {
         assert_eq!(VendorId::Devin.display_name(), "Devin");
         assert_eq!(VendorId::Devin.short_name(), "dvn");
         assert_eq!(VendorId::Devin.auth_kind(), AuthKind::Local);
+        assert_eq!(VendorId::Droid.slug(), "droid");
+        assert_eq!(VendorId::Droid.display_name(), "Droid");
+        assert_eq!(VendorId::Droid.short_name(), "drd");
+        assert_eq!(VendorId::Droid.auth_kind(), AuthKind::Local);
         assert_eq!(VendorId::Cline.slug(), "cline");
         assert_eq!(VendorId::Cline.display_name(), "Cline");
         assert_eq!(VendorId::Cline.short_name(), "cln");

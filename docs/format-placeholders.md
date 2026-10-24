@@ -38,6 +38,7 @@ the documented subscription limit; the reset is the API's `renewsAt` value.
 | Ollama Cloud | `oll` | SuperGrok | `sgk` |
 | Devin | `dvn` | Cline | `cln` |
 | Muse Code | `msc` | Synthetic | `syn` |
+| Droid | `drd` | | |
 
 The same codes ride the `ai-usagebar usage --json` report as each entry's
 `short_name`, so a native frontend can draw a Waybar-style provider tag without
@@ -485,6 +486,19 @@ values consistently mean more quota used. `{weekly_pct}` and
 `{session_pct}` and its related placeholders remain empty. The optional
 `{devin_overage_balance}` display uses the tested account's six-decimal USD
 interpretation; its currency contract is not verified for all accounts.
+
+## Droid (Factory)
+
+`{droid_headline_pct}` is the busiest active Standard window — the figure the
+`droid` CLI's `/limits` leads with. `{droid_session_*}`, `{droid_weekly_*}` and
+`{droid_monthly_*}` describe the Standard 5-hour, weekly and monthly windows;
+`{droid_core_session_*}`, `{droid_core_weekly_*}` and `{droid_core_monthly_*}`
+the Droid Core bucket. Every family also has `_reset`, `_elapsed`, `_pace` and
+`_pace_indicator` forms. A window the account has not started keeps its
+percentage with an empty reset; an absent one expands to empty strings.
+`{droid_extra_balance}` is `extraUsageBalanceCents` in dollars.
+`{session_pct}`/`{session_reset}`/`{session_elapsed}` and the `weekly_*`
+aliases map to the Standard 5-hour and weekly windows.
 
 ## Ollama Cloud
 

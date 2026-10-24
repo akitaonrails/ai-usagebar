@@ -604,6 +604,13 @@ assert.match(devinMark, /<path\s/);
 assert.match(devinMark, /<svg\b[^>]*\bfill="#ffffff"/);
 assert.doesNotMatch(devinMark, /\bfill="(?:#000(?:000)?|black)"/i);
 assert.doesNotMatch(devinMark, /<(?:script|image|foreignObject|use)\b|\bhref\s*=|\bon\w+\s*=/i);
+assert.equal(model.brandIconFile({id: 'droid'}), 'droid.svg');
+const droidMark = fs.readFileSync(new URL('./icons/droid.svg', import.meta.url), 'utf8');
+assert.match(droidMark, /viewBox="0 0 24 24"/);
+assert.match(droidMark, /<path\s/);
+assert.match(droidMark, /<svg\b[^>]*\bfill="#ffffff"/);
+assert.doesNotMatch(droidMark, /\bfill="(?:#000(?:000)?|black)"/i);
+assert.doesNotMatch(droidMark, /<(?:script|image|foreignObject|use)\b|\bhref\s*=|\bon\w+\s*=/i);
 assert.equal(model.brandIconFile({id: 'zai'}), 'zhipu.svg');
 assert.equal(model.brandIconFile({id: 'kimi'}), 'kimi.svg');
 assert.equal(model.brandIconFile({id: 'opencode-go'}), 'opencode.svg');
@@ -651,7 +658,7 @@ assert.equal(model.brandIconFile({id: 'anthropic', brand: 'openai'}), 'openai.sv
 const slugs = [
   'anthropic', 'anthropic_api', 'openai', 'copilot', 'zai', 'openrouter',
   'deepseek', 'kimi', 'kilo', 'novita', 'moonshot', 'grok', 'supergrok', 'grokbot',
-  'antigravity', 'cursor', 'minimax', 'kiro', 'nous', 'opencode-go', 'lyceum', 'commandcode', 'devin', 'ollama', 'muse-code'
+  'antigravity', 'cursor', 'minimax', 'kiro', 'nous', 'opencode-go', 'lyceum', 'commandcode', 'devin', 'ollama', 'muse-code', 'droid'
 ];
 const byMark = {};
 for (const slug of slugs) {

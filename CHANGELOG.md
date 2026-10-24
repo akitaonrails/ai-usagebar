@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Added
+
+- **Factory Droid subscription quota (`--vendor droid`, opt-in).** Reuses the
+  login the official `droid` CLI keeps on Linux: the `~/.factory/auth.v2.keyring`
+  session is opened with the `Factory CLI/auth-encryption-key` Secret Service
+  item, read-only — ai-usagebar never logs in, renews the JWT, or writes the
+  credential back. Near expiry it runs `droid doctor --checks auth` so the CLI
+  renews its own login (no model call, at most every 15 minutes;
+  `cli_renewal = false` turns it off), and an expired login it cannot renew is
+  reported as "run `droid` once". The bar shows the busiest active Standard
+  window and the panel lists the Standard 5-hour/weekly/monthly windows, the
+  Droid Core bucket, and the extra-usage balance. Other `auth.v2.*` stores and
+  non-Linux platforms fail closed. Enable with `[droid] enabled = true`.
+
 ## [1.43.0] — 2026-10-22
 
 ### Added

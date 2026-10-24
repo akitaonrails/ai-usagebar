@@ -178,6 +178,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Lyceum => lyceum_output(cli, &config).await,
         Vendor::ModelStudio => modelstudio_output(cli, &config).await,
         Vendor::Devin => devin_output(cli, &config).await,
+        Vendor::Droid => droid_output(cli, &config).await,
         Vendor::MuseCode => muse_output(cli, &config).await,
         Vendor::Cline => cline_output(cli, &config).await,
     }
@@ -1132,6 +1133,29 @@ async fn devin_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let vendor_outcome: VendorOutcome = outcome.into();
     let opts = RenderOpts::from_cli(cli);
     Ok(crate::devin::vendor::render(
+        &vendor_outcome,
+        &snapshot,
+        &theme,
+        &opts,
+        chrono::Utc::now(),
+    ))
+}
+
+async fn droid_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let cache = vendor_cache(cli, "droid")?;
+    let outcome =
+        match crate::droid::fetch::fetch_snapshot(&config.droid, &cache, DEFAULT_TTL).await {
+            Ok(outcome) => outcome,
+            Err(error) if error.is_transient() => {
+                return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+            }
+            Err(error) => return Err(error),
+        };
+    let theme = theme_from_cli(cli);
+    let snapshot = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    let opts = RenderOpts::from_cli(cli);
+    Ok(crate::droid::vendor::render(
         &vendor_outcome,
         &snapshot,
         &theme,

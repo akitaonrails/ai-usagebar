@@ -432,6 +432,7 @@ pub enum Vendor {
     Devin,
     MuseCode,
     Cline,
+    Droid,
 }
 
 impl Vendor {
@@ -467,6 +468,7 @@ impl Vendor {
             Vendor::Devin => crate::vendor::VendorId::Devin,
             Vendor::MuseCode => crate::vendor::VendorId::MuseCode,
             Vendor::Cline => crate::vendor::VendorId::Cline,
+            Vendor::Droid => crate::vendor::VendorId::Droid,
         }
     }
 }
@@ -569,6 +571,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Devin => Vendor::Devin,
         crate::vendor::VendorId::MuseCode => Vendor::MuseCode,
         crate::vendor::VendorId::Cline => Vendor::Cline,
+        crate::vendor::VendorId::Droid => Vendor::Droid,
     }
 }
 

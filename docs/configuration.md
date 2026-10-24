@@ -30,7 +30,7 @@ ai-usagebar-tui --config ./config.test.toml
 #                         # | zai | openrouter | deepseek | deepinfra | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
-#                         # | orcarouter | modelstudio | lyceum | devin | cline | muse-code
+#                         # | orcarouter | modelstudio | lyceum | devin | cline | muse-code | droid
 # Which vendors the Overview lists, in this order. The TUI tab bar leads with
 # the same list; enabled vendors left off it follow in the canonical order.
 # Omit for every enabled vendor. A repeated slug keeps its first occurrence;
@@ -286,7 +286,34 @@ enabled = false            # disabled by default; enable after signing in with D
 # (the CLI's documented paths; macOS is untested here).
 # An explicit credentials_path needs no home directory to resolve.
 # credentials_path = "/home/you/.local/share/devin/credentials.toml"
+
+[droid]
+enabled = false            # disabled by default; enable after signing in with `droid` on Linux
+# Factory Droid subscription quota. Reuses the login the official `droid` CLI
+# keeps on Linux: `~/.factory/auth.v2.keyring`, opened with the
+# `Factory CLI/auth-encryption-key` Secret Service item. ai-usagebar never
+# refreshes or writes the token itself. Other `auth.v2.*` stores and non-Linux
+# platforms are not supported.
+cli_renewal = true         # near expiry, let the `droid` CLI renew its own login
+# cli_path = "/home/you/.local/bin/droid"   # default: `droid` on PATH
 ```
+
+The CLI's access token lasts about a day and the CLI renews it only when it
+runs. With `cli_renewal` on, a login within 10 minutes of expiry makes
+ai-usagebar run `droid doctor --checks auth --timeout 10000` — the CLI's own
+auth check, which renews and saves the session through Factory's sign-in
+service without calling a model. It runs with stdin closed, its output
+discarded, provider secrets removed from its environment, a 30-second limit,
+and at most once every 15 minutes. If it is off or the CLI cannot renew
+(signed out, offline, `droid` not on the bar's `PATH`), the bar keeps the last
+reading and says to run `droid` once.
+
+Droid remains opt-in when its CLI login is present. First-run detection and
+`detect --all` do not enable it; set `enabled = true` explicitly to activate
+the provider. It reports the Standard quota's 5-hour, weekly and monthly
+windows plus the Droid Core bucket and the extra-usage balance. A window the
+account has not started reads "Not started", and a Droid Core bucket that was
+never used collapses to one "not used yet" row.
 
 Devin remains opt-in when its CLI login is present. First-run detection and
 `detect --all` do not enable it; set `enabled = true` explicitly to activate

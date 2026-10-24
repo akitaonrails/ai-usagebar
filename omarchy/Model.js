@@ -537,6 +537,8 @@ function brandFileFor(provider) {
       return "copilot.svg"
     case "devin":
       return "devin.svg"
+    case "droid":
+      return "droid.svg"
     case "zai":
       return "zhipu.svg"
     case "openrouter":

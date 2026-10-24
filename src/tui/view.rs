@@ -982,7 +982,7 @@ mod tests {
         app.settings = Some(settings_state());
         // Tall enough that the whole body (keys + provider switches +
         // notifications + save) fits inside the 88%-height modal.
-        let mut terminal = Terminal::new(TestBackend::new(160, 70)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(160, 72)).unwrap();
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
 
         let hit = app.hit.borrow();

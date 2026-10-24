@@ -324,6 +324,8 @@ mod tests {
             VendorId::Deepinfra => MacosMirror::Slot("dif_balance"),
             VendorId::Deepseek => MacosMirror::Slot("ds_balance"),
             VendorId::Devin => MacosMirror::Slot("devin_daily_pct"),
+            // Standard's 5-hour/weekly windows ride the generic slots.
+            VendorId::Droid => MacosMirror::Generic(CORE),
             VendorId::MuseCode => MacosMirror::Generic(CORE),
             VendorId::Grok => MacosMirror::Slot("grok_balance"),
             VendorId::Kilo => MacosMirror::Slot("kilo_balance"),

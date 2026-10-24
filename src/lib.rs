@@ -31,6 +31,7 @@ pub mod deepseek;
 pub mod detect;
 pub mod devin;
 pub mod display;
+pub mod droid;
 pub mod error;
 pub mod format;
 pub mod grok;

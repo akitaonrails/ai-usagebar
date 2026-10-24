@@ -21,6 +21,7 @@ back to its `short_name` (`cmc`).
 | `cursor.svg` | Cursor | Simple Icons `cursor` | CC0-1.0 |
 | `grok.svg` | Grok, SuperGrok | [lobe-icons](https://github.com/lobehub/lobe-icons) `grok` | [MIT](https://github.com/lobehub/lobe-icons/blob/master/LICENSE) |
 | `devin.svg` | Devin | [lobe-icons static SVG](https://github.com/lobehub/lobe-icons/blob/master/packages/static-svg/icons/devin.svg), path geometry preserved; fixed 24px dimensions for Qt | MIT; notice in [LICENSE-lobe-icons.txt](LICENSE-lobe-icons.txt) |
+| `droid.svg` | Droid | Official logomark from [factory.ai/favicon.svg](https://factory.ai/favicon.svg), background removed, path geometry preserved, scaled to a 24px box | Identification use; Factory brand |
 | `grokbot.svg` | Grok Bot | Official logomark from [x.ai/bot](https://x.ai/bot) / Grok Bot.app (head with eye cutouts) | Identification use; [xAI brand guidelines](https://x.ai/legal/brand-guidelines) |
 | `zhipu.svg` | Z.AI | Z.AI logomark shared with the Windows tray | Identification use; Z.AI brand |
 | `moonshot.svg` | Moonshot | lobe-icons `moonshot` | MIT |

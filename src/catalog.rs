@@ -239,6 +239,7 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
             any_exists(probes, [crate::modelstudio::config_path(&cfg.modelstudio)])
         }
         VendorId::Devin => any_exists(probes, [crate::devin::credentials_path(&cfg.devin)]),
+        VendorId::Droid => any_exists(probes, [crate::droid::keyring_path()]),
         VendorId::MuseCode => any_exists(probes, [crate::muse::creds::path(&cfg.muse)]),
         // Nothing to check: handled by `needs_credential`, never reached.
         VendorId::Antigravity => true,

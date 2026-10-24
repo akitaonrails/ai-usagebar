@@ -887,6 +887,43 @@ async fn ollama_live() {
 }
 
 #[tokio::test]
+#[ignore = "live API; run explicitly with an existing `droid` CLI login on Linux"]
+async fn droid_live() {
+    let config = ai_usagebar::config::DroidConfig {
+        enabled: true,
+        ..Default::default()
+    };
+    let Ok(keyring_path) = ai_usagebar::droid::keyring_path() else {
+        eprintln!("droid_live: no home directory — skipping");
+        return;
+    };
+    if !keyring_path.is_file() {
+        eprintln!("droid_live: no ~/.factory/auth.v2.keyring — skipping");
+        return;
+    }
+    let cache = xdg_cache_for("droid");
+    let out = ai_usagebar::droid::fetch::fetch_snapshot(&config, &cache, Duration::ZERO)
+        .await
+        .expect("Droid limits fetch should succeed using the existing CLI login");
+    for (name, window) in [
+        ("droid.session", out.snapshot.session.as_ref()),
+        ("droid.weekly", out.snapshot.weekly.as_ref()),
+        ("droid.monthly", out.snapshot.monthly.as_ref()),
+    ] {
+        if let Some(window) = window {
+            assert!((0..=100).contains(&window.utilization_pct), "{name}");
+        }
+    }
+    eprintln!(
+        "✅ droid — session={:?}, weekly={:?}, monthly={:?}, extra_balance_cents={:?}",
+        out.snapshot.session.as_ref().map(|w| w.utilization_pct),
+        out.snapshot.weekly.as_ref().map(|w| w.utilization_pct),
+        out.snapshot.monthly.as_ref().map(|w| w.utilization_pct),
+        out.snapshot.extra_balance_cents,
+    );
+}
+
+#[tokio::test]
 #[ignore = "live API; run explicitly with existing Devin CLI credentials"]
 async fn devin_live() {
     let mut config = ai_usagebar::config::DevinConfig::default();
