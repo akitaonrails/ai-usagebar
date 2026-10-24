@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Nous Research Waybar widget shows loading state on transient fetch errors.**
+  When a live account refresh fails with a transient transport error or HTTP
+  5xx status, the Waybar widget returns the standard loading state instead of
+  falling back to the warning indicator (#498).
+
 ## [1.43.0] — 2026-10-22
 
 ### Added

@@ -212,12 +212,23 @@ fn dispatch_is_eligible(cli: &Cli, config: &Config, vendor: Vendor) -> bool {
 
 /// Nous Research authenticates with the independent OAuth credential store.
 async fn nous_output(cli: &Cli) -> Result<WaybarOutput> {
-    let client = http_client()?;
     let store = crate::nous::credentials::CredentialStore::default();
     let endpoints = crate::nous::fetch::Endpoints::default();
-    let account =
-        crate::nous::fetch::fetch_account_with_refresh(&client, &store, &endpoints, Utc::now())
-            .await?;
+    nous_output_with(cli, &store, &endpoints).await
+}
+
+async fn nous_output_with(
+    cli: &Cli,
+    store: &crate::nous::credentials::CredentialStore,
+    endpoints: &crate::nous::fetch::Endpoints,
+) -> Result<WaybarOutput> {
+    let account = match fetch_nous_account(store, endpoints).await {
+        Ok(account) => account,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
     let snapshot = account.clone();
     // Nous keeps no cache of its own, so every read is a live one.
     let outcome =
@@ -230,6 +241,17 @@ async fn nous_output(cli: &Cli) -> Result<WaybarOutput> {
         &RenderOpts::from_cli(cli),
         Utc::now(),
     ))
+}
+
+async fn fetch_nous_account(
+    store: &crate::nous::credentials::CredentialStore,
+    endpoints: &crate::nous::fetch::Endpoints,
+) -> Result<crate::nous::AccountSnapshot> {
+    let client = http_client()?;
+    let account =
+        crate::nous::fetch::fetch_account_with_refresh(&client, store, endpoints, Utc::now())
+            .await?;
+    Ok(account)
 }
 
 async fn opencode_go_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
@@ -1718,5 +1740,53 @@ mod tests {
         cli.desktop = true;
         assert!(validate_vendor_options(&cli, Vendor::Openrouter).is_err());
         assert!(validate_vendor_options(&cli, Vendor::Anthropic).is_ok());
+    }
+
+    #[tokio::test]
+    async fn nous_output_returns_loading_on_transient_failure_and_propagates_auth_error() {
+        use crate::nous::credentials::{CredentialDocument, CredentialStore, NousCredential};
+        use crate::nous::fetch::Endpoints;
+
+        let mut server = mockito::Server::new_async().await;
+        let transient_mock = server
+            .mock("GET", "/account")
+            .with_status(503)
+            .create_async()
+            .await;
+        let root = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::at(root.path().join("config").join("credentials.json"));
+        store
+            .write(&CredentialDocument::new(Some(NousCredential {
+                client_id: "hermes-cli".into(),
+                access_token: "test-access-token".into(),
+                refresh_token: "test-refresh-token".into(),
+                expires_at: Utc::now() + chrono::Duration::hours(1),
+            })))
+            .unwrap();
+        let endpoints = Endpoints {
+            account: format!("{}/account", server.url()),
+            token: format!("{}/token", server.url()),
+        };
+        let mut cli = cli_default();
+        cli.icon = Some("N".into());
+
+        let res = nous_output_with(&cli, &store, &endpoints).await;
+        let out = res.unwrap();
+        let expected = WaybarOutput::loading(Some("N"));
+        assert_eq!(out.text, expected.text);
+        assert_eq!(out.tooltip, expected.tooltip);
+        assert_eq!(out.class, expected.class);
+        transient_mock.assert_async().await;
+
+        let auth_mock = server
+            .mock("GET", "/account")
+            .with_status(401)
+            .create_async()
+            .await;
+        let res = nous_output_with(&cli, &store, &endpoints).await;
+        let err = res.unwrap_err();
+        assert!(!err.is_transient(), "{err:?}");
+        assert_eq!(fallback(&err, &cli).text, "⚠");
+        auth_mock.assert_async().await;
     }
 }
