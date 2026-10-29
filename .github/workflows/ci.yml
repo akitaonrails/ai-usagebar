@@ -45,7 +45,7 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -99,7 +99,7 @@ jobs:
         with:
           toolchain: 1.90.0
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           key: msrv-1.90.0-${{ matrix.runner }}
 
@@ -153,7 +153,7 @@ jobs:
         with:
           components: clippy
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
 
       # Ships with `-D warnings` like Linux. Each platform compiles a different
       # slice of this crate — the macOS Keychain fallback, the Windows process
@@ -186,7 +186,7 @@ jobs:
         with:
           components: clippy
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
 
       # ring assembles its primitives on x86_64 and needs nasm; the runner does
       # not ship it on PATH. No-op if a future image already provides it.
