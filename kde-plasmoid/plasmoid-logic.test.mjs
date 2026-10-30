@@ -2,7 +2,7 @@
 // gnome-extension/marker-logic.test.mjs: node:assert/strict, no framework, no
 // dependency. Run with `node kde-plasmoid/plasmoid-logic.test.mjs`.
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync, readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {
     buildArgv, buildCommand, buildTuiCommand, cardFor, cardModel, cardState,
@@ -10,7 +10,7 @@ import {
     detailRows, entryFor, errorMessage, EXIT_KILLED, EXIT_TIMED_OUT, formatDuration,
     headline, isAlarming, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
     metricChoices, metricDetail, metricKeys, nextVendor, paletteFromTheme, panelCells,
-    parseHiddenMetrics, parseReport,
+    parseHiddenMetrics, parseReport, providerIconSlug,
     resetRemainingMs, safeText, severityColor, severityOf, SEVERITIES, shellQuote,
     shortLabel, shouldStartFetch, TIMEOUT_KILL_GRACE_SECS, timeoutSeconds,
     updatedAgeMs, vendorTabs, visibleEntry,
@@ -268,6 +268,24 @@ assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.active), [true, fals
 assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.failing), [false, false, true]);
 assert.equal(vendorTabs(report, 'gone').filter(t => t.active).length, 1,
     'an unknown id must still leave exactly one tab active');
+assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.iconSlug),
+    ['anthropic', 'openai', 'zai']);
+
+assert.equal(providerIconSlug('anthropic'), 'anthropic');
+assert.equal(providerIconSlug('anthropic@work'), 'anthropic');
+assert.equal(providerIconSlug('supergrok'), 'grok');
+assert.equal(providerIconSlug('unknown-vendor'), '');
+assert.equal(providerIconSlug(''), '');
+{
+    const iconsDir = at('./package/contents/icons/providers');
+    const files = new Set(readdirSync(iconsDir));
+    for (const slug of [
+        'anthropic', 'openai', 'cursor', 'copilot', 'zai', 'openrouter', 'grok',
+    ])
+        assert.ok(existsSync(at(`./package/contents/icons/providers/${slug}.svg`)),
+            `missing provider mark ${slug}.svg`);
+    assert.ok(files.has('muse-code.svg') && files.has('opencode-go.svg'));
+}
 
 // ---------------------------------------------------------------------------
 // projection
@@ -277,7 +295,9 @@ const openai = entryFor(report, 'openai');
 const zai = entryFor(report, 'zai');
 
 assert.equal(anthropic.label, 'Claude');
+assert.equal(anthropic.iconSlug, 'anthropic');
 assert.equal(anthropic.plan, 'Max 20x');
+assert.equal(cardFor(anthropic).iconSlug, 'anthropic');
 assert.equal(openai.stale, true);
 assert.equal(zai.status, 'error');
 

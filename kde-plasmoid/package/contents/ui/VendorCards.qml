@@ -86,6 +86,11 @@ ColumnLayout {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
 
+                    ProviderMark {
+                        slug: card.modelData.iconSlug || ""
+                        pixelSize: Kirigami.Units.iconSizes.small
+                    }
+
                     PlasmaComponents.Label {
                         Layout.fillWidth: true
                         elide: Text.ElideRight

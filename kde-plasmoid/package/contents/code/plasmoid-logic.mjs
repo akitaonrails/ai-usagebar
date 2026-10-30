@@ -174,6 +174,27 @@ function normalizeSection(raw) {
     };
 }
 
+// SVG filenames shipped under contents/icons/providers/ — keep in sync with
+// src/tray/marks.rs and windows/popover/src/icons/providers/.
+const PROVIDER_ICON_SLUGS = new Set([
+    'anthropic', 'anthropic_api', 'antigravity', 'copilot', 'cursor', 'deepseek',
+    'devin', 'grok', 'grokbot', 'kilo', 'kimi', 'kiro', 'minimax', 'moonshot',
+    'muse-code', 'nous', 'novita', 'ollama', 'openai', 'opencode-go',
+    'openrouter', 'zai',
+]);
+
+// Map report brand/id to a shipped SVG stem. Matches tray marks.rs: strip
+// @account, lowercase, SuperGrok → grok. Unknown vendors get "" so QML hides
+// the Image rather than requesting a missing file.
+export function providerIconSlug(idOrBrand) {
+    const raw = String(idOrBrand ?? '').trim();
+    if (!raw)
+        return '';
+    const base = raw.split('@')[0].toLowerCase();
+    const slug = base === 'supergrok' ? 'grok' : base;
+    return PROVIDER_ICON_SLUGS.has(slug) ? slug : '';
+}
+
 function normalizeEntry(raw) {
     if (!raw || typeof raw !== 'object')
         return null;
@@ -182,8 +203,11 @@ function normalizeEntry(raw) {
         return null;
     const sections = Array.isArray(raw.sections)
         ? raw.sections.slice(0, 128).map(normalizeSection) : [];
+    const brand = safeText(raw.brand, 60).trim() || id.split('@')[0];
     return {
         id: id,
+        brand: brand,
+        iconSlug: providerIconSlug(brand || id),
         // display_name is the canonical label the Rust core owns. Falling back
         // to the raw id keeps a slug visible rather than an empty tab.
         label: safeText(raw.display_name, 60).trim() || safeText(raw.name, 60).trim() || id,
@@ -247,6 +271,7 @@ export function vendorTabs(report, activeId) {
     return entries.map(e => ({
         id: e.id,
         label: e.label,
+        iconSlug: e.iconSlug || providerIconSlug(e.brand || e.id),
         active: !!active && e.id === active.id,
         failing: e.status === 'error' || !!e.error,
     }));
@@ -442,6 +467,8 @@ export function visibleEntry(entry, hiddenByProvider) {
     // QML V4 does not support object spread (...), so copy properties explicitly.
     return {
         id: entry.id,
+        brand: entry.brand,
+        iconSlug: entry.iconSlug,
         label: entry.label,
         plan: entry.plan,
         status: entry.status,
@@ -555,6 +582,7 @@ export function cardFor(entry) {
     return {
         id: entry.id,
         label: entry.label,
+        iconSlug: entry.iconSlug || providerIconSlug(entry.brand || entry.id),
         plan: entry.plan,
         state: state,
         // An errored vendor outranks whatever its last good numbers said.

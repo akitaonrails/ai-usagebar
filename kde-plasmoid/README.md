@@ -106,6 +106,10 @@ provider tab strip, a tinted surface when something is wrong, the usage rows
 under one heading, and a footer saying how old the data is. Only the structure
 is ported — every size comes from `Kirigami.Units` and every colour from
 `Kirigami.Theme`, so the widget follows whatever Plasma colour scheme you run.
+Provider tabs and cards use the same brand SVG marks as the Win/mac tray
+(`contents/icons/providers/`, shared catalog with `src/tray/marks.rs`).
+
+See [`FUTURE.md`](FUTURE.md) for tray features not yet ported to this plasmoid.
 
 Each row puts its label and value on one line, the bar under them, then the pace
 text and a live countdown. The countdown is recomputed locally from the
