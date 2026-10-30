@@ -50,7 +50,8 @@ cd kde-plasmoid
 # then: right-click the panel → "Add or Manage Widgets…" → search "AI Usage"
 ```
 
-It runs `sync-provider-icons.sh` (symlink to the tray SVG catalog under
+It runs `sync-provider-icons.sh` (KDE/Linux install helper only — not used on
+Windows/macOS or at widget runtime; symlinks the tray SVG catalog under
 `windows/popover/src/icons/providers/`), symlinks `package/` into
 `~/.local/share/plasma/plasmoids/`, and restarts plasmashell. Editing the QML
 only needs `systemctl --user restart plasma-plasmashell` afterwards.

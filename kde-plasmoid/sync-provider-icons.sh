@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# Point package/contents/icons/providers at the tray/popover SVG catalog
-# (windows/popover/src/icons/providers/) without copying bytes into git.
-# Dev install uses a symlink; `make install-plasmoid` copies into DESTDIR.
+# KDE / Linux Plasma only — not used on Windows or macOS.
+#
+# When: only while installing or packaging the plasmoid (called from
+# ./install.sh, or by hand before kpackagetool6). Never at widget runtime,
+# CLI install, or tray startup.
+#
+# What: point package/contents/icons/providers at the shared tray catalog
+# windows/popover/src/icons/providers/ via symlink so git does not duplicate
+# the SVGs. `make install-plasmoid` copies that same catalog into DESTDIR
+# instead of calling this script.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
