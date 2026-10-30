@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {
-    buildArgv, buildCommand, buildTuiCommand, cardFor, cardModel, cardState,
+    buildArgv, buildCommand, buildTuiCommand, tuiPathFromBinary, cardFor, cardModel, cardState,
     DEFAULT_BINARY, DEFAULT_TIMEOUT_SECS,
     detailRows, entryFor, errorMessage, EXIT_KILLED, EXIT_TIMED_OUT, formatDuration,
     headline, isAlarming, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
@@ -613,6 +613,22 @@ assert.ok(!/[;{}]/.test(cmd.replace(/'[^']*'/g, '')),
 assert.ok(buildTuiCommand('').includes('||'), 'the fallback chain needs its ||');
 assert.equal(buildTuiCommand('kitty -e'), `kitty -e 'ai-usagebar-tui'`);
 assert.equal(buildTuiCommand('  '), buildTuiCommand(''), 'blank means "no custom terminal"');
+
+// binaryPath already steers the usage fetch; the TUI must follow the same
+// directory when plasmashell's PATH does not include ~/.local/bin / cargo.
+assert.equal(tuiPathFromBinary(''), 'ai-usagebar-tui');
+assert.equal(tuiPathFromBinary('ai-usagebar'), 'ai-usagebar-tui');
+assert.equal(
+    tuiPathFromBinary('/home/you/.local/bin/ai-usagebar'),
+    '/home/you/.local/bin/ai-usagebar-tui');
+assert.equal(
+    tuiPathFromBinary('/opt/my apps/ai-usagebar'),
+    '/opt/my apps/ai-usagebar-tui',
+    'spaces in the install prefix stay in the sibling path');
+assert.ok(
+    buildTuiCommand('', tuiPathFromBinary('/home/you/.local/bin/ai-usagebar'))
+        .includes(`'/home/you/.local/bin/ai-usagebar-tui'`),
+    'konsole -e must receive the absolute TUI path, not a bare name');
 
 assert.equal(shouldStartFetch('', 'cmd'), true);
 assert.equal(shouldStartFetch('cmd', 'cmd'), false, 'never queue a second identical fetch');
