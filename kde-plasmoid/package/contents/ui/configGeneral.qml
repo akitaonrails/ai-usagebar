@@ -40,6 +40,26 @@ KCM.SimpleKCM {
     property var vendorList: []
     property bool probing: true
 
+    // Ring members first (in ring order), then the rest — so the up/down arrows
+    // move rows visually instead of only changing an invisible index.
+    readonly property var vendorChoices: {
+        const list = Array.from(page.vendorList || []);
+        const ring = Array.from(page.cfg_vendorRing || []);
+        const byId = {};
+        for (const entry of list)
+            byId[entry.id] = entry;
+        const ordered = [];
+        for (const id of ring) {
+            if (byId[id])
+                ordered.push(byId[id]);
+        }
+        for (const entry of list) {
+            if (ring.indexOf(entry.id) === -1)
+                ordered.push(entry);
+        }
+        return ordered;
+    }
+
     Plasma5Support.DataSource {
         id: prober
         engine: "executable"
@@ -81,6 +101,14 @@ KCM.SimpleKCM {
             page.cfg_vendor = next[0];
     }
 
+    function moveRing(id, delta) {
+        page.cfg_vendorRing = Logic.moveRing(page.cfg_vendorRing, id, delta);
+    }
+
+    function ringIndex(id) {
+        return Array.from(page.cfg_vendorRing || []).indexOf(id);
+    }
+
     function hiddenMap() {
         return Logic.parseHiddenMetrics(page.cfg_hiddenMetrics);
     }
@@ -104,7 +132,7 @@ KCM.SimpleKCM {
             Kirigami.FormData.label: i18n("Vendors:")
             text: page.probing
                 ? i18n("Checking which vendors are configured…")
-                : i18n("Tick the ones the scroll gesture cycles through. Status comes from your config.toml.")
+                : i18n("Tick the ones that appear as tabs (and that scroll cycles). Arrows set the tab order. Status comes from your config.toml.")
             font: Kirigami.Theme.smallFont
             opacity: 0.7
             wrapMode: Text.WordWrap
@@ -113,16 +141,18 @@ KCM.SimpleKCM {
         }
 
         Repeater {
-            model: page.vendorList
+            model: page.vendorChoices
 
             delegate: RowLayout {
                 id: choice
                 required property var modelData
+                readonly property int ringAt: page.ringIndex(choice.modelData.id)
+                readonly property bool inRing: choice.ringAt !== -1
                 spacing: Kirigami.Units.smallSpacing
 
                 QQC2.CheckBox {
                     text: choice.modelData.label || choice.modelData.id
-                    checked: page.ringHas(choice.modelData.id)
+                    checked: choice.inRing
                     onToggled: page.setRing(choice.modelData.id, checked)
                 }
 
@@ -140,8 +170,49 @@ KCM.SimpleKCM {
                     font: Kirigami.Theme.smallFont
                     elide: Text.ElideRight
                     Layout.fillWidth: true
-                    Layout.maximumWidth: Kirigami.Units.gridUnit * 20
+                    Layout.maximumWidth: Kirigami.Units.gridUnit * 18
                     textFormat: Text.PlainText
+                }
+
+                // Compact flat arrows kept in the layout for every row (opacity 0
+                // when unticked) so active rows don't grow taller than the rest.
+                QQC2.ToolButton {
+                    flat: true
+                    padding: 0
+                    icon.name: "go-up"
+                    icon.width: Kirigami.Units.iconSizes.small
+                    icon.height: Kirigami.Units.iconSizes.small
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                    Layout.alignment: Qt.AlignVCenter
+                    enabled: choice.inRing && choice.ringAt > 0
+                    opacity: choice.inRing ? 1 : 0
+                    text: i18n("Move up")
+                    display: QQC2.AbstractButton.IconOnly
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered && choice.inRing
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    onClicked: page.moveRing(choice.modelData.id, -1)
+                }
+
+                QQC2.ToolButton {
+                    flat: true
+                    padding: 0
+                    icon.name: "go-down"
+                    icon.width: Kirigami.Units.iconSizes.small
+                    icon.height: Kirigami.Units.iconSizes.small
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                    Layout.alignment: Qt.AlignVCenter
+                    enabled: choice.inRing
+                        && choice.ringAt < Array.from(page.cfg_vendorRing || []).length - 1
+                    opacity: choice.inRing ? 1 : 0
+                    text: i18n("Move down")
+                    display: QQC2.AbstractButton.IconOnly
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered && choice.inRing
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    onClicked: page.moveRing(choice.modelData.id, 1)
                 }
             }
         }

@@ -238,11 +238,53 @@ export function entryFor(report, vendorId) {
     return entries[0];
 }
 
-// The popup's tab strip. Every configured vendor is offered, including ones
-// currently failing — hiding an errored vendor is what made it impossible to
-// tell "not configured" from "configured and broken".
-export function vendorTabs(report, activeId) {
+// Entries the user opted into via the scroll/tab ring, in ring order. An empty
+// ring means "no filter" and keeps report order — that is what a fresh applet
+// sees before the settings page has been opened. A ring whose ids no longer
+// appear in the report (every vendor disabled in config.toml) falls back the
+// same way so the popup never goes blank.
+export function entriesForRing(report, ring) {
     const entries = (report && report.entries) || [];
+    const order = toRing(ring);
+    if (!order.length)
+        return entries.slice();
+    const byId = new Map();
+    for (const e of entries)
+        byId.set(e.id, e);
+    const chosen = [];
+    for (const id of order) {
+        const e = byId.get(id);
+        if (e)
+            chosen.push(e);
+    }
+    return chosen.length ? chosen : entries.slice();
+}
+
+// Reorder one id inside the ring. Returns a new array; out-of-range moves and
+// unknown ids are no-ops so the settings page can bind the arrows blindly.
+export function moveRing(ring, id, delta) {
+    const list = toRing(ring);
+    const wanted = String(id ?? '').trim();
+    const at = list.indexOf(wanted);
+    const step = Number(delta) || 0;
+    if (at === -1 || step === 0)
+        return list;
+    const to = at + step;
+    if (to < 0 || to >= list.length)
+        return list;
+    const next = list.slice();
+    next.splice(at, 1);
+    next.splice(to, 0, wanted);
+    return next;
+}
+
+// The popup's tab strip. Follows the user's ring for both membership and order
+// so unticked vendors stay out of the chips and the arrows in Configure set
+// the chip order. Failing vendors that ARE in the ring still show the ⚠ —
+// hiding them only when the user unticks them is what keeps "I don't use this"
+// distinct from "configured and broken".
+export function vendorTabs(report, activeId, ring) {
+    const entries = entriesForRing(report, ring);
     const active = entryFor(report, activeId);
     return entries.map(e => ({
         id: e.id,
@@ -577,8 +619,8 @@ export function cardFor(entry) {
     };
 }
 
-export function cardModel(report, hiddenByProvider) {
-    const entries = (report && report.entries) || [];
+export function cardModel(report, hiddenByProvider, ring) {
+    const entries = entriesForRing(report, ring);
     return entries.map(entry => cardFor(visibleEntry(entry, hiddenByProvider)));
 }
 
