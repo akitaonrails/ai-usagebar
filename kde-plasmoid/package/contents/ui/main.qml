@@ -40,15 +40,17 @@ PlasmoidItem {
         Plasmoid.configuration.hiddenMetrics)
     readonly property var entry: Logic.visibleEntry(
         Logic.entryFor(root.report, root.vendor), root.hiddenMetrics)
-    readonly property var tabs: Logic.vendorTabs(root.report, root.vendor)
+    readonly property var tabs: Logic.vendorTabs(
+        root.report, root.vendor, Plasmoid.configuration.vendorRing)
     readonly property var compactCells: Logic.panelCells(root.entry, {max: 2})
     readonly property bool showBars: Plasmoid.configuration.showBars
 
     // Read back as the integer index of the Enum choice (0 = tabs, 1 = cards).
     readonly property int viewMode: Plasmoid.configuration.viewMode
-    // The cards view projects every entry the report returned; it needs no
-    // per-vendor selection and never refetches when toggled.
-    readonly property var cards: Logic.cardModel(root.report, root.hiddenMetrics)
+    // Cards follow the same ring as the tab strip (membership + order), still
+    // projected from the one aggregate report — switching layout never refetches.
+    readonly property var cards: Logic.cardModel(
+        root.report, root.hiddenMetrics, Plasmoid.configuration.vendorRing)
 
     // The user's own five colours, defaulting to One Dark exactly as in
     // src/theme.rs, the GNOME extension and the macOS app.
@@ -262,8 +264,8 @@ PlasmoidItem {
     }
 
     function cycleVendor(delta) {
-        // Scroll walks the ring the user configured; the tab strip in the popup
-        // is the discoverable way to reach a vendor that is not in it.
+        // Scroll and the tab strip share the same ring: membership, order, and
+        // the vendor the compact panel shows after a flick.
         const next = Logic.nextVendor(Plasmoid.configuration.vendorRing, root.vendor, delta);
         root.selectVendor(next);
     }

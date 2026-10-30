@@ -74,19 +74,20 @@ never appears in the chooser.
 
 ## Configuration
 
-Right-click the widget → *Configure*. One page: which vendors are in the scroll
-ring (each listed with its plan or its error, straight from the report), the
-current vendor, per-provider metric switches, the popup layout, refresh
-interval, command timeout, left-click action, compact percentage and bar
-toggles, bar width, and the five severity colours. Hidden metrics leave both
-popup layouts, the compact panel, the tooltip, and headline/severity selection.
-The final visible metric is locked to keep the applet usable.
+Right-click the widget → *Configure*. One page: which vendors appear as tabs
+and in the scroll ring (each listed with its plan or its error, straight from
+the report — untick to hide; arrows reorder the chips), the current vendor,
+per-provider metric switches, the popup layout, refresh interval, command
+timeout, left-click action, compact percentage and bar toggles, bar width, and
+the five severity colours. Hidden metrics leave both popup layouts, the compact
+panel, the tooltip, and headline/severity selection. The final visible metric is
+locked to keep the applet usable.
 
 The GNOME prefs window has a second "Vendors" page listing per-vendor login
 status. There is no equivalent page here because the report already carries
-`status` and `error` for every configured vendor: the popup's tab strip marks a
-failing one where you are already looking, and the ring checkboxes show the same
-thing while you choose.
+`status` and `error` for every configured vendor: a failing vendor you left
+ticked still shows ⚠ on its tab, and the ring checkboxes show the same status
+while you choose.
 
 **Each panel instance keeps its own vendor.** One report covers every vendor, so
 switching is a client-side re-pick rather than a refetch, and the widget never
