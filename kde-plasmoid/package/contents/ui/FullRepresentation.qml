@@ -48,12 +48,22 @@ Item {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing
 
+            // Prefer the active vendor's brand mark (tray catalog). Fall back
+            // to the widget speedometer when the report has no known SVG.
+            ProviderMark {
+                slug: full.entry ? (full.entry.iconSlug || "") : ""
+                pixelSize: Kirigami.Units.iconSizes.medium
+                color: full.applet.statusIsUrgent()
+                    ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+            }
+
             // isMask is explicit on purpose: Kirigami only infers it for some
             // icons, and without it `color` is ignored and the full-colour
             // artwork renders — a little monitor with a chart painted on it,
             // which reads as a picture rather than as this widget's mark and
             // ignores the colour scheme entirely.
             Kirigami.Icon {
+                visible: !(full.entry && full.entry.iconSlug)
                 source: "speedometer-symbolic"
                 isMask: true
                 implicitWidth: Kirigami.Units.iconSizes.medium
@@ -127,13 +137,39 @@ Item {
                 model: full.applet.tabs
 
                 PlasmaComponents.Button {
+                    id: tabBtn
                     required property var modelData
 
-                    text: modelData.label
                     checkable: true
                     checked: modelData.active
-                    icon.name: modelData.failing ? "dialog-warning" : ""
+                    // Accessible name; visual label lives in contentItem with the mark.
+                    text: modelData.label
+                    Accessible.name: modelData.label
                     onClicked: full.applet.selectVendor(modelData.id)
+
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.smallSpacing
+
+                        ProviderMark {
+                            slug: tabBtn.modelData.iconSlug || ""
+                            pixelSize: Kirigami.Units.iconSizes.small
+                        }
+
+                        Kirigami.Icon {
+                            visible: tabBtn.modelData.failing
+                            source: "dialog-warning"
+                            implicitWidth: Kirigami.Units.iconSizes.small
+                            implicitHeight: Kirigami.Units.iconSizes.small
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                            Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                        }
+
+                        PlasmaComponents.Label {
+                            text: tabBtn.modelData.label
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                        }
+                    }
                 }
             }
         }

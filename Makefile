@@ -39,9 +39,20 @@ uninstall:
 # A tree walk rather than the explicit `install -Dm644` lines used above: the
 # CLI's five artifacts are stable, but a plasmoid grows, and a .qml missing from
 # an explicit list fails at *runtime* in plasmashell, which no test here catches.
+#
+# Provider brand SVGs are NOT stored under kde-plasmoid/ — they are the tray
+# catalog at windows/popover/src/icons/providers/. Copy them into the install
+# tree explicitly (find would miss a working-tree symlink and we refuse to
+# duplicate the files in git).
+PROVIDER_ICONS_SRC = windows/popover/src/icons/providers
+
 install-plasmoid:
 	cd kde-plasmoid/package && find metadata.json contents -type f \
+	  ! -path 'contents/icons/providers/*' \
 	  -exec install -Dm644 -- {} "$(PLASMOID_DIR)/{}" \;
+	install -d "$(PLASMOID_DIR)/contents/icons/providers"
+	install -Dm644 -- $(PROVIDER_ICONS_SRC)/*.svg \
+	  "$(PLASMOID_DIR)/contents/icons/providers/"
 
 uninstall-plasmoid:
 	rm -rf -- "$(PLASMOID_DIR)"
