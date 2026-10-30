@@ -5,13 +5,18 @@
 set -euo pipefail
 
 ID="io.github.akitaonrails.ai-usagebar"
-SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/package"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="$HERE/package"
 DEST="$HOME/.local/share/plasma/plasmoids/$ID"
 
 if [ ! -f "$SRC/metadata.json" ]; then
     echo "✗ $SRC/metadata.json not found — run this from a checkout." >&2
     exit 1
 fi
+
+# Brand marks live in windows/popover/… — symlink them into the package so the
+# git tree does not ship a second copy (see sync-provider-icons.sh).
+"$HERE/sync-provider-icons.sh"
 
 echo "› Linking $DEST → $SRC"
 mkdir -p "$(dirname "$DEST")"

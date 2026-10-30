@@ -174,8 +174,9 @@ function normalizeSection(raw) {
     };
 }
 
-// SVG filenames shipped under contents/icons/providers/ — keep in sync with
-// src/tray/marks.rs and windows/popover/src/icons/providers/.
+// SVG stems in windows/popover/src/icons/providers/ (tray/popover catalog;
+// plasmoid install symlinks or copies that directory — keep in sync with
+// src/tray/marks.rs).
 const PROVIDER_ICON_SLUGS = new Set([
     'anthropic', 'anthropic_api', 'antigravity', 'copilot', 'cursor', 'deepseek',
     'devin', 'grok', 'grokbot', 'kilo', 'kimi', 'kiro', 'minimax', 'moonshot',

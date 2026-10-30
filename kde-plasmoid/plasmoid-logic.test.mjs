@@ -277,12 +277,13 @@ assert.equal(providerIconSlug('supergrok'), 'grok');
 assert.equal(providerIconSlug('unknown-vendor'), '');
 assert.equal(providerIconSlug(''), '');
 {
-    const iconsDir = at('./package/contents/icons/providers');
+    // Canonical catalog (tray/popover) — plasmoid install links or copies from here.
+    const iconsDir = at('../windows/popover/src/icons/providers');
     const files = new Set(readdirSync(iconsDir));
     for (const slug of [
         'anthropic', 'openai', 'cursor', 'copilot', 'zai', 'openrouter', 'grok',
     ])
-        assert.ok(existsSync(at(`./package/contents/icons/providers/${slug}.svg`)),
+        assert.ok(existsSync(at(`../windows/popover/src/icons/providers/${slug}.svg`)),
             `missing provider mark ${slug}.svg`);
     assert.ok(files.has('muse-code.svg') && files.has('opencode-go.svg'));
 }

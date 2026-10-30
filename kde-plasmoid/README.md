@@ -50,13 +50,15 @@ cd kde-plasmoid
 # then: right-click the panel → "Add or Manage Widgets…" → search "AI Usage"
 ```
 
-It symlinks `package/` into `~/.local/share/plasma/plasmoids/` and restarts
-plasmashell, so editing the QML only needs
-`systemctl --user restart plasma-plasmashell` afterwards.
+It runs `sync-provider-icons.sh` (symlink to the tray SVG catalog under
+`windows/popover/src/icons/providers/`), symlinks `package/` into
+`~/.local/share/plasma/plasmoids/`, and restarts plasmashell. Editing the QML
+only needs `systemctl --user restart plasma-plasmashell` afterwards.
 
 The copy-based alternative, if you prefer it:
 
 ```sh
+./sync-provider-icons.sh
 kpackagetool6 --type Plasma/Applet --install ./package
 kpackagetool6 --type Plasma/Applet --upgrade ./package   # on re-runs
 ```
@@ -107,9 +109,10 @@ under one heading, and a footer saying how old the data is. Only the structure
 is ported — every size comes from `Kirigami.Units` and every colour from
 `Kirigami.Theme`, so the widget follows whatever Plasma colour scheme you run.
 Provider tabs and cards use the same brand SVG marks as the Win/mac tray
-(`contents/icons/providers/`, shared catalog with `src/tray/marks.rs`).
-
-See [`FUTURE.md`](FUTURE.md) for tray features not yet ported to this plasmoid.
+(`windows/popover/src/icons/providers/`, also embedded by `src/tray/marks.rs`).
+Dev install symlinks that catalog into the package; `make install-plasmoid`
+copies the SVGs into the install prefix so the plasmoid tree does not duplicate
+them in git.
 
 Each row puts its label and value on one line, the bar under them, then the pace
 text and a live countdown. The countdown is recomputed locally from the

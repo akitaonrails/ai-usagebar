@@ -1,6 +1,6 @@
-// Brand mark from contents/icons/providers/<slug>.svg — same catalog as the
-// Win/mac tray (src/tray/marks.rs). isMask + Theme.textColor keeps the glyph
-// readable on light and dark Plasma schemes; currentColor SVGs mask cleanly.
+// Brand mark from contents/icons/providers/<slug>.svg (symlink/copy of
+// windows/popover/src/icons/providers — see sync-provider-icons.sh). isMask +
+// Theme.textColor keeps the glyph readable on light and dark Plasma schemes.
 import QtQuick
 import QtQuick.Layouts
 import org.kde.kirigami as Kirigami
