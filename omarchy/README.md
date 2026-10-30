@@ -60,7 +60,10 @@ omarchy plugin remove akitaonrails.ai-usagebar
   yellow → orange → red from the Omarchy theme as usage climbs, and is off by
   default. Its **Show provider logos** toggle, on by default, draws each
   provider's own mark; off, the bar and the panel hero use the generic robot
-  icon of the bar before the marks. Its **Top bar usage window**
+  icon of the bar before the marks. Its **Show provider names on tabs** toggle,
+  off by default, adds each provider's name beside its logo in the panel tabs;
+  off, the tabs show logos only and the name on hover, and with logos off the
+  names always show. Its **Top bar usage window**
   dropdown pins the bar to auto (highest), 5-hour, weekly, or monthly; the
   tooltip and panel hero echo the pinned value while the panel rows keep
   showing every window and alert state still follows the highest percent of the
@@ -182,6 +185,10 @@ omarchy bar set akitaonrails.ai-usagebar showAs left
 # Provider logos in the top bar and panel. Off restores the generic robot icon
 # (and the short code on each chip with showAll). The default is true.
 omarchy bar set akitaonrails.ai-usagebar brandIcons false --json
+
+# Provider names beside the logos in the panel tabs. The default is false
+# (logos only, the name on hover); without logos the names always show.
+omarchy bar set akitaonrails.ai-usagebar tabNames true --json
 
 # Panel and settings language: auto (follow the system locale, the default),
 # en, ru, pt-BR, ko, or es.
@@ -348,7 +355,12 @@ make omarchy-visual-test
 tests in `omarchy/priority.test.mjs` and the notice tests in
 `omarchy/notice.test.mjs`. The visual test renders the real settings component,
 the usage view's notices and the priority cards (English and pt-BR) in dark and light fixture
-themes through Quickshell's offscreen backend. It does not open a window or
+themes through Quickshell's offscreen backend. It also renders the whole panel
+(`panel-*.png`): tabs, header, meters near and at the limit, a balance and the
+priorities view, from a synthetic report that `visual-tests/fake-ai-usagebar`
+serves, with a stand-in for the layer-shell window. The brand marks need an
+OpenGL context; without a GPU, set `AI_USAGEBAR_VISUAL_BACKEND=software` and the
+logos render blank. It does not open a window, run the real `ai-usagebar` or
 read credentials. Review the generated PNGs under
 `target/omarchy-visual-scenarios/`; they are local test artifacts, not golden
 pixel snapshots.

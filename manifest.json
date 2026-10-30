@@ -29,6 +29,7 @@
       "refreshIntervalSec": 300,
       "showValue": true,
       "brandIcons": true,
+      "tabNames": false,
       "showProvider": false,
       "colorCodeUsage": false,
       "showAll": false,
@@ -80,6 +81,13 @@
         "label": "Show provider logos",
         "description": "Draw each provider's own mark in the top bar and panel. Off restores the generic icon the bar used before the marks: one robot for a single provider, and the provider's short code on each chip when Show all providers is on. On by default.",
         "defaultValue": true
+      },
+      {
+        "key": "tabNames",
+        "type": "boolean",
+        "label": "Show provider names on tabs",
+        "description": "Add each provider's name beside its logo in the panel tabs. Off shows logos only, with the name on hover. Always on when provider logos are off.",
+        "defaultValue": false
       },
       {
         "key": "showProvider",

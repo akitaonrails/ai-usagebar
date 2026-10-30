@@ -356,7 +356,7 @@ assert.match(panelSource, /setting\("showProvider",\s*false\)/);
 assert.match(panelSource, /setting\("showAll",\s*false\)/);
 assert.match(panelSource, /setting\("colorCodeUsage",\s*false\)/);
 assert.match(panelSource, /Model\.normalizeBarWindow\(setting\("barWindow",\s*"auto"\)\)/);
-// The pin covers the bar value and its echoes (hero detail, tooltip):
+// The pin covers the bar value and its echoes (hero value, tooltip):
 // summary (bar label/chips) is pinned, while panel rows keep every pool.
 // Cursor's bar urgent state follows the pools still on the chip.
 assert.match(panelSource, /Model\.headline\(shapedEntry,\s*barWindow,\s*showAs\)/);
@@ -490,7 +490,10 @@ assert.match(panelSource, /I18n\.displayLabel\(/);
 assert.match(panelSource, /I18n\.displayDetail\(/);
 assert.match(panelSource, /I18n\.tipPoolLine\(/);
 // Settings hero: long copy wraps under the hero, not inside the detail pill.
-assert.match(panelSource, /detail:\s*root\.settingsOpen\s*\|\|\s*root\.priorityOpen\s*\?\s*""/);
+// The usage headline is no pill either: it sits beside the header actions,
+// and neither settings nor priorities show it.
+assert.doesNotMatch(panelSource, /PanelHero \{[^}]*?\n\s*detail:/);
+assert.match(panelSource, /readonly property string heroValue: !settingsOpen && !priorityOpen && entry && entry\.error === ""/);
 assert.match(panelSource, /root\.tr\("hero\.settings_detail"\)/);
 assert.match(panelSource, /I18n\.displayLabel\(root\.uiLocale,\s*detailRow\.row\.label\)/);
 assert.match(settingsViewSource, /I18n\.displaySecretLabel\(/);
@@ -2199,13 +2202,17 @@ assert.equal(model.cursorPoolOf(null), '');
   assert.match(panel, /persistWidgetSettings\(\{\s*brandIcons:\s*next\s*\}\)/);
   assert.match(panel, /brand: root\.priorityOpen \|\| root\.settingsOpen \|\| !root\.brandIcons \? "" : Model\.brandIconFile\(root\.entry\)/);
   assert.match(settingsForm, /signal brandIconsRequested\(bool enabled\)/);
-  const displayKeys = ['showValue', 'brandIcons', 'showProvider', 'colorCodeUsage', 'showAll'];
-  assert.deepEqual(displayKeys.map(key => manifest.barWidget.defaults[key]), [true, true, false, false, false]);
+  const displayKeys = ['showValue', 'brandIcons', 'tabNames', 'showProvider', 'colorCodeUsage', 'showAll'];
+  assert.deepEqual(displayKeys.map(key => manifest.barWidget.defaults[key]), [true, true, false, false, false, false]);
   assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.key), displayKeys);
-  assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.defaultValue), [true, true, false, false, false]);
+  assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.defaultValue), [true, true, false, false, false, false]);
   assert.deepEqual(
     Array.from(settingsForm.matchAll(/label: root\.tr\("toggle\.(\w+)"\)/g), match => match[1]),
-    ['show_value', 'brand_icons', 'show_provider', 'color_code', 'show_all']);
+    ['show_value', 'brand_icons', 'tab_names', 'show_provider', 'color_code', 'show_all']);
+  assert.match(settingsForm, /signal tabNamesRequested\(bool enabled\)/);
+  // Without logos the names always show, so the switch is locked on.
+  assert.match(settingsForm, /checked: root\.tabNames \|\| !root\.brandIcons\s*foreground[\s\S]*?enabled: root\.brandIcons && !root\.saving/);
+  assert.match(panel, /persistWidgetSettings\(\{\s*tabNames:\s*next\s*\}\)/);
   assert.equal(manifest.barWidget.defaults.brandIcons, true);
   assert.equal(manifest.barWidget.schema.find(row => row.key === 'brandIcons').type, 'boolean');
   assert.equal(manifest.barWidget.defaults.showAs, 'used');
@@ -2309,7 +2316,7 @@ assert.match(panelSource, /NoticeCard \{\s*readonly property var current: root\.
 assert.match(panelSource, /bar\.run\("printf %s " \+ Util\.shellQuote\(String\(text\)\) \+ " \| wl-copy"\)/);
 assert.doesNotMatch(fs.readFileSync(new URL('./NoticeCard.qml', import.meta.url), 'utf8'), /bar\.run|execDetached|Process/);
 // An error shows the translated badge, never the untranslated "Error" pill.
-assert.match(panelSource, /root\.entry && root\.entry\.error === "" && root\.summary\.text !== "Ready"/);
+assert.match(panelSource, /entry && entry\.error === ""\s*&& summary\.text !== "Ready"/);
 assert.match(panelSource, /root\.tr\("notice\.short\." \+ errorBadge\.notice\.category\)/);
 // Generic window names follow the interface language; English keeps them.
 assert.equal(i18n.displayLabel('pt-BR', 'Weekly (7d)'), i18n.t('pt-BR', 'metrics.window_weekly'));
@@ -2374,5 +2381,41 @@ assert.match(barWidgetSource, /Component\.onDestruction: syncPriorityTarget\(nul
 // A provider chip pressed while priorities show switches to its usage view
 // instead of closing the panel.
 assert.match(panelSource, /if \(opened && i === entryIndex && !priorityOpen\) \{\s*close\(\)/);
+
+// Panel look. Provider tabs share one width, show the brand mark beside the
+// name, and balance their rows (3 + 2 rather than 4 + 1). Logos only by
+// default, names one switch away, and never an empty tab without logos.
+assert.match(panelSource, /width: providerList\.tabWidth/);
+assert.match(panelSource, /var rows = Math\.ceil\(n \/ Math\.min\(n, fit\)\)/);
+assert.match(panelSource, /brand: Model\.brandIconFile\(providerTab\.modelData\)/);
+assert.match(panelSource, /Accessible\.name: Model\.providerName\(modelData\)/);
+assert.equal(manifest.barWidget.defaults.tabNames, false);
+assert.match(panelSource, /readonly property bool tabNames: tabNamesSetting \|\| !brandIcons/);
+assert.match(panelSource, /tooltipText: root\.tabNames \? "" : Model\.providerName\(modelData\)/);
+for (const locale of ['en', 'ru', 'pt-BR', 'ko', 'es'])
+  for (const key of ['toggle.tab_names', 'toggle.tab_names_desc'])
+    assert.notEqual(i18n.t(locale, key), key, `${locale} ${key}`);
+// The headline value sits beside the header actions, figure first and the %
+// lighter on the same baseline.
+assert.match(panelSource, /readonly property var parts: Model\.valueParts\(root\.heroValue\)/);
+assert.match(panelSource, /anchors\.baseline: heroFigure\.baseline/);
+// One glyph per view in the switcher; the alert replaces the list glyph.
+assert.match(panelSource, /value: "usage", label: root\.tr\("view\.usage"\), icon: "󰓅"/);
+assert.match(panelSource, /icon: root\.urgentPriority \? "󰀦" : "󰉻"/);
+// Metric values: figure emphasised, % and surrounding words secondary, all on
+// the label's baseline. Locale word order is preserved.
+{
+  const parts = value => JSON.parse(JSON.stringify(model.valueParts(value)));
+  assert.deepEqual(parts('47%'), {prefix: '', figure: '47', unit: '%', suffix: ''});
+  assert.deepEqual(parts('53% left'), {prefix: '', figure: '53', unit: '%', suffix: ' left'});
+  assert.deepEqual(parts('осталось 53%'), {prefix: 'осталось ', figure: '53', unit: '%', suffix: ''});
+  assert.deepEqual(parts('12.5%'), {prefix: '', figure: '12.5', unit: '%', suffix: ''});
+  assert.deepEqual(parts('$75.00'), {prefix: '', figure: '$75.00', unit: '', suffix: ''});
+  assert.deepEqual(parts(null), {prefix: '', figure: '', unit: '', suffix: ''});
+  assert.match(panelSource, /anchors\.baseline: metricValue\.baseline/);
+  assert.match(panelSource, /baselineOffset: valueFigure\.y \+ valueFigure\.baselineOffset/);
+  assert.match(panelSource, /readonly property var valueParts: Model\.valueParts\(valueText\)/);
+  assert.match(panelSource, /Accessible\.name: metricRow\.valueText/);
+}
 
 console.log('Omarchy model tests passed');
