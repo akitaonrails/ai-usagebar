@@ -70,7 +70,6 @@ export function ProviderList({ cards, error, headerActions, layout, onOpen, onRe
     <div className="flex flex-col gap-[var(--header-card-gap)]">
       <div className="flex items-center justify-between gap-2">
         <div className="section-title flex items-center gap-[var(--gap-inline)]">
-          <span>{m.providers()}</span>
           <Hint content={m.all_providers_hint()}>
             <span tabIndex={0} role="img" aria-label={m.all_providers_hint()}>
               <MdiHelpCircleOutline className="size-[var(--icon-help)] shrink-0 text-label-2" />

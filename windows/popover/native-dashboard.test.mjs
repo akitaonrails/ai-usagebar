@@ -344,6 +344,9 @@ try {
   assert.match(providers, /Redefinir toda a personalização/);
   assert.match(providers, /Claude/);
   assert.doesNotMatch(providers, /Iniciar ao entrar/);
+  // The tab keeps its "Provedores" label and the list's own title is gone, so
+  // the visible word appears exactly once (the tab), not twice.
+  assert.equal(providers.split('>Provedores<').length - 1, 1);
   // The Providers header actions are the uniform icon buttons: reset (only
   // with cards) and Detect on its right, both with tooltips.
   iconButtonTag(providers, 'Redefinir toda a personalização');
@@ -534,11 +537,12 @@ try {
   assert.match(inertTag, /aria-hidden="true"/);
   assert.match(inertTag, /class="[^"]*icon-btn[^"]*"/);
   assert.doesNotMatch(inertTag, /data-slot/);
-  // The hint is no longer a text line: it rides the help icon beside the
-  // "Providers" title — focusable, labelled with the hint itself, tooltip
-  // trigger — and "Detect Providers" is out of the list (the screen passes it
-  // as a header action). An error stays the red text under the list; without
-  // one there is no hint line at all.
+  // The hint is no longer a text line: it rides the list's help icon in the
+  // header — focusable, labelled with the hint itself, tooltip trigger — and
+  // the group no longer carries a visible "Providers" title of its own.
+  // "Detect Providers" is out of the list (the screen passes it as a header
+  // action). An error stays the red text under the list; without one there is
+  // no hint line at all.
   const providersHint = 'Turn a provider on to fetch it. Changes are saved to config.toml.';
   assert.equal(listMarkup.split(providersHint).length - 1, 1);
   const helpTag = (listMarkup.match(/<span[^>]*>/g) ?? []).find((tag) => tag.includes(`aria-label="${providersHint}"`));
@@ -547,6 +551,9 @@ try {
   assert.match(helpTag, /role="img"/);
   assert.match(helpTag, /data-slot="tooltip-trigger"/);
   assert.doesNotMatch(listMarkup, new RegExp(`>${escaped(providersHint)}`));
+  // The group's visible "Providers" title is gone: the header keeps only the
+  // help icon (plus the screen's header actions, when it passes them).
+  assert.doesNotMatch(listMarkup, />Providers</);
   assert.doesNotMatch(listMarkup, /Detect Providers/);
   const listWithError = renderToStaticMarkup(React.createElement(TooltipProvider, {},
     React.createElement(LanguageProvider, { language: 'en' },
