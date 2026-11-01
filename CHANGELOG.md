@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Copilot Free no longer shows premium requests as 100% used.** GitHub
+  reports a quota the plan does not include as 0 of 0 with 0% remaining, which
+  was read as exhausted and, as the worst quota, took over the bar. A bucket
+  with a zero entitlement is now skipped.
+
 ## [1.47.0] — 2026-10-30
 
 ### Added
