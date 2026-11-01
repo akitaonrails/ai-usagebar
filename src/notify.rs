@@ -907,6 +907,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_refill_tick_is_not_a_new_window() {
+        // Synthetic's weekly budget refills about 2% every 202 minutes. Each
+        // tick moves the reported instant past the tolerance without opening
+        // a new window, so a budget held at its cap must not notify per tick.
+        let mut state = NotifyState::default();
+        let now = at(23, 12, 0);
+        let tick = chrono::Duration::minutes(202);
+        let refilling = |percent: u16, reset_at: DateTime<Utc>| {
+            let mut metric = row("Weekly credits", percent, Some(reset_at));
+            metric.regen = Some("2%".into());
+            input(vec![metric])
+        };
+        let next = at(23, 15, 22);
+
+        let exhausted = refilling(100, next);
+        assert_eq!(decide(&exhausted, 97, &mut state, now).len(), 1);
+        // The tick restored 2% and moved the instant 202 minutes later.
+        let refilled = refilling(98, next + tick);
+        assert_eq!(decide(&refilled, 97, &mut state, now).len(), 0);
+        let hovering = refilling(97, next + tick * 2);
+        assert_eq!(decide(&hovering, 97, &mut state, now).len(), 0);
+
+        // Below the band it re-arms like any other window.
+        let dropped = refilling(89, next + tick * 6);
+        assert_eq!(decide(&dropped, 97, &mut state, now).len(), 0);
+        let crossed = refilling(97, next + tick * 7);
+        assert_eq!(decide(&crossed, 97, &mut state, now).len(), 1);
+    }
+
     // — Decision: copy ——————————————————————————————
 
     #[test]
