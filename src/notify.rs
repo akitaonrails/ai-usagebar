@@ -147,7 +147,9 @@ pub struct RefreshInput {
 /// - Fire when `percent >= threshold` and the key is not marked notified.
 ///   Band: `>= 100` is [`Urgency::Critical`], otherwise [`Urgency::Normal`].
 /// - A key re-arms when usage drops below `threshold - 7`, or when the
-///   window's `reset_at` moves to a later instant (a new window). The same
+///   window's `reset_at` moves to a later instant (a new window). A
+///   refilling window (one with `regen`) re-arms only on the drop: each
+///   refill tick moves its instant without opening a new window. The same
 ///   crossing therefore never fires twice.
 /// - A credit expiring within 48h (and not yet expired) fires once per
 ///   expiry instant, at [`Urgency::Normal`].
@@ -167,6 +169,9 @@ pub fn decide(
         if pct >= threshold {
             let armed = match state.entries.get(&key) {
                 None => true,
+                // A refill tick returns part of the same budget instead of
+                // opening a new window: only the hysteresis band re-arms it.
+                Some(_) if row.regen.is_some() => false,
                 Some(record) => reset_moved_later(row.reset_at, record.reset_at_snapshot),
             };
             if armed {
