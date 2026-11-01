@@ -730,6 +730,41 @@ assert.equal(resetAlternate(sameDayRow, 'exact', resetNow, utc), 'Resets in 6h 3
 assert.equal(resetAlternate(noStampRow, 'countdown', resetNow, utc), '');
 assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
 
+// A refilling window (Synthetic's weekly credits) gets `regen` back at its
+// instant instead of resetting: the countdown, the exact time and the hover say so.
+{
+  const refillRow = { ...sameDayRow, regen: '2%' };
+  assert.equal(resetText(refillRow, 'countdown', resetNow, utc), 'Regenerates 2% in 6h 38m');
+  assert.equal(resetText(refillRow, 'exact', resetNow, utc), 'Regenerates 2% today at 6:38 PM');
+  assert.equal(resetAlternate(refillRow, 'countdown', resetNow, utc), 'Regenerates 2% today at 6:38 PM');
+  assert.equal(resetAlternate(refillRow, 'exact', resetNow, utc), 'Regenerates 2% in 6h 38m');
+  assert.equal(resetText(refillRow, 'countdown', resetNow, { ...utc, locale: 'pt-BR' }), 'Regenera 2% em 6h 38m');
+  assert.equal(resetText(refillRow, 'countdown', resetNow, { ...utc, locale: 'ko' }), '6h 38m 후 2% 재생성');
+  assert.equal(resetText(refillRow, 'countdown', resetNow, { ...utc, locale: 'es' }), 'Regenera 2% en 6h 38m');
+
+  // The report's `regen` survives the projection onto the row.
+  const synthetic = parseHostPayload({
+    entries: [{
+      id: 'synthetic',
+      display_name: 'Synthetic',
+      sections: [{
+        type: 'metric',
+        label: 'Weekly credits',
+        percent: 30,
+        value: '30%',
+        detail: 'Regenerates 2% in 6h 38m',
+        severity: 'low',
+        reset_at: '2026-09-04T18:38:00Z',
+        regen: '2%',
+      }],
+    }],
+  });
+  const [row] = projectCards(synthetic, resetNow)[0].rows;
+  assert.equal(row.regen, '2%');
+  assert.equal(row.reset, 'Regenerates 2% in 6h 38m');
+  assert.equal(resetText(row, 'countdown', resetNow, utc), 'Regenerates 2% in 6h 38m');
+}
+
 // --- timeFormat: 12h / 24h override rides through resetText and resetAlternate --
 
 {
