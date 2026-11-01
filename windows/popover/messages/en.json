@@ -199,6 +199,8 @@
   "resets": "Resets",
   "resets_at": "Resets {exact}",
   "resets_in": "Resets in {duration}",
+  "regenerates_at": "Regenerates {amount} {exact}",
+  "regenerates_in": "Regenerates {amount} in {duration}",
   "retrying_automatically_in": "Retrying automatically in {duration}.",
   "same_readings_power": "The same readings power the ai-usagebar CLI, the terminal TUI and the Waybar, GNOME and KDE widgets.",
   "session": "Session",
