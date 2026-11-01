@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Synthetic alerts no longer repeat at every refill tick.** Each tick
+  restores about 2% of the weekly budget and moves its refill instant 202
+  minutes later, which the notification dedupe read as a new window, so a
+  budget held at its cap notified again after every tick. A refilling window
+  now re-arms only when usage drops 7 points below the threshold (#562).
+
 ## [1.47.0] — 2026-10-30
 
 ### Added
