@@ -93,7 +93,7 @@ These are compatible with claudebar.
 
 | Placeholder | Example |
 |---|---|
-| `{plan}` | `Max 5x` |
+| `{plan}` | `Ultra` |
 | `{session_pct}`, `{session_reset}`, `{session_bar}`, `{session_elapsed}` | `62`, `1h 30m`, `█████████████░░░░░░░`, `58` |
 | `{session_pace}`, `{session_pace_indicator}`, `{session_pace_pct}`, `{session_pace_pts}`, `{session_pace_delta}`, `{session_pace_abs_delta}` | `↑`, `↑`, `12% ahead`, `4pts ahead`, `4`, `4` |
 | `{weekly_*}` | The same family for the seven-day window. |
@@ -104,6 +104,11 @@ These are compatible with claudebar.
 
 The scoped family describes the first model-specific weekly window. When that
 window is absent, it returns neutral empty, `0`, or `—` values as appropriate.
+
+A verified Ultra account has no five-hour limit, so it has no session window:
+every `{session_*}` placeholder above expands to an empty string, and without
+`--format` the bar shows `{weekly_pct}% · {weekly_reset}` instead. An
+unverified Ultra account still has a temporary five-hour limit and fills them.
 
 `{resets_available}` is the number of banked limit resets Claude is offering —
 the ones the app shows under "Resets", which you redeem by hand rather than

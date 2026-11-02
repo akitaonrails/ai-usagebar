@@ -341,7 +341,9 @@ desktop_prepare_binary = "~/.local/bin/claude"
 
 An inactive Desktop card then shows **Prepare**. A click checks live usage
 first. A running window is **Ready** without another message; an exhausted
-session or weekly limit blocks preparation. Otherwise, it runs one short
+session or weekly limit blocks preparation, and so does an account with no
+five-hour limit (a verified Ultra account), which has no window to start.
+Otherwise, it runs one short
 Haiku turn with that profile's OAuth access token in an isolated temporary
 home. Tools, MCP, customizations and history persistence are disabled. The
 temporary directory is deleted afterward. No project context or existing
