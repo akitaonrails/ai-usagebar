@@ -27,15 +27,22 @@ fn existing_window(
             "Weekly usage limit reached; no message sent.".into(),
         ));
     }
-    if let Some(reset) = snapshot.session.resets_at.filter(|reset| *reset > now) {
-        if snapshot.session.utilization_pct >= 100 {
+    // Preparing starts a five-hour window early. An account without that
+    // limit has no window to start, so a turn would be spent for nothing.
+    let Some(session) = snapshot.session.as_ref() else {
+        return Err(AppError::Other(
+            "This account has no five-hour limit; no message sent.".into(),
+        ));
+    };
+    if let Some(reset) = session.resets_at.filter(|reset| *reset > now) {
+        if session.utilization_pct >= 100 {
             return Err(AppError::Other(
                 "The five-hour limit has not reset yet; no message sent.".into(),
             ));
         }
         return Ok(Some(reset));
     }
-    if snapshot.session.resets_at.is_none() && snapshot.session.utilization_pct > 0 {
+    if session.resets_at.is_none() && session.utilization_pct > 0 {
         return Err(AppError::Other(
             "Session reset time is unknown; no message sent.".into(),
         ));
@@ -280,7 +287,12 @@ pub async fn run(config: &crate::config::Config, label: &str) -> Result<Preparat
     {
         return Err(AppError::Other("Request completed, but the new reset time could not be confirmed. Refresh usage before retrying.".into()));
     }
-    let reset_at = after.snapshot.session.resets_at.filter(|reset| *reset > Utc::now())
+    let reset_at = after
+        .snapshot
+        .session
+        .as_ref()
+        .and_then(|session| session.resets_at)
+        .filter(|reset| *reset > Utc::now())
         .ok_or_else(|| AppError::Other("Request completed, but the server did not report a new window. Refresh usage before retrying.".into()))?;
     Ok(Preparation {
         reset_at,

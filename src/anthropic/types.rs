@@ -443,7 +443,7 @@ impl UsageResponse {
             }
         }
 
-        let session = to_window(self.five_hour, SESSION);
+        let session = Some(to_window(self.five_hour, SESSION));
         let weekly = to_window(self.seven_day, WEEKLY);
         let sonnet = self.seven_day_sonnet.map(|w| to_window(Some(w), WEEKLY));
         let extra = self.extra_usage.and_then(|e| {
@@ -695,13 +695,13 @@ mod tests {
         }"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Max 5x".into());
-        assert_eq!(snap.session.utilization_pct, 43); // rounded
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 43); // rounded
         assert_eq!(snap.weekly.utilization_pct, 27);
         assert_eq!(snap.sonnet.as_ref().unwrap().utilization_pct, 4);
         let extra = snap.extra.as_ref().unwrap();
         assert_eq!(extra.limit, Some(Cents(5000)));
         assert_eq!(extra.spent.0, 250);
-        assert!(snap.session.resets_at.is_some());
+        assert!(snap.session.as_ref().unwrap().resets_at.is_some());
     }
 
     #[test]
@@ -958,9 +958,9 @@ mod tests {
     fn empty_object_yields_neutral_snapshot() {
         let resp: UsageResponse = serde_json::from_str("{}").unwrap();
         let snap = resp.into_snapshot("Unknown".into());
-        assert_eq!(snap.session.utilization_pct, 0);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 0);
         assert_eq!(snap.weekly.utilization_pct, 0);
-        assert!(snap.session.resets_at.is_none());
+        assert!(snap.session.as_ref().unwrap().resets_at.is_none());
     }
 
     #[test]
@@ -973,7 +973,7 @@ mod tests {
         }"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Pro".into());
-        assert_eq!(snap.session.utilization_pct, 100);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 100);
         assert_eq!(snap.weekly.utilization_pct, 100); // rounds to 101, saturated
     }
 
@@ -1083,7 +1083,7 @@ mod tests {
             Some("2026-10-22T16:00:00Z".parse().unwrap())
         );
         // The rest of the payload is untouched by the added query parameter.
-        assert_eq!(snap.session.utilization_pct, 2);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 2);
         assert_eq!(snap.weekly.utilization_pct, 63);
     }
 
@@ -1180,8 +1180,8 @@ mod tests {
         }"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Pro".into());
-        assert!(snap.session.resets_at.is_none());
-        assert_eq!(snap.session.utilization_pct, 50);
+        assert!(snap.session.as_ref().unwrap().resets_at.is_none());
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 50);
     }
 
     /// The two credit blocks as the endpoint actually returned them on
@@ -1215,7 +1215,7 @@ mod tests {
         // absent, never a fabricated $0.00.
         assert!(snap.usage_credits.is_none());
         // The windows keep parsing around the two new blocks.
-        assert_eq!(snap.session.utilization_pct, 12);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 12);
         assert_eq!(snap.weekly.utilization_pct, 34);
     }
 
@@ -1265,7 +1265,14 @@ mod tests {
             r#"{"five_hour": {"utilization": 5}, "iguana_necktie": "hostile"}"#,
         )
         .unwrap();
-        assert_eq!(resp.into_snapshot("Pro".into()).session.utilization_pct, 5);
+        assert_eq!(
+            resp.into_snapshot("Pro".into())
+                .session
+                .as_ref()
+                .unwrap()
+                .utilization_pct,
+            5
+        );
     }
 
     #[test]
@@ -1444,7 +1451,14 @@ mod tests {
         let resp: UsageResponse =
             serde_json::from_str(r#"{"five_hour": {"utilization": 5}, "spend": "hostile"}"#)
                 .unwrap();
-        assert_eq!(resp.into_snapshot("Pro".into()).session.utilization_pct, 5);
+        assert_eq!(
+            resp.into_snapshot("Pro".into())
+                .session
+                .as_ref()
+                .unwrap()
+                .utilization_pct,
+            5
+        );
     }
 
     // ----------------------------------------------------------------
@@ -1461,7 +1475,7 @@ mod tests {
         let resp: UsageResponse =
             serde_json::from_str(raw).unwrap_or_else(|e| panic!("{raw}: {e}"));
         let snap = resp.into_snapshot("Pro".into());
-        assert_eq!(snap.session.utilization_pct, 5);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 5);
         assert!(snap.cloud_credits.is_none(), "1e400 dollars is not a limit");
         assert!(
             snap.usage_credits.is_none(),
@@ -1476,7 +1490,7 @@ mod tests {
         let raw = r#"{"five_hour":{"utilization":5},"iguana_necktie":{"limit_dollars":1e300,"remaining_dollars":1}}"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Pro".into());
-        assert_eq!(snap.session.utilization_pct, 5);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 5);
         assert!(snap.cloud_credits.is_none());
     }
 

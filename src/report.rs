@@ -2292,11 +2292,11 @@ mod tests {
         let state = TabState::Ready(Box::new(ReadyTab {
             snapshot: VendorSnapshot::Anthropic(crate::usage::AnthropicSnapshot {
                 plan: "Max 20x".into(),
-                session: crate::usage::UsageWindow {
+                session: Some(crate::usage::UsageWindow {
                     utilization_pct: 2,
                     resets_at: None,
                     window_duration: chrono::Duration::hours(5),
-                },
+                }),
                 weekly: crate::usage::UsageWindow {
                     utilization_pct: 63,
                     resets_at: None,
@@ -2482,11 +2482,11 @@ mod tests {
         let state = TabState::Ready(Box::new(ReadyTab {
             snapshot: VendorSnapshot::Anthropic(AnthropicSnapshot {
                 plan: "Claude Max 20x".into(),
-                session: UsageWindow {
+                session: Some(UsageWindow {
                     utilization_pct: 29,
                     resets_at: Some(now + chrono::Duration::minutes(50)),
                     window_duration: chrono::Duration::hours(5),
-                },
+                }),
                 weekly: UsageWindow {
                     utilization_pct: 32,
                     resets_at: Some(now + chrono::Duration::days(4)),

@@ -68,7 +68,10 @@ pub struct Cents(pub i64);
 pub struct AnthropicSnapshot {
     /// "Claude Pro", "Claude Max 5x", "Claude Max 20x", etc.
     pub plan: String,
-    pub session: UsageWindow,
+    /// The five-hour window. `None` when the account has no five-hour limit
+    /// at all: there is no window to show, which is not the same thing as an
+    /// idle one at 0%.
+    pub session: Option<UsageWindow>,
     pub weekly: UsageWindow,
     /// Some vendors of Claude (Pro, some Max tiers) don't have a separate
     /// Sonnet bucket — in which case this is None.
@@ -1418,9 +1421,11 @@ pub struct DroidSnapshot {
 /// Worst-of severity class for the Waybar bar text color. Mirrors
 /// claudebar:606-620 — "extra usage only matters when a rate limit hits 100%".
 pub fn anthropic_severity(snap: &AnthropicSnapshot) -> crate::pacing::PaceSeverity {
-    let mut max = snap.session.utilization_pct;
-    if snap.weekly.utilization_pct > max {
-        max = snap.weekly.utilization_pct;
+    let mut max = snap.weekly.utilization_pct;
+    if let Some(s) = &snap.session
+        && s.utilization_pct > max
+    {
+        max = s.utilization_pct;
     }
     if let Some(s) = &snap.sonnet
         && s.utilization_pct > max
@@ -1433,7 +1438,10 @@ pub fn anthropic_severity(snap: &AnthropicSnapshot) -> crate::pacing::PaceSeveri
         }
     }
     // Extra usage only promotes severity if a rate-limit window is at 100%.
-    let any_at_cap = snap.session.utilization_pct >= 100
+    let any_at_cap = snap
+        .session
+        .as_ref()
+        .is_some_and(|s| s.utilization_pct >= 100)
         || snap.weekly.utilization_pct >= 100
         || snap
             .sonnet
@@ -1466,7 +1474,7 @@ mod tests {
     fn snap(s: i32, w_: i32, sonnet: Option<i32>, extra: Option<(i64, i64)>) -> AnthropicSnapshot {
         AnthropicSnapshot {
             plan: "Max 5x".into(),
-            session: w(s),
+            session: Some(w(s)),
             weekly: w(w_),
             sonnet: sonnet.map(w),
             scoped: vec![],

@@ -1406,11 +1406,11 @@ mod tests {
         let state = TabState::Ready(Box::new(ReadyTab {
             snapshot: VendorSnapshot::Anthropic(AnthropicSnapshot {
                 plan: "Claude Max 20x".into(),
-                session: UsageWindow {
+                session: Some(UsageWindow {
                     utilization_pct: 98,
                     resets_at: Some(reset),
                     window_duration: chrono::Duration::hours(5),
-                },
+                }),
                 weekly: UsageWindow {
                     utilization_pct: 42,
                     resets_at: None,
