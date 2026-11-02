@@ -414,8 +414,8 @@ where
 impl UsageResponse {
     /// Lift the wire response into our canonical [`AnthropicSnapshot`].
     ///
-    /// `plan_label` is the rendered plan name ("Max 5x" etc.), derived from
-    /// the credentials file (since the usage endpoint doesn't include it).
+    /// `plan_label` is the rendered plan name ("Max", "Ultra" etc.), derived
+    /// from the credentials file (since the usage endpoint doesn't include it).
     pub fn into_snapshot(self, plan_label: String) -> AnthropicSnapshot {
         // Window durations are constants per claudebar:172-173.
         const SESSION: chrono::Duration = chrono::Duration::hours(5);

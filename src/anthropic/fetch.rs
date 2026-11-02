@@ -775,7 +775,7 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.is_transient(), "expected transient error, got {err:?}");
-        assert_eq!(err.plan(), Some("Claude Max 5x"));
+        assert_eq!(err.plan(), Some("Claude Max"));
     }
 
     #[tokio::test]
@@ -807,7 +807,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err.plan(), Some("Claude Max 5x"));
+        assert_eq!(err.plan(), Some("Claude Max"));
         let message = err.user_message();
         assert!(message.contains("401"), "{message}");
         assert!(

@@ -66,7 +66,7 @@ pub struct Cents(pub i64);
 /// pay-as-you-go credit balance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnthropicSnapshot {
-    /// "Claude Pro", "Claude Max 5x", "Claude Max 20x", etc.
+    /// "Pro", "Max", "Ultra", etc. — renderers add the "Claude " prefix.
     pub plan: String,
     /// The five-hour window. `None` when the account has no five-hour limit
     /// at all: there is no window to show, which is not the same thing as an
