@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::creds::ULTRA;
 use crate::usage::{
     AnthropicSnapshot, Cents, CloudCredits, ExtraUsage, ExtraUsageStatus, ResetCredit,
     ResetCredits, ScopedWindow, UsageCredits, UsageWindow, checked_reset_title,
@@ -416,6 +417,14 @@ impl UsageResponse {
     ///
     /// `plan_label` is the rendered plan name ("Max", "Ultra" etc.), derived
     /// from the credentials file (since the usage endpoint doesn't include it).
+    ///
+    /// The plan also decides what a missing `five_hour` means. Verified Ultra
+    /// accounts have no five-hour limit, and the endpoint reports that as
+    /// `five_hour: null`; claude.ai's own check is the same ("If you don't
+    /// see a Current session bar, your account is verified"), so the snapshot
+    /// carries no session window. An unverified Ultra account has a temporary
+    /// five-hour limit and still reports the window. Every other plan has the
+    /// limit, so a missing window there still reads as an idle one at 0%.
     pub fn into_snapshot(self, plan_label: String) -> AnthropicSnapshot {
         // Window durations are constants per claudebar:172-173.
         const SESSION: chrono::Duration = chrono::Duration::hours(5);
@@ -443,7 +452,10 @@ impl UsageResponse {
             }
         }
 
-        let session = Some(to_window(self.five_hour, SESSION));
+        let session = match self.five_hour {
+            None if plan_label == ULTRA => None,
+            five_hour => Some(to_window(five_hour, SESSION)),
+        };
         let weekly = to_window(self.seven_day, WEEKLY);
         let sonnet = self.seven_day_sonnet.map(|w| to_window(Some(w), WEEKLY));
         let extra = self.extra_usage.and_then(|e| {

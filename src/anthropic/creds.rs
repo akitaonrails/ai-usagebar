@@ -64,7 +64,9 @@ where
     }
 }
 
-/// The plan label of Anthropic's top consumer tier, formerly Max 20x.
+/// The plan label of Anthropic's top consumer tier, formerly Max 20x. The
+/// usage conversion keys on it too: Ultra is the plan whose verified accounts
+/// have no five-hour limit (see `UsageResponse::into_snapshot`).
 pub const ULTRA: &str = "Ultra";
 
 impl OauthCreds {

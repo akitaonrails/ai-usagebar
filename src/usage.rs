@@ -69,8 +69,8 @@ pub struct AnthropicSnapshot {
     /// "Pro", "Max", "Ultra", etc. — renderers add the "Claude " prefix.
     pub plan: String,
     /// The five-hour window. `None` when the account has no five-hour limit
-    /// at all: there is no window to show, which is not the same thing as an
-    /// idle one at 0%.
+    /// at all — a verified Ultra account: there is no window to show, which
+    /// is not the same thing as an idle one at 0%.
     pub session: Option<UsageWindow>,
     pub weekly: UsageWindow,
     /// Some vendors of Claude (Pro, some Max tiers) don't have a separate
