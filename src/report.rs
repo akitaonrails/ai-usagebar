@@ -2551,6 +2551,54 @@ mod tests {
         );
     }
 
+    /// What the GNOME and KDE menus, Omarchy, the tray popover and the
+    /// notifications read for a verified Ultra account, from credentials and
+    /// wire to JSON: the plan under its current name and no five-hour metric.
+    #[test]
+    fn json_has_no_five_hour_window_for_a_verified_ultra_account() {
+        let creds = crate::anthropic::creds::OauthCreds {
+            access_token: String::new(),
+            refresh_token: String::new(),
+            expires_at_ms: 0,
+            subscription_type: "max".into(),
+            rate_limit_tier: "default_claude_max_20x".into(),
+            scopes: None,
+        };
+        let response: crate::anthropic::types::UsageResponse = serde_json::from_str(
+            r#"{"five_hour": null,
+                "seven_day": {"utilization": 41.0, "resets_at": "2026-11-06T18:00:00Z"}}"#,
+        )
+        .unwrap();
+        let state = TabState::Ready(Box::new(ReadyTab {
+            snapshot: VendorSnapshot::Anthropic(response.into_snapshot(creds.plan_label())),
+            stale: false,
+            last_error: None,
+            fetched_at: None,
+            display: Default::default(),
+        }));
+        let now: DateTime<Utc> = "2026-11-02T12:00:00Z".parse().unwrap();
+        let projected = entry_from_state(&TabId::vendor(VendorId::Anthropic), &state, now);
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_for_primary(&[projected], None)).unwrap();
+        let entry = &value["entries"][0];
+        assert_eq!(entry["plan"], "Claude Ultra");
+        let labels: Vec<&str> = entry["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|metric| metric["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(labels, ["Weekly (7d)"]);
+        assert!(
+            !entry["sections"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|section| section["window_secs"] == 18_000),
+            "{entry}"
+        );
+    }
+
     /// A per-provider refresh narrows the configured tab list to the
     /// one whose report id it was shown; anything else yields nothing rather
     /// than a fallback to the whole report.

@@ -1170,6 +1170,69 @@ mod tests {
         assert!(out.text.contains(&theme.fg));
     }
 
+    /// A verified Ultra account: no five-hour limit, so no session window.
+    fn without_session(mut oc: FetchOutcome) -> FetchOutcome {
+        oc.snapshot.plan = "Ultra".into();
+        oc.snapshot.session = None;
+        oc
+    }
+
+    #[test]
+    fn without_a_session_window_the_default_bar_shows_the_weekly_window() {
+        let oc = without_session(sample_outcome());
+        let theme = Theme::default();
+        let mut inp = input(&oc, &theme);
+        inp.format = default_format(&oc.snapshot);
+        let out = render_anthropic(&inp);
+        assert!(out.text.contains(">27% · 4d 1h<"), "{}", out.text);
+        // An account that has the window keeps the session default.
+        assert_eq!(default_format(&sample_outcome().snapshot), DEFAULT_FORMAT);
+    }
+
+    #[test]
+    fn without_a_session_window_the_tooltip_has_no_session_block() {
+        let oc = without_session(sample_outcome());
+        let theme = Theme::default();
+        let out = render_anthropic(&input(&oc, &theme));
+        assert!(out.tooltip.contains("Claude Ultra"), "{}", out.tooltip);
+        assert!(!out.tooltip.contains("Session"), "{}", out.tooltip);
+        assert!(!out.tooltip.contains("Resets in 1h 30m"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("󰃰  Weekly"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("Resets in 4d 1h"), "{}", out.tooltip);
+    }
+
+    /// The session family is empty, never a confident 0%: the macOS and
+    /// GNOME bars hide the five-hour row exactly when `{session_pct}` is not
+    /// a number.
+    #[test]
+    fn without_a_session_window_its_placeholders_are_empty() {
+        let oc = without_session(sample_outcome());
+        let theme = Theme::default();
+        let values = build_placeholders(&input(&oc, &theme));
+        for key in [
+            "session_pct",
+            "session_reset",
+            "session_elapsed",
+            "session_bar",
+            "session_pace",
+            "session_pace_indicator",
+            "session_pace_pct",
+            "session_pace_pts",
+            "session_pace_delta",
+            "session_pace_abs_delta",
+        ] {
+            assert_eq!(values[key], "", "{key}");
+        }
+        assert_eq!(values["weekly_pct"], "27");
+        assert_eq!(values["plan"], "Ultra");
+
+        let mut inp = input(&oc, &theme);
+        inp.format = "[{session_pct}{session_pace}] {weekly_pct}%";
+        inp.format_pace_color = true;
+        let out = render_anthropic(&inp);
+        assert!(out.text.contains(">[] 27%<"), "{}", out.text);
+    }
+
     #[test]
     fn wrap_words_breaks_on_width_boundary() {
         let lines = wrap_words("aaa bbb ccc ddd eee fff", 8);

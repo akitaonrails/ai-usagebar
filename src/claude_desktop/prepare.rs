@@ -343,6 +343,18 @@ mod tests {
         assert!(existing_window(&snapshot(100, Some("2026-10-10T19:00:00Z"), 20), now()).is_err());
         assert!(existing_window(&snapshot(0, None, 100), now()).is_err());
     }
+    /// A verified Ultra account has no five-hour window to start early.
+    #[test]
+    fn an_account_without_a_five_hour_limit_sends_no_turn() {
+        let response: UsageResponse = serde_json::from_value(json!({
+            "five_hour": null,
+            "seven_day": {"utilization": 20}
+        }))
+        .unwrap();
+        let ultra = response.into_snapshot(crate::anthropic::creds::ULTRA.into());
+        let err = existing_window(&ultra, now()).unwrap_err();
+        assert!(err.to_string().contains("no five-hour limit"), "{err}");
+    }
     #[test]
     fn trusted_cli_must_be_explicit_absolute_and_a_file() {
         assert!(trusted_binary(None).is_err());

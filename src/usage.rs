@@ -1579,6 +1579,19 @@ mod tests {
         assert_eq!(anthropic_severity(&s), PaceSeverity::Critical); // 100 → critical
     }
 
+    /// A verified Ultra account has no five-hour window: the worst of the
+    /// windows it does have decides.
+    #[test]
+    fn severity_without_a_session_window_uses_the_others() {
+        let mut s = snap(0, 60, Some(10), None);
+        s.session = None;
+        assert_eq!(anthropic_severity(&s), PaceSeverity::Mid); // weekly 60
+
+        let mut s = with_scoped(snap(0, 20, None, None), 84);
+        s.session = None;
+        assert_eq!(anthropic_severity(&s), PaceSeverity::High); // Fable 84
+    }
+
     #[test]
     fn severity_falls_through_to_extra_when_extra_higher_than_capped_window() {
         // session = 100, weekly = 50, extra = 100% → max should be 100.

@@ -3486,6 +3486,53 @@ mod tests {
         assert_eq!(metric_count, 2);
     }
 
+    /// A verified Ultra account has no five-hour limit: no Session row, no
+    /// "S" cell, and the headline comes from the windows it does have.
+    #[test]
+    fn anthropic_without_a_session_window_has_no_session_row() {
+        let snapshot = VendorSnapshot::Anthropic(AnthropicSnapshot {
+            plan: "Ultra".into(),
+            session: None,
+            weekly: UsageWindow {
+                utilization_pct: 41,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            },
+            sonnet: None,
+            scoped: vec![crate::usage::ScopedWindow {
+                label: "Fable".into(),
+                window: UsageWindow {
+                    utilization_pct: 33,
+                    resets_at: Some(now() + chrono::Duration::days(3)),
+                    window_duration: chrono::Duration::days(7),
+                },
+            }],
+            extra: None,
+            reset_credits: Default::default(),
+            cloud_credits: None,
+            usage_credits: None,
+        });
+        let sections = sections_for(&ready(snapshot.clone()), now(), 5);
+        assert!(matches!(
+            sections.first(),
+            Some(Section::Title { left, .. }) if left == "Claude Ultra"
+        ));
+        let metrics: Vec<&str> = sections
+            .iter()
+            .filter_map(|s| match s {
+                Section::Metric { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metrics, ["Weekly (7d)", "Fable (7d)"]);
+
+        let (plan, cells) = compact_cells(&snapshot);
+        assert_eq!(plan, "Ultra");
+        let cells: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(cells, ["W 41%"]);
+        assert_eq!(headline_pct(&snapshot), Some(41));
+    }
+
     fn claude_snapshot_with_credits(
         cloud: Option<CloudCredits>,
         usage: Option<UsageCredits>,

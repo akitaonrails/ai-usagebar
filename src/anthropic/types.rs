@@ -746,6 +746,68 @@ mod tests {
         assert_eq!(snap.weekly.utilization_pct, 55);
     }
 
+    /// The shape a verified Ultra account returns (observed 2026-11-02, numbers
+    /// and times changed): `five_hour` is null and `limits[]` has no session
+    /// entry, because the account has no five-hour limit.
+    const VERIFIED_ULTRA: &str = r#"{
+        "five_hour": null,
+        "seven_day": {"utilization": 41.0, "resets_at": "2026-11-06T18:00:00.123456+00:00",
+                      "limit_dollars": null, "used_dollars": null,
+                      "remaining_dollars": null, "locked_reason": null},
+        "seven_day_sonnet": null,
+        "limits": [
+            {"kind": "weekly_all", "group": "weekly", "percent": 41,
+             "severity": "normal", "resets_at": "2026-11-06T18:00:00.123456+00:00",
+             "scope": null, "is_active": true},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 33,
+             "severity": "normal", "resets_at": "2026-11-06T18:00:00.123456+00:00",
+             "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null},
+             "is_active": false}
+        ]
+    }"#;
+
+    #[test]
+    fn a_verified_ultra_account_has_no_session_window() {
+        let resp: UsageResponse = serde_json::from_str(VERIFIED_ULTRA).unwrap();
+        let snap = resp.into_snapshot(ULTRA.into());
+        assert_eq!(snap.session, None);
+        assert_eq!(snap.weekly.utilization_pct, 41);
+        assert!(snap.weekly.resets_at.is_some());
+        assert_eq!(snap.scoped.len(), 1);
+        assert_eq!(snap.scoped[0].label, "Fable");
+        assert_eq!(snap.scoped[0].window.utilization_pct, 33);
+    }
+
+    /// Until it is verified, an Ultra account has a temporary five-hour limit
+    /// and the endpoint reports it, so the window stays.
+    #[test]
+    fn an_unverified_ultra_account_keeps_its_five_hour_window() {
+        let raw = r#"{
+            "five_hour": {"utilization": 12.0, "resets_at": "2026-11-02T23:00:00Z"},
+            "seven_day": {"utilization": 41.0, "resets_at": "2026-11-06T18:00:00Z"}
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let session = resp.into_snapshot(ULTRA.into()).session.unwrap();
+        assert_eq!(session.utilization_pct, 12);
+        assert!(session.resets_at.is_some());
+    }
+
+    /// Ultra is the only plan with a documented state without the limit. On
+    /// any other plan a missing window still reads as an idle one at 0%.
+    #[test]
+    fn other_plans_keep_the_idle_fallback_for_a_missing_five_hour_window() {
+        for plan in ["Max", "Pro", "Team", "Unknown"] {
+            let resp: UsageResponse = serde_json::from_str(VERIFIED_ULTRA).unwrap();
+            let session = resp.into_snapshot(plan.into()).session;
+            assert_eq!(
+                session.as_ref().map(|s| s.utilization_pct),
+                Some(0),
+                "{plan}"
+            );
+            assert_eq!(session.and_then(|s| s.resets_at), None, "{plan}");
+        }
+    }
+
     #[test]
     fn missing_limits_array_yields_empty_scoped() {
         let raw = r#"{
