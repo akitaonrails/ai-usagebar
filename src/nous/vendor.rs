@@ -47,17 +47,6 @@ fn renewal_at(snapshot: &AccountSnapshot) -> Option<DateTime<Utc>> {
         .or(snapshot.current_period_end)
 }
 
-/// A percentage as the portal reports it: one decimal when it has one, so the
-/// 1.80 % day window does not round to "2%".
-fn format_pct(value: f64) -> String {
-    let rounded = (value * 10.0).round() / 10.0;
-    if rounded.fract() == 0.0 {
-        format!("{rounded:.0}%")
-    } else {
-        format!("{rounded:.1}%")
-    }
-}
-
 pub fn build_placeholders(
     snapshot: &AccountSnapshot,
     now: DateTime<Utc>,
@@ -109,7 +98,6 @@ pub fn build_placeholders(
 }
 
 pub fn render_tooltip(snapshot: &AccountSnapshot, now: DateTime<Utc>) -> String {
-    let values = build_placeholders(snapshot, now);
     let mut lines = vec![DISPLAY_NAME.to_string()];
     if let Some(plan) = snapshot.plan.as_deref() {
         lines.push(format!(
@@ -117,25 +105,26 @@ pub fn render_tooltip(snapshot: &AccountSnapshot, now: DateTime<Utc>) -> String 
             escape_text(&crate::display::sanitize_untrusted_field(plan))
         ));
     }
-    if let Some(pct) = snapshot.usage_percent() {
-        if snapshot.has_usage_windows() {
-            for gauge in &snapshot.gauges {
-                let mut line = format!(
-                    "{}: {}",
-                    escape_text(&gauge_label(gauge)),
-                    format_pct(gauge.percent())
-                );
-                if let Some(reset) = gauge.reset_at {
-                    line.push_str(&format!(
-                        " · resets in {}",
-                        crate::countdown::format(Some(reset), now)
-                    ));
-                }
-                lines.push(line);
+    // The same condition the panel branches on: a window the portal reported
+    // is a row of its own, even when it cannot be the headline figure, so the
+    // tooltip and the panel never disagree about what the account reported.
+    if snapshot.has_usage_windows() {
+        for gauge in &snapshot.gauges {
+            let mut line = format!(
+                "{}: {}",
+                escape_text(&gauge_label(gauge)),
+                crate::format::precise_pct(gauge.percent())
+            );
+            if let Some(reset) = gauge.reset_at {
+                line.push_str(&format!(
+                    " · resets in {}",
+                    crate::countdown::format(Some(reset), now)
+                ));
             }
-        } else {
-            lines.push(format!("Usage: {}%", crate::format::clamp_pct(pct)));
+            lines.push(line);
         }
+    } else if let Some(pct) = snapshot.usage_percent() {
+        lines.push(format!("Usage: {}%", crate::format::clamp_pct(pct)));
     }
     if let Some(remaining) = snapshot.credits_remaining {
         lines.push(format!(
@@ -164,7 +153,14 @@ pub fn render_tooltip(snapshot: &AccountSnapshot, now: DateTime<Utc>) -> String 
             crate::format::usd(rollover)
         ));
     }
-    lines.push(format!("Renews: {}", values["nous_renewal"]));
+    // The subscription period, not the headline window: each window already
+    // printed its own countdown above, and `{nous_renewal}` follows the
+    // headline window so the bar's two halves agree. The renewal date is the
+    // one piece of timing the window rows do not carry.
+    lines.push(format!(
+        "Renews: {}",
+        crate::countdown::format(snapshot.current_period_end, now)
+    ));
     lines.join("\n")
 }
 
@@ -372,9 +368,11 @@ mod tests {
         let snap = usage_window_snapshot();
         let now = Utc.with_ymd_and_hms(2026, 11, 3, 0, 0, 0).unwrap();
         let values = build_placeholders(&snap, now);
-        // The monthly window carries the headline, not the zeroed credits.
-        assert_eq!(values["nous_pct"], "10");
-        assert_eq!(values["nous_renewal"], "28d 0h");
+        // The most-exhausted window carries the headline, not the zeroed
+        // credits and not the idle month, and the countdown beside it is that
+        // same window's reset so the two halves describe one window.
+        assert_eq!(values["nous_pct"], "31");
+        assert_eq!(values["nous_renewal"], "6d 0h");
         // Credits stay as a secondary, still-formatted balance.
         assert_eq!(values["nous_balance"], "$0.00");
 
@@ -406,7 +404,7 @@ mod tests {
             },
             now,
         );
-        assert!(rendered.text.contains("10% · 28d 0h"));
+        assert!(rendered.text.contains("31% · 6d 0h"));
         assert!(!rendered.text.contains('$'));
     }
 

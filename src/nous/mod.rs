@@ -96,9 +96,10 @@ mod tests {
             parsed.gauge("day").unwrap().reset_at.unwrap().to_rfc3339(),
             "2026-11-04T00:00:00+00:00"
         );
-        // The month is the broadest reported window, so it is the headline.
-        assert_eq!(parsed.primary_gauge().unwrap().id, "month");
-        assert_eq!(parsed.usage_percent(), Some(10.43));
+        // The week is the most-exhausted reported window, so it is the
+        // headline — the month is broader but nowhere near its limit.
+        assert_eq!(parsed.primary_gauge().unwrap().id, "week");
+        assert_eq!(parsed.usage_percent(), Some(31.31));
     }
 
     #[test]
@@ -127,7 +128,51 @@ mod tests {
                 .to_rfc3339(),
             "2026-12-01T00:00:00+00:00"
         );
-        assert_eq!(parsed.usage_percent(), Some(10.43));
+        assert_eq!(parsed.usage_percent(), Some(31.31));
+    }
+
+    #[test]
+    fn the_headline_window_is_the_one_closest_to_its_limit() {
+        // A plan can be blocked today and idle for the month. `headline_pct`,
+        // the Overview bar and the Waybar severity all read this figure, so it
+        // has to be the window that is actually spent.
+        let parsed = parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "usage_window": {"gauges": [
+                {"id": "day", "used_bp": 9900},
+                {"id": "week", "used_bp": 4000},
+                {"id": "month", "used_bp": 1043}
+            ]}
+        }))
+        .expect("account must parse");
+        assert_eq!(parsed.primary_gauge().unwrap().id, "day");
+        assert_eq!(parsed.usage_percent(), Some(99.0));
+
+        // Equally spent windows settle on the broadest, so the headline does
+        // not flip between two identical figures between refreshes.
+        let tied = parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "usage_window": {"gauges": [
+                {"id": "day", "used_bp": 4000},
+                {"id": "week", "used_bp": 4000},
+                {"id": "month", "used_bp": 4000}
+            ]}
+        }))
+        .expect("account must parse");
+        assert_eq!(tied.primary_gauge().unwrap().id, "month");
+
+        // An unknown window still renders as its own row, but it cannot be the
+        // headline: we do not know what it measures.
+        let unknown = parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "usage_window": {"gauges": [
+                {"id": "future_window", "used_bp": 9900},
+                {"id": "month", "used_bp": 1043}
+            ]}
+        }))
+        .expect("account must parse");
+        assert!(unknown.has_usage_windows());
+        assert_eq!(unknown.primary_gauge().unwrap().id, "month");
     }
 
     #[test]
