@@ -40,6 +40,13 @@
   Every provider stays visible until you untick one, so an existing applet is
   unchanged until you choose otherwise.
 
+- **KDE: provider brand marks on the tabs and cards.** The plasmoid now draws
+  each provider's own SVG mark — the same catalog the Windows and macOS tray
+  use — beside its name in the tab strip, on the cards, and in the popup
+  header. The marks are not duplicated in git: the dev install symlinks that
+  catalog into the package and `make install-plasmoid` copies it into the
+  install prefix.
+
 ### Fixed
 
 - **Synthetic alerts no longer repeat at every refill tick.** Each tick
