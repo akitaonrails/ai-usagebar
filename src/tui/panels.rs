@@ -189,7 +189,7 @@ impl SectionBuilder {
         };
         last.percent_precise = Some(pct);
         if let Section::Metric { value_label, .. } = &mut last.section {
-            *value_label = format_precise_pct(pct);
+            *value_label = crate::format::precise_pct(pct);
         }
     }
 
@@ -1498,7 +1498,42 @@ fn nous_sections(
         left: "Nous Research".into(),
         right: None,
     }]);
-    if let Some(value) = s.usage_percent() {
+    if s.has_usage_windows() {
+        // Migrated plans report consumption as daily/weekly/monthly windows and
+        // leave the credit balances at zero. One meter per window; the credits
+        // below stay visible as a secondary balance, never as the headline
+        // percentage (a zero credit balance is not "0 % used").
+        for gauge in &s.gauges {
+            let pct = gauge.percent();
+            let metric = Section::Metric {
+                label: crate::nous::vendor::gauge_label(gauge),
+                pct: clamp_pct(pct),
+                severity: severity_for(i32::from(clamp_pct(pct))),
+                value_label: format!("{}%", clamp_pct(pct)),
+                footnote: String::new(),
+            };
+            match gauge.id.as_str() {
+                "day" => sections.push_metric_in_window(
+                    metric,
+                    gauge.reset_at,
+                    chrono::Duration::days(1),
+                ),
+                "week" => sections.push_metric_in_window(
+                    metric,
+                    gauge.reset_at,
+                    chrono::Duration::days(7),
+                ),
+                _ => sections.push_metric(metric, gauge.reset_at),
+            }
+            sections.precise_last_metric(pct);
+            if gauge.reset_at.is_some() {
+                sections.push(Section::Text {
+                    label: "Resets".into(),
+                    value: countdown::format(gauge.reset_at, now),
+                });
+            }
+        }
+    } else if let Some(value) = s.usage_percent() {
         let pct = clamp_pct(value);
         // `[nous] headline = "amount"` puts the credits still usable on the
         // bar, the way the prepaid-balance vendors do. The consumed percentage
@@ -2745,15 +2780,6 @@ fn push_droid_window(
 }
 
 /// One decimal when it matters ("70.5%"), none when it does not ("70%").
-fn format_precise_pct(pct: f64) -> String {
-    let rounded = (pct * 10.0).round() / 10.0;
-    if rounded == rounded.trunc() {
-        format!("{rounded:.0}%")
-    } else {
-        format!("{rounded}%")
-    }
-}
-
 fn push_window(
     sections: &mut SectionBuilder,
     label: &str,
@@ -3116,6 +3142,7 @@ mod tests {
             total_usable_credits: Some(12.93),
             rollover_credits: Some(10.0),
             current_period_end: None,
+            gauges: Vec::new(),
         }
     }
 
@@ -3172,6 +3199,53 @@ mod tests {
         assert!(sections.iter().any(|s| matches!(
             &s.section,
             Section::Text { label, value } if label == "Total usable credits" && value == "$12.93"
+        )));
+    }
+
+    #[test]
+    fn nous_usage_windows_render_one_meter_each_not_a_zero_credit_headline() {
+        let snapshot = crate::nous::types::parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "monthly_credits": 0.0,
+            "credits_remaining": 0.0,
+            "usage_window": {
+                "gauges": [
+                    {"id": "day", "scope": "all", "label": "Today", "used_bp": 180, "resets_at_ms": 1_780_000_000_000i64},
+                    {"id": "week", "scope": "all", "label": "This week", "used_bp": 3131, "resets_at_ms": 1_780_000_000_000i64},
+                    {"id": "month", "scope": "all", "label": "This month", "used_bp": 1043, "resets_at_ms": 1_780_000_000_000i64},
+                    {"id": "top_tier", "scope": "top_tier", "label": "Large models (monthly)", "used_bp": 30, "resets_at_ms": 1_780_000_000_000i64}
+                ]
+            }
+        }))
+        .unwrap();
+        let sections =
+            sections_with_metadata_for(&ready(VendorSnapshot::NousResearch(snapshot)), now(), 5);
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter_map(|projection| match &projection.section {
+                Section::Metric {
+                    label, value_label, ..
+                } => Some((label.clone(), value_label.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            metrics,
+            vec![
+                ("Today".to_string(), "1.8%".to_string()),
+                ("This week".to_string(), "31.3%".to_string()),
+                ("This month".to_string(), "10.4%".to_string()),
+                ("Large models (monthly)".to_string(), "0.3%".to_string()),
+            ]
+        );
+        // The zeroed credit balance stays a secondary row, never the headline.
+        assert!(!sections.iter().any(|projection| matches!(
+            &projection.section,
+            Section::Metric { value_label, .. } if value_label.starts_with('$')
+        )));
+        assert!(sections.iter().any(|projection| matches!(
+            &projection.section,
+            Section::Text { label, .. } if label == "Subscription credits"
         )));
     }
 
@@ -4914,6 +4988,22 @@ mod tests {
             headline_pct(&VendorSnapshot::Cursor(cursor_snap())),
             Some(99)
         );
+
+        // Nous: a migrated plan reports four windows, and the Overview bar
+        // shows the one closest to its limit — not the broadest, and not the
+        // credit balance the new plans leave at zero.
+        let nous = crate::nous::types::parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "monthly_credits": 0.0,
+            "credits_remaining": 0.0,
+            "usage_window": {"gauges": [
+                {"id": "day", "used_bp": 9900},
+                {"id": "week", "used_bp": 3131},
+                {"id": "month", "used_bp": 1043}
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(headline_pct(&VendorSnapshot::NousResearch(nous)), Some(99));
 
         // Balance-only vendors have no meaningful percentage → no bar.
         let kilo = VendorSnapshot::Kilo(crate::usage::KiloSnapshot {

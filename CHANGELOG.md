@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
+  Portal moved its plans from a credit allocation to daily, weekly and monthly
+  limits, reporting consumption in `usage_window.gauges` and leaving
+  `credits_remaining` at zero. With no reader for those windows the bar, the
+  panels and `usage --json` showed a spent balance for an account nowhere near
+  its limit. Each window now gets its own meter, figure and countdown, the
+  credit rows stay as a secondary balance, and `{nous_pct}` reports the window
+  closest to its limit with `{nous_renewal}` counting down to that window's
+  reset. Accounts that still report a credit allocation are unchanged (#569).
+
 ## [1.48.0] — 2026-11-03
 
 ### Changed

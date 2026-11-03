@@ -72,6 +72,35 @@ impl fmt::Debug for TokenResponse {
     }
 }
 
+/// One consumption window from `usage_window.gauges`.
+///
+/// `used_bp` is the portal's own unit: basis points of the window consumed,
+/// where `10_000` is the whole window (`180` = 1.80 %). Plans that migrated
+/// from credits to daily/weekly/monthly limits report only these; the credit
+/// balances are then zero and no longer describe consumption.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageGauge {
+    /// Stable portal id: `day`, `week`, `month`, or `top_tier`. Unknown ids
+    /// are retained (the wire is additive) and simply have no display name.
+    pub id: String,
+    /// Portal scope, when the window applies to a subset (`top_tier`).
+    pub scope: Option<String>,
+    /// Portal-provided display label. Untrusted text; sanitize at the sink.
+    pub label: Option<String>,
+    pub used_bp: f64,
+    pub reset_at: Option<DateTime<Utc>>,
+}
+
+impl UsageGauge {
+    /// Consumed percentage of this window, clamped to `0..=100`.
+    ///
+    /// Parsing already rejects negative/non-finite basis points, so the clamp
+    /// only handles an over-100 % window (the portal can report one).
+    pub fn percent(&self) -> f64 {
+        (self.used_bp / 100.0).clamp(0.0, 100.0)
+    }
+}
+
 /// Display-safe subset of the Nous account response.
 ///
 /// The account response may include internal user/organization IDs and future
@@ -86,15 +115,56 @@ pub struct AccountSnapshot {
     pub total_usable_credits: Option<f64>,
     pub rollover_credits: Option<f64>,
     pub current_period_end: Option<DateTime<Utc>>,
+    /// Usage windows from `usage_window` (or its flat fallback fields). Empty
+    /// for pre-migration accounts, which report credits only.
+    pub gauges: Vec<UsageGauge>,
 }
 
-// Parsing rejects non-finite credit values, so equality remains reflexive.
+// Parsing rejects non-finite credit/basis-point values, so equality remains
+// reflexive.
 impl Eq for AccountSnapshot {}
 
+/// The window ids this build understands, broadest first. The order breaks a
+/// tie between two equally consumed windows, so the headline figure does not
+/// flip between them while both sit at the same percentage; it is not itself a
+/// priority, because the window that matters is the one closest to its limit.
+const KNOWN_WINDOWS: [&str; 4] = ["month", "top_tier", "week", "day"];
+
 impl AccountSnapshot {
-    /// Percentage consumed from the monthly allocation, if the response gives
-    /// a complete, positive denominator and a non-negative numerator.
+    /// The window whose percentage stands for the account as a whole: the
+    /// most-exhausted one the portal reported.
+    ///
+    /// Not the broadest. `tui::panels::headline_pct` is the contract every
+    /// multi-window vendor here meets — the Overview bar, the macOS headline
+    /// and the Waybar severity all read this figure — and a plan at 99 % of
+    /// today's limit and 10 % of the month is blocked today. Windows whose id
+    /// this build does not know still render as their own rows, but they never
+    /// become the headline: we cannot say what an unknown window measures.
+    pub fn primary_gauge(&self) -> Option<&UsageGauge> {
+        // Walked narrowest-first because `max_by` keeps the last of equal
+        // elements, so a tie settles on the broadest window.
+        KNOWN_WINDOWS
+            .iter()
+            .rev()
+            .filter_map(|id| self.gauges.iter().find(|gauge| gauge.id == *id))
+            .max_by(|a, b| a.percent().total_cmp(&b.percent()))
+    }
+
+    /// Window with a given portal id, if the response carried it.
+    pub fn gauge(&self, id: &str) -> Option<&UsageGauge> {
+        self.gauges.iter().find(|gauge| gauge.id == id)
+    }
+
+    pub fn has_usage_windows(&self) -> bool {
+        !self.gauges.is_empty()
+    }
+
+    /// Percentage consumed for the account: the primary usage window when the
+    /// response reports windows, otherwise the legacy credit allocation.
     pub fn usage_percent(&self) -> Option<f64> {
+        if let Some(gauge) = self.primary_gauge() {
+            return Some(gauge.percent());
+        }
         let monthly = self.monthly_credits?;
         let remaining = self.credits_remaining?;
         if !monthly.is_finite() || !remaining.is_finite() || monthly <= 0.0 || remaining < 0.0 {
@@ -207,6 +277,7 @@ pub fn parse_account(value: &Value) -> Result<AccountSnapshot, String> {
             "renewalAt",
         ],
     )?;
+    let gauges = parse_usage_gauges(&sources)?;
 
     // A payload containing only an internal ID or an unrelated error/status is
     // not an account contract. Nested subscription/access objects are valid
@@ -241,6 +312,13 @@ pub fn parse_account(value: &Value) -> Result<AccountSnapshot, String> {
             "renewal_at",
             "renewalAt",
         ][..],
+        &["usage_window", "usageWindow"][..],
+        &[
+            "day_used_bp",
+            "week_used_bp",
+            "month_used_bp",
+            "top_tier_used_bp",
+        ][..],
     ]
     .into_iter()
     .flatten()
@@ -262,7 +340,136 @@ pub fn parse_account(value: &Value) -> Result<AccountSnapshot, String> {
         total_usable_credits,
         rollover_credits,
         current_period_end,
+        gauges,
     })
+}
+
+/// Canonical flat fallback fields, in the order the API's `gauges` array uses.
+const FLAT_WINDOWS: [&str; 4] = ["day", "week", "month", "top_tier"];
+
+/// Read `usage_window.gauges`, falling back to the redundant flat
+/// `<window>_used_bp` / `<window>_resets_at_ms` fields when the array is
+/// absent (older payloads, or a portal that only sent the flat form).
+///
+/// A gauge without `used_bp` is dropped, never defaulted to 0: an unreported
+/// window is a metric we do not have, not a spent one. Non-finite or negative
+/// basis points are a schema error, the same rule credits already follow.
+fn parse_usage_gauges(sources: &[&Map<String, Value>]) -> Result<Vec<UsageGauge>, String> {
+    let mut gauges = Vec::new();
+    let usage_window = sources.iter().find_map(|source| {
+        source
+            .get("usage_window")
+            .or_else(|| source.get("usageWindow"))
+    });
+    if let Some(window) = usage_window
+        && let Some(list) = window.get("gauges").and_then(Value::as_array)
+    {
+        for entry in list {
+            let Some(entry) = entry.as_object() else {
+                continue;
+            };
+            let Some(id) = entry
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+            else {
+                continue;
+            };
+            let Some(used_bp) = optional_basis_points(entry.get("used_bp"))? else {
+                continue;
+            };
+            let scope = entry
+                .get("scope")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|scope| !scope.is_empty() && !scope.chars().any(char::is_control))
+                .map(str::to_owned);
+            let label = entry
+                .get("label")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|label| !label.is_empty() && !label.chars().any(char::is_control))
+                .map(str::to_owned);
+            gauges.push(UsageGauge {
+                id: id.to_owned(),
+                scope,
+                label,
+                used_bp,
+                reset_at: optional_epoch_ms(entry.get("resets_at_ms")),
+            });
+        }
+    }
+    if !gauges.is_empty() {
+        return Ok(gauges);
+    }
+
+    for id in FLAT_WINDOWS {
+        let Some(used_bp) = flat_basis_points(sources, id)? else {
+            continue;
+        };
+        gauges.push(UsageGauge {
+            id: id.to_owned(),
+            scope: None,
+            label: None,
+            used_bp,
+            reset_at: flat_reset(sources, id),
+        });
+    }
+    Ok(gauges)
+}
+
+fn flat_key(sources: &[&Map<String, Value>], id: &str, suffix: &str) -> Option<Value> {
+    let key = format!("{id}_{suffix}");
+    sources.iter().find_map(|source| source.get(&key).cloned())
+}
+
+fn flat_basis_points(sources: &[&Map<String, Value>], id: &str) -> Result<Option<f64>, String> {
+    match flat_key(sources, id, "used_bp") {
+        Some(value) => optional_basis_points(Some(&value)),
+        None => Ok(None),
+    }
+}
+
+fn flat_reset(sources: &[&Map<String, Value>], id: &str) -> Option<DateTime<Utc>> {
+    let value = flat_key(sources, id, "resets_at_ms")?;
+    optional_epoch_ms(Some(&value))
+}
+
+/// Basis points (`10_000` = 100 %), accepted as a number or numeric string.
+fn optional_basis_points(value: Option<&Value>) -> Result<Option<f64>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let number = match value {
+        Value::Number(number) => number
+            .as_f64()
+            .ok_or_else(|| "usage basis points are not a finite number".to_string())?,
+        Value::String(text) => text
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "usage basis points are not numeric".to_string())?,
+        _ => return Err("usage basis points must be a number".into()),
+    };
+    if !number.is_finite() || number < 0.0 {
+        return Err("usage basis points must be finite and non-negative".into());
+    }
+    Ok(Some(number))
+}
+
+/// Epoch milliseconds → UTC. A malformed reset is dropped rather than failing
+/// the whole account payload: the figure is still usable without a countdown.
+fn optional_epoch_ms(value: Option<&Value>) -> Option<DateTime<Utc>> {
+    let value = value?;
+    let millis = match value {
+        Value::Number(number) => number.as_i64()?,
+        Value::String(text) => text.trim().parse::<i64>().ok()?,
+        _ => return None,
+    };
+    DateTime::from_timestamp_millis(millis)
 }
 
 fn object<'a>(value: &'a Value, name: &str) -> Result<&'a Map<String, Value>, String> {
