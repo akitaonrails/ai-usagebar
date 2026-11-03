@@ -10,6 +10,12 @@
   placeholder (literal) and points shared formats at the generic
   `{session_*}` and `{weekly_*}` placeholders.
 
+- **Claude: the plans read Ultra and Max.** Anthropic renamed Max 20x to
+  Ultra and Max 5x to Max in October 2026. The OAuth credentials keep the old
+  tier ids, so the bar, the tooltip, the panel and `usage --json` still said
+  "Claude Max 20x" and "Claude Max 5x"; they now say "Claude Ultra" and
+  "Claude Max".
+
 ### Fixed
 
 - **Synthetic alerts no longer repeat at every refill tick.** Each tick
@@ -33,6 +39,17 @@
 - **The Copilot bar falls back to the next quota the plan includes.** Without
   premium requests the default format had nothing to print and read
   `—% · 29d 4h`; it now shows the chat quota (then completions).
+
+- **Claude: no five-hour window on a verified Ultra account.** Verified Ultra
+  accounts have no five-hour limit, and the usage endpoint sends
+  `five_hour: null`, but it was drawn as an empty `0% · —` session everywhere.
+  Such an account now has no Session row in the tooltip, the TUI and
+  `usage --json` (and so in GNOME, KDE, Omarchy, the tray popover and the
+  notifications), and no five-hour segment on the macOS and GNOME bars. The
+  `{session_*}` placeholders are empty, and without `--format` the bar shows
+  the weekly window. Claude Desktop's Prepare sends no turn for it. An
+  unverified Ultra account keeps its temporary five-hour limit, and other
+  plans are unchanged.
 
 ## [1.47.0] — 2026-10-30
 

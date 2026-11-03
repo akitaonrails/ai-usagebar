@@ -14,18 +14,22 @@ use ai_usagebar::anthropic::{self, fetch::Endpoints};
 use ai_usagebar::cache::Cache;
 use ai_usagebar::format::updated_at_hm;
 use ai_usagebar::theme::Theme;
-use ai_usagebar::widget::render::{DEFAULT_FORMAT, RenderInput, render_anthropic};
+use ai_usagebar::widget::render::{DEFAULT_FORMAT, RenderInput, default_format, render_anthropic};
 use chrono::{TimeZone, Utc};
 use tempfile::{NamedTempFile, TempDir};
 
 fn write_creds() -> NamedTempFile {
+    write_creds_with_tier("default_claude_max_5x")
+}
+
+fn write_creds_with_tier(rate_limit_tier: &str) -> NamedTempFile {
     // Token expires far in the future → no refresh needed during the test.
     let expires_ms = chrono::Utc::now().timestamp_millis() + 3_600_000;
     let body = format!(
         r#"{{"claudeAiOauth":{{
             "accessToken":"AT","refreshToken":"RT",
             "expiresAt": {expires_ms},
-            "subscriptionType":"max","rateLimitTier":"default_claude_max_5x"
+            "subscriptionType":"max","rateLimitTier":"{rate_limit_tier}"
         }}}}"#
     );
     let mut f = NamedTempFile::new().unwrap();
@@ -165,6 +169,63 @@ async fn no_sonnet_no_extra_renders_minimal_tooltip() {
         "minimal_response_tooltip",
         normalize_updated_time(&out.tooltip, now, outcome.cache_age)
     );
+}
+
+/// A verified Ultra account (formerly Max 20x) has no five-hour limit, and the
+/// endpoint sends `five_hour: null`. Neither the bar nor the tooltip may show a
+/// five-hour window, and the plan reads under its current name.
+#[tokio::test]
+async fn verified_ultra_renders_no_five_hour_window() {
+    let mut server = mockito::Server::new_async().await;
+    server
+        .mock("GET", "/api/oauth/usage")
+        .with_status(200)
+        .with_body(read_fixture("anthropic_usage_ultra_verified.json"))
+        .create_async()
+        .await;
+
+    let td = TempDir::new().unwrap();
+    let cache = cache_in(&td);
+    let creds = write_creds_with_tier("default_claude_max_20x");
+    let client = reqwest::Client::new();
+    let endpoints = Endpoints {
+        usage: format!("{}/api/oauth/usage", server.url()),
+        token: format!("{}/v1/oauth/token", server.url()),
+    };
+    let outcome = anthropic::fetch_snapshot(
+        &client,
+        &anthropic::creds::CredsTarget::Explicit(creds.path().to_path_buf()),
+        &cache,
+        &endpoints,
+        Duration::from_secs(0),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome.snapshot.plan, "Ultra");
+    assert_eq!(outcome.snapshot.session, None);
+
+    let now = Utc.with_ymd_and_hms(2026, 5, 23, 12, 0, 0).unwrap();
+    let theme = Theme::default();
+    let format = default_format(&outcome.snapshot).to_string();
+    let input = RenderInput {
+        claude_sessions: None,
+        outcome: &outcome,
+        theme: &theme,
+        format: &format,
+        tooltip_format: None,
+        icon: None,
+        pace_tolerance: 5,
+        format_pace_color: false,
+        tooltip_pace_pts: false,
+        now,
+    };
+    let out = render_anthropic(&input);
+    assert!(out.text.contains(">41% · 4d 1h<"), "{}", out.text);
+    assert!(out.tooltip.contains("Claude Ultra"), "{}", out.tooltip);
+    assert!(!out.tooltip.contains("Session"), "{}", out.tooltip);
+    assert!(out.tooltip.contains("Weekly"), "{}", out.tooltip);
+    assert!(out.tooltip.contains("Fable weekly"), "{}", out.tooltip);
+    assert_eq!(format!("{:?}", out.class), "Low");
 }
 
 #[tokio::test]
