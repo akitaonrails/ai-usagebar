@@ -7,7 +7,7 @@ defensive and includes opt-in live tests for catching response changes.
 
 | Vendor | Endpoint | What you see | Native desktop selector (v0.13) |
 |---|---|---|---|
-| **Claude** | `api.anthropic.com/api/oauth/usage` (undocumented) | Session (5h), Weekly (7d), model-scoped weekly (e.g. Fable), Extra usage $, cloud session credits + usage-credit balance when the account reports them | Yes |
+| **Claude** | `api.anthropic.com/api/oauth/usage` (undocumented) | Session (5h; none on a verified Ultra account, which has no five-hour limit), Weekly (7d), model-scoped weekly (e.g. Fable), Extra usage $, cloud session credits + usage-credit balance when the account reports them | Yes |
 | **Codex** | `chatgpt.com/backend-api/wham/usage`, plus `…/wham/rate-limit-reset-credits` when any are banked (undocumented; both used by the official `codex` CLI) | Codex 5h and/or weekly, Code-review weekly, named extra limits with their own windows, models currently at capacity, Credits, banked reset credits + expiry | Yes |
 | **Cline** | `api.cline.bot` `/api/v1/users/me/plan` (plan name, billing period) + `/api/v1/users/me/plan/usage-limits` (undocumented; the same calls the web dashboard makes) | ClinePass's three limits — 5 hours, weekly, monthly — as the percentage Cline reports, with the reset time of each open window | No — widget/TUI only |
 | **GitHub Copilot** | `api.github.com/copilot_internal/user` (private; used by VS Code) | Premium requests, Chat, and Completions quota %, counts when supplied, plan, reset | Yes |

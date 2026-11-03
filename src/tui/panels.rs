@@ -337,10 +337,11 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
     let money_cell = |v: f64, c: &str| (money(v, c), PaceSeverity::Low);
     let (plan, mut cells) = match snapshot {
         VendorSnapshot::Anthropic(s) => {
-            let mut cells = vec![
-                pct("S", s.session.utilization_pct),
-                pct("W", s.weekly.utilization_pct),
-            ];
+            let mut cells = Vec::new();
+            if let Some(session) = &s.session {
+                cells.push(pct("S", session.utilization_pct));
+            }
+            cells.push(pct("W", s.weekly.utilization_pct));
             if let Some(sonnet) = &s.sonnet {
                 cells.push(pct("Son", sonnet.utilization_pct));
             }
@@ -605,7 +606,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
 pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
     match snapshot {
         VendorSnapshot::Anthropic(s) => [
-            Some(s.session.utilization_pct),
+            s.session.as_ref().map(|w| w.utilization_pct),
             Some(s.weekly.utilization_pct),
             s.sonnet.as_ref().map(|w| w.utilization_pct),
         ]
@@ -953,7 +954,11 @@ fn anthropic_sections(
         right: None,
     }]);
 
-    push_window(&mut v, "Session (5h)", &s.session, now, tol, true);
+    // No five-hour limit means no row, not an empty one: the report, the
+    // frontends that draw it and the notifications all follow this list.
+    if let Some(session) = &s.session {
+        push_window(&mut v, "Session (5h)", session, now, tol, true);
+    }
     push_window(&mut v, "Weekly (7d)", &s.weekly, now, tol, true);
     if let Some(w) = &s.sonnet {
         push_window(&mut v, "Sonnet only", w, now, tol, false);
@@ -3353,11 +3358,11 @@ mod tests {
     fn anthropic_sections_include_all_three_windows_when_present() {
         let snap = AnthropicSnapshot {
             plan: "Max 20x".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 60,
                 resets_at: Some(now() + chrono::Duration::hours(1)),
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 30,
                 resets_at: Some(now() + chrono::Duration::days(3)),
@@ -3404,11 +3409,11 @@ mod tests {
         // spend alone — not "of $0.00", not an invented percentage.
         let snap = AnthropicSnapshot {
             plan: "Pro".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 10,
                 resets_at: None,
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 20,
                 resets_at: None,
@@ -3456,11 +3461,11 @@ mod tests {
     fn anthropic_omits_sonnet_and_extra_when_absent() {
         let snap = AnthropicSnapshot {
             plan: "Pro".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 10,
                 resets_at: None,
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 5,
                 resets_at: None,
@@ -3481,17 +3486,64 @@ mod tests {
         assert_eq!(metric_count, 2);
     }
 
+    /// A verified Ultra account has no five-hour limit: no Session row, no
+    /// "S" cell, and the headline comes from the windows it does have.
+    #[test]
+    fn anthropic_without_a_session_window_has_no_session_row() {
+        let snapshot = VendorSnapshot::Anthropic(AnthropicSnapshot {
+            plan: "Ultra".into(),
+            session: None,
+            weekly: UsageWindow {
+                utilization_pct: 41,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            },
+            sonnet: None,
+            scoped: vec![crate::usage::ScopedWindow {
+                label: "Fable".into(),
+                window: UsageWindow {
+                    utilization_pct: 33,
+                    resets_at: Some(now() + chrono::Duration::days(3)),
+                    window_duration: chrono::Duration::days(7),
+                },
+            }],
+            extra: None,
+            reset_credits: Default::default(),
+            cloud_credits: None,
+            usage_credits: None,
+        });
+        let sections = sections_for(&ready(snapshot.clone()), now(), 5);
+        assert!(matches!(
+            sections.first(),
+            Some(Section::Title { left, .. }) if left == "Claude Ultra"
+        ));
+        let metrics: Vec<&str> = sections
+            .iter()
+            .filter_map(|s| match s {
+                Section::Metric { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metrics, ["Weekly (7d)", "Fable (7d)"]);
+
+        let (plan, cells) = compact_cells(&snapshot);
+        assert_eq!(plan, "Ultra");
+        let cells: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(cells, ["W 41%"]);
+        assert_eq!(headline_pct(&snapshot), Some(41));
+    }
+
     fn claude_snapshot_with_credits(
         cloud: Option<CloudCredits>,
         usage: Option<UsageCredits>,
     ) -> VendorSnapshot {
         VendorSnapshot::Anthropic(AnthropicSnapshot {
             plan: "Max 5x".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 12,
                 resets_at: Some(now() + chrono::Duration::hours(2)),
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 34,
                 resets_at: None,
@@ -4223,11 +4275,11 @@ mod tests {
         };
         let claude = AnthropicSnapshot {
             plan: "Max 20x".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 2,
                 resets_at: Some(now + chrono::Duration::hours(1)),
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 63,
                 resets_at: Some(now + chrono::Duration::days(1)),
