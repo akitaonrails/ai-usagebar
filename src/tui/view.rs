@@ -981,8 +981,9 @@ mod tests {
         let mut app = app_with(vec![TabState::Loading, TabState::Loading]);
         app.settings = Some(settings_state());
         // Tall enough that the whole body (keys + provider switches +
-        // notifications + save) fits inside the 88%-height modal.
-        let mut terminal = Terminal::new(TestBackend::new(160, 72)).unwrap();
+        // notifications + save) fits inside the 88%-height modal. Every new
+        // key provider lengthens it, so this grows with the list.
+        let mut terminal = Terminal::new(TestBackend::new(160, 80)).unwrap();
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
 
         let hit = app.hit.borrow();

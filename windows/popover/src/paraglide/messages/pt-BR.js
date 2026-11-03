@@ -208,6 +208,8 @@
 /** @typedef {{}} Refresh_Interval_HintInputs */
 /** @typedef {{}} Refresh_NowInputs */
 /** @typedef {{}} Refresh_To_Detect_HintInputs */
+/** @typedef {{ amount: NonNullable<unknown>, exact: NonNullable<unknown> }} Regenerates_AtInputs */
+/** @typedef {{ amount: NonNullable<unknown>, duration: NonNullable<unknown> }} Regenerates_InInputs */
 /** @typedef {{}} Release_NotesInputs */
 /** @typedef {{}} Remind_Me_LaterInputs */
 /** @typedef {{}} ReorderInputs */
@@ -1149,6 +1151,14 @@ export const refresh_now = /** @type {(inputs: Refresh_NowInputs) => LocalizedSt
 
 export const refresh_to_detect_hint = /** @type {(inputs: Refresh_To_Detect_HintInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`Atualize para verificar os provedores instalados.`)
+};
+
+export const regenerates_at = /** @type {(inputs: Regenerates_AtInputs) => LocalizedString} */ (i) => {
+	return /** @type {LocalizedString} */ (`Regenera ${i?.amount} ${i?.exact}`)
+};
+
+export const regenerates_in = /** @type {(inputs: Regenerates_InInputs) => LocalizedString} */ (i) => {
+	return /** @type {LocalizedString} */ (`Regenera ${i?.amount} em ${i?.duration}`)
 };
 
 export const release_notes = /** @type {(inputs: Release_NotesInputs) => LocalizedString} */ () => {

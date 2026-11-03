@@ -79,6 +79,7 @@ use ai_usagebar::antigravity;
 use ai_usagebar::cache::Cache;
 use ai_usagebar::cursor;
 use ai_usagebar::deepinfra;
+use ai_usagebar::deeprelay;
 use ai_usagebar::devin;
 use ai_usagebar::error::AppError;
 use ai_usagebar::kimi;
@@ -142,7 +143,9 @@ async fn anthropic_live() {
     .expect("anthropic fetch should succeed against the real API");
 
     assert!(!out.snapshot.plan.is_empty(), "anthropic plan label empty");
-    assert_pct("anthropic.session", out.snapshot.session.utilization_pct);
+    if let Some(s) = out.snapshot.session.as_ref() {
+        assert_pct("anthropic.session", s.utilization_pct);
+    }
     assert_pct("anthropic.weekly", out.snapshot.weekly.utilization_pct);
     if let Some(s) = out.snapshot.sonnet.as_ref() {
         assert_pct("anthropic.sonnet", s.utilization_pct);
@@ -155,9 +158,9 @@ async fn anthropic_live() {
         assert!(e.spent.0 >= 0, "anthropic extra.spent < 0");
     }
     println!(
-        "✅ anthropic — plan={}, session={}%, weekly={}%, sonnet={:?}, extra={:?}",
+        "✅ anthropic — plan={}, session={:?}, weekly={}%, sonnet={:?}, extra={:?}",
         out.snapshot.plan,
-        out.snapshot.session.utilization_pct,
+        out.snapshot.session.as_ref().map(|s| s.utilization_pct),
         out.snapshot.weekly.utilization_pct,
         out.snapshot.sonnet.as_ref().map(|s| s.utilization_pct),
         out.snapshot
@@ -335,6 +338,83 @@ async fn deepinfra_live() {
         out.snapshot.monthly_spend,
         out.snapshot.monthly_limit,
         out.snapshot.period,
+    );
+}
+
+/// DeepRelay's plan meters. Skips when `DEEPRELAY_API_KEY` is unset, so the
+/// opt-in smoke run stays usable on a machine without an account.
+#[tokio::test]
+#[ignore = "live API; run with --ignored"]
+async fn deeprelay_live() {
+    let Ok(api_key) = std::env::var("DEEPRELAY_API_KEY") else {
+        eprintln!("deeprelay_live: DEEPRELAY_API_KEY is unset — skipping");
+        return;
+    };
+    if api_key.trim().is_empty() {
+        eprintln!("deeprelay_live: DEEPRELAY_API_KEY is empty — skipping");
+        return;
+    }
+    let cache = xdg_cache_for("deeprelay");
+    let client = reqwest::Client::builder()
+        .timeout(ai_usagebar::vendor::HTTP_CLIENT_TIMEOUT)
+        .redirect(ai_usagebar::vendor::same_origin_redirect_policy())
+        .build()
+        .unwrap();
+    let out = deeprelay::fetch::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &deeprelay::fetch::Endpoints::default(),
+        Duration::ZERO,
+    )
+    .await
+    .expect("deeprelay fetch should succeed against the real API");
+
+    assert!(
+        !out.snapshot.plan.is_empty(),
+        "deeprelay plan label is empty"
+    );
+    for (label, meter) in [
+        ("monthly input", out.snapshot.monthly_input),
+        ("monthly output", out.snapshot.monthly_output),
+        ("weekly input", out.snapshot.weekly_input),
+        ("weekly output", out.snapshot.weekly_output),
+    ] {
+        if let Some(meter) = meter {
+            assert!(meter.used >= 0, "{label}: used tokens are negative");
+            assert!(meter.limit > 0, "{label}: allowance is not positive");
+            assert_pct(label, meter.pct().expect("a positive allowance has a pct"));
+        }
+    }
+    if let (Some(used), Some(limit)) = (
+        out.snapshot.backstop_used_usd,
+        out.snapshot.backstop_limit_usd,
+    ) {
+        assert!(used >= 0.0, "deeprelay ceiling spend is negative");
+        assert!(limit > 0.0, "deeprelay ceiling is not positive");
+    }
+    println!(
+        "deeprelay — plan={}, monthly in={}%, out={}%, weekly in={}%, out={}%, ceiling={:?}/{:?}, balance={:?}",
+        out.snapshot.plan,
+        out.snapshot
+            .monthly_input
+            .and_then(|m| m.pct())
+            .unwrap_or(-1),
+        out.snapshot
+            .monthly_output
+            .and_then(|m| m.pct())
+            .unwrap_or(-1),
+        out.snapshot
+            .weekly_input
+            .and_then(|m| m.pct())
+            .unwrap_or(-1),
+        out.snapshot
+            .weekly_output
+            .and_then(|m| m.pct())
+            .unwrap_or(-1),
+        out.snapshot.backstop_used_usd,
+        out.snapshot.backstop_limit_usd,
+        out.snapshot.balance_usd,
     );
 }
 

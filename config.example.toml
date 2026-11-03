@@ -698,3 +698,15 @@ enabled = false
                                   # environment outranks the credential file.
 # api_key = "[REDACTED]"          # optional inline fallback; prefer the env var
 # auth_paths = ["~/.cline/data/settings/providers.json"]
+
+[deeprelay]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Reads the monthly plan from https://api.deeprelay.ai/v1/billing/subscription
+# (scope `billing:read`, which the dashboard's default key carries): the
+# monthly input/output allowance, the rolling 7-day caps (which have no reset
+# date — they slide), the per-period dollar usage ceiling, and the
+# pay-as-you-go wallet when it matters. Token figures are weighted by each
+# model's usage factor, so they are directly comparable with the limits.
+enabled = false
+api_key_env = "DEEPRELAY_API_KEY"   # checked first; if set + non-empty, used
+# api_key = "deeprelay_live_..."     # fallback; chmod 600 the file if you use it

@@ -49,6 +49,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "GITHUB_TOKEN",
     "OLLAMA_API_KEY",
     "CLINE_API_KEY",
+    "DEEPRELAY_API_KEY",
 ];
 
 /// Env var names a `[[custom]]` provider reads its token from. They are not
@@ -194,6 +195,7 @@ pub enum VendorId {
     #[serde(rename = "muse-code")]
     MuseCode,
     Droid,
+    DeepRelay,
 }
 
 /// How a provider authenticates. Drives what a frontend offers a provider that
@@ -255,6 +257,7 @@ impl VendorId {
             VendorId::MuseCode => "muse-code",
             VendorId::Cline => "cline",
             VendorId::Droid => "droid",
+            VendorId::DeepRelay => "deeprelay",
         }
     }
 
@@ -294,6 +297,7 @@ impl VendorId {
             VendorId::Devin => "Devin",
             VendorId::MuseCode => "Muse Code",
             VendorId::Droid => "Droid",
+            VendorId::DeepRelay => "DeepRelay",
         }
     }
 
@@ -336,6 +340,9 @@ impl VendorId {
             VendorId::MuseCode => VendorId::MuseCode.short_name(),
             VendorId::Cline => VendorId::Cline.short_name(),
             VendorId::Droid => VendorId::Droid.short_name(),
+            // No distinct Nerd Font mark for DeepRelay; `drl` is unique by
+            // construction and cannot render as tofu.
+            VendorId::DeepRelay => VendorId::DeepRelay.short_name(),
         }
     }
 
@@ -376,6 +383,7 @@ impl VendorId {
             VendorId::MuseCode => "msc",
             VendorId::Cline => "cln",
             VendorId::Droid => "drd",
+            VendorId::DeepRelay => "drl",
         }
     }
 
@@ -419,6 +427,7 @@ impl VendorId {
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
             VendorId::Droid => "droid",
+            VendorId::DeepRelay => "deeprelay",
         }
     }
 
@@ -450,7 +459,8 @@ impl VendorId {
             | VendorId::OpenCodeGo
             | VendorId::Ollama
             | VendorId::OrcaRouter
-            | VendorId::Lyceum => AuthKind::ApiKey,
+            | VendorId::Lyceum
+            | VendorId::DeepRelay => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
             // the login. Antigravity has no credential file at all (the binary
             // probes whichever local server answers), Cursor and Kiro read the
@@ -494,6 +504,7 @@ impl VendorId {
             VendorId::Ollama => "OLLAMA_API_KEY",
             VendorId::OrcaRouter => "ORCAROUTER_API_KEY",
             VendorId::Lyceum => "LYCEUM_API_KEY",
+            VendorId::DeepRelay => "DEEPRELAY_API_KEY",
             // OAuth-first, with an environment override for CI and headless
             // use. Neither name is configurable, so neither has an
             // `api_key_env` field in its config section.
@@ -568,7 +579,8 @@ impl VendorId {
             | VendorId::OpenCodeGo
             | VendorId::Ollama
             | VendorId::OrcaRouter
-            | VendorId::Lyceum => "Add an API key in Settings, then Refresh.",
+            | VendorId::Lyceum
+            | VendorId::DeepRelay => "Add an API key in Settings, then Refresh.",
         }
     }
 
@@ -607,7 +619,8 @@ impl VendorId {
             | VendorId::OpenCodeGo
             | VendorId::Ollama
             | VendorId::OrcaRouter
-            | VendorId::Lyceum => "",
+            | VendorId::Lyceum
+            | VendorId::DeepRelay => "",
         }
     }
 
@@ -651,6 +664,7 @@ impl VendorId {
             VendorId::Cline,
             VendorId::MuseCode,
             VendorId::Droid,
+            VendorId::DeepRelay,
         ]
     }
 

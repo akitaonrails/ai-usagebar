@@ -1,6 +1,6 @@
 # ai-usagebar
 
-Native Omarchy Quattro panel, Waybar widget, and tabbed TUI for AI plan usage across **Claude**, **Codex/ChatGPT**, **GitHub Copilot**, **Z.AI (GLM)**, **OpenRouter**, **DeepSeek**, **DeepInfra**, **Kimi**, **Nous Research**, **OpenCode Go**, **Command Code**, **Devin**, **Cline**, **Muse Code**, **Droid**, **Synthetic**, and other supported AI coding services.
+Native Omarchy Quattro panel, Waybar widget, and tabbed TUI for AI plan usage across **Claude**, **Codex/ChatGPT**, **GitHub Copilot**, **Z.AI (GLM)**, **OpenRouter**, **DeepSeek**, **DeepInfra**, **Kimi**, **Nous Research**, **OpenCode Go**, **Command Code**, **Devin**, **Cline**, **Muse Code**, **Droid**, **Synthetic**, **DeepRelay**, and other supported AI coding services.
 
 ai-usagebar began as a Rust port of
 [`claudebar`](https://github.com/mryll/claudebar) and remains drop-in
@@ -314,6 +314,7 @@ come from environment variables or `config.toml`.
 | Devin | Existing official Devin CLI login | Opt in (`[devin]`) after signing in with the Devin CLI. Reuses its existing `credentials.toml` read-only; ai-usagebar never logs in, refreshes, or writes credentials. Reports daily and weekly quota usage and an optional overage balance. |
 | Droid (Factory) | Existing `droid` CLI login | Opt in (`[droid]`) after signing in with `droid` on Linux. Reuses the CLI's `~/.factory/auth.v2.keyring` login read-only — the Secret Service key never leaves the keyring and ai-usagebar never refreshes or writes the token; near expiry it asks the CLI to renew its own login (`droid doctor --checks auth`). Reports Standard 5-hour/weekly/monthly windows, the Droid Core bucket, and the extra-usage balance. |
 | Cline / ClinePass | Existing `cline` CLI login | Enable `[cline]`. No key to paste; the CLI's own credential is reused. `CLINE_API_KEY` overrides it. |
+| DeepRelay | API key (`DEEPRELAY_API_KEY` env or `[deeprelay] api_key` in config) | Set either. Opt-in. The key needs the `billing:read` scope, which the dashboard's default key carries. Reports the monthly input/output allowance, the rolling 7-day caps (which slide, so they have no reset date), the per-period dollar usage ceiling, and the pay-as-you-go wallet when it matters. |
 | Muse Code | Existing file-based Muse CLI OAuth login | Enable `[muse-code]` after `muse login`. Reports subscription session/weekly quota and resets. Credentials are read only; Meta can omit quotas while the session window is idle. [Setup and limitations](docs/muse-code.md). |
 
 ### Nous credits and OpenCode Go
@@ -1030,6 +1031,8 @@ Use one bar item and scroll through your vendors. The TUI on-click still shows t
 format shared by every cycled provider, use `{session_pct}`,
 `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}`. Cursor maps its two
 usage pools to the session and weekly slots; Kiro maps its single pool to both.
+Claude on a verified Ultra plan has no five-hour limit and leaves the session
+slots empty, so add `{weekly_pct}` to see a figure for it.
 The [placeholder reference](docs/format-placeholders.md) lists every generic
 and provider-specific field.
 

@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::copilot;
 use crate::cursor;
 use crate::deepinfra;
+use crate::deeprelay;
 use crate::deepseek;
 use crate::error::{AppError, Result};
 use crate::grok;
@@ -41,7 +42,7 @@ use crate::vendor::{HTTP_CLIENT_TIMEOUT, RenderOpts, VendorId, VendorOutcome};
 use crate::waybar::WaybarOutput;
 use crate::widget::cli::{Cli, Vendor};
 use crate::widget::pretty::print_pretty;
-use crate::widget::render::{DEFAULT_FORMAT, RenderInput, render_anthropic};
+use crate::widget::render::{RenderInput, default_format, render_anthropic};
 use crate::zai;
 
 /// Entry point — runs to completion and ALWAYS returns Ok with exit code 0
@@ -182,6 +183,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Droid => droid_output(cli, &config).await,
         Vendor::MuseCode => muse_output(cli, &config).await,
         Vendor::Cline => cline_output(cli, &config).await,
+        Vendor::DeepRelay => deeprelay_output(cli, &config).await,
     }
 }
 
@@ -193,12 +195,15 @@ fn validate_vendor_options(cli: &Cli, vendor: Vendor) -> Result<()> {
         )
         && !Config::API_KEY_ACCOUNT_VENDORS.contains(&vendor.to_id())
     {
-        return Err(AppError::Other(
-            "--account is supported only for Claude, Codex (OpenAI), GitHub Copilot, Devin, and \
-             the API-key vendors with a [[<vendor>.accounts]] array: Z.AI, OpenRouter, \
-             DeepSeek, DeepInfra, Kilo, Novita, Moonshot, Grok, MiniMax, and OrcaRouter"
-                .into(),
-        ));
+        let api_key_vendors = Config::API_KEY_ACCOUNT_VENDORS
+            .iter()
+            .map(|vendor| vendor.display_name())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(AppError::Other(format!(
+            "--account is supported only for Claude, Codex (OpenAI), GitHub Copilot, Devin, \
+                 and the API-key vendors with a [[<vendor>.accounts]] array: {api_key_vendors}"
+        )));
     }
     if cli.desktop && vendor != Vendor::Anthropic {
         return Err(AppError::Other(
@@ -750,6 +755,35 @@ async fn synthetic_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let snapshot = outcome.snapshot.clone();
     let vendor_outcome: VendorOutcome = outcome.into();
     Ok(synthetic::vendor::render(
+        &vendor_outcome,
+        &snapshot,
+        &theme_from_cli(cli),
+        &RenderOpts::from_cli(cli),
+        Utc::now(),
+    ))
+}
+
+async fn deeprelay_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let (api_key, cache) = api_key_target(cli, config, VendorId::DeepRelay)?;
+    let client = http_client()?;
+    let endpoints = deeprelay::fetch::Endpoints::default();
+    let outcome = match fetch_api_keyed(
+        async {
+            deeprelay::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await
+        },
+        &api_key,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
+    let snapshot = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    Ok(deeprelay::vendor::render(
         &vendor_outcome,
         &snapshot,
         &theme_from_cli(cli),
@@ -1344,7 +1378,7 @@ fn render_with_theme(
     let format_owned = cli
         .format
         .clone()
-        .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
+        .unwrap_or_else(|| default_format(&outcome.snapshot).to_string());
     let input = RenderInput {
         outcome,
         theme,
@@ -1485,11 +1519,11 @@ mod tests {
         FetchOutcome {
             snapshot: AnthropicSnapshot {
                 plan: "Test".into(),
-                session: UsageWindow {
+                session: Some(UsageWindow {
                     utilization_pct: 25,
                     resets_at: None,
                     window_duration: chrono::Duration::hours(5),
-                },
+                }),
                 weekly: UsageWindow {
                     utilization_pct: 10,
                     resets_at: None,
@@ -1838,6 +1872,21 @@ mod tests {
             })
             .collect();
         assert_eq!(accepted, Config::API_KEY_ACCOUNT_VENDORS);
+    }
+
+    #[test]
+    fn account_flag_error_lists_every_api_key_account_vendor() {
+        let cli = cli_with(Some("work"), None, Some("/tmp/cache"));
+        let err = validate_vendor_options(&cli, Vendor::Ollama)
+            .unwrap_err()
+            .to_string();
+        for vendor in Config::API_KEY_ACCOUNT_VENDORS {
+            assert!(
+                err.contains(vendor.display_name()),
+                "expected {err} to list {}",
+                vendor.display_name()
+            );
+        }
     }
 
     #[test]

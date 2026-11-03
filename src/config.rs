@@ -83,6 +83,7 @@ pub struct Config {
     /// User-defined providers, one `[[custom]]` table each.
     pub custom: Vec<CustomProviderConfig>,
     pub cline: ClineConfig,
+    pub deeprelay: DeepRelayConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -1827,6 +1828,27 @@ impl Default for LyceumConfig {
     }
 }
 
+/// DeepRelay's monthly plan meters (`GET /v1/billing/subscription`).
+///
+/// Key-only and opt-in: the key needs the `billing:read` scope, which the
+/// dashboard's default key carries.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DeepRelayConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+impl Default for DeepRelayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "DEEPRELAY_API_KEY".into(),
+            api_key: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct MinimaxConfig {
@@ -2643,6 +2665,7 @@ impl Config {
             self.lyceum.api_key.as_deref(),
             self.antigravity.oauth_client_secret.as_deref(),
             self.cline.api_key.as_deref(),
+            self.deeprelay.api_key.as_deref(),
         ]
         .into_iter()
         .chain(
@@ -2749,6 +2772,7 @@ impl Config {
             VendorId::Devin => self.devin.enabled,
             VendorId::Droid => self.droid.enabled,
             VendorId::MuseCode => self.muse.enabled,
+            VendorId::DeepRelay => self.deeprelay.enabled,
         }
     }
 
@@ -2776,6 +2800,7 @@ impl Config {
             VendorId::Ollama => &self.ollama.api_key_env,
             VendorId::OrcaRouter => &self.orcarouter.api_key_env,
             VendorId::Lyceum => &self.lyceum.api_key_env,
+            VendorId::DeepRelay => &self.deeprelay.api_key_env,
             VendorId::Cline => &self.cline.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
             // not user-renameable, and the providers with no key at all.
@@ -2817,6 +2842,7 @@ impl Config {
             VendorId::Ollama => self.ollama.api_key.as_deref(),
             VendorId::OrcaRouter => self.orcarouter.api_key.as_deref(),
             VendorId::Lyceum => self.lyceum.api_key.as_deref(),
+            VendorId::DeepRelay => self.deeprelay.api_key.as_deref(),
             VendorId::Cline => self.cline.api_key.as_deref(),
             VendorId::Anthropic
             | VendorId::Openai

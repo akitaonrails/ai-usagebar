@@ -1,0 +1,408 @@
+{
+ "schema_version": 1,
+ "primary": "anthropic",
+ "entries": [
+  {
+   "id": "anthropic",
+   "brand": "anthropic",
+   "name": "anthropic",
+   "display_name": "Claude",
+   "short_name": "cld",
+   "icon": "󰚩",
+   "plan": "Max",
+   "error": null,
+   "status": "ready",
+   "stale": false,
+   "fetched_at": "@0@",
+   "reset_credits": null,
+   "metrics": [
+    {
+     "label": "Session (5h)",
+     "percent": 27,
+     "value": "27%",
+     "detail": "Resets in 2h 54m · 41% elapsed · 14pts under",
+     "severity": "low",
+     "window_secs": 18000,
+     "reset_at": "@174@",
+     "headline": "percent"
+    },
+    {
+     "label": "Weekly (7d)",
+     "percent": @WEEKLY@,
+     "value": "@WEEKLY@%",
+     "detail": "Resets in 1d 1h · 84% elapsed · 15pts under",
+     "severity": "@WEEKLY_SEVERITY@",
+     "window_secs": 604800,
+     "reset_at": "@1500@",
+     "headline": "percent"
+    },
+    {
+     "label": "Fable (7d)",
+     "percent": 12,
+     "value": "12%",
+     "detail": "Resets in 1d 1h",
+     "severity": "low",
+     "window_secs": 604800,
+     "reset_at": "@1500@",
+     "headline": "percent"
+    }
+   ],
+   "sections": [
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Session (5h)",
+     "percent": 27,
+     "value": "27%",
+     "detail": "Resets in 2h 54m · 41% elapsed · 14pts under",
+     "severity": "low",
+     "window_secs": 18000,
+     "reset_at": "@174@",
+     "headline": "percent"
+    },
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Weekly (7d)",
+     "percent": @WEEKLY@,
+     "value": "@WEEKLY@%",
+     "detail": "Resets in 1d 1h · 84% elapsed · 15pts under",
+     "severity": "@WEEKLY_SEVERITY@",
+     "window_secs": 604800,
+     "reset_at": "@1500@",
+     "headline": "percent"
+    },
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Fable (7d)",
+     "percent": 12,
+     "value": "12%",
+     "detail": "Resets in 1d 1h",
+     "severity": "low",
+     "window_secs": 604800,
+     "reset_at": "@1500@",
+     "headline": "percent"
+    }
+   ]
+  },
+  {
+   "id": "openai",
+   "brand": "openai",
+   "name": "openai",
+   "display_name": "Codex",
+   "short_name": "gpt",
+   "icon": "󰚩",
+   "plan": "Plus",
+   "error": null,
+   "status": "ready",
+   "stale": false,
+   "fetched_at": "@0@",
+   "reset_credits": null,
+   "metrics": [
+    {
+     "label": "Codex 5h",
+     "percent": 8,
+     "value": "8%",
+     "detail": "Resets in 4h 12m · 16% elapsed · 8pts under",
+     "severity": "low",
+     "window_secs": 18000,
+     "reset_at": "@252@",
+     "headline": "percent"
+    },
+    {
+     "label": "Codex weekly",
+     "percent": 31,
+     "value": "31%",
+     "detail": "Resets in 18h · 89% elapsed · 58pts under",
+     "severity": "low",
+     "window_secs": 604800,
+     "reset_at": "@1080@",
+     "headline": "percent"
+    }
+   ],
+   "sections": [
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Codex 5h",
+     "percent": 8,
+     "value": "8%",
+     "detail": "Resets in 4h 12m · 16% elapsed · 8pts under",
+     "severity": "low",
+     "window_secs": 18000,
+     "reset_at": "@252@",
+     "headline": "percent"
+    },
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Codex weekly",
+     "percent": 31,
+     "value": "31%",
+     "detail": "Resets in 18h · 89% elapsed · 58pts under",
+     "severity": "low",
+     "window_secs": 604800,
+     "reset_at": "@1080@",
+     "headline": "percent"
+    }
+   ]
+  },
+  {
+   "id": "zai",
+   "brand": "zai",
+   "name": "zai",
+   "display_name": "Z.AI",
+   "short_name": "zai",
+   "icon": "󰚩",
+   "plan": "Coding Pro",
+   "error": null,
+   "status": "ready",
+   "stale": false,
+   "fetched_at": "@0@",
+   "reset_credits": null,
+   "metrics": [
+    {
+     "label": "Rolling (5h)",
+     "percent": 46,
+     "value": "46%",
+     "detail": "Resets in 1h 30m",
+     "severity": "mid",
+     "window_secs": 18000,
+     "reset_at": "@90@",
+     "headline": "percent"
+    },
+    {
+     "label": "Weekly",
+     "percent": 62,
+     "value": "62%",
+     "detail": "Resets in 3d 8h",
+     "severity": "mid",
+     "window_secs": 604800,
+     "reset_at": "@4800@",
+     "headline": "percent"
+    }
+   ],
+   "sections": [
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Rolling (5h)",
+     "percent": 46,
+     "value": "46%",
+     "detail": "Resets in 1h 30m",
+     "severity": "mid",
+     "window_secs": 18000,
+     "reset_at": "@90@",
+     "headline": "percent"
+    },
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Weekly",
+     "percent": 62,
+     "value": "62%",
+     "detail": "Resets in 3d 8h",
+     "severity": "mid",
+     "window_secs": 604800,
+     "reset_at": "@4800@",
+     "headline": "percent"
+    }
+   ]
+  },
+  {
+   "id": "antigravity",
+   "brand": "antigravity",
+   "name": "antigravity",
+   "display_name": "Antigravity",
+   "short_name": "agy",
+   "icon": "󰚩",
+   "plan": "Pro",
+   "error": null,
+   "status": "ready",
+   "stale": false,
+   "fetched_at": "@0@",
+   "reset_credits": null,
+   "metrics": [
+    {
+     "label": "Gemini 3 Pro",
+     "percent": 84,
+     "value": "84%",
+     "detail": "Resets in 3h 6m",
+     "severity": "high",
+     "window_secs": 18000,
+     "reset_at": "@186@",
+     "headline": "percent"
+    },
+    {
+     "label": "Claude / GPT",
+     "percent": 18,
+     "value": "18%",
+     "detail": "Resets in 3h 6m",
+     "severity": "low",
+     "window_secs": 18000,
+     "reset_at": "@186@",
+     "headline": "percent"
+    }
+   ],
+   "sections": [
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Gemini 3 Pro",
+     "percent": 84,
+     "value": "84%",
+     "detail": "Resets in 3h 6m",
+     "severity": "high",
+     "window_secs": 18000,
+     "reset_at": "@186@",
+     "headline": "percent"
+    },
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Claude / GPT",
+     "percent": 18,
+     "value": "18%",
+     "detail": "Resets in 3h 6m",
+     "severity": "low",
+     "window_secs": 18000,
+     "reset_at": "@186@",
+     "headline": "percent"
+    }
+   ]
+  },
+  {
+   "id": "openrouter",
+   "brand": "openrouter",
+   "name": "openrouter",
+   "display_name": "OpenRouter",
+   "short_name": "or",
+   "icon": "󰚩",
+   "plan": null,
+   "error": null,
+   "status": "ready",
+   "stale": false,
+   "fetched_at": "@0@",
+   "reset_credits": null,
+   "metrics": [
+    {
+     "label": "Credit balance",
+     "percent": 38,
+     "value": "$12.40",
+     "detail": "$12.40 of $20.00 left",
+     "severity": "low",
+     "headline": "value"
+    }
+   ],
+   "sections": [
+    {
+     "type": "spacer"
+    },
+    {
+     "type": "metric",
+     "label": "Credit balance",
+     "percent": 38,
+     "value": "$12.40",
+     "detail": "$12.40 of $20.00 left",
+     "severity": "low",
+     "headline": "value"
+    }
+   ]
+  }
+ ],
+ "ranking": [
+  {
+   "entry_id": "openai",
+   "name": "Codex",
+   "status": "priority",
+   "reason_code": "priority",
+   "urgent": true,
+   "window": "Codex weekly",
+   "reset_at": "@1080@",
+   "unused_percent": 58,
+   "remaining_percent": 69,
+   "pace_percent_per_hour": 0.4,
+   "recent_percent_per_hour": 0.3,
+   "recent_hours": 3,
+   "cycle_percent_per_hour": 0.5,
+   "required_percent_per_hour": 3.8,
+   "alert_unused_percent": 50,
+   "alert_hours": 24
+  },
+  {
+   "entry_id": "anthropic",
+   "name": "Claude",
+   "status": "priority",
+   "reason_code": "priority",
+   "urgent": false,
+   "window": "Weekly (7d)",
+   "reset_at": "@1500@",
+   "unused_percent": 12,
+   "remaining_percent": 31,
+   "pace_percent_per_hour": 1.1,
+   "recent_percent_per_hour": 1.4,
+   "recent_hours": 3,
+   "cycle_percent_per_hour": 0.5,
+   "required_percent_per_hour": 1.2,
+   "alert_unused_percent": 50,
+   "alert_hours": 24
+  },
+  {
+   "entry_id": "zai",
+   "name": "Z.AI",
+   "status": "on_track",
+   "reason_code": "on_track",
+   "urgent": false,
+   "window": "Weekly",
+   "reset_at": "@4800@",
+   "unused_percent": 0,
+   "remaining_percent": 38,
+   "pace_percent_per_hour": 0.5,
+   "recent_percent_per_hour": null,
+   "recent_hours": 3,
+   "cycle_percent_per_hour": 0.5,
+   "required_percent_per_hour": 0.45,
+   "alert_unused_percent": 50,
+   "alert_hours": 24
+  },
+  {
+   "entry_id": "antigravity",
+   "name": "Antigravity",
+   "status": "blocked",
+   "reason_code": "blocked",
+   "urgent": false
+  },
+  {
+   "entry_id": "openrouter",
+   "name": "OpenRouter",
+   "status": "unavailable",
+   "reason_code": "unavailable",
+   "urgent": false
+  }
+ ],
+ "priority_recent_hours": 3,
+ "priority_alert": {
+  "unused_percent": 50,
+  "hours": 24
+ },
+ "priority_history_available": true
+}

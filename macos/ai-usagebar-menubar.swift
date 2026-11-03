@@ -779,6 +779,16 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         weeklyTag = "7d"
         sessionLabel = "Subscription"
         weeklyLabel = ""
+    case "deeprelay":
+        // The generic slots carry the plan's primary (monthly) window and the
+        // rolling 7-day caps. Relabelled so a monthly figure is never called
+        // a 5-hour session; the rolling cap has no reset, so it draws without
+        // one.
+        weeklyWindow = quotaWindow(3, 4, -1)
+        sessionTag = "mo"
+        weeklyTag = "wk"
+        sessionLabel = "Monthly"
+        weeklyLabel = "Weekly"
     default:
         weeklyWindow = quotaWindow(3, 4, 14)
         sessionTag = "5h"

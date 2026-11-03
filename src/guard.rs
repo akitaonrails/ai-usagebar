@@ -354,6 +354,11 @@ mod tests {
             // reads its fields by index, so each gets its own appended slot.
             VendorId::Cline => MacosMirror::Slot("cline_5h_pct"),
             VendorId::ModelStudio => MacosMirror::Slot("mst_monthly_pct"),
+            // Monthly allowance + rolling weekly caps, rendered through the
+            // generic slots: `session_pct` carries the monthly window and
+            // `weekly_pct` the rolling cap. DeepRelay's own Swift dispatch case
+            // only relabels them ("Monthly" / "Weekly").
+            VendorId::DeepRelay => MacosMirror::Generic(CORE),
         }
     }
 

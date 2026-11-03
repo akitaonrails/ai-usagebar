@@ -33,7 +33,7 @@ shows the last cached figures, then an error once those age out.
 
 ## Requirements
 
-- GNOME Shell **45–50** (ESM extensions).
+- GNOME Shell **45–51** (ESM extensions).
 - The `ai-usagebar` binary on `PATH` (or `~/.cargo/bin`, or set an explicit
   path in preferences). Install it with `cargo install ai-usagebar` or from
   the AUR — see the [main README](../README.md).

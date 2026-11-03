@@ -60,6 +60,7 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::Kilo => key_present(config, vendor),
         VendorId::Novita => key_present(config, vendor),
         VendorId::Synthetic => key_present(config, vendor),
+        VendorId::DeepRelay => key_present(config, vendor),
         VendorId::Moonshot => key_present(config, vendor),
         VendorId::Grok => key_present(config, vendor),
         VendorId::Supergrok => crate::supergrok::scope::ScopePaths::with_overrides(

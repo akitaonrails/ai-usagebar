@@ -337,10 +337,11 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
     let money_cell = |v: f64, c: &str| (money(v, c), PaceSeverity::Low);
     let (plan, mut cells) = match snapshot {
         VendorSnapshot::Anthropic(s) => {
-            let mut cells = vec![
-                pct("S", s.session.utilization_pct),
-                pct("W", s.weekly.utilization_pct),
-            ];
+            let mut cells = Vec::new();
+            if let Some(session) = &s.session {
+                cells.push(pct("S", session.utilization_pct));
+            }
+            cells.push(pct("W", s.weekly.utilization_pct));
             if let Some(sonnet) = &s.sonnet {
                 cells.push(pct("Son", sonnet.utilization_pct));
             }
@@ -490,6 +491,24 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             // from appearing twice (Devin and Lyceum do the same).
             (String::new(), cells)
         }
+        VendorSnapshot::DeepRelay(s) => {
+            // The two monthly meters are the head of this list because they
+            // are what the bar headlines; the rolling weekly caps follow, and
+            // the wallet only appears when there is one.
+            let mut cells = [
+                ("in", s.monthly_input.as_ref()),
+                ("out", s.monthly_output.as_ref()),
+                ("wk-in", s.weekly_input.as_ref()),
+                ("wk-out", s.weekly_output.as_ref()),
+            ]
+            .into_iter()
+            .filter_map(|(label, meter)| meter.and_then(|m| m.pct()).map(|p| pct(label, p)))
+            .collect::<Vec<_>>();
+            if let Some(balance) = s.balance_usd {
+                cells.push(usd_cell(balance));
+            }
+            (s.plan.clone(), cells)
+        }
         VendorSnapshot::Antigravity(s) => (
             s.plan.clone(),
             [
@@ -587,7 +606,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
 pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
     match snapshot {
         VendorSnapshot::Anthropic(s) => [
-            Some(s.session.utilization_pct),
+            s.session.as_ref().map(|w| w.utilization_pct),
             Some(s.weekly.utilization_pct),
             s.sonnet.as_ref().map(|w| w.utilization_pct),
         ]
@@ -669,6 +688,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .flatten()
         .max(),
         VendorSnapshot::Droid(s) => crate::droid::vendor::headline_utilization(s),
+        VendorSnapshot::DeepRelay(s) => crate::deeprelay::vendor::headline_pct(s),
         VendorSnapshot::Ollama(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
@@ -772,6 +792,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Ollama(s) => ollama_sections(s, now, pace_tolerance),
                 VendorSnapshot::Custom(s) => custom_sections(s),
                 VendorSnapshot::Cline(s) => cline_sections(s, now),
+                VendorSnapshot::DeepRelay(s) => deeprelay_sections(s, now),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -933,7 +954,11 @@ fn anthropic_sections(
         right: None,
     }]);
 
-    push_window(&mut v, "Session (5h)", &s.session, now, tol, true);
+    // No five-hour limit means no row, not an empty one: the report, the
+    // frontends that draw it and the notifications all follow this list.
+    if let Some(session) = &s.session {
+        push_window(&mut v, "Session (5h)", session, now, tol, true);
+    }
     push_window(&mut v, "Weekly (7d)", &s.weekly, now, tol, true);
     if let Some(w) = &s.sonnet {
         push_window(&mut v, "Sonnet only", w, now, tol, false);
@@ -2527,6 +2552,170 @@ fn droid_sections(
     sections
 }
 
+/// DeepRelay: the monthly allowance (the bar's headline), the rolling weekly
+/// caps, the per-period dollar ceiling, and the wallet only when it matters.
+///
+/// The monthly rows carry their reset but **no window length**: a billing
+/// period is calendar-derived and frontends must not pace against a guessed
+/// denominator. The weekly rows carry neither, because the cap rolls.
+fn deeprelay_sections(
+    snapshot: &crate::usage::DeepRelaySnapshot,
+    now: DateTime<Utc>,
+) -> SectionBuilder {
+    use crate::usage::DeepRelayMeter;
+
+    // The plan is the title, the way every other vendor labels its tab; the
+    // price and cancellation note ride a plain row below it.
+    let mut sections = SectionBuilder::new(vec![Section::Title {
+        left: snapshot.plan.clone(),
+        right: None,
+    }]);
+
+    let mut price = String::new();
+    if let Some(cents) = snapshot.plan_price_cents {
+        price.push_str(&usd(cents as f64 / 100.0));
+        if let Some(interval) = &snapshot.plan_interval {
+            price.push('/');
+            price.push_str(interval);
+        }
+    }
+    if snapshot.cancel_at_period_end {
+        if !price.is_empty() {
+            price.push_str(" · ");
+        }
+        price.push_str("cancels at period end");
+    }
+    if !price.is_empty() {
+        sections.push(Section::Text {
+            label: "Plan".into(),
+            value: price,
+        });
+    }
+
+    let push_meter = |sections: &mut SectionBuilder,
+                      label: &str,
+                      meter: Option<&DeepRelayMeter>,
+                      resets_at: Option<DateTime<Utc>>| {
+        let Some(meter) = meter else { return };
+        let Some(pct) = meter.pct() else { return };
+        let footnote = match resets_at {
+            Some(reset) => format!("Resets in {}", countdown::format(Some(reset), now)),
+            None => "Rolling 7-day window — no reset date".into(),
+        };
+        sections.push_metric(
+            Section::Metric {
+                label: label.into(),
+                pct: pct.clamp(0, 100) as u16,
+                severity: severity_for(pct),
+                value_label: meter.used_of_limit(),
+                footnote,
+            },
+            resets_at,
+        );
+    };
+
+    // Each label names its window instead of relying on a heading row. The
+    // report is flat, so "Input" twice (monthly, then rolling-weekly) is
+    // ambiguous in `usage --json`; the frontends also select a window by
+    // matching this label, which is what makes `barWindow` work here.
+    if snapshot.monthly_input.is_some() || snapshot.monthly_output.is_some() {
+        sections.push(Section::Spacer);
+        push_meter(
+            &mut sections,
+            "Monthly input",
+            snapshot.monthly_input.as_ref(),
+            snapshot.period_end,
+        );
+        push_meter(
+            &mut sections,
+            "Monthly output",
+            snapshot.monthly_output.as_ref(),
+            snapshot.period_end,
+        );
+    }
+
+    if snapshot.weekly_input.is_some() || snapshot.weekly_output.is_some() {
+        sections.push(Section::Spacer);
+        push_meter(
+            &mut sections,
+            "Weekly input",
+            snapshot.weekly_input.as_ref(),
+            None,
+        );
+        push_meter(
+            &mut sections,
+            "Weekly output",
+            snapshot.weekly_output.as_ref(),
+            None,
+        );
+    }
+
+    if let (Some(used), Some(limit)) = (snapshot.backstop_used_usd, snapshot.backstop_limit_usd) {
+        let pct = (used / limit * 100.0).round().clamp(0.0, 100.0) as i32;
+        sections.push(Section::Spacer);
+        sections.push_metric(
+            Section::Metric {
+                label: "Usage ceiling".into(),
+                pct: pct.clamp(0, 100) as u16,
+                severity: severity_for(pct),
+                value_label: format!("{} / {}", usd(used), usd(limit)),
+                footnote: match snapshot.period_end {
+                    Some(reset) => format!("Resets in {}", countdown::format(Some(reset), now)),
+                    None => "Reset date not reported".into(),
+                },
+            },
+            snapshot.period_end,
+        );
+    }
+
+    if let Some((used, limit)) = snapshot.searches {
+        sections.push(Section::Text {
+            label: "Web searches".into(),
+            value: format!("{used} / {limit}"),
+        });
+    }
+
+    if snapshot.balance_usd.is_some() || snapshot.payg_calls_24h.unwrap_or(0) > 0 {
+        sections.push(Section::Spacer);
+        sections.push(Section::Text {
+            label: "Pay as you go".into(),
+            value: String::new(),
+        });
+        if let Some(balance) = snapshot.balance_usd {
+            sections.push(Section::Text {
+                label: "Balance".into(),
+                value: usd(balance),
+            });
+        }
+        if let Some(calls) = snapshot.payg_calls_24h.filter(|calls| *calls > 0) {
+            sections.push(Section::Text {
+                label: "Wallet calls (24h)".into(),
+                value: calls.to_string(),
+            });
+        }
+    }
+
+    if !snapshot.models.is_empty() {
+        sections.push(Section::Spacer);
+        sections.push(Section::Block {
+            label: "Top models this period".into(),
+            body: snapshot
+                .models
+                .iter()
+                .map(|model| {
+                    format!(
+                        "{}  {}",
+                        crate::pango::escape(&model.model),
+                        crate::format::tokens(model.weighted_total())
+                    )
+                })
+                .collect(),
+        });
+    }
+
+    sections
+}
+
 /// Droid reports `windowEnd: null` for a window the account has not started:
 /// there is no reset and no elapsed time to pace against, so the footnote
 /// says so instead of "Resets in — · 0% elapsed · on track".
@@ -3169,11 +3358,11 @@ mod tests {
     fn anthropic_sections_include_all_three_windows_when_present() {
         let snap = AnthropicSnapshot {
             plan: "Max 20x".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 60,
                 resets_at: Some(now() + chrono::Duration::hours(1)),
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 30,
                 resets_at: Some(now() + chrono::Duration::days(3)),
@@ -3220,11 +3409,11 @@ mod tests {
         // spend alone — not "of $0.00", not an invented percentage.
         let snap = AnthropicSnapshot {
             plan: "Pro".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 10,
                 resets_at: None,
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 20,
                 resets_at: None,
@@ -3272,11 +3461,11 @@ mod tests {
     fn anthropic_omits_sonnet_and_extra_when_absent() {
         let snap = AnthropicSnapshot {
             plan: "Pro".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 10,
                 resets_at: None,
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 5,
                 resets_at: None,
@@ -3297,17 +3486,64 @@ mod tests {
         assert_eq!(metric_count, 2);
     }
 
+    /// A verified Ultra account has no five-hour limit: no Session row, no
+    /// "S" cell, and the headline comes from the windows it does have.
+    #[test]
+    fn anthropic_without_a_session_window_has_no_session_row() {
+        let snapshot = VendorSnapshot::Anthropic(AnthropicSnapshot {
+            plan: "Ultra".into(),
+            session: None,
+            weekly: UsageWindow {
+                utilization_pct: 41,
+                resets_at: Some(now() + chrono::Duration::days(3)),
+                window_duration: chrono::Duration::days(7),
+            },
+            sonnet: None,
+            scoped: vec![crate::usage::ScopedWindow {
+                label: "Fable".into(),
+                window: UsageWindow {
+                    utilization_pct: 33,
+                    resets_at: Some(now() + chrono::Duration::days(3)),
+                    window_duration: chrono::Duration::days(7),
+                },
+            }],
+            extra: None,
+            reset_credits: Default::default(),
+            cloud_credits: None,
+            usage_credits: None,
+        });
+        let sections = sections_for(&ready(snapshot.clone()), now(), 5);
+        assert!(matches!(
+            sections.first(),
+            Some(Section::Title { left, .. }) if left == "Claude Ultra"
+        ));
+        let metrics: Vec<&str> = sections
+            .iter()
+            .filter_map(|s| match s {
+                Section::Metric { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metrics, ["Weekly (7d)", "Fable (7d)"]);
+
+        let (plan, cells) = compact_cells(&snapshot);
+        assert_eq!(plan, "Ultra");
+        let cells: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(cells, ["W 41%"]);
+        assert_eq!(headline_pct(&snapshot), Some(41));
+    }
+
     fn claude_snapshot_with_credits(
         cloud: Option<CloudCredits>,
         usage: Option<UsageCredits>,
     ) -> VendorSnapshot {
         VendorSnapshot::Anthropic(AnthropicSnapshot {
             plan: "Max 5x".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 12,
                 resets_at: Some(now() + chrono::Duration::hours(2)),
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 34,
                 resets_at: None,
@@ -4039,11 +4275,11 @@ mod tests {
         };
         let claude = AnthropicSnapshot {
             plan: "Max 20x".into(),
-            session: UsageWindow {
+            session: Some(UsageWindow {
                 utilization_pct: 2,
                 resets_at: Some(now + chrono::Duration::hours(1)),
                 window_duration: chrono::Duration::hours(5),
-            },
+            }),
             weekly: UsageWindow {
                 utilization_pct: 63,
                 resets_at: Some(now + chrono::Duration::days(1)),
@@ -4606,6 +4842,69 @@ mod tests {
         let (plan, _) = compact_cells(&VendorSnapshot::Cursor(snapshot));
         assert_eq!(plan, "Ultra[2J");
         assert!(!plan.chars().any(char::is_control));
+    }
+
+    fn deeprelay_snapshot() -> crate::usage::DeepRelaySnapshot {
+        let raw = include_str!("../../tests/fixtures/deeprelay/subscription.json");
+        serde_json::from_str::<crate::deeprelay::types::Subscription>(raw)
+            .unwrap()
+            .snapshot()
+            .unwrap()
+    }
+
+    #[test]
+    fn deeprelay_monthly_rows_carry_a_reset_and_weekly_rows_never_do() {
+        let snapshot = deeprelay_snapshot();
+        let period_end = snapshot.period_end;
+        let snapshot = VendorSnapshot::DeepRelay(snapshot);
+
+        let (plan, cells) = compact_cells(&snapshot);
+        assert_eq!(plan, "Plus");
+        assert_eq!(headline_pct(&snapshot), Some(32));
+        assert!(cells.iter().any(|(label, _)| label == "wk-in 50%"));
+
+        let projected = sections_with_metadata_for(&ready(snapshot), now(), 5);
+        assert!(matches!(
+            &projected[0].section,
+            Section::Title { left, .. } if left == "Plus"
+        ));
+
+        let rows: Vec<_> = projected
+            .iter()
+            .filter_map(|p| match &p.section {
+                Section::Metric { label, pct, .. } => {
+                    Some((label.clone(), *pct, p.reset_at, p.window))
+                }
+                _ => None,
+            })
+            .collect();
+        // Every label names its window: the report is flat, so a bare "Input"
+        // twice would be ambiguous, and `barWindow` selects by this label.
+        let labels: Vec<_> = rows.iter().map(|(label, ..)| label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Monthly input",
+                "Monthly output",
+                "Weekly input",
+                "Weekly output",
+                "Usage ceiling",
+            ]
+        );
+        assert_eq!(
+            rows.iter().map(|(_, pct, ..)| *pct).collect::<Vec<_>>(),
+            vec![32, 2, 50, 3, 2]
+        );
+
+        // The monthly pair resets at the period end and declares no window:
+        // a billing period must not be paced against a guessed denominator.
+        assert_eq!(rows[0].2, period_end);
+        assert_eq!(rows[1].2, period_end);
+        assert_eq!(rows[0].3, None);
+        // The rolling weekly pair has no reset instant at all.
+        assert_eq!(rows[2].2, None);
+        assert_eq!(rows[3].2, None);
+        assert_eq!(rows[4].2, period_end);
     }
 
     #[test]

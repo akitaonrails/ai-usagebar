@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "akitaonrails.ai-usagebar",
   "name": "AI Usage",
-  "version": "1.46.0",
+  "version": "1.48.0",
   "author": "AkitaOnRails",
   "license": "MIT",
   "description": "Multi-provider AI plan usage and balances in a native Omarchy Quattro panel. Needs the ai-usagebar binary as well as this plugin: omarchy pkg aur add ai-usagebar-bin",
@@ -29,6 +29,7 @@
       "refreshIntervalSec": 300,
       "showValue": true,
       "brandIcons": true,
+      "tabNames": false,
       "showProvider": false,
       "colorCodeUsage": false,
       "showAll": false,
@@ -41,6 +42,12 @@
       "showCursorCredits": true,
       "showAntigravityGemini": true,
       "showAntigravityClaudeGpt": true,
+      "showPriorities": false,
+      "showPriorityShortcut": false,
+      "recentHours": 3,
+      "priorityAlert": true,
+      "alertUnusedPercent": 50,
+      "alertHours": 24,
       "reportBinary": "ai-usagebar",
       "tuiBinary": "ai-usagebar-tui"
     },
@@ -74,6 +81,13 @@
         "label": "Show provider logos",
         "description": "Draw each provider's own mark in the top bar and panel. Off restores the generic icon the bar used before the marks: one robot for a single provider, and the provider's short code on each chip when Show all providers is on. On by default.",
         "defaultValue": true
+      },
+      {
+        "key": "tabNames",
+        "type": "boolean",
+        "label": "Show provider names on tabs",
+        "description": "Add each provider's name beside its logo in the panel tabs. Off shows logos only, with the name on hover. Always on when provider logos are off.",
+        "defaultValue": false
       },
       {
         "key": "showProvider",
@@ -176,6 +190,57 @@
         "label": "Show Claude & GPT OSS",
         "description": "Show the Claude & GPT OSS pool in the top bar and tooltip. The panel list drops its Session and Weekly rows too. At least one Antigravity pool stays visible.",
         "defaultValue": true
+      },
+      {
+        "key": "showPriorities",
+        "type": "boolean",
+        "label": "Enable usage priorities",
+        "description": "Show the recommended order of use inside the same popup. A quota at risk of going unused before its reset turns red in the bar. Off by default; while off, nothing is recorded.",
+        "defaultValue": false
+      },
+      {
+        "key": "showPriorityShortcut",
+        "type": "boolean",
+        "label": "Show priority in the bar",
+        "description": "Always show the recommended provider in the bar as a shortcut to the priorities. An urgent quota appears in red even when this is off.",
+        "defaultValue": false
+      },
+      {
+        "key": "recentHours",
+        "type": "integer",
+        "label": "Recent usage window (hours)",
+        "description": "Look back 1–24 hours for the priority calculation. Applies immediately.",
+        "min": 1,
+        "max": 24,
+        "step": 1,
+        "defaultValue": 3
+      },
+      {
+        "key": "priorityAlert",
+        "type": "boolean",
+        "label": "Alert in the bar",
+        "description": "Show a provider in red in the bar when its quota is at risk of going unused (see the two thresholds below).",
+        "defaultValue": true
+      },
+      {
+        "key": "alertUnusedPercent",
+        "type": "integer",
+        "label": "Alert when projected unused quota is at least (%)",
+        "description": "Projected unused percentage at reset, at the current pace, that makes a quota urgent.",
+        "min": 1,
+        "max": 100,
+        "step": 5,
+        "defaultValue": 50
+      },
+      {
+        "key": "alertHours",
+        "type": "integer",
+        "label": "…and the quota resets within (hours)",
+        "description": "Hours left before the quota resets. Only the weekly window is measured, so a 5-hour session never alerts.",
+        "min": 1,
+        "max": 168,
+        "step": 1,
+        "defaultValue": 24
       },
       {
         "key": "reportBinary",

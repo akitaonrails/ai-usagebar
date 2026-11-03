@@ -1,0 +1,98 @@
+{
+  "subscribed": true,
+  "status": "active",
+  "cancel_at_period_end": false,
+  "current_period_start": "2026-10-28T14:31:53Z",
+  "current_period_end": "2026-11-28T14:31:53Z",
+  "plan": {
+    "key": "plus",
+    "name": "Plus",
+    "price": {
+      "amount_cents": 499,
+      "currency": "usd",
+      "interval": "month",
+      "interval_count": 1
+    }
+  },
+  "quota": {
+    "input_tokens_monthly": 2500000000,
+    "output_tokens_monthly": 250000000,
+    "weekly_input_tokens": 625000000,
+    "weekly_output_tokens": 62500000,
+    "max_usage_micro_cents": 50000000000,
+    "payg_discount_bp": 0,
+    "searches_monthly": 500
+  },
+  "usage": {
+    "period_start": "2026-10-28T14:31:53Z",
+    "period_end": "2026-11-28T14:31:53Z",
+    "weighted_input_tokens": 812400000,
+    "weighted_output_tokens": 4100000,
+    "weekly_weighted_input_tokens": 310500000,
+    "weekly_weighted_output_tokens": 2050000,
+    "cost_micro_cents": 1234000000,
+    "recent_payg_calls_24h": 0,
+    "searches": 7,
+    "by_model": [
+      {
+        "model": "deeprelay/deepseek-v4.1-flash",
+        "input_tokens": 700000000,
+        "cached_input_tokens": 650000000,
+        "output_tokens": 3900000,
+        "usage_factor_milli": 1000,
+        "weighted_input_tokens": 700000000,
+        "weighted_output_tokens": 3900000
+      },
+      {
+        "model": "deeprelay/kimi-k3",
+        "input_tokens": 1200000,
+        "cached_input_tokens": 0,
+        "output_tokens": 4000,
+        "usage_factor_milli": 24000,
+        "weighted_input_tokens": 28800000,
+        "weighted_output_tokens": 96000
+      },
+      {
+        "model": "deeprelay/glm-5.3",
+        "input_tokens": 70000000,
+        "cached_input_tokens": 0,
+        "output_tokens": 100000,
+        "usage_factor_milli": 12000,
+        "weighted_input_tokens": 83600000,
+        "weighted_output_tokens": 1200000
+      }
+    ],
+    "weekly_by_model": [
+      {
+        "model": "deeprelay/deepseek-v4.1-flash",
+        "input_tokens": 280000000,
+        "cached_input_tokens": 260000000,
+        "output_tokens": 1900000,
+        "usage_factor_milli": 1000,
+        "weighted_input_tokens": 280000000,
+        "weighted_output_tokens": 1900000
+      }
+    ]
+  },
+  "plans": [
+    {
+      "key": "flat",
+      "name": "Base",
+      "price": {
+        "amount_cents": 99,
+        "currency": "usd",
+        "interval": "month",
+        "interval_count": 1
+      },
+      "quota": {
+        "input_tokens_monthly": 500000000,
+        "output_tokens_monthly": 50000000,
+        "weekly_input_tokens": 125000000,
+        "weekly_output_tokens": 12500000,
+        "max_usage_micro_cents": 10000000000,
+        "payg_discount_bp": 0,
+        "searches_monthly": 100
+      }
+    }
+  ]
+}

@@ -120,6 +120,27 @@ pub fn usd(v: f64) -> String {
     money(v, "USD")
 }
 
+/// A token count in the compact form providers use on their own dashboards:
+/// `900`, `12.4K`, `812.4M`, `2.5B`.
+///
+/// One decimal wherever a unit applies, dropped when it would be `.0` so a
+/// round allowance reads `500M` rather than `500.0M`. Token allowances arrive
+/// in the billions; spelling them out pushes every meter off the row.
+pub fn tokens(v: i64) -> String {
+    let sign = if v < 0 { "-" } else { "" };
+    let magnitude = (v as f64).abs();
+    for (scale, suffix) in [(1e9, "B"), (1e6, "M"), (1e3, "K")] {
+        if magnitude >= scale {
+            let mut text = format!("{:.1}", magnitude / scale);
+            if text.ends_with(".0") {
+                text.truncate(text.len() - 2);
+            }
+            return format!("{sign}{text}{suffix}");
+        }
+    }
+    format!("{v}")
+}
+
 /// A raw percentage as a whole number a meter can draw: rounded, held to
 /// 0–100, and NaN-safe.
 ///
@@ -536,6 +557,18 @@ mod tests {
     fn multiple_substitutions() {
         let v = pm(&[("a", "1"), ("b", "2")]);
         assert_eq!(substitute("{a}-{b}-{a}", &v), "1-2-1");
+    }
+
+    #[test]
+    fn tokens_compact_every_allowance_scale() {
+        assert_eq!(tokens(0), "0");
+        assert_eq!(tokens(999), "999");
+        assert_eq!(tokens(1_000), "1K");
+        assert_eq!(tokens(12_400), "12.4K");
+        assert_eq!(tokens(812_400_000), "812.4M");
+        assert_eq!(tokens(2_500_000_000), "2.5B");
+        assert_eq!(tokens(625_000_000), "625M");
+        assert_eq!(tokens(-2_500), "-2.5K");
     }
 
     #[test]

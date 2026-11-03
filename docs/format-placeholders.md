@@ -1,7 +1,9 @@
 # Format placeholders
 
-Use placeholders with `--format` and `--tooltip-format`. Unsupported or absent
-metrics expand to an empty string unless noted otherwise.
+Use placeholders with `--format` and `--tooltip-format`. A placeholder the
+active provider defines but has no value for (an absent window or metric)
+expands to an empty string unless noted otherwise. A placeholder the provider
+does not define at all is left as written, braces included.
 
 Muse Code (`--vendor muse-code`, short name `msc`) supplies `{muse_plan}`,
 `{muse_session_pct}`, `{muse_session_reset}`, `{muse_session_elapsed}`,
@@ -21,6 +23,25 @@ percentage-only plans, `weeklyTokenLimit` on credit-denominated plans); the
 reset counts down to the next regeneration tick. `{synthetic_requests}` and
 `{synthetic_limit}` carry the weekly credits used and budget when the plan
 reports them, and expand to an empty string on percentage-only plans.
+
+DeepRelay (`--vendor deeprelay`, short name `drl`) supplies
+`{deeprelay_pct}`, `{deeprelay_reset}`, `{deeprelay_elapsed}`,
+`{deeprelay_pace}`, `{deeprelay_pace_indicator}`,
+`{deeprelay_monthly_input_pct}`, `{deeprelay_monthly_input}` (the raw
+`used / limit` in weighted tokens), `{deeprelay_monthly_output_pct}`,
+`{deeprelay_monthly_output}`, `{deeprelay_weekly_input_pct}`,
+`{deeprelay_weekly_input}`, `{deeprelay_weekly_output_pct}`,
+`{deeprelay_weekly_output}`, `{deeprelay_weekly_pace}`,
+`{deeprelay_weekly_pace_indicator}`, `{deeprelay_backstop_pct}`,
+`{deeprelay_backstop}` (`$used / $ceiling`), `{deeprelay_balance}`,
+`{deeprelay_payg}` (wallet-billed calls in the last 24 h), and
+`{deeprelay_searches}`, plus the generic `{icon}`, `{plan}`, `{vendor_short}`,
+`{session_pct}`, `{session_reset}`, `{session_elapsed}`, `{weekly_pct}`,
+`{weekly_reset}`, and `{weekly_elapsed}`. `{deeprelay_pct}` is the **monthly**
+meter closest to its ceiling, which is also the bar's headline; the generic
+`session_*` aliases carry that same monthly window because DeepRelay has no
+5-hour session, and `weekly_*` carries the rolling 7-day caps. The weekly caps
+slide rather than reset, so every weekly reset placeholder is empty by design.
 
 ## Cross-provider formats
 
@@ -42,7 +63,7 @@ reports them, and expand to an empty string on percentage-only plans.
 | Ollama Cloud | `oll` | SuperGrok | `sgk` |
 | Devin | `dvn` | Cline | `cln` |
 | Muse Code | `msc` | Synthetic | `syn` |
-| Droid | `drd` | | |
+| Droid | `drd` | DeepRelay | `drl` |
 
 The same codes ride the `ai-usagebar usage --json` report as each entry's
 `short_name`, so a native frontend can draw a Waybar-style provider tag without
@@ -66,7 +87,10 @@ Model and plan names are Pango-escaped at the placeholder boundary, so a name
 like `Claude & GPT OSS` can never break the bar's markup (non-Pango consumers
 see the escaped form, e.g. `&amp;`).
 Provider-specific families such as `{oai_*}`, `{zai_*}`, `{or_*}`, and
-`{orc_*}` are empty for providers that do not define them.
+`{orc_*}` exist only for their own provider. Any other provider prints them
+literally (`{oai_weekly_pct}`), so a format shared across providers should use
+the generic `{session_*}` and `{weekly_*}` placeholders described under
+"Cross-provider formats".
 
 ## Shared and Claude placeholders
 
@@ -74,7 +98,7 @@ These are compatible with claudebar.
 
 | Placeholder | Example |
 |---|---|
-| `{plan}` | `Max 5x` |
+| `{plan}` | `Ultra` |
 | `{session_pct}`, `{session_reset}`, `{session_bar}`, `{session_elapsed}` | `62`, `1h 30m`, `█████████████░░░░░░░`, `58` |
 | `{session_pace}`, `{session_pace_indicator}`, `{session_pace_pct}`, `{session_pace_pts}`, `{session_pace_delta}`, `{session_pace_abs_delta}` | `↑`, `↑`, `12% ahead`, `4pts ahead`, `4`, `4` |
 | `{weekly_*}` | The same family for the seven-day window. |
@@ -85,6 +109,11 @@ These are compatible with claudebar.
 
 The scoped family describes the first model-specific weekly window. When that
 window is absent, it returns neutral empty, `0`, or `—` values as appropriate.
+
+A verified Ultra account has no five-hour limit, so it has no session window:
+every `{session_*}` placeholder above expands to an empty string, and without
+`--format` the bar shows `{weekly_pct}% · {weekly_reset}` instead. An
+unverified Ultra account still has a temporary five-hour limit and fills them.
 
 `{resets_available}` is the number of banked limit resets Claude is offering —
 the ones the app shows under "Resets", which you redeem by hand rather than

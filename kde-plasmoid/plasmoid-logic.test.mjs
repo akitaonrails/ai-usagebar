@@ -2,15 +2,17 @@
 // gnome-extension/marker-logic.test.mjs: node:assert/strict, no framework, no
 // dependency. Run with `node kde-plasmoid/plasmoid-logic.test.mjs`.
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {
-    buildArgv, buildCommand, buildTuiCommand, cardFor, cardModel, cardState,
+    buildArgv, buildCommand, buildTuiCommand, tuiPathFromBinary, cardFor, cardModel, cardState,
+    entriesForRing, moveRing, ringOrder,
     DEFAULT_BINARY, DEFAULT_TIMEOUT_SECS,
     detailRows, entryFor, errorMessage, EXIT_KILLED, EXIT_TIMED_OUT, formatDuration,
     headline, isAlarming, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
     metricChoices, metricDetail, metricKeys, nextVendor, paletteFromTheme, panelCells,
-    parseHiddenMetrics, parseReport,
+    PROVIDER_ICON_SLUGS,
+    parseHiddenMetrics, parseReport, providerIconSlug,
     resetRemainingMs, safeText, severityColor, severityOf, SEVERITIES, shellQuote,
     shortLabel, shouldStartFetch, TIMEOUT_KILL_GRACE_SECS, timeoutSeconds,
     updatedAgeMs, vendorTabs, visibleEntry,
@@ -128,8 +130,10 @@ assert.match(mainQml, /Logic\.panelCells\(root\.entry, \{max: 2\}\)/,
     'the compact view must not pretend a removed weekly toggle selects metrics');
 assert.match(mainQml, /Logic\.visibleEntry\(/,
     'the selected KDE entry must apply persisted metric visibility before every projection');
-assert.match(mainQml, /Logic\.cardModel\(root\.report, root\.hiddenMetrics\)/,
-    'the all-provider card layout must apply the same metric visibility');
+assert.match(mainQml, /Logic\.cardModel\(\s*root\.report,\s*root\.hiddenMetrics,\s*Plasmoid\.configuration\.vendorRing\s*\)/,
+    'the card layout must apply metric visibility and follow the vendor ring');
+assert.match(mainQml, /Logic\.vendorTabs\(\s*root\.report,\s*root\.vendor,\s*Plasmoid\.configuration\.vendorRing\s*\)/,
+    'the tab strip must follow the vendor ring for membership and order');
 assert.match(configUi, /Logic\.metricChoices\(/,
     'Configure must derive metric switches from the report rather than a vendor table');
 assert.match(readFileSync(at('./package/contents/ui/UsageRow.qml'), 'utf8'),
@@ -263,11 +267,75 @@ assert.equal(entryFor({entries: []}, 'anthropic'), null);
 // display_name is the canonical label; the raw id shows only if it is missing.
 assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.label), ['Claude', 'Codex', 'Z.AI']);
 assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.active), [true, false, false]);
-// Every configured vendor is offered, including failing ones — hiding a broken
-// vendor made "not configured" indistinguishable from "configured and broken".
+// With no ring filter every report entry is offered, including failing ones.
 assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.failing), [false, false, true]);
 assert.equal(vendorTabs(report, 'gone').filter(t => t.active).length, 1,
     'an unknown id must still leave exactly one tab active');
+// The ring filters membership and sets chip order — Z.AI before Claude, Codex hidden.
+assert.deepEqual(vendorTabs(report, 'zai', ['zai', 'anthropic']).map(t => t.label),
+    ['Z.AI', 'Claude']);
+assert.deepEqual(vendorTabs(report, 'anthropic', ['zai', 'anthropic']).map(t => t.active),
+    [false, true]);
+assert.deepEqual(entriesForRing(report, ['zai', 'anthropic']).map(e => e.id),
+    ['zai', 'anthropic']);
+assert.deepEqual(entriesForRing(report, ['missing']).map(e => e.id),
+    ['anthropic', 'openai', 'zai'],
+    'a ring that matches nothing must fall back to the full report');
+assert.deepEqual(moveRing(['anthropic', 'cursor', 'zai'], 'cursor', -1),
+    ['cursor', 'anthropic', 'zai']);
+assert.deepEqual(moveRing(['anthropic', 'cursor'], 'anthropic', -1),
+    ['anthropic', 'cursor'], 'an already-first id is a no-op');
+assert.deepEqual(moveRing(['anthropic', 'cursor'], 'gone', 1),
+    ['anthropic', 'cursor']);
+
+// An empty ring is the shipped default and means "every vendor the report
+// returned": seeding it with one vendor would hide the rest of an existing
+// user's providers from both layouts on upgrade.
+assert.deepEqual(entriesForRing(report, []).map(e => e.id),
+    ['anthropic', 'openai', 'zai'], 'no ring configured shows every vendor');
+assert.deepEqual(vendorTabs(report, 'anthropic', []).map(t => t.label),
+    ['Claude', 'Codex', 'Z.AI'], 'no ring configured keeps every tab');
+assert.deepEqual(cardModel(report, {}, []).map(c => c.id),
+    ['anthropic', 'openai', 'zai'], 'no ring configured keeps every card');
+
+// Scroll walks what the popup shows, so a flick still reaches every vendor on
+// an applet whose Configure page was never opened.
+assert.deepEqual(ringOrder(report, []), ['anthropic', 'openai', 'zai']);
+assert.deepEqual(ringOrder(report, ['zai', 'anthropic']), ['zai', 'anthropic']);
+assert.equal(nextVendor(ringOrder(report, []), 'anthropic', 1), 'openai');
+assert.equal(nextVendor(ringOrder(report, ['zai', 'anthropic']), 'zai', 1), 'anthropic');
+
+assert.match(readFileSync(at('./package/contents/config/main.xml'), 'utf8'),
+    /<entry name="vendorRing" type="StringList">\s*<default><\/default>/,
+    'vendorRing must ship empty: a one-vendor default hides the others on upgrade');
+assert.match(mainQml,
+    /Logic\.nextVendor\(\s*Logic\.ringOrder\(root\.report, Plasmoid\.configuration\.vendorRing\)/,
+    'scroll must cycle the vendors the popup shows, not the raw ring');
+
+assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.iconSlug),
+    ['anthropic', 'openai', 'zai']);
+
+assert.equal(providerIconSlug('anthropic'), 'anthropic');
+assert.equal(providerIconSlug('anthropic@work'), 'anthropic');
+assert.equal(providerIconSlug('supergrok'), 'grok');
+assert.equal(providerIconSlug('unknown-vendor'), '');
+assert.equal(providerIconSlug(''), '');
+
+// The slug list is a hand-kept mirror of a directory QML cannot read, and the
+// same mirror pattern has shipped three vendors short before (see the macOS
+// FORMAT guard in src/guard.rs). Diff it against the real catalog both ways:
+// an extra stem asks plasmashell for a file that is not there, a missing one
+// silently drops that provider's mark.
+{
+    const catalog = readdirSync(at('../windows/popover/src/icons/providers'))
+        .filter(name => name.endsWith('.svg'))
+        .map(name => name.slice(0, -'.svg'.length))
+        .sort();
+    assert.deepEqual([...PROVIDER_ICON_SLUGS].sort(), catalog,
+        'PROVIDER_ICON_SLUGS must list exactly the SVGs in windows/popover/src/icons/providers/');
+    for (const slug of catalog)
+        assert.equal(providerIconSlug(slug), slug, `every shipped mark must resolve: ${slug}`);
+}
 
 // ---------------------------------------------------------------------------
 // projection
@@ -277,7 +345,9 @@ const openai = entryFor(report, 'openai');
 const zai = entryFor(report, 'zai');
 
 assert.equal(anthropic.label, 'Claude');
+assert.equal(anthropic.iconSlug, 'anthropic');
 assert.equal(anthropic.plan, 'Max 20x');
+assert.equal(cardFor(anthropic).iconSlug, 'anthropic');
 assert.equal(openai.stale, true);
 assert.equal(zai.status, 'error');
 
@@ -447,8 +517,11 @@ assert.equal(syntheticCard.windows[0].regen, '2%');
 assert.equal(syntheticCard.windows[0].detail, '');
 
 // One card per entry the aggregate report returned, in report order — the
-// card view never restates a provider list of its own.
+// card view never restates a provider list of its own. A ring reorders and
+// filters the same way the tab strip does.
 assert.deepEqual(cardModel(report).map(c => c.label), ['Claude', 'Codex', 'Z.AI']);
+assert.deepEqual(cardModel(report, null, ['zai', 'anthropic']).map(c => c.label),
+    ['Z.AI', 'Claude']);
 assert.equal(cardModel(null).length, 0);
 assert.equal(cardFor(null), null);
 assert.equal(cardState(null), 'ok');
@@ -613,6 +686,22 @@ assert.ok(!/[;{}]/.test(cmd.replace(/'[^']*'/g, '')),
 assert.ok(buildTuiCommand('').includes('||'), 'the fallback chain needs its ||');
 assert.equal(buildTuiCommand('kitty -e'), `kitty -e 'ai-usagebar-tui'`);
 assert.equal(buildTuiCommand('  '), buildTuiCommand(''), 'blank means "no custom terminal"');
+
+// binaryPath already steers the usage fetch; the TUI must follow the same
+// directory when plasmashell's PATH does not include ~/.local/bin / cargo.
+assert.equal(tuiPathFromBinary(''), 'ai-usagebar-tui');
+assert.equal(tuiPathFromBinary('ai-usagebar'), 'ai-usagebar-tui');
+assert.equal(
+    tuiPathFromBinary('/home/you/.local/bin/ai-usagebar'),
+    '/home/you/.local/bin/ai-usagebar-tui');
+assert.equal(
+    tuiPathFromBinary('/opt/my apps/ai-usagebar'),
+    '/opt/my apps/ai-usagebar-tui',
+    'spaces in the install prefix stay in the sibling path');
+assert.ok(
+    buildTuiCommand('', tuiPathFromBinary('/home/you/.local/bin/ai-usagebar'))
+        .includes(`'/home/you/.local/bin/ai-usagebar-tui'`),
+    'konsole -e must receive the absolute TUI path, not a bare name');
 
 assert.equal(shouldStartFetch('', 'cmd'), true);
 assert.equal(shouldStartFetch('cmd', 'cmd'), false, 'never queue a second identical fetch');

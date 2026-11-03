@@ -149,7 +149,7 @@ pub fn build_placeholders(
         optional(snap.third_party_weekly.as_ref(), GROUP_THIRD_PARTY);
 
     placeholders(vec![
-        ("icon", "󰧑".to_string()),
+        ("icon", VendorId::Antigravity.bar_icon().to_string()),
         (
             "vendor_short",
             VendorId::Antigravity.short_name().to_string(),
@@ -406,6 +406,12 @@ mod tests {
         assert_eq!(v["scoped_reset"], "4h 30m");
         assert_ne!(v["session_reset"], v["weekly_reset"]);
         assert_ne!(v["scoped_reset"], v["extra_reset"]);
+    }
+
+    #[test]
+    fn icon_placeholder_matches_bar_icon() {
+        let v = build_placeholders(&snapshot(), now(), 5);
+        assert_eq!(v["icon"], VendorId::Antigravity.bar_icon());
     }
 
     #[test]

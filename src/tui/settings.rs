@@ -130,6 +130,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         note: "weekly credit quota",
     },
     KeyVendor {
+        id: VendorId::DeepRelay,
+        label: "DeepRelay",
+        section: VendorId::DeepRelay.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "key needs the billing:read scope",
+    },
+    KeyVendor {
         id: VendorId::Moonshot,
         label: "Moonshot",
         section: VendorId::Moonshot.config_section(),

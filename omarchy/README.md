@@ -60,19 +60,23 @@ omarchy plugin remove akitaonrails.ai-usagebar
   yellow → orange → red from the Omarchy theme as usage climbs, and is off by
   default. Its **Show provider logos** toggle, on by default, draws each
   provider's own mark; off, the bar and the panel hero use the generic robot
-  icon of the bar before the marks. Its **Top bar usage window**
+  icon of the bar before the marks. Its **Show provider names on tabs** toggle,
+  off by default, adds each provider's name beside its logo in the panel tabs;
+  off, the tabs show logos only and the name on hover, and with logos off the
+  names always show. Its **Top bar usage window**
   dropdown pins the bar to auto (highest), 5-hour, weekly, or monthly; the
   tooltip and panel hero echo the pinned value while the panel rows keep
   showing every window and alert state still follows the highest percent of the
   metrics not hidden. Its **Show usage as** dropdown reads percentages as what
   is used (the default) or what is left of the same window, on the bar, tooltip,
-  hero and panel meters. The form is an accordion of Display, Language, Top bar
-  window, Show usage as, Primary provider, Providers and Credentials: one
+  hero and panel meters. The form is an accordion of Display, Priorities,
+  Language, Top bar window, Show usage as, Primary provider, Providers and
+  Credentials: one
   section is open at a time and the first is open by default. A folded section
   keeps what you typed, so Save still covers it.
   `h`/`l` or Left/Right switches provider, `j`/`k` or Up/Down scrolls, `r`,
-  Enter, or Space refreshes, Tab moves to the neighboring bar panel, and Esc
-  closes. Mouse-wheel and touchpad scrolling cover long settings forms faster;
+  Enter, or Space refreshes, `p` opens usage priorities (when enabled), Tab
+  moves to the neighboring bar panel, and Esc closes. Mouse-wheel and touchpad scrolling cover long settings forms faster;
   changes to settings take effect only after the Save button at the bottom.
 - Shell: `omarchy-shell shell summon akitaonrails.ai-usagebar '{}'` opens the
   panel and `omarchy-shell shell hide akitaonrails.ai-usagebar` closes it.
@@ -182,6 +186,10 @@ omarchy bar set akitaonrails.ai-usagebar showAs left
 # (and the short code on each chip with showAll). The default is true.
 omarchy bar set akitaonrails.ai-usagebar brandIcons false --json
 
+# Provider names beside the logos in the panel tabs. The default is false
+# (logos only, the name on hover); without logos the names always show.
+omarchy bar set akitaonrails.ai-usagebar tabNames true --json
+
 # Panel and settings language: auto (follow the system locale, the default),
 # en, ru, pt-BR, ko, or es.
 omarchy bar set akitaonrails.ai-usagebar uiLocale pt-BR
@@ -288,6 +296,51 @@ omarchy bar set akitaonrails.ai-usagebar reportBinary ai-usagebar
 The report command stays a structured argument list (no shell), and the
 dashboard and Nous login commands quote the path with `Util.shellQuote`.
 
+## Usage priorities
+
+The priorities view is off by default. Turn it on in Settings → Priorities.
+It is a second view inside the same popup, built from the same native controls
+and locale catalog; it opens no other application. While it is on, a
+`Usage | Usage priorities` switcher sits at the bottom of the panel, outside the
+scrolling content, and `p` opens the view. Esc goes back to usage. Turning it
+off removes the switcher, the bar alert and the shortcut.
+
+While the view is on, the plugin runs `usage --json --priorities` with the
+settings below. While it is off, the plugin runs the plain `usage --json` and
+nothing is recorded. The Rust backend owns the ranking, the rates and the
+urgency rule; the plugin only formats them. The history lives in
+`~/.cache/ai-usagebar/priority/history.json`: provider and metric ids,
+percentages and timestamps for the last 25 hours, at most 16,384 samples.
+
+Each card shows the provider's position, its state (urgent, spare quota, on
+pace, exhausted, unavailable or no forecast) and a one-line summary. Hover for
+300 ms to preview the numbers behind it, or click (Enter/Space) to pin them:
+the weekly window and its reset, what is left now, the projected unused quota,
+your pace, the recent and cycle rates, and the rate that would use it all.
+**View limits** opens that provider's usage view.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `showPriorities` | `false` | Turns the module on. |
+| `showPriorityShortcut` | `false` | Always shows the recommended provider in the bar (`󰉻 Provider`). |
+| `recentHours` | `3` | Hours of recent use in the estimate, 1 to 24. Changing it asks for a fresh report. |
+| `priorityAlert` | `true` | Shows an urgent quota in the bar, in red, even with the shortcut off. |
+| `alertUnusedPercent` | `50` | Projected unused share that makes a quota urgent. |
+| `alertHours` | `24` | ...when the weekly quota resets within this many hours. |
+
+The urgent chip reads `󰀦 Provider` in the theme's red. On a vertical bar the
+chips are hidden, so the bar's single icon turns into the red alert glyph
+instead, and only that icon takes clicks. A provider hidden from the bar
+neither alerts nor is recommended there; the priorities view still lists it.
+The bar's priority chip presses like a provider chip: left opens or closes the
+priorities view, middle switches provider, right opens the dashboard.
+
+```bash
+omarchy bar set akitaonrails.ai-usagebar showPriorities true --json
+omarchy bar set akitaonrails.ai-usagebar recentHours 6 --json
+omarchy bar set akitaonrails.ai-usagebar alertUnusedPercent 30 --json
+```
+
 ## Development checks
 
 On an Omarchy 4 machine:
@@ -298,10 +351,16 @@ make plugin-test
 make omarchy-visual-test
 ```
 
-`make plugin-test` runs `omarchy/model.test.mjs` and the notice tests in
-`omarchy/notice.test.mjs`. The visual test renders the real settings component
-and the usage view's notices (English and pt-BR) in dark and light fixture
-themes through Quickshell's offscreen backend. It does not open a window or
+`make plugin-test` runs `omarchy/model.test.mjs`, the priority presentation
+tests in `omarchy/priority.test.mjs` and the notice tests in
+`omarchy/notice.test.mjs`. The visual test renders the real settings component,
+the usage view's notices and the priority cards (English and pt-BR) in dark and light fixture
+themes through Quickshell's offscreen backend. It also renders the whole panel
+(`panel-*.png`): tabs, header, meters near and at the limit, a balance and the
+priorities view, from a synthetic report that `visual-tests/fake-ai-usagebar`
+serves, with a stand-in for the layer-shell window. The brand marks need an
+OpenGL context; without a GPU, set `AI_USAGEBAR_VISUAL_BACKEND=software` and the
+logos render blank. It does not open a window, run the real `ai-usagebar` or
 read credentials. Review the generated PNGs under
 `target/omarchy-visual-scenarios/`; they are local test artifacts, not golden
 pixel snapshots.

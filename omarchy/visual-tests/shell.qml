@@ -5,9 +5,11 @@ import qs.Commons as Commons
 import "Usage"
 import "Usage/Notice.js" as Notice
 import "Usage/I18n.js" as I18n
+import "Usage/Priority.js" as Priority
 
 // Deterministic, offscreen visual scenarios for the real Quattro settings
-// component and the usage view's status notices. scripts/omarchy-visual-test.sh supplies the shell modules and
+// component, the usage view's status notices and the priority cards.
+// scripts/omarchy-visual-test.sh supplies the shell modules and
 // output directory, then launches this config with Qt's offscreen backend.
 ShellRoot {
   id: root
@@ -17,9 +19,33 @@ ShellRoot {
   property color scenarioBackground: "#1e1e2e"
   readonly property var scenarioNames: [
     "settings-display-dark.png", "settings-credentials-light.png",
-    "notices-dark.png", "notices-light-pt-BR.png"
+    "notices-dark.png", "notices-light-pt-BR.png",
+    "settings-priorities-dark.png", "priorities-dark.png", "priorities-light-pt-BR.png"
   ]
-  readonly property bool showNotices: scenario >= 2
+  readonly property bool showNotices: scenario === 2 || scenario === 3
+  readonly property bool showPriorities: scenario >= 5
+  readonly property bool showSettings: !showNotices && !showPriorities
+  property string priorityLocale: "en"
+  // One row per state the ranking can report, as `usage --json --priorities`
+  // emits them, against a fixed clock.
+  readonly property double priorityNow: Date.parse("2026-10-21T12:00:00Z")
+  readonly property var priorityFixtures: [
+    { entry_id: "openai", name: "Codex", status: "priority", reason_code: "priority", urgent: true,
+      window: "Weekly (7d)", reset_at: "2026-10-22T03:00:00Z", unused_percent: 58, remaining_percent: 71,
+      pace_percent_per_hour: 0.9, recent_percent_per_hour: 0.4, recent_hours: 3, cycle_percent_per_hour: 1.1,
+      required_percent_per_hour: 4.7, alert_unused_percent: 50, alert_hours: 24 },
+    { entry_id: "anthropic", name: "Claude", status: "priority", reason_code: "priority", urgent: false,
+      window: "Weekly (7d)", reset_at: "2026-10-24T09:00:00Z", unused_percent: 22, remaining_percent: 64,
+      pace_percent_per_hour: 0.6, recent_percent_per_hour: 0.8, recent_hours: 3, cycle_percent_per_hour: 0.5,
+      required_percent_per_hour: 0.9, alert_unused_percent: 50, alert_hours: 24, session_exhausted: true },
+    { entry_id: "zai", name: "Z.AI", status: "on_track", reason_code: "on_track", urgent: false,
+      window: "Weekly", reset_at: "2026-10-25T00:00:00Z", unused_percent: 0, remaining_percent: 38,
+      pace_percent_per_hour: 0.5, recent_percent_per_hour: null, recent_hours: 0, cycle_percent_per_hour: 0.5,
+      required_percent_per_hour: 0.45, alert_unused_percent: 50, alert_hours: 24 },
+    { entry_id: "kimi", name: "Kimi", status: "blocked", reason_code: "blocked", urgent: false },
+    { entry_id: "opencode-go", name: "OpenCode Go", status: "unavailable", reason_code: "unavailable", urgent: false }
+  ]
+  function priorityTr(key, params) { return I18n.t(priorityLocale, key, params) }
   property string noticeLocale: "en"
   // The same messages the report produces: a sign-in error naming its fix, a
   // transient failure that offers a retry, and a cached-data note.
@@ -77,13 +103,31 @@ ShellRoot {
       scenarioBackground = "#1e1e2e"
       noticeLocale = "en"
       viewport.contentY = 0
-    } else {
+    } else if (scenario === 3) {
       applyTheme("#1f2328", "#f6f8fa", "#0969da", "#cf222e", "#656d76")
       scenarioBackground = "#f6f8fa"
       noticeLocale = "pt-BR"
       viewport.contentY = 0
+    } else if (scenario === 4) {
+      applyTheme("#cdd6f4", "#1e1e2e", "#89b4fa", "#f38ba8", "#6c7086")
+      scenarioBackground = "#1e1e2e"
+      settings.foreground = "#cdd6f4"
+      settings.urgent = "#f38ba8"
+      settings.showPriorities = true
+      settings.openSection = "priorities"
+      viewport.contentY = 0
+    } else if (scenario === 5) {
+      applyTheme("#cdd6f4", "#1e1e2e", "#89b4fa", "#f38ba8", "#6c7086")
+      scenarioBackground = "#1e1e2e"
+      priorityLocale = "en"
+      viewport.contentY = 0
+    } else {
+      applyTheme("#1f2328", "#f6f8fa", "#0969da", "#cf222e", "#656d76")
+      scenarioBackground = "#f6f8fa"
+      priorityLocale = "pt-BR"
+      viewport.contentY = 0
     }
-    if (!showNotices) {
+    if (showSettings) {
       settings.forceActiveFocus()
       Qt.callLater(function() { root.focusFirst(settings) })
     }
@@ -123,7 +167,8 @@ ShellRoot {
       anchors.margins: 24
       clip: true
       contentWidth: width
-      contentHeight: root.showNotices ? notices.implicitHeight : settings.implicitHeight
+      contentHeight: root.showNotices ? notices.implicitHeight
+        : root.showPriorities ? priorities.implicitHeight : settings.implicitHeight
 
       Column {
         id: notices
@@ -149,9 +194,42 @@ ShellRoot {
         }
       }
 
+      // The first card is pinned open, as a click leaves it; the others show
+      // their compact form.
+      Column {
+        id: priorities
+        visible: root.showPriorities
+        width: viewport.width
+        spacing: 8
+
+        Repeater {
+          model: root.priorityFixtures
+
+          PriorityCard {
+            required property var modelData
+            required property int index
+            readonly property var shown: Object.assign({}, modelData,
+              { window: I18n.displayLabel(root.priorityLocale, modelData.window) })
+            width: priorities.width
+            row: modelData
+            rank: index + 1
+            pinned: index === 0
+            summary: Priority.summary(modelData, root.priorityNow, root.priorityTr)
+            facts: Priority.facts(shown, root.priorityNow, true, root.priorityTr)
+            notes: Priority.notes(modelData, root.priorityNow, root.priorityTr)
+            statusText: root.priorityTr("priority." + Priority.stateKey(modelData))
+            limitsText: root.priorityTr("priority.view_limits")
+            urgent: Priority.stateKey(modelData) === "urgent"
+            urgentColor: Commons.Color.urgent
+            foreground: Commons.Color.foreground
+            fontFamily: "monospace"
+          }
+        }
+      }
+
       SettingsView {
         id: settings
-        visible: !root.showNotices
+        visible: root.showSettings
         width: viewport.width
         fontFamily: "monospace"
         showValue: true

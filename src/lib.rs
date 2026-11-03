@@ -27,6 +27,7 @@ pub mod countdown;
 pub mod cursor;
 pub mod custom;
 pub mod deepinfra;
+pub mod deeprelay;
 pub mod deepseek;
 pub mod detect;
 pub mod devin;

@@ -67,6 +67,20 @@ export function buildCommand(binary, timeoutSecs) {
     return buildArgv(binary, timeoutSecs).map(shellQuote).join(' ');
 }
 
+// plasmashell's PATH is the session PATH, not the interactive shell's — so a
+// cargo / ~/.local/bin install is often invisible. When binaryPath is an
+// absolute path to `ai-usagebar`, launch the sibling `ai-usagebar-tui` from
+// the same directory instead of relying on PATH.
+export function tuiPathFromBinary(binary) {
+    const bin = String(binary ?? '').trim() || DEFAULT_BINARY;
+    if (bin.indexOf('/') === -1)
+        return 'ai-usagebar-tui';
+    if (bin.endsWith('ai-usagebar'))
+        return bin.slice(0, -'ai-usagebar'.length) + 'ai-usagebar-tui';
+    const slash = bin.lastIndexOf('/');
+    return bin.slice(0, slash + 1) + 'ai-usagebar-tui';
+}
+
 // Launching the TUI needs a terminal, and there is no portable way to probe
 // PATH from QML. Emit a shell fallback chain instead and let KProcess take its
 // /bin/sh -c path — here the metacharacters are the point, unlike buildCommand
@@ -174,6 +188,31 @@ function normalizeSection(raw) {
     };
 }
 
+// SVG stems in windows/popover/src/icons/providers/ (the tray/popover catalog;
+// the plasmoid install symlinks or copies that directory, and src/tray/marks.rs
+// include_bytes!'s the same files). QML cannot list a directory, so this is a
+// hand-kept mirror — exported so the test suite can diff it against the real
+// catalog. A stem listed here with no SVG asks plasmashell for a file that is
+// not there; one missing from here silently drops that provider's mark.
+export const PROVIDER_ICON_SLUGS = new Set([
+    'anthropic', 'anthropic_api', 'antigravity', 'copilot', 'cursor', 'deepseek',
+    'devin', 'grok', 'grokbot', 'kilo', 'kimi', 'kiro', 'minimax', 'moonshot',
+    'muse-code', 'nous', 'novita', 'ollama', 'openai', 'opencode-go',
+    'openrouter', 'zai',
+]);
+
+// Map report brand/id to a shipped SVG stem. Matches tray marks.rs: strip
+// @account, lowercase, SuperGrok → grok. Unknown vendors get "" so QML hides
+// the Image rather than requesting a missing file.
+export function providerIconSlug(idOrBrand) {
+    const raw = String(idOrBrand ?? '').trim();
+    if (!raw)
+        return '';
+    const base = raw.split('@')[0].toLowerCase();
+    const slug = base === 'supergrok' ? 'grok' : base;
+    return PROVIDER_ICON_SLUGS.has(slug) ? slug : '';
+}
+
 function normalizeEntry(raw) {
     if (!raw || typeof raw !== 'object')
         return null;
@@ -182,8 +221,11 @@ function normalizeEntry(raw) {
         return null;
     const sections = Array.isArray(raw.sections)
         ? raw.sections.slice(0, 128).map(normalizeSection) : [];
+    const brand = safeText(raw.brand, 60).trim() || id.split('@')[0];
     return {
         id: id,
+        brand: brand,
+        iconSlug: providerIconSlug(brand || id),
         // display_name is the canonical label the Rust core owns. Falling back
         // to the raw id keeps a slug visible rather than an empty tab.
         label: safeText(raw.display_name, 60).trim() || safeText(raw.name, 60).trim() || id,
@@ -238,15 +280,66 @@ export function entryFor(report, vendorId) {
     return entries[0];
 }
 
-// The popup's tab strip. Every configured vendor is offered, including ones
-// currently failing — hiding an errored vendor is what made it impossible to
-// tell "not configured" from "configured and broken".
-export function vendorTabs(report, activeId) {
+// Entries the user opted into via the scroll/tab ring, in ring order. An empty
+// ring means "no filter" and keeps report order — that is what a fresh applet
+// sees before the settings page has been opened. A ring whose ids no longer
+// appear in the report (every vendor disabled in config.toml) falls back the
+// same way so the popup never goes blank.
+export function entriesForRing(report, ring) {
     const entries = (report && report.entries) || [];
+    const order = toRing(ring);
+    if (!order.length)
+        return entries.slice();
+    const byId = new Map();
+    for (const e of entries)
+        byId.set(e.id, e);
+    const chosen = [];
+    for (const id of order) {
+        const e = byId.get(id);
+        if (e)
+            chosen.push(e);
+    }
+    return chosen.length ? chosen : entries.slice();
+}
+
+// The ids the popup actually shows, in the order it shows them. Scroll walks
+// this rather than the raw ring, so a flick reaches exactly the tabs in front
+// of you — including the "no ring configured" case, where that is every vendor
+// the report returned.
+export function ringOrder(report, ring) {
+    return entriesForRing(report, ring).map(e => e.id);
+}
+
+// Reorder one id inside the ring. Returns a new array; out-of-range moves and
+// unknown ids are no-ops so the settings page can bind the arrows blindly.
+export function moveRing(ring, id, delta) {
+    const list = toRing(ring);
+    const wanted = String(id ?? '').trim();
+    const at = list.indexOf(wanted);
+    const step = Number(delta) || 0;
+    if (at === -1 || step === 0)
+        return list;
+    const to = at + step;
+    if (to < 0 || to >= list.length)
+        return list;
+    const next = list.slice();
+    next.splice(at, 1);
+    next.splice(to, 0, wanted);
+    return next;
+}
+
+// The popup's tab strip. Follows the user's ring for both membership and order
+// so unticked vendors stay out of the chips and the arrows in Configure set
+// the chip order. Failing vendors that ARE in the ring still show the ⚠ —
+// hiding them only when the user unticks them is what keeps "I don't use this"
+// distinct from "configured and broken".
+export function vendorTabs(report, activeId, ring) {
+    const entries = entriesForRing(report, ring);
     const active = entryFor(report, activeId);
     return entries.map(e => ({
         id: e.id,
         label: e.label,
+        iconSlug: e.iconSlug || providerIconSlug(e.brand || e.id),
         active: !!active && e.id === active.id,
         failing: e.status === 'error' || !!e.error,
     }));
@@ -442,6 +535,8 @@ export function visibleEntry(entry, hiddenByProvider) {
     // QML V4 does not support object spread (...), so copy properties explicitly.
     return {
         id: entry.id,
+        brand: entry.brand,
+        iconSlug: entry.iconSlug,
         label: entry.label,
         plan: entry.plan,
         status: entry.status,
@@ -555,6 +650,7 @@ export function cardFor(entry) {
     return {
         id: entry.id,
         label: entry.label,
+        iconSlug: entry.iconSlug || providerIconSlug(entry.brand || entry.id),
         plan: entry.plan,
         state: state,
         // An errored vendor outranks whatever its last good numbers said.
@@ -577,8 +673,8 @@ export function cardFor(entry) {
     };
 }
 
-export function cardModel(report, hiddenByProvider) {
-    const entries = (report && report.entries) || [];
+export function cardModel(report, hiddenByProvider, ring) {
+    const entries = entriesForRing(report, ring);
     return entries.map(entry => cardFor(visibleEntry(entry, hiddenByProvider)));
 }
 
