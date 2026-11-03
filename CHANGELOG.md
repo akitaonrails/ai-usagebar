@@ -30,6 +30,10 @@
   was read as exhausted and, as the worst quota, took over the bar. A bucket
   with a zero entitlement is now skipped.
 
+- **The Copilot bar falls back to the next quota the plan includes.** Without
+  premium requests the default format had nothing to print and read
+  `—% · 29d 4h`; it now shows the chat quota (then completions).
+
 ## [1.47.0] — 2026-10-30
 
 ### Added
