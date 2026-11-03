@@ -10,6 +10,7 @@ import {
     detailRows, entryFor, errorMessage, EXIT_KILLED, EXIT_TIMED_OUT, formatDuration,
     headline, isAlarming, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
     metricChoices, metricDetail, metricKeys, nextVendor, paletteFromTheme, panelCells,
+    PROVIDER_ICON_SLUGS,
     parseHiddenMetrics, parseReport, providerIconSlug,
     resetRemainingMs, safeText, severityColor, severityOf, SEVERITIES, shellQuote,
     shortLabel, shouldStartFetch, TIMEOUT_KILL_GRACE_SECS, timeoutSeconds,
@@ -276,6 +277,22 @@ assert.equal(providerIconSlug('anthropic@work'), 'anthropic');
 assert.equal(providerIconSlug('supergrok'), 'grok');
 assert.equal(providerIconSlug('unknown-vendor'), '');
 assert.equal(providerIconSlug(''), '');
+
+// The slug list is a hand-kept mirror of a directory QML cannot read, and the
+// same mirror pattern has shipped three vendors short before (see the macOS
+// FORMAT guard in src/guard.rs). Diff it against the real catalog both ways:
+// an extra stem asks plasmashell for a file that is not there, a missing one
+// silently drops that provider's mark.
+{
+    const catalog = readdirSync(at('../windows/popover/src/icons/providers'))
+        .filter(name => name.endsWith('.svg'))
+        .map(name => name.slice(0, -'.svg'.length))
+        .sort();
+    assert.deepEqual([...PROVIDER_ICON_SLUGS].sort(), catalog,
+        'PROVIDER_ICON_SLUGS must list exactly the SVGs in windows/popover/src/icons/providers/');
+    for (const slug of catalog)
+        assert.equal(providerIconSlug(slug), slug, `every shipped mark must resolve: ${slug}`);
+}
 {
     // Canonical catalog (tray/popover) — plasmoid install links or copies from here.
     const iconsDir = at('../windows/popover/src/icons/providers');

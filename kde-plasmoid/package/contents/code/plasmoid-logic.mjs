@@ -174,10 +174,13 @@ function normalizeSection(raw) {
     };
 }
 
-// SVG stems in windows/popover/src/icons/providers/ (tray/popover catalog;
-// plasmoid install symlinks or copies that directory — keep in sync with
-// src/tray/marks.rs).
-const PROVIDER_ICON_SLUGS = new Set([
+// SVG stems in windows/popover/src/icons/providers/ (the tray/popover catalog;
+// the plasmoid install symlinks or copies that directory, and src/tray/marks.rs
+// include_bytes!'s the same files). QML cannot list a directory, so this is a
+// hand-kept mirror — exported so the test suite can diff it against the real
+// catalog. A stem listed here with no SVG asks plasmashell for a file that is
+// not there; one missing from here silently drops that provider's mark.
+export const PROVIDER_ICON_SLUGS = new Set([
     'anthropic', 'anthropic_api', 'antigravity', 'copilot', 'cursor', 'deepseek',
     'devin', 'grok', 'grokbot', 'kilo', 'kimi', 'kiro', 'minimax', 'moonshot',
     'muse-code', 'nous', 'novita', 'ollama', 'openai', 'opencode-go',

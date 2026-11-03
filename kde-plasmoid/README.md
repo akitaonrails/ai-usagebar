@@ -113,7 +113,10 @@ Provider tabs and cards use the same brand SVG marks as the Win/mac tray
 (`windows/popover/src/icons/providers/`, also embedded by `src/tray/marks.rs`).
 Dev install symlinks that catalog into the package; `make install-plasmoid`
 copies the SVGs into the install prefix so the plasmoid tree does not duplicate
-them in git.
+them in git. The slug list in `plasmoid-logic.mjs` is a hand-kept
+mirror of that directory, because QML cannot list one; `plasmoid-logic.test.mjs`
+diffs the two in both directions, so a new mark cannot ship without its slug and
+a slug cannot outlive its file.
 
 Each row puts its label and value on one line, the bar under them, then the pace
 text and a live countdown. The countdown is recomputed locally from the
