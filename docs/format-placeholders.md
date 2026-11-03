@@ -478,26 +478,11 @@ modified.
 `{nous_rollover_credits}`, `{nous_balance}`, `{balance}`
 
 These describe the Portal account the OAuth login reads. `{nous_pct}` is the
-consumed share of the account's usage, a whole number held to 0..=100, and
-which figure that is depends on the plan the Portal reports:
-
-- **Plans with rolling limits** (the Portal's `usage_window`: today, this week,
-  this month, and large models for the month) report consumption per window and
-  leave the credit balances at zero. `{nous_pct}` is then the window closest to
-  its limit — the one that is actually blocking — and not the broadest window;
-  the TUI panel, the Omarchy panel and the tooltip list every window separately
-  with its own figure and countdown. `{nous_renewal}` counts down to that same
-  window's reset, so the two halves of `{nous_pct}% · {nous_renewal}` describe
-  one window.
-- **Plans with a credit allocation** report no usage windows, and `{nous_pct}`
-  is the consumed share of the monthly subscription-credit pool, computed from
-  the subscription credits alone, never from top-up credits; it is `—` when the
-  Portal omits the monthly allocation or the subscription credits remaining.
-  `{nous_renewal}` then counts down to the end of the current period.
-
-`{nous_renewal}` is `—` when neither a window reset nor a period end is stated.
-The tooltip's `Renews` line always counts down to the subscription period,
-whichever model the plan uses. The credit placeholders are plain
+consumed share of the monthly subscription-credit pool, a whole number held to
+0..=100 and computed from the subscription credits alone, never from top-up
+credits; it is `—` when the Portal omits the monthly allocation or the
+subscription credits remaining. `{nous_renewal}` counts down to the end of the
+current period (`—` when none is stated). The credit placeholders are plain
 numbers without a currency symbol: whole credits print without decimals,
 fractions keep up to six decimal places with trailing zeros trimmed, and a
 value the Portal does not report is `—`. `{nous_top_up_credits_remaining}`
@@ -506,10 +491,9 @@ aliases `{nous_purchased_credits_remaining}`. `{nous_balance}` and its alias
 
 The default format is `{nous_pct}% · {nous_renewal}`; with no `format`
 configured and no percentage available, the bar shows the renewal countdown
-alone. The generic `{session_pct}` and `{weekly_pct}` alias `{nous_pct}`,
-`{session_reset}` and `{weekly_reset}` alias `{nous_renewal}`, and `{plan}`
-aliases `{nous_plan}` — so on a plan with rolling limits they carry the
-headline window rather than a session or a week specifically. There are no
+alone. Nous has one pool and one period, so `{session_pct}` and
+`{weekly_pct}` alias `{nous_pct}`, `{session_reset}` and `{weekly_reset}`
+alias `{nous_renewal}`, and `{plan}` aliases `{nous_plan}`. There are no
 elapsed or pace placeholders.
 
 ## Command Code

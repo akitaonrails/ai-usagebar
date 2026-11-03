@@ -179,7 +179,7 @@ mod tests {
         let snapshot = fetch_account(&reqwest::Client::new(), "test-access-token", &endpoints)
             .await
             .unwrap();
-        assert_eq!(snapshot.plan.as_deref(), Some("Ultra"));
+        assert_eq!(snapshot.plan.as_deref(), Some("Pro"));
         mock.assert_async().await;
     }
 
@@ -279,7 +279,7 @@ mod tests {
             fetch_account_with_refresh(&reqwest::Client::new(), &store, &endpoints, Utc::now())
                 .await
                 .unwrap();
-        assert_eq!(snapshot.plan.as_deref(), Some("Ultra"));
+        assert_eq!(snapshot.plan.as_deref(), Some("Pro"));
         assert_eq!(
             store.read().unwrap().unwrap().nous.unwrap().refresh_token,
             "test-new-refresh"

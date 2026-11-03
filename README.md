@@ -319,16 +319,9 @@ come from environment variables or `config.toml`.
 
 ### Nous credits and OpenCode Go
 
-Nous plans come in two shapes, and the percentage follows whichever the Portal
-reports. A plan with rolling limits reports consumption for today, this week,
-this month and large models for the month, and leaves its credit balances at
-zero; the percentage is then the window closest to its limit, each window gets
-its own meter and countdown in the panels and the tooltip, and the credit rows
-stay visible as a secondary balance. A plan with a credit allocation reports no
-windows, and the percentage is calculated from the subscription-credit pool
-only: `(monthly subscription credits - subscription credits remaining) /
-monthly subscription credits`. Top-up/purchased credits are not mixed into that
-percentage. When the Portal
+Nous usage percentage is calculated from the subscription-credit pool only:
+`(monthly subscription credits - subscription credits remaining) / monthly subscription credits`.
+Top-up/purchased credits are not mixed into that percentage. When the Portal
 reports them, the tooltip and TUI show subscription credits, top-up credits, and
 total usable credits as separate values. `[nous] headline = "amount"` puts those
 credits still usable on the bar instead of the percentage, the way the

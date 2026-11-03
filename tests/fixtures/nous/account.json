@@ -1,54 +1,10 @@
 {
-  "plan": "Ultra",
-  "tier": 9,
-  "monthly_credits": 0.0,
-  "credits_remaining": 0.0,
-  "purchased_credits_remaining": 0.0,
-  "total_usable_credits": 0.0,
-  "rollover_credits": 0.0,
-  "period_end": "2026-12-01T00:00:00Z",
-  "usage_window": {
-    "gauges": [
-      {
-        "id": "day",
-        "scope": "all",
-        "label": "Today",
-        "used_bp": 180,
-        "resets_at_ms": 1793750400000
-      },
-      {
-        "id": "week",
-        "scope": "all",
-        "label": "This week",
-        "used_bp": 3131,
-        "resets_at_ms": 1794182400000
-      },
-      {
-        "id": "month",
-        "scope": "all",
-        "label": "This month",
-        "used_bp": 1043,
-        "resets_at_ms": 1796083200000
-      },
-      {
-        "id": "top_tier",
-        "scope": "top_tier",
-        "label": "Large models (monthly)",
-        "used_bp": 30,
-        "resets_at_ms": 1796083200000
-      }
-    ]
-  },
-  "day_used_bp": 180,
-  "week_used_bp": 3131,
-  "month_used_bp": 1043,
-  "top_tier_used_bp": 30,
-  "day_resets_at_ms": 1793750400000,
-  "week_resets_at_ms": 1794182400000,
-  "month_resets_at_ms": 1796083200000,
-  "top_tier_resets_at_ms": 1796083200000,
-  "featured_model_ids": ["test-featured-model"],
-  "auto_top_up_enabled": false,
+  "plan": "Pro",
+  "tier": 2,
+  "monthly_credits": 1000.0,
+  "credits_remaining": 760.0,
+  "rollover_credits": 40.0,
+  "period_end": "2026-09-01T00:00:00Z",
   "user_id": "internal-user-that-must-not-be-retained",
   "organization_id": "internal-org-that-must-not-be-retained",
   "future_field": "ignored-additive-field"
