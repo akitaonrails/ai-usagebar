@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Changed
+
+- **The placeholder reference no longer says undefined placeholders are
+  empty.** `docs/format-placeholders.md` claimed that unsupported placeholders,
+  and provider-specific families such as `{oai_*}` on other providers, expand
+  to an empty string. They are left as written, as `unknown_placeholder_passes_through`
+  pins. The page now separates an absent value (empty) from an undefined
+  placeholder (literal) and points shared formats at the generic
+  `{session_*}` and `{weekly_*}` placeholders.
+
 ### Fixed
 
 - **Synthetic alerts no longer repeat at every refill tick.** Each tick
