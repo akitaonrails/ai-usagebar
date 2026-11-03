@@ -390,6 +390,8 @@ hours before each credit expires. Bodies carry only vendor-reported reset or
 refill times — never a burn-rate estimate. For a partially refilling window
 such as Synthetic's weekly budget, the alert names the regeneration amount
 (for example, `regenerates 2% in 3h 00m`) rather than promising a full reset.
+Each refill tick moves that instant later without opening a new window, so
+such a window re-arms only on the 7-point drop.
 
 Credit-expiry alerts include the configured account label for named accounts,
 so the reminder identifies which account needs to redeem the credit.

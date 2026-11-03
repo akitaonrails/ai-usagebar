@@ -1,6 +1,29 @@
 ## [Unreleased]
 
+### Changed
+
+- **The placeholder reference no longer says undefined placeholders are
+  empty.** `docs/format-placeholders.md` claimed that unsupported placeholders,
+  and provider-specific families such as `{oai_*}` on other providers, expand
+  to an empty string. They are left as written, as `unknown_placeholder_passes_through`
+  pins. The page now separates an absent value (empty) from an undefined
+  placeholder (literal) and points shared formats at the generic
+  `{session_*}` and `{weekly_*}` placeholders.
+
 ### Fixed
+
+- **Synthetic alerts no longer repeat at every refill tick.** Each tick
+  restores about 2% of the weekly budget and moves its refill instant 202
+  minutes later, which the notification dedupe read as a new window, so a
+  budget held at its cap notified again after every tick. A refilling window
+  now re-arms only when usage drops 7 points below the threshold (#562).
+
+- **Tray popover: Synthetic's countdown says what regenerates.** The weekly
+  credit budget gets about 2% back at each tick, but the macOS and Windows
+  popover printed "Resets in 2h 48m", and "Resets today at ..." in the exact
+  time mode and the hover, as if the whole budget returned. It now reads
+  "Regenerates 2% in 2h 48m" in all four languages, like the Omarchy, GNOME
+  and KDE frontends (#564).
 
 - **Copilot Free no longer shows premium requests as 100% used.** GitHub
   reports a quota the plan does not include as 0 of 0 with 0% remaining, which

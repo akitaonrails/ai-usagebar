@@ -210,6 +210,8 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{}} Refresh_Interval_HintInputs */
 /** @typedef {{}} Refresh_NowInputs */
 /** @typedef {{}} Refresh_To_Detect_HintInputs */
+/** @typedef {{ amount: NonNullable<unknown>, exact: NonNullable<unknown> }} Regenerates_AtInputs */
+/** @typedef {{ amount: NonNullable<unknown>, duration: NonNullable<unknown> }} Regenerates_InInputs */
 /** @typedef {{}} Release_NotesInputs */
 /** @typedef {{}} Remind_Me_LaterInputs */
 /** @typedef {{}} ReorderInputs */
@@ -3659,6 +3661,38 @@ export const refresh_to_detect_hint = /** @type {((inputs?: Refresh_To_Detect_Hi
 	if (locale === "ko") return __ko.refresh_to_detect_hint(inputs)
 	if (locale === "es") return __es.refresh_to_detect_hint(inputs)
 	return __en.refresh_to_detect_hint(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Regenerates {amount} {exact}" |
+*
+* @param {Regenerates_AtInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const regenerates_at = /** @type {((inputs: Regenerates_AtInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Regenerates_AtInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.regenerates_at(inputs)
+	if (locale === "ko") return __ko.regenerates_at(inputs)
+	if (locale === "es") return __es.regenerates_at(inputs)
+	return __en.regenerates_at(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Regenerates {amount} in {duration}" |
+*
+* @param {Regenerates_InInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const regenerates_in = /** @type {((inputs: Regenerates_InInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Regenerates_InInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.regenerates_in(inputs)
+	if (locale === "ko") return __ko.regenerates_in(inputs)
+	if (locale === "es") return __es.regenerates_in(inputs)
+	return __en.regenerates_in(inputs)
 });
 /**
 * | output |
