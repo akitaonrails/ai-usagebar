@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Stand-in for `ai-usagebar usage --json` in the Omarchy panel scenarios: a
+# synthetic report with made-up providers and figures, dated from now so the
+# reset texts read naturally. The link name sets Claude's weekly quota
+# (ai-usagebar-94 reports 94%); any other name reports 69%.
+set -euo pipefail
+
+here=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)
+weekly=${0##*-}
+[[ $weekly =~ ^[0-9]+$ ]] || weekly=69
+severity=mid
+(( weekly >= 75 )) && severity=high
+(( weekly >= 90 )) && severity=critical
+
+report=$(<"$here/report.json")
+report=${report//@WEEKLY_SEVERITY@/$severity}
+report=${report//@WEEKLY@/$weekly}
+now=$(date -u +%s)
+# "@N@" is a timestamp N minutes from now.
+for minutes in $(grep -o '"@[0-9]*@"' <<<"$report" | tr -d '"@' | sort -u); do
+  stamp=$(date -u -d "@$((now + minutes * 60))" +%Y-%m-%dT%H:%M:%SZ)
+  report=${report//\"@$minutes@\"/\"$stamp\"}
+done
+printf '%s\n' "$report"

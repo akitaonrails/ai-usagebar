@@ -16,12 +16,6 @@
   "Claude Max 20x" and "Claude Max 5x"; they now say "Claude Ultra" and
   "Claude Max".
 
-- **KDE: hide and reorder providers.** The Configure page's vendor list now
-  drives the popup's tab strip and card layout as well as the scroll ring:
-  untick a provider to take it off both layouts, and the arrows set the order
-  the chips appear in. A failing provider you keep ticked still shows its ⚠.
-  Every provider stays visible until you untick one, so an existing applet is
-  unchanged until you choose otherwise.
 
 ### Fixed
 
