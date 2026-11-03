@@ -76,7 +76,8 @@ never appears in the chooser.
 
 Right-click the widget → *Configure*. One page: which vendors appear as tabs
 and in the scroll ring (each listed with its plan or its error, straight from
-the report — untick to hide; arrows reorder the chips), the current vendor,
+the report — every vendor is shown until you untick one; arrows reorder the
+chips), the current vendor,
 per-provider metric switches, the popup layout, refresh interval, command
 timeout, left-click action, compact percentage and bar toggles, bar width, and
 the five severity colours. Hidden metrics leave both popup layouts, the compact

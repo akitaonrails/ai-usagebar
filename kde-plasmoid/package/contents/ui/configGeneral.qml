@@ -91,8 +91,19 @@ KCM.SimpleKCM {
         return Array.from(page.cfg_vendorRing || []).indexOf(id) !== -1;
     }
 
+    // An empty ring means "all of them", so the boxes read as ticked. The
+    // first untick has to write the list out in full — otherwise it would
+    // leave the ring empty, which is still "all of them", and the box would
+    // spring back.
+    function ringOrAll() {
+        const ring = Array.from(page.cfg_vendorRing || []);
+        if (ring.length)
+            return ring;
+        return Array.from(page.vendorList || []).map(entry => entry.id);
+    }
+
     function setRing(id, on) {
-        const next = Array.from(page.cfg_vendorRing || []).filter(v => v !== id);
+        const next = ringOrAll().filter(v => v !== id);
         if (on)
             next.push(id);
         page.cfg_vendorRing = next;
@@ -147,7 +158,10 @@ KCM.SimpleKCM {
                 id: choice
                 required property var modelData
                 readonly property int ringAt: page.ringIndex(choice.modelData.id)
+                // An empty ring shows every vendor, so every box is ticked;
+                // the arrows stay inert until there is a real order to move in.
                 readonly property bool inRing: choice.ringAt !== -1
+                    || Array.from(page.cfg_vendorRing || []).length === 0
                 spacing: Kirigami.Units.smallSpacing
 
                 QQC2.CheckBox {
@@ -185,7 +199,7 @@ KCM.SimpleKCM {
                     Layout.preferredWidth: Kirigami.Units.iconSizes.small
                     Layout.preferredHeight: Kirigami.Units.iconSizes.small
                     Layout.alignment: Qt.AlignVCenter
-                    enabled: choice.inRing && choice.ringAt > 0
+                    enabled: choice.ringAt > 0
                     opacity: choice.inRing ? 1 : 0
                     text: i18n("Move up")
                     display: QQC2.AbstractButton.IconOnly
@@ -204,7 +218,7 @@ KCM.SimpleKCM {
                     Layout.preferredWidth: Kirigami.Units.iconSizes.small
                     Layout.preferredHeight: Kirigami.Units.iconSizes.small
                     Layout.alignment: Qt.AlignVCenter
-                    enabled: choice.inRing
+                    enabled: choice.ringAt !== -1
                         && choice.ringAt < Array.from(page.cfg_vendorRing || []).length - 1
                     opacity: choice.inRing ? 1 : 0
                     text: i18n("Move down")

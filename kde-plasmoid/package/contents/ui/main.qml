@@ -264,9 +264,12 @@ PlasmoidItem {
     }
 
     function cycleVendor(delta) {
-        // Scroll and the tab strip share the same ring: membership, order, and
-        // the vendor the compact panel shows after a flick.
-        const next = Logic.nextVendor(Plasmoid.configuration.vendorRing, root.vendor, delta);
+        // Scroll and the tab strip share one list: membership, order, and the
+        // vendor the compact panel shows after a flick. With no ring set that
+        // list is every vendor in the report, so scroll keeps working for an
+        // applet whose Configure page was never opened.
+        const next = Logic.nextVendor(
+            Logic.ringOrder(root.report, Plasmoid.configuration.vendorRing), root.vendor, delta);
         root.selectVendor(next);
     }
 

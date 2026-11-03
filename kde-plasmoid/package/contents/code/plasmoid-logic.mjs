@@ -260,6 +260,14 @@ export function entriesForRing(report, ring) {
     return chosen.length ? chosen : entries.slice();
 }
 
+// The ids the popup actually shows, in the order it shows them. Scroll walks
+// this rather than the raw ring, so a flick reaches exactly the tabs in front
+// of you — including the "no ring configured" case, where that is every vendor
+// the report returned.
+export function ringOrder(report, ring) {
+    return entriesForRing(report, ring).map(e => e.id);
+}
+
 // Reorder one id inside the ring. Returns a new array; out-of-range moves and
 // unknown ids are no-ops so the settings page can bind the arrows blindly.
 export function moveRing(ring, id, delta) {

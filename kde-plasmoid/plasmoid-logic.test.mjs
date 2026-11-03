@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {
     buildArgv, buildCommand, buildTuiCommand, cardFor, cardModel, cardState,
-    entriesForRing, moveRing,
+    entriesForRing, moveRing, ringOrder,
     DEFAULT_BINARY, DEFAULT_TIMEOUT_SECS,
     detailRows, entryFor, errorMessage, EXIT_KILLED, EXIT_TIMED_OUT, formatDuration,
     headline, isAlarming, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
@@ -286,6 +286,30 @@ assert.deepEqual(moveRing(['anthropic', 'cursor'], 'anthropic', -1),
     ['anthropic', 'cursor'], 'an already-first id is a no-op');
 assert.deepEqual(moveRing(['anthropic', 'cursor'], 'gone', 1),
     ['anthropic', 'cursor']);
+
+// An empty ring is the shipped default and means "every vendor the report
+// returned": seeding it with one vendor would hide the rest of an existing
+// user's providers from both layouts on upgrade.
+assert.deepEqual(entriesForRing(report, []).map(e => e.id),
+    ['anthropic', 'openai', 'zai'], 'no ring configured shows every vendor');
+assert.deepEqual(vendorTabs(report, 'anthropic', []).map(t => t.label),
+    ['Claude', 'Codex', 'Z.AI'], 'no ring configured keeps every tab');
+assert.deepEqual(cardModel(report, {}, []).map(c => c.id),
+    ['anthropic', 'openai', 'zai'], 'no ring configured keeps every card');
+
+// Scroll walks what the popup shows, so a flick still reaches every vendor on
+// an applet whose Configure page was never opened.
+assert.deepEqual(ringOrder(report, []), ['anthropic', 'openai', 'zai']);
+assert.deepEqual(ringOrder(report, ['zai', 'anthropic']), ['zai', 'anthropic']);
+assert.equal(nextVendor(ringOrder(report, []), 'anthropic', 1), 'openai');
+assert.equal(nextVendor(ringOrder(report, ['zai', 'anthropic']), 'zai', 1), 'anthropic');
+
+assert.match(readFileSync(at('./package/contents/config/main.xml'), 'utf8'),
+    /<entry name="vendorRing" type="StringList">\s*<default><\/default>/,
+    'vendorRing must ship empty: a one-vendor default hides the others on upgrade');
+assert.match(mainQml,
+    /Logic\.nextVendor\(\s*Logic\.ringOrder\(root\.report, Plasmoid\.configuration\.vendorRing\)/,
+    'scroll must cycle the vendors the popup shows, not the raw ring');
 
 // ---------------------------------------------------------------------------
 // projection
