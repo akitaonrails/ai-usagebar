@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.48.0] — 2026-11-03
+
 ### Changed
 
 - **The placeholder reference no longer says undefined placeholders are
@@ -5300,7 +5302,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.47.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...HEAD
+[1.48.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.45.0...v1.46.0
 [1.45.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.44.0...v1.45.0
