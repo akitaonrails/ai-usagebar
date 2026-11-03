@@ -116,6 +116,11 @@ fn parse_quota(value: Option<&Value>) -> Option<Quota> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let entitlement = object.get("entitlement").and_then(nonnegative_integer);
+    // A zero entitlement means the plan does not include this bucket (Copilot
+    // Free premium requests), not that it is exhausted.
+    if !unlimited && entitlement == Some(0) {
+        return None;
+    }
     let remaining = object.get("remaining").and_then(nonnegative_integer);
     let percent_remaining = object
         .get("percent_remaining")
@@ -208,5 +213,20 @@ mod tests {
 
         let empty: Response = serde_json::from_str(r#"{"quota_snapshots":{}}"#).unwrap();
         assert!(to_snapshot(empty).is_err());
+    }
+
+    #[test]
+    fn skips_a_bucket_the_plan_does_not_include() {
+        // Copilot Free: premium is not part of the plan, reported as 0 of 0 with 0% remaining.
+        let response: Response = serde_json::from_str(
+            r#"{"copilot_plan":"individual","quota_snapshots":{
+                "premium_interactions":{"entitlement":0,"remaining":0,"percent_remaining":0.0,"unlimited":false,"has_quota":false},
+                "chat":{"entitlement":200,"remaining":200,"percent_remaining":100.0,"unlimited":false,"has_quota":true}
+            }}"#,
+        )
+        .unwrap();
+        let snapshot = to_snapshot(response).unwrap();
+        assert!(snapshot.premium.is_none());
+        assert_eq!(snapshot.worst_pct(), 0);
     }
 }

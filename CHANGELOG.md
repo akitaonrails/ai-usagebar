@@ -25,6 +25,15 @@
   "Regenerates 2% in 2h 48m" in all four languages, like the Omarchy, GNOME
   and KDE frontends (#564).
 
+- **Copilot Free no longer shows premium requests as 100% used.** GitHub
+  reports a quota the plan does not include as 0 of 0 with 0% remaining, which
+  was read as exhausted and, as the worst quota, took over the bar. A bucket
+  with a zero entitlement is now skipped.
+
+- **The Copilot bar falls back to the next quota the plan includes.** Without
+  premium requests the default format had nothing to print and read
+  `—% · 29d 4h`; it now shows the chat quota (then completions).
+
 ## [1.47.0] — 2026-10-30
 
 ### Added
