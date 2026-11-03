@@ -1,7 +1,9 @@
 # Format placeholders
 
-Use placeholders with `--format` and `--tooltip-format`. Unsupported or absent
-metrics expand to an empty string unless noted otherwise.
+Use placeholders with `--format` and `--tooltip-format`. A placeholder the
+active provider defines but has no value for (an absent window or metric)
+expands to an empty string unless noted otherwise. A placeholder the provider
+does not define at all is left as written, braces included.
 
 Muse Code (`--vendor muse-code`, short name `msc`) supplies `{muse_plan}`,
 `{muse_session_pct}`, `{muse_session_reset}`, `{muse_session_elapsed}`,
@@ -85,7 +87,10 @@ Model and plan names are Pango-escaped at the placeholder boundary, so a name
 like `Claude & GPT OSS` can never break the bar's markup (non-Pango consumers
 see the escaped form, e.g. `&amp;`).
 Provider-specific families such as `{oai_*}`, `{zai_*}`, `{or_*}`, and
-`{orc_*}` are empty for providers that do not define them.
+`{orc_*}` exist only for their own provider. Any other provider prints them
+literally (`{oai_weekly_pct}`), so a format shared across providers should use
+the generic `{session_*}` and `{weekly_*}` placeholders described under
+"Cross-provider formats".
 
 ## Shared and Claude placeholders
 
