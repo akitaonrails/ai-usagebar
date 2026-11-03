@@ -39,6 +39,8 @@ Column {
   property string barWindow: "auto"
   property string showAs: "used"
   property bool brandIcons: true
+  property bool tabNames: false
+  signal tabNamesRequested(bool enabled)
   // The executable for `settings show`/`settings apply` (Panel.reportBinary).
   property string binaryPath: "ai-usagebar"
   property var barProviderChoices: []
@@ -363,6 +365,16 @@ Column {
         fontFamily: root.fontFamily
         enabled: !root.saving
         onClicked: root.brandIconsRequested(!root.brandIcons)
+      }
+      Toggle {
+        width: parent.width
+        label: root.tr("toggle.tab_names")
+        description: root.tr("toggle.tab_names_desc")
+        checked: root.tabNames || !root.brandIcons
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        enabled: root.brandIcons && !root.saving
+        onClicked: root.tabNamesRequested(!root.tabNames)
       }
       Toggle {
         width: parent.width
