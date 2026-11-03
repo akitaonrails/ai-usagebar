@@ -64,20 +64,36 @@ where
     }
 }
 
+/// The plan label of Anthropic's top consumer tier, formerly Max 20x. The
+/// usage conversion keys on it too: Ultra is the plan whose verified accounts
+/// have no five-hour limit (see `UsageResponse::into_snapshot`).
+pub const ULTRA: &str = "Ultra";
+
 impl OauthCreds {
-    /// Plan label rendered the way claudebar does (claudebar:547-550):
-    ///   "${sub_type^} [5x|20x]" (first letter capitalized, optional tier suffix).
+    /// Plan label under Anthropic's current names: "Pro", "Max", "Ultra".
+    ///
+    /// Anthropic renamed both Max tiers in October 2026: Max 20x is now Ultra
+    /// and Max 5x is just Max. The credentials still carry the old ids
+    /// (`subscriptionType: "max"` with `rateLimitTier:
+    /// "default_claude_max_20x"` or `"default_claude_max_5x"`), so the tier is
+    /// what tells Ultra apart. claudebar's `"${sub_type^} [5x|20x]"`
+    /// (claudebar:547-550) would still print the retired "Max 20x".
     pub fn plan_label(&self) -> String {
-        let mut name = crate::format::capitalize(&self.subscription_type);
+        // Both halves matter: the label now decides whether a missing
+        // `five_hour` means "no limit" or "idle at 0%", so claim Ultra only
+        // for the subscription Anthropic documented it for, not for any
+        // future tier id that happens to carry the same multiplier.
+        if self.subscription_type.eq_ignore_ascii_case("max")
+            && self.rate_limit_tier.contains("20x")
+        {
+            return ULTRA.into();
+        }
+        let name = crate::format::capitalize(&self.subscription_type);
         if name.is_empty() {
-            name = "Unknown".into();
+            "Unknown".into()
+        } else {
+            name
         }
-        if self.rate_limit_tier.contains("5x") {
-            name.push_str(" 5x");
-        } else if self.rate_limit_tier.contains("20x") {
-            name.push_str(" 20x");
-        }
-        name
     }
 
     pub fn expires_at_secs(&self) -> i64 {
@@ -388,7 +404,7 @@ mod tests {
         let creds = read_from(f.path()).unwrap();
         assert_eq!(creds.claude_ai_oauth.access_token, "AT");
         assert_eq!(creds.claude_ai_oauth.expires_at_ms, 1735000000000);
-        assert_eq!(creds.claude_ai_oauth.plan_label(), "Max 5x");
+        assert_eq!(creds.claude_ai_oauth.plan_label(), "Max");
     }
 
     #[test]
@@ -417,8 +433,9 @@ mod tests {
         assert_eq!(creds.claude_ai_oauth.plan_label(), "Pro");
     }
 
+    /// The tier id outlived the plan name: Max 20x credentials are Ultra's.
     #[test]
-    fn plan_label_max_20x() {
+    fn plan_label_max_20x_is_ultra() {
         let f = write_creds(
             r#"{"claudeAiOauth":{
                 "accessToken":"A","refreshToken":"R","expiresAt": 0,
@@ -426,7 +443,22 @@ mod tests {
             }}"#,
         );
         let creds = read_from(f.path()).unwrap();
-        assert_eq!(creds.claude_ai_oauth.plan_label(), "Max 20x");
+        assert_eq!(creds.claude_ai_oauth.plan_label(), "Ultra");
+    }
+
+    /// The Ultra label is load-bearing: `into_snapshot` drops the five-hour
+    /// window for it. A 20x tier on some other subscription is not that plan,
+    /// so it must not inherit the name or the suppression.
+    #[test]
+    fn plan_label_claims_ultra_only_for_a_max_subscription() {
+        let f = write_creds(
+            r#"{"claudeAiOauth":{
+                "accessToken":"A","refreshToken":"R","expiresAt": 0,
+                "subscriptionType":"team","rateLimitTier":"default_claude_team_20x"
+            }}"#,
+        );
+        let creds = read_from(f.path()).unwrap();
+        assert_eq!(creds.claude_ai_oauth.plan_label(), "Team");
     }
 
     #[test]
