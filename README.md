@@ -277,6 +277,12 @@ Credentials are read from the Windows user profile rather than `$HOME`:
 `codex` CLI once on Windows to populate them, exactly as on Linux/macOS.
 API-key vendors work unchanged via environment variables or `config.toml`.
 
+### Pop!_OS / COSMIC
+
+For the experimental COSMIC status-area integration, install the Linux CLI/TUI
+binaries first, then follow [`pop-os/README.md`](pop-os/README.md). It reuses the
+GTK dashboard and uses Ayatana AppIndicator instead of Mint's XApp applet.
+
 ## Authentication
 
 Claude and Codex reuse OAuth credentials from their official CLIs. Other

@@ -1,0 +1,19 @@
+#!/usr/bin/python3
+"""Start the shared GTK dashboard with COSMIC's status-area presentation."""
+import os
+from pathlib import Path
+import sys
+
+
+def launch(environ=None, home=None, args=None, execute=os.execve):
+    env = dict(os.environ if environ is None else environ)
+    home = Path.home() if home is None else Path(home)
+    # The launcher explicitly targets COSMIC even when started from an X11 terminal.
+    env["XDG_CURRENT_DESKTOP"] = "COSMIC"
+    env["AI_USAGEBAR_TRAY_ICON"] = str(home / ".local/share/ai-usagebar/tray/ai-usagebar-symbolic.svg")
+    script = str(home / ".local/bin/ai-usagebar-tray")
+    execute("/usr/bin/python3", ["/usr/bin/python3", script, *(sys.argv[1:] if args is None else args)], env)
+
+
+if __name__ == "__main__":
+    launch()

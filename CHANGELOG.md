@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Experimental Pop!_OS / COSMIC status-area launcher and installer, reusing the Linux Mint GTK dashboard through Ayatana AppIndicator with a white tray icon.
+
 ## [1.48.1] — 2026-11-03
 
 ### Fixed
