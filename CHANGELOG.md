@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+## [1.48.1] — 2026-11-03
+
+### Fixed
+
+- **The test suite no longer depends on the machine's clock, which could fail
+  an AUR install.** `a_plan_without_premium_puts_its_next_quota_on_the_bar`,
+  added in 1.48.0, built a Copilot reset from one `Utc::now()` and rendered the
+  bar with another, then asserted the countdown. The gap between the two
+  readings decided the figure, so the bar read "29d 0h" on a coarse clock and
+  "28d 23h" elsewhere. `cargo test` runs in the AUR package's `check()`, so the
+  flake could fail `makepkg` on a user's machine; it failed CI's
+  `nix (aarch64-darwin)` job while the other eight passed. Both the reset and
+  the render clock now come from one fixed instant. No shipped behaviour
+  changes — the fix is entirely inside `#[cfg(test)]`.
+
 ## [1.48.0] — 2026-11-03
 
 ### Changed
@@ -5302,7 +5317,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...HEAD
+[1.48.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...v1.48.1
 [1.48.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.45.0...v1.46.0
