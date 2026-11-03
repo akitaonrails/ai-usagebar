@@ -67,6 +67,20 @@ export function buildCommand(binary, timeoutSecs) {
     return buildArgv(binary, timeoutSecs).map(shellQuote).join(' ');
 }
 
+// plasmashell's PATH is the session PATH, not the interactive shell's — so a
+// cargo / ~/.local/bin install is often invisible. When binaryPath is an
+// absolute path to `ai-usagebar`, launch the sibling `ai-usagebar-tui` from
+// the same directory instead of relying on PATH.
+export function tuiPathFromBinary(binary) {
+    const bin = String(binary ?? '').trim() || DEFAULT_BINARY;
+    if (bin.indexOf('/') === -1)
+        return 'ai-usagebar-tui';
+    if (bin.endsWith('ai-usagebar'))
+        return bin.slice(0, -'ai-usagebar'.length) + 'ai-usagebar-tui';
+    const slash = bin.lastIndexOf('/');
+    return bin.slice(0, slash + 1) + 'ai-usagebar-tui';
+}
+
 // Launching the TUI needs a terminal, and there is no portable way to probe
 // PATH from QML. Emit a shell fallback chain instead and let KProcess take its
 // /bin/sh -c path — here the metacharacters are the point, unlike buildCommand

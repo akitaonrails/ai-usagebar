@@ -15,12 +15,26 @@ use crate::pacing;
 use crate::pango::{self, color_span, escape, severity_for};
 use crate::theme::Theme;
 use crate::tooltip::{self, Line};
-use crate::usage::{ExtraUsage, anthropic_severity};
+use crate::usage::{AnthropicSnapshot, ExtraUsage, anthropic_severity};
 use crate::vendor::VendorId;
 use crate::waybar::{Class, WaybarOutput};
 
 /// Default format string when `--format` is omitted (claudebar:55).
 pub const DEFAULT_FORMAT: &str = "{session_pct}% · {session_reset}";
+/// Default format for an account with no five-hour window: the weekly window
+/// takes the bar, as it does for a Codex account without one.
+pub const WEEKLY_ONLY_FORMAT: &str = "{weekly_pct}% · {weekly_reset}";
+
+/// The bar text used when `--format` is omitted. [`DEFAULT_FORMAT`] reads the
+/// session placeholders, which are empty when the account has no five-hour
+/// window, so such an account gets [`WEEKLY_ONLY_FORMAT`] instead of `% · `.
+pub fn default_format(snap: &AnthropicSnapshot) -> &'static str {
+    if snap.session.is_some() {
+        DEFAULT_FORMAT
+    } else {
+        WEEKLY_ONLY_FORMAT
+    }
+}
 
 /// All inputs needed to render the widget — packaged so tests can construct
 /// it without any I/O.
@@ -102,13 +116,16 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
     let snap = &input.outcome.snapshot;
     let theme = input.theme;
 
-    let session = pacing::calc(
-        snap.session.utilization_pct,
-        snap.session.resets_at,
-        input.now,
-        snap.session.window_duration,
-        input.pace_tolerance,
-    );
+    let session_window = snap.session.as_ref();
+    let session = session_window.map(|w| {
+        pacing::calc(
+            w.utilization_pct,
+            w.resets_at,
+            input.now,
+            w.window_duration,
+            input.pace_tolerance,
+        )
+    });
     let weekly = pacing::calc(
         snap.weekly.utilization_pct,
         snap.weekly.resets_at,
@@ -127,7 +144,8 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
         )
     });
 
-    let session_color = pango::severity_color(severity_for(snap.session.utilization_pct), theme);
+    let session_color =
+        session_window.map(|w| pango::severity_color(severity_for(w.utilization_pct), theme));
     let weekly_color = pango::severity_color(severity_for(snap.weekly.utilization_pct), theme);
     let sonnet_color =
         sonnet_window.map(|w| pango::severity_color(severity_for(w.utilization_pct), theme));
@@ -136,7 +154,11 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
         .as_ref()
         .map(|e| pango::severity_color(severity_for(e.percent()), theme));
 
-    let session_bar = pango::progress_bar(snap.session.utilization_pct, session_color, theme, None);
+    let session_bar = if let (Some(w), Some(c)) = (session_window, session_color) {
+        pango::progress_bar(w.utilization_pct, c, theme, None)
+    } else {
+        String::new()
+    };
     let weekly_bar = pango::progress_bar(snap.weekly.utilization_pct, weekly_color, theme, None);
     let sonnet_bar = if let (Some(w), Some(c)) = (sonnet_window, sonnet_color) {
         pango::progress_bar(w.utilization_pct, c, theme, None)
@@ -176,12 +198,27 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
         ("icon", "󰚩".to_string()),
         ("vendor_short", VendorId::Anthropic.short_name().to_string()),
         ("plan", snap.plan.clone()),
-        ("session_pct", snap.session.utilization_pct.to_string()),
+        // No five-hour window: the whole session family is empty, the
+        // missing-placeholder convention the native frontends hide a row on.
+        (
+            "session_pct",
+            session_window
+                .map(|w| w.utilization_pct.to_string())
+                .unwrap_or_default(),
+        ),
         (
             "session_reset",
-            countdown::format(snap.session.resets_at, input.now),
+            session_window
+                .map(|w| countdown::format(w.resets_at, input.now))
+                .unwrap_or_default(),
         ),
-        ("session_elapsed", session.elapsed_pct.to_string()),
+        (
+            "session_elapsed",
+            session
+                .as_ref()
+                .map(|s| s.elapsed_pct.to_string())
+                .unwrap_or_default(),
+        ),
         ("session_bar", session_bar.clone()),
         ("weekly_pct", snap.weekly.utilization_pct.to_string()),
         (
@@ -264,17 +301,29 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
         ("resets", crate::format::reset_credits(&snap.reset_credits)),
     ]);
 
-    insert_pace(&mut v, "session", &session, input.format_pace_color, theme);
-    insert_pace(&mut v, "weekly", &weekly, input.format_pace_color, theme);
+    insert_pace(
+        &mut v,
+        "session",
+        session.as_ref(),
+        input.format_pace_color,
+        theme,
+    );
+    insert_pace(
+        &mut v,
+        "weekly",
+        Some(&weekly),
+        input.format_pace_color,
+        theme,
+    );
     if let Some(sp) = sonnet.as_ref() {
-        insert_pace(&mut v, "sonnet", sp, input.format_pace_color, theme);
+        insert_pace(&mut v, "sonnet", Some(sp), input.format_pace_color, theme);
     } else {
         // Empty placeholders so `{sonnet_pace}` etc. don't render the literal
         // brace text when sonnet is absent.
         insert_pace(
             &mut v,
             "sonnet",
-            &pacing::Pacing::neutral(),
+            Some(&pacing::Pacing::neutral()),
             input.format_pace_color,
             theme,
         );
@@ -291,13 +340,19 @@ fn build_placeholders(input: &RenderInput) -> HashMap<&'static str, String> {
     v
 }
 
+/// `None` is a window the account does not have: its whole pace family
+/// expands to empty strings, like the rest of its placeholders. "On track"
+/// would describe a window that is not there.
 fn insert_pace(
     map: &mut HashMap<&'static str, String>,
     prefix: &'static str,
-    p: &pacing::Pacing,
+    p: Option<&pacing::Pacing>,
     pace_color: bool,
     theme: &Theme,
 ) {
+    let neutral = pacing::Pacing::neutral();
+    let present = p.is_some();
+    let p = p.unwrap_or(&neutral);
     let pace_glyph = p.ratio_pace.glyph();
     let indicator_glyph = p.point_pace.glyph();
     let delta = p.delta.to_string();
@@ -306,7 +361,9 @@ fn insert_pace(
     let pts = &p.point_label;
 
     let wrap = |s: &str| -> String {
-        if pace_color {
+        if !present {
+            String::new()
+        } else if pace_color {
             let sev = pacing::pace_severity(p.delta);
             let color = pango::severity_color(sev, theme);
             color_span(color, s)
@@ -355,16 +412,8 @@ fn render_default_tooltip(input: &RenderInput) -> String {
     let dim = &theme.dim;
     let fg = &theme.fg;
 
-    let session_color = pango::severity_color(severity_for(snap.session.utilization_pct), theme);
     let weekly_color = pango::severity_color(severity_for(snap.weekly.utilization_pct), theme);
 
-    let session_pacing = pacing::calc(
-        snap.session.utilization_pct,
-        snap.session.resets_at,
-        input.now,
-        snap.session.window_duration,
-        input.pace_tolerance,
-    );
     let weekly_pacing = pacing::calc(
         snap.weekly.utilization_pct,
         snap.weekly.resets_at,
@@ -373,16 +422,6 @@ fn render_default_tooltip(input: &RenderInput) -> String {
         input.pace_tolerance,
     );
 
-    let session_bar = if input.tooltip_pace_pts {
-        pango::progress_bar(
-            snap.session.utilization_pct,
-            session_color,
-            theme,
-            Some(session_pacing.elapsed_pct),
-        )
-    } else {
-        pango::progress_bar(snap.session.utilization_pct, session_color, theme, None)
-    };
     let weekly_bar = if input.tooltip_pace_pts {
         pango::progress_bar(
             snap.weekly.utilization_pct,
@@ -394,7 +433,6 @@ fn render_default_tooltip(input: &RenderInput) -> String {
         pango::progress_bar(snap.weekly.utilization_pct, weekly_color, theme, None)
     };
 
-    let session_pace_glyph = pick_pace_glyph(input.tooltip_pace_pts, &session_pacing);
     let weekly_pace_glyph = pick_pace_glyph(input.tooltip_pace_pts, &weekly_pacing);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -406,21 +444,45 @@ fn render_default_tooltip(input: &RenderInput) -> String {
     lines.push(Line::Sep);
     lines.push(Line::Body("".into()));
 
-    lines.push(Line::Body(format!(
-        " <span foreground='{fg}'>  󰔟  Session</span>"
-    )));
-    lines.push(Line::Body(format!(
-        "   {bar}  <span font_weight='bold' foreground='{color}'>{pct}% {glyph}</span>",
-        bar = session_bar,
-        color = session_color,
-        pct = snap.session.utilization_pct,
-        glyph = session_pace_glyph
-    )));
-    lines.push(Line::Body(format!(
-        " <span foreground='{dim}'>  ⏱  Resets in {cd}</span>",
-        cd = escape(&countdown::format(snap.session.resets_at, input.now))
-    )));
-    lines.push(Line::Body("".into()));
+    // An account with no five-hour limit has no Session block at all: an
+    // empty bar would claim a window that does not exist.
+    if let Some(session) = snap.session.as_ref() {
+        let session_color = pango::severity_color(severity_for(session.utilization_pct), theme);
+        let session_pacing = pacing::calc(
+            session.utilization_pct,
+            session.resets_at,
+            input.now,
+            session.window_duration,
+            input.pace_tolerance,
+        );
+        let session_bar = if input.tooltip_pace_pts {
+            pango::progress_bar(
+                session.utilization_pct,
+                session_color,
+                theme,
+                Some(session_pacing.elapsed_pct),
+            )
+        } else {
+            pango::progress_bar(session.utilization_pct, session_color, theme, None)
+        };
+        let session_pace_glyph = pick_pace_glyph(input.tooltip_pace_pts, &session_pacing);
+
+        lines.push(Line::Body(format!(
+            " <span foreground='{fg}'>  󰔟  Session</span>"
+        )));
+        lines.push(Line::Body(format!(
+            "   {bar}  <span font_weight='bold' foreground='{color}'>{pct}% {glyph}</span>",
+            bar = session_bar,
+            color = session_color,
+            pct = session.utilization_pct,
+            glyph = session_pace_glyph
+        )));
+        lines.push(Line::Body(format!(
+            " <span foreground='{dim}'>  ⏱  Resets in {cd}</span>",
+            cd = escape(&countdown::format(session.resets_at, input.now))
+        )));
+        lines.push(Line::Body("".into()));
+    }
 
     lines.push(Line::Body(format!(
         " <span foreground='{fg}'>  󰃰  Weekly</span>"
@@ -709,7 +771,7 @@ mod tests {
         };
         let snap = AnthropicSnapshot {
             plan: "Max 5x".into(),
-            session,
+            session: Some(session),
             weekly,
             sonnet: Some(sonnet),
             scoped: vec![],
@@ -1106,6 +1168,69 @@ mod tests {
         let out = render_anthropic(&inp);
         // Wrapper color should be the foreground (neutral), not severity.
         assert!(out.text.contains(&theme.fg));
+    }
+
+    /// A verified Ultra account: no five-hour limit, so no session window.
+    fn without_session(mut oc: FetchOutcome) -> FetchOutcome {
+        oc.snapshot.plan = "Ultra".into();
+        oc.snapshot.session = None;
+        oc
+    }
+
+    #[test]
+    fn without_a_session_window_the_default_bar_shows_the_weekly_window() {
+        let oc = without_session(sample_outcome());
+        let theme = Theme::default();
+        let mut inp = input(&oc, &theme);
+        inp.format = default_format(&oc.snapshot);
+        let out = render_anthropic(&inp);
+        assert!(out.text.contains(">27% · 4d 1h<"), "{}", out.text);
+        // An account that has the window keeps the session default.
+        assert_eq!(default_format(&sample_outcome().snapshot), DEFAULT_FORMAT);
+    }
+
+    #[test]
+    fn without_a_session_window_the_tooltip_has_no_session_block() {
+        let oc = without_session(sample_outcome());
+        let theme = Theme::default();
+        let out = render_anthropic(&input(&oc, &theme));
+        assert!(out.tooltip.contains("Claude Ultra"), "{}", out.tooltip);
+        assert!(!out.tooltip.contains("Session"), "{}", out.tooltip);
+        assert!(!out.tooltip.contains("Resets in 1h 30m"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("󰃰  Weekly"), "{}", out.tooltip);
+        assert!(out.tooltip.contains("Resets in 4d 1h"), "{}", out.tooltip);
+    }
+
+    /// The session family is empty, never a confident 0%: the macOS and
+    /// GNOME bars hide the five-hour row exactly when `{session_pct}` is not
+    /// a number.
+    #[test]
+    fn without_a_session_window_its_placeholders_are_empty() {
+        let oc = without_session(sample_outcome());
+        let theme = Theme::default();
+        let values = build_placeholders(&input(&oc, &theme));
+        for key in [
+            "session_pct",
+            "session_reset",
+            "session_elapsed",
+            "session_bar",
+            "session_pace",
+            "session_pace_indicator",
+            "session_pace_pct",
+            "session_pace_pts",
+            "session_pace_delta",
+            "session_pace_abs_delta",
+        ] {
+            assert_eq!(values[key], "", "{key}");
+        }
+        assert_eq!(values["weekly_pct"], "27");
+        assert_eq!(values["plan"], "Ultra");
+
+        let mut inp = input(&oc, &theme);
+        inp.format = "[{session_pct}{session_pace}] {weekly_pct}%";
+        inp.format_pace_color = true;
+        let out = render_anthropic(&inp);
+        assert!(out.text.contains(">[] 27%<"), "{}", out.text);
     }
 
     #[test]

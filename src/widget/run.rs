@@ -42,7 +42,7 @@ use crate::vendor::{HTTP_CLIENT_TIMEOUT, RenderOpts, VendorId, VendorOutcome};
 use crate::waybar::WaybarOutput;
 use crate::widget::cli::{Cli, Vendor};
 use crate::widget::pretty::print_pretty;
-use crate::widget::render::{DEFAULT_FORMAT, RenderInput, render_anthropic};
+use crate::widget::render::{RenderInput, default_format, render_anthropic};
 use crate::zai;
 
 /// Entry point — runs to completion and ALWAYS returns Ok with exit code 0
@@ -1378,7 +1378,7 @@ fn render_with_theme(
     let format_owned = cli
         .format
         .clone()
-        .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
+        .unwrap_or_else(|| default_format(&outcome.snapshot).to_string());
     let input = RenderInput {
         outcome,
         theme,
@@ -1519,11 +1519,11 @@ mod tests {
         FetchOutcome {
             snapshot: AnthropicSnapshot {
                 plan: "Test".into(),
-                session: UsageWindow {
+                session: Some(UsageWindow {
                     utilization_pct: 25,
                     resets_at: None,
                     window_duration: chrono::Duration::hours(5),
-                },
+                }),
                 weekly: UsageWindow {
                     utilization_pct: 10,
                     resets_at: None,
