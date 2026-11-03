@@ -15,7 +15,7 @@ import fcntl
 import time
 from datetime import datetime
 
-from tray_model import metric_display, metric_usage_label, is_not_connected, connection_help, metric_pace, meter_color, report_sections, summary_lines, icon_label, icon_tooltip, tr, installed_binary, dashboard_entries
+from tray_model import select_tray_backend, metric_display, metric_usage_label, is_not_connected, connection_help, metric_pace, meter_color, report_sections, summary_lines, icon_label, icon_tooltip, tr, installed_binary, dashboard_entries
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -46,6 +46,7 @@ except (ValueError, ImportError):
 AI_USAGEBAR_BIN = installed_binary("ai-usagebar", override=os.environ.get("AI_USAGEBAR_BIN"))
 AI_USAGEBAR_TUI_BIN = installed_binary("ai-usagebar-tui", override=os.environ.get("AI_USAGEBAR_TUI_BIN"))
 ICON_NAME = "ai-usagebar"
+TRAY_ICON = os.environ.get("AI_USAGEBAR_TRAY_ICON") or ICON_NAME
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR") or os.path.expanduser("~/.cache")
 LOCK_PATH = os.path.join(RUNTIME_DIR, "ai-usagebar-tray.lock")
 SOCKET_PATH = os.path.join(RUNTIME_DIR, "ai-usagebar-tray.sock")
@@ -525,24 +526,30 @@ class AIUsageTrayApp:
         self.indicator = None
 
         self.xapp_icon = None
+        # COSMIC uses StatusNotifier/AppIndicator, including XWayland launches.
+        backend = select_tray_backend(
+            os.environ.get("XDG_CURRENT_DESKTOP", ""),
+            os.environ.get("XDG_SESSION_TYPE", ""),
+            bool(XApp and "cinnamon" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+                 and XApp.StatusIcon.any_monitors()), bool(AppIndicator))
         # Cinnamon's native XApp applet supports distinct left and right clicks.
-        if XApp and "cinnamon" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower() and XApp.StatusIcon.any_monitors():
+        if backend == "xapp":
             self.xapp_icon = XApp.StatusIcon()
             self.xapp_icon.set_name("ai-usagebar")
             self.xapp_icon.set_icon_name(ICON_NAME)
             self.xapp_icon.set_tooltip_text(tr("AI Usage Bar — open dashboard", "AI Usage Bar — abrir painel"))
             self.xapp_icon.connect("activate", self.on_xapp_activate)
             self.xapp_icon.set_visible(True)
-        elif os.environ.get("XDG_SESSION_TYPE", "").lower() == "x11":
+        elif backend == "gtk":
             self.status_icon = Gtk.StatusIcon.new_from_icon_name(ICON_NAME)
             self.status_icon.set_tooltip_text(tr("AI Usage Bar — open dashboard", "AI Usage Bar — abrir painel"))
             self.status_icon.connect("activate", lambda icon: self.toggle_window(near_pointer=True))
             self.status_icon.connect("popup-menu", self.on_popup_menu)
             self.status_icon.set_visible(True)
-        elif AppIndicator:
+        elif backend == "appindicator":
             self.indicator = AppIndicator.Indicator.new(
                 "ai-usagebar-tray",
-                ICON_NAME,
+                TRAY_ICON,
                 AppIndicator.IndicatorCategory.APPLICATION_STATUS
             )
             self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)

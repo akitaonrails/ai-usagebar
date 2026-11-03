@@ -9,7 +9,7 @@ PLASMOID_ID ?= io.github.akitaonrails.ai-usagebar
 PLASMOID_DIR = $(abspath $(DESTDIR)$(PREFIX))/share/plasma/plasmoids/$(PLASMOID_ID)
 
 .PHONY: build install uninstall install-plasmoid uninstall-plasmoid \
-	test desktop-test plugin-test omarchy-visual-test mint-test mint-runtime-test \
+	test desktop-test plugin-test omarchy-visual-test mint-test mint-runtime-test cosmic-test \
 	qml-lint qml-test mjs-probe smoke clippy fmt clean
 
 build:
@@ -62,6 +62,7 @@ test:
 	$(MAKE) desktop-test
 	$(MAKE) plugin-test
 	$(MAKE) mint-test
+	$(MAKE) cosmic-test
 	$(MAKE) macos-package-test
 
 .PHONY: macos-package-test
@@ -99,6 +100,9 @@ omarchy-visual-test:
 
 mint-test:
 	PYTHONPATH=linux-mint python3 -m unittest discover -s linux-mint -p 'test_tray_model.py'
+
+cosmic-test:
+	PYTHONPATH=linux-mint python3 -m unittest discover -s pop-os -p 'test_*.py'
 
 mint-runtime-test:
 	PYTHONPATH=linux-mint /usr/bin/python3 -m unittest discover -s linux-mint -p 'test_tray_runtime.py'

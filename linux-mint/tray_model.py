@@ -286,3 +286,15 @@ def meter_color(metric, pace=None):
     if left < METER_YELLOW_BELOW_LEFT:
         return "yellow"
     return "blue"
+
+
+def select_tray_backend(desktop, session_type, has_xapp, has_appindicator):
+    """Keep Cinnamon/X11 behavior; COSMIC's panel hosts StatusNotifier items."""
+    desktops = str(desktop).lower().split(":")
+    if has_xapp and "cinnamon" in str(desktop).lower():
+        return "xapp"
+    if "cosmic" in desktops:
+        return "appindicator" if has_appindicator else None
+    if str(session_type).lower() == "x11":
+        return "gtk"
+    return "appindicator" if has_appindicator else None

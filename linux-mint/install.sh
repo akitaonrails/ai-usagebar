@@ -8,10 +8,21 @@ if ! command -v python3 >/dev/null || ! python3 -c 'import gi; gi.require_versio
   echo 'Python 3 with PyGObject and GTK3 is required.' >&2
   exit 1
 fi
-if ! python3 -c 'import gi; gi.require_version("XApp", "1.0"); from gi.repository import XApp' >/dev/null 2>&1; then
-  echo 'The Linux Mint XApp introspection library is required.' >&2
-  exit 1
-fi
+case "${AI_USAGEBAR_INSTALL_DESKTOP:-mint}" in
+  mint)
+    if ! python3 -c 'import gi; gi.require_version("XApp", "1.0"); from gi.repository import XApp' >/dev/null 2>&1; then
+      echo 'The Linux Mint XApp introspection library is required.' >&2
+      exit 1
+    fi
+    ;;
+  cosmic)
+    if ! python3 -c 'import gi; gi.require_version("AyatanaAppIndicator3", "0.1"); from gi.repository import AyatanaAppIndicator3' >/dev/null 2>&1; then
+      echo 'COSMIC requires gir1.2-ayatanaappindicator3-0.1 (install it with apt).' >&2
+      exit 1
+    fi
+    ;;
+  *) echo 'Unknown AI_USAGEBAR_INSTALL_DESKTOP (expected mint or cosmic).' >&2; exit 1 ;;
+esac
 if [[ -n "${AI_USAGEBAR_BIN:-}" && ( "${AI_USAGEBAR_BIN:0:1}" != / || ! -x "$AI_USAGEBAR_BIN" ) ]]; then
   echo 'AI_USAGEBAR_BIN must be an absolute path to an executable.' >&2
   exit 1
@@ -66,8 +77,9 @@ def quote_exec(path):
         value = value.replace(char, "\\" + char)
     return '"' + value + '"'
 
+tray_name = "ai-usagebar-cosmic-tray" if os.environ.get("AI_USAGEBAR_INSTALL_DESKTOP") == "cosmic" else "ai-usagebar-tray"
 replacements = {
-    "@TRAY_EXEC@": quote_exec(user_home / ".local/bin/ai-usagebar-tray"),
+    "@TRAY_EXEC@": quote_exec(user_home / ".local/bin" / tray_name),
     "@TUI_EXEC@": quote_exec(installed_binary("ai-usagebar-tui", str(user_home),
                                               os.environ.get("AI_USAGEBAR_TUI_BIN"))),
 }
@@ -82,4 +94,6 @@ for template, destination in (
     destination.chmod(0o644)
 PY
 install -Dm644 "$source_dir/../windows/tray-icon.png" "$user_home/.local/share/icons/hicolor/256x256/apps/ai-usagebar.png"
-echo 'Installed AI Usage Bar for Linux Mint. Start ai-usagebar-tray or log in again.'
+if [[ "${AI_USAGEBAR_INSTALL_DESKTOP:-mint}" == mint ]]; then
+  echo 'Installed AI Usage Bar for Linux Mint. Start ai-usagebar-tray or log in again.'
+fi
