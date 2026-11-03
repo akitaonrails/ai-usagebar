@@ -4,7 +4,7 @@ assertion_line: 96
 expression: "&out.tooltip"
 ---
 <span foreground='#61afef'>╭───────────────────────────────╮</span>
-<span foreground='#61afef'>│</span>         <span font_weight='bold' foreground='#61afef'>Claude Max 5x</span>         <span foreground='#61afef'>│</span>
+<span foreground='#61afef'>│</span>          <span font_weight='bold' foreground='#61afef'>Claude Max</span>           <span foreground='#61afef'>│</span>
 <span foreground='#61afef'>│</span> <span foreground='#5c6370'>─────────────────────────────</span> <span foreground='#61afef'>│</span>
 <span foreground='#61afef'>│</span>                               <span foreground='#61afef'>│</span>
 <span foreground='#61afef'>│</span> <span foreground='#abb2bf'>  󰔟  Session</span>                  <span foreground='#61afef'>│</span>

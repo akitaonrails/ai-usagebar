@@ -147,7 +147,9 @@ pub struct RefreshInput {
 /// - Fire when `percent >= threshold` and the key is not marked notified.
 ///   Band: `>= 100` is [`Urgency::Critical`], otherwise [`Urgency::Normal`].
 /// - A key re-arms when usage drops below `threshold - 7`, or when the
-///   window's `reset_at` moves to a later instant (a new window). The same
+///   window's `reset_at` moves to a later instant (a new window). A
+///   refilling window (one with `regen`) re-arms only on the drop: each
+///   refill tick moves its instant without opening a new window. The same
 ///   crossing therefore never fires twice.
 /// - A credit expiring within 48h (and not yet expired) fires once per
 ///   expiry instant, at [`Urgency::Normal`].
@@ -167,6 +169,9 @@ pub fn decide(
         if pct >= threshold {
             let armed = match state.entries.get(&key) {
                 None => true,
+                // A refill tick returns part of the same budget instead of
+                // opening a new window: only the hysteresis band re-arms it.
+                Some(_) if row.regen.is_some() => false,
                 Some(record) => reset_moved_later(row.reset_at, record.reset_at_snapshot),
             };
             if armed {
@@ -902,6 +907,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_refill_tick_is_not_a_new_window() {
+        // Synthetic's weekly budget refills about 2% every 202 minutes. Each
+        // tick moves the reported instant past the tolerance without opening
+        // a new window, so a budget held at its cap must not notify per tick.
+        let mut state = NotifyState::default();
+        let now = at(23, 12, 0);
+        let tick = chrono::Duration::minutes(202);
+        let refilling = |percent: u16, reset_at: DateTime<Utc>| {
+            let mut metric = row("Weekly credits", percent, Some(reset_at));
+            metric.regen = Some("2%".into());
+            input(vec![metric])
+        };
+        let next = at(23, 15, 22);
+
+        let exhausted = refilling(100, next);
+        assert_eq!(decide(&exhausted, 97, &mut state, now).len(), 1);
+        // The tick restored 2% and moved the instant 202 minutes later.
+        let refilled = refilling(98, next + tick);
+        assert_eq!(decide(&refilled, 97, &mut state, now).len(), 0);
+        let hovering = refilling(97, next + tick * 2);
+        assert_eq!(decide(&hovering, 97, &mut state, now).len(), 0);
+
+        // Below the band it re-arms like any other window.
+        let dropped = refilling(89, next + tick * 6);
+        assert_eq!(decide(&dropped, 97, &mut state, now).len(), 0);
+        let crossed = refilling(97, next + tick * 7);
+        assert_eq!(decide(&crossed, 97, &mut state, now).len(), 1);
+    }
+
     // — Decision: copy ——————————————————————————————
 
     #[test]
@@ -1406,11 +1441,11 @@ mod tests {
         let state = TabState::Ready(Box::new(ReadyTab {
             snapshot: VendorSnapshot::Anthropic(AnthropicSnapshot {
                 plan: "Claude Max 20x".into(),
-                session: UsageWindow {
+                session: Some(UsageWindow {
                     utilization_pct: 98,
                     resets_at: Some(reset),
                     window_duration: chrono::Duration::hours(5),
-                },
+                }),
                 weekly: UsageWindow {
                     utilization_pct: 42,
                     resets_at: None,

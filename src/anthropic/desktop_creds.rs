@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(o.access_token, "sk-ant-oat01-REAL");
         assert_eq!(o.refresh_token, "sk-ant-ort01-REAL");
         assert_eq!(o.expires_at_ms, 111);
-        assert_eq!(o.plan_label(), "Max 20x");
+        assert_eq!(o.plan_label(), "Ultra");
     }
 
     #[test]

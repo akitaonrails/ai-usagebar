@@ -1031,6 +1031,8 @@ Use one bar item and scroll through your vendors. The TUI on-click still shows t
 format shared by every cycled provider, use `{session_pct}`,
 `{session_reset}`, `{weekly_pct}`, and `{weekly_reset}`. Cursor maps its two
 usage pools to the session and weekly slots; Kiro maps its single pool to both.
+Claude on a verified Ultra plan has no five-hour limit and leaves the session
+slots empty, so add `{weekly_pct}` to see a figure for it.
 The [placeholder reference](docs/format-placeholders.md) lists every generic
 and provider-specific field.
 

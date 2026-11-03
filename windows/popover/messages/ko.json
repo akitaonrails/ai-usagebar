@@ -199,6 +199,8 @@
   "resets": "초기화",
   "resets_at": "{exact} 초기화",
   "resets_in": "{duration} 후 초기화",
+  "regenerates_at": "{exact} {amount} 재생성",
+  "regenerates_in": "{duration} 후 {amount} 재생성",
   "retrying_automatically_in": "{duration} 후 자동으로 다시 시도합니다.",
   "same_readings_power": "ai-usagebar CLI, 터미널 TUI, Waybar·GNOME·KDE 위젯도 같은 데이터를 사용합니다.",
   "session": "세션",

@@ -6,7 +6,8 @@
 // asked: no second plasmoid, no per-vendor subprocess plumbing, and above all
 // no hardcoded provider table — every label, window, percentage, severity and
 // error text comes from the same report the tab view consumes, projected by
-// Logic.cardModel (table-tested in plasmoid-logic.test.mjs). Colours follow
+// Logic.cardModel (table-tested in plasmoid-logic.test.mjs) and filtered to the
+// Configure ring so both layouts hide the same unticked vendors. Colours follow
 // the applet's severity palette, so this view tracks the same theme tokens as
 // everything else instead of carrying its own hexes.
 //

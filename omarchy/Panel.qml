@@ -161,6 +161,9 @@ Panel {
   readonly property bool showAntigravityGemini: Model.booleanSetting(setting("showAntigravityGemini", true), true)
   readonly property bool showAntigravityClaudeGpt: Model.booleanSetting(setting("showAntigravityClaudeGpt", true), true)
   readonly property bool brandIcons: Model.booleanSetting(setting("brandIcons", true), true)
+  // Without logos a tab has nothing but its name, so names always show.
+  readonly property bool tabNamesSetting: Model.booleanSetting(setting("tabNames", false), false)
+  readonly property bool tabNames: tabNamesSetting || !brandIcons
   // Local builds: the executables the plugin runs. No settings control on
   // purpose; set them with `omarchy bar set` (see omarchy/README.md).
   readonly property string reportBinary: String(setting("reportBinary", "ai-usagebar"))
@@ -194,7 +197,7 @@ Panel {
   })
   readonly property var shapedEntry: entryIndex >= 0 ? shapedEntries[entryIndex] : null
   readonly property var summary: Model.headline(shapedEntry, barWindow, showAs)
-  // barWindow pins the bar value and its echoes (hero detail, tooltip).
+  // barWindow pins the bar value and its echoes (hero value, tooltip).
   // Panel rows and alert state keep the historical highest-percent headline,
   // matching every other frontend (Waybar class, KDE isAlarming, TUI).
   // Grouped sub-rows (SuperGrok's product slices) gain a heading row here so
@@ -378,6 +381,12 @@ Panel {
     var next = enabled === true
     if (next === brandIcons) return
     persistWidgetSettings({ brandIcons: next })
+  }
+
+  function setTabNames(enabled) {
+    var next = enabled === true
+    if (next === tabNamesSetting) return
+    persistWidgetSettings({ tabNames: next })
   }
 
   function setShowAs(value) {
@@ -715,6 +724,13 @@ Panel {
     if (bar && typeof bar.run === "function")
       bar.run("printf %s " + Util.shellQuote(String(text)) + " | wl-copy")
   }
+
+  readonly property string heroValue: !settingsOpen && !priorityOpen && entry && entry.error === ""
+    && summary.text !== "Ready" && summary.text !== root.tr("ready")
+    ? Model.autoTextSafe(panelHeadline(shapedEntry)) : ""
+  readonly property color heroValueColor: colorCodeUsage
+    ? severityColorOf(summary.severity || "")
+    : ((summary.severity || "") === "critical" ? urgent : foreground)
 
   function heroMeta() {
     if (!entry) return loading ? root.tr("hero.loading") : root.tr("hero.usage_report")
@@ -1148,12 +1164,12 @@ Panel {
           anchors.horizontalCenter: parent.horizontalCenter
           focusable: false
           value: root.priorityOpen ? "priorities" : "usage"
-          // Only an urgent quota marks the priorities option, with the bar's
-          // own alert glyph.
+          // One glyph per view: a speedometer for usage, the numbered list
+          // for the ranked priorities, the bar's alert while a quota is urgent.
           options: [
-            { value: "usage", label: root.tr("view.usage") },
+            { value: "usage", label: root.tr("view.usage"), icon: "󰓅" },
             { value: "priorities", label: root.tr("priority.title"),
-              icon: root.urgentPriority ? "󰀦" : "",
+              icon: root.urgentPriority ? "󰀦" : "󰉻",
               tooltip: root.urgentPriority ? root.tr("priority.alert_tip", { name: root.urgentPriority.name }) : "" }
           ]
           foreground: root.foreground
@@ -1213,14 +1229,10 @@ Panel {
             title: root.priorityOpen ? root.tr("priority.title") : root.settingsOpen ? root.tr("hero.settings")
               : (root.entry ? Model.providerName(root.entry) : root.tr("app.name"))
             meta: root.priorityOpen ? root.tr("priority.meta") : root.settingsOpen ? root.tr("hero.settings_meta") : root.heroMeta()
-            // Long settings copy must not live in the hero detail pill — that
-            // control is a single-line chip and overflows in RU/pt-BR. The
-            // sentence renders as a wrapped caption under the hero instead.
-            // An error has no figure: the badge beside refresh names it instead
-            // of an untranslated "Error" pill.
-            detail: root.settingsOpen || root.priorityOpen ? ""
-              : (root.entry && root.entry.error === "" && root.summary.text !== "Ready" && root.summary.text !== root.tr("ready")
-                ? Model.autoTextSafe(root.panelHeadline(root.shapedEntry)) : "")
+            // The headline value renders beside the header actions
+            // (heroValue), on their line, instead of in the hero's bordered
+            // detail pill. An error has no figure: the badge beside refresh
+            // names it instead of an untranslated "Error" pill.
             foreground: root.foreground
             fontFamily: root.fontFamily
 
@@ -1243,6 +1255,38 @@ Panel {
             trailingControl: Component {
               Row {
                 spacing: Style.space(4)
+
+                // Headline value, figure first and % lighter, centred on the
+                // same line as refresh/settings.
+                Row {
+                  readonly property var parts: Model.valueParts(root.heroValue)
+                  readonly property bool single: root.heroValue.indexOf("·") < 0
+                  visible: root.heroValue !== ""
+                  anchors.verticalCenter: parent.verticalCenter
+                  rightPadding: Style.space(6)
+                  Accessible.name: root.heroValue
+
+                  Text {
+                    id: heroFigure
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: parent.single ? parent.parts.prefix + parent.parts.figure : root.heroValue
+                    color: root.heroValueColor
+                    font.family: root.fontFamily
+                    font.pixelSize: parent.single ? Style.font.heading : Style.font.bodySmall
+                    font.bold: true
+                  }
+                  Text {
+                    visible: parent.single && text !== ""
+                    anchors.baseline: heroFigure.baseline
+                    textFormat: Text.PlainText
+                    text: parent.parts.unit + parent.parts.suffix
+                    color: root.heroValueColor
+                    opacity: 0.6
+                    font.family: root.fontFamily
+                    font.pixelSize: heroFigure.font.pixelSize
+                  }
+                }
 
                 // Compact error badge beside refresh/settings: the category's
                 // icon and a one-word label in the urgent colour. The full
@@ -1353,6 +1397,7 @@ Panel {
             barWindow: root.barWindow
             showAs: root.showAs
             brandIcons: root.brandIcons
+            tabNames: root.tabNamesSetting
             barProviderChoices: root.barProviderChoices
             onBarProviderToggleRequested: function(entryId) { root.toggleBarProvider(entryId) }
             metricEntries: root.metricEntries
@@ -1366,6 +1411,7 @@ Panel {
             onShowAsRequested: function(value) { root.setShowAs(value) }
             onMetricToggleRequested: function(entryId, key) { root.setMetricShown(entryId, key) }
             onBrandIconsRequested: function(enabled) { root.setBrandIcons(enabled) }
+            onTabNamesRequested: function(enabled) { root.setTabNames(enabled) }
             onFallbackRequested: root.openTerminalSettings()
             onNousLoginRequested: root.openNousLogin()
             onCopilotLoginRequested: root.openCopilotLogin()
@@ -1417,6 +1463,10 @@ Panel {
           // the panel edge once there are more configured entries than fit
           // on one line — a fixed-width ListView silently hid entries past
           // the visible edge, with no way to reach them (see #173).
+          //
+          // The tabs share one width — the widest logo + name — and the rows
+          // are balanced (five providers read 3 + 2, never 4 + 1), so the
+          // logos line up in columns instead of a ragged run of text pills.
           Flow {
             id: providerList
             visible: !root.settingsOpen && !root.priorityOpen && root.visibleEntries.length > 1
@@ -1425,16 +1475,42 @@ Panel {
             flow: Flow.LeftToRight
             spacing: Style.spacing.md
 
+            readonly property real markSize: root.tabNames ? Style.font.bodySmall + Style.space(2) : Style.font.body + Style.space(4)
+            readonly property real naturalWidth: {
+              var widest = 0
+              for (var i = 0; root.tabNames && i < root.visibleEntries.length; i++)
+                widest = Math.max(widest, tabMetrics.advanceWidth(Model.providerName(root.visibleEntries[i])))
+              var mark = root.brandIcons ? markSize + Style.spacing.controlGap : 0
+              if (!root.tabNames) mark = markSize
+              return Math.ceil(widest + mark + Style.spacing.controlPaddingX * 2 + Style.space(4))
+            }
+            readonly property int columns: {
+              var n = root.visibleEntries.length
+              var fit = Math.max(1, Math.floor((width + spacing) / (naturalWidth + spacing)))
+              var rows = Math.ceil(n / Math.min(n, fit))
+              return Math.max(1, Math.ceil(n / rows))
+            }
+            readonly property real tabWidth: Math.floor((width - spacing * (columns - 1)) / columns)
+
+            FontMetrics {
+              id: tabMetrics
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+
             Repeater {
               model: root.visibleEntries
 
               delegate: Button {
+                id: providerTab
                 required property var modelData
                 required property int index
+                readonly property color tint: selected
+                  ? Style.selectedStateColor(root.foreground, Commons.Color.accent) : root.foreground
 
                 height: Style.spacing.controlHeight
-                width: implicitWidth
-                text: Model.providerName(modelData)
+                width: providerList.tabWidth
                 selected: index === root.entryIndex
                 hasCursor: root.cursorActive && index === root.entryIndex
                 bordered: true
@@ -1442,11 +1518,44 @@ Panel {
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall
                 verticalPadding: Style.spacing.controlPaddingY
+                Accessible.name: Model.providerName(modelData)
+                tooltipText: root.tabNames ? "" : Model.providerName(modelData)
                 onClicked: {
                   root.cursorActive = true
                   root.selectEntry(index)
                 }
                 onHovered: function(isHovered) { if (isHovered) root.cursorActive = true }
+
+                Row {
+                  anchors.centerIn: parent
+                  spacing: Style.spacing.controlGap
+
+                  BrandMark {
+                    visible: root.brandIcons
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: providerList.markSize
+                    height: providerList.markSize
+                    brand: Model.brandIconFile(providerTab.modelData)
+                    fallback: Model.providerIcon(providerTab.modelData)
+                    foreground: providerTab.tint
+                    fontFamily: root.fontFamily
+                    fontSize: providerList.markSize
+                  }
+
+                  Text {
+                    visible: root.tabNames
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.min(implicitWidth, providerTab.width - Style.spacing.controlPaddingX * 2
+                      - (root.brandIcons ? providerList.markSize + Style.spacing.controlGap : 0))
+                    textFormat: Text.PlainText
+                    text: Model.providerName(providerTab.modelData)
+                    elide: Text.ElideRight
+                    color: providerTab.tint
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: providerTab.selected
+                  }
+                }
               }
             }
           }
@@ -1627,6 +1736,7 @@ Panel {
     readonly property string valueText: valueView.left
       ? I18n.t(root.uiLocale, "metric.left", { percent: valueView.percent })
       : valueView.text
+    readonly property var valueParts: Model.valueParts(valueText)
 
     spacing: Style.space(grouped ? 4 : 6)
 
@@ -1646,19 +1756,59 @@ Panel {
         anchors.leftMargin: metricRow.indent
         anchors.right: metricValue.left
         anchors.rightMargin: Style.spacing.sm
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.baseline: metricValue.baseline
       }
 
-      Text {
+      // The figure leads; the % sits tight beside it on the same baseline as
+      // the label, and words such as "left" stay secondary.
+      Row {
         id: metricValue
-        text: metricRow.valueText
-        textFormat: Text.PlainText
-        color: metricRow.valueColor
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: !metricRow.grouped
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
+        spacing: 0
+        // Anchors only reach siblings, so the row publishes its figure's
+        // baseline for the label beside it.
+        baselineOffset: valueFigure.y + valueFigure.baselineOffset
+        Accessible.name: metricRow.valueText
+
+        Text {
+          visible: text !== ""
+          anchors.baseline: valueFigure.baseline
+          rightPadding: Style.space(3)
+          text: metricRow.valueParts.prefix
+          textFormat: Text.PlainText
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+        Text {
+          id: valueFigure
+          text: metricRow.valueParts.figure
+          textFormat: Text.PlainText
+          color: metricRow.valueColor
+          font.family: root.fontFamily
+          font.pixelSize: metricRow.grouped ? Style.font.bodySmall : Style.font.title
+          font.bold: !metricRow.grouped
+        }
+        Text {
+          visible: text !== ""
+          anchors.baseline: valueFigure.baseline
+          text: metricRow.valueParts.unit
+          textFormat: Text.PlainText
+          color: metricRow.valueColor
+          opacity: 0.6
+          font.family: root.fontFamily
+          font.pixelSize: valueFigure.font.pixelSize
+        }
+        Text {
+          visible: text !== ""
+          anchors.baseline: valueFigure.baseline
+          text: metricRow.valueParts.suffix
+          textFormat: Text.PlainText
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
     }
 

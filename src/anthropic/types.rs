@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::creds::ULTRA;
 use crate::usage::{
     AnthropicSnapshot, Cents, CloudCredits, ExtraUsage, ExtraUsageStatus, ResetCredit,
     ResetCredits, ScopedWindow, UsageCredits, UsageWindow, checked_reset_title,
@@ -414,8 +415,16 @@ where
 impl UsageResponse {
     /// Lift the wire response into our canonical [`AnthropicSnapshot`].
     ///
-    /// `plan_label` is the rendered plan name ("Max 5x" etc.), derived from
-    /// the credentials file (since the usage endpoint doesn't include it).
+    /// `plan_label` is the rendered plan name ("Max", "Ultra" etc.), derived
+    /// from the credentials file (since the usage endpoint doesn't include it).
+    ///
+    /// The plan also decides what a missing `five_hour` means. Verified Ultra
+    /// accounts have no five-hour limit, and the endpoint reports that as
+    /// `five_hour: null`; claude.ai's own check is the same ("If you don't
+    /// see a Current session bar, your account is verified"), so the snapshot
+    /// carries no session window. An unverified Ultra account has a temporary
+    /// five-hour limit and still reports the window. Every other plan has the
+    /// limit, so a missing window there still reads as an idle one at 0%.
     pub fn into_snapshot(self, plan_label: String) -> AnthropicSnapshot {
         // Window durations are constants per claudebar:172-173.
         const SESSION: chrono::Duration = chrono::Duration::hours(5);
@@ -443,7 +452,10 @@ impl UsageResponse {
             }
         }
 
-        let session = to_window(self.five_hour, SESSION);
+        let session = match self.five_hour {
+            None if plan_label == ULTRA => None,
+            five_hour => Some(to_window(five_hour, SESSION)),
+        };
         let weekly = to_window(self.seven_day, WEEKLY);
         let sonnet = self.seven_day_sonnet.map(|w| to_window(Some(w), WEEKLY));
         let extra = self.extra_usage.and_then(|e| {
@@ -695,13 +707,13 @@ mod tests {
         }"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Max 5x".into());
-        assert_eq!(snap.session.utilization_pct, 43); // rounded
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 43); // rounded
         assert_eq!(snap.weekly.utilization_pct, 27);
         assert_eq!(snap.sonnet.as_ref().unwrap().utilization_pct, 4);
         let extra = snap.extra.as_ref().unwrap();
         assert_eq!(extra.limit, Some(Cents(5000)));
         assert_eq!(extra.spent.0, 250);
-        assert!(snap.session.resets_at.is_some());
+        assert!(snap.session.as_ref().unwrap().resets_at.is_some());
     }
 
     #[test]
@@ -732,6 +744,68 @@ mod tests {
         assert!(snap.scoped[0].window.resets_at.is_some());
         // Unscoped entries never duplicate into `scoped`.
         assert_eq!(snap.weekly.utilization_pct, 55);
+    }
+
+    /// The shape a verified Ultra account returns (observed 2026-11-02, numbers
+    /// and times changed): `five_hour` is null and `limits[]` has no session
+    /// entry, because the account has no five-hour limit.
+    const VERIFIED_ULTRA: &str = r#"{
+        "five_hour": null,
+        "seven_day": {"utilization": 41.0, "resets_at": "2026-11-06T18:00:00.123456+00:00",
+                      "limit_dollars": null, "used_dollars": null,
+                      "remaining_dollars": null, "locked_reason": null},
+        "seven_day_sonnet": null,
+        "limits": [
+            {"kind": "weekly_all", "group": "weekly", "percent": 41,
+             "severity": "normal", "resets_at": "2026-11-06T18:00:00.123456+00:00",
+             "scope": null, "is_active": true},
+            {"kind": "weekly_scoped", "group": "weekly", "percent": 33,
+             "severity": "normal", "resets_at": "2026-11-06T18:00:00.123456+00:00",
+             "scope": {"model": {"id": null, "display_name": "Fable"}, "surface": null},
+             "is_active": false}
+        ]
+    }"#;
+
+    #[test]
+    fn a_verified_ultra_account_has_no_session_window() {
+        let resp: UsageResponse = serde_json::from_str(VERIFIED_ULTRA).unwrap();
+        let snap = resp.into_snapshot(ULTRA.into());
+        assert_eq!(snap.session, None);
+        assert_eq!(snap.weekly.utilization_pct, 41);
+        assert!(snap.weekly.resets_at.is_some());
+        assert_eq!(snap.scoped.len(), 1);
+        assert_eq!(snap.scoped[0].label, "Fable");
+        assert_eq!(snap.scoped[0].window.utilization_pct, 33);
+    }
+
+    /// Until it is verified, an Ultra account has a temporary five-hour limit
+    /// and the endpoint reports it, so the window stays.
+    #[test]
+    fn an_unverified_ultra_account_keeps_its_five_hour_window() {
+        let raw = r#"{
+            "five_hour": {"utilization": 12.0, "resets_at": "2026-11-02T23:00:00Z"},
+            "seven_day": {"utilization": 41.0, "resets_at": "2026-11-06T18:00:00Z"}
+        }"#;
+        let resp: UsageResponse = serde_json::from_str(raw).unwrap();
+        let session = resp.into_snapshot(ULTRA.into()).session.unwrap();
+        assert_eq!(session.utilization_pct, 12);
+        assert!(session.resets_at.is_some());
+    }
+
+    /// Ultra is the only plan with a documented state without the limit. On
+    /// any other plan a missing window still reads as an idle one at 0%.
+    #[test]
+    fn other_plans_keep_the_idle_fallback_for_a_missing_five_hour_window() {
+        for plan in ["Max", "Pro", "Team", "Unknown"] {
+            let resp: UsageResponse = serde_json::from_str(VERIFIED_ULTRA).unwrap();
+            let session = resp.into_snapshot(plan.into()).session;
+            assert_eq!(
+                session.as_ref().map(|s| s.utilization_pct),
+                Some(0),
+                "{plan}"
+            );
+            assert_eq!(session.and_then(|s| s.resets_at), None, "{plan}");
+        }
     }
 
     #[test]
@@ -958,9 +1032,9 @@ mod tests {
     fn empty_object_yields_neutral_snapshot() {
         let resp: UsageResponse = serde_json::from_str("{}").unwrap();
         let snap = resp.into_snapshot("Unknown".into());
-        assert_eq!(snap.session.utilization_pct, 0);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 0);
         assert_eq!(snap.weekly.utilization_pct, 0);
-        assert!(snap.session.resets_at.is_none());
+        assert!(snap.session.as_ref().unwrap().resets_at.is_none());
     }
 
     #[test]
@@ -973,7 +1047,7 @@ mod tests {
         }"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Pro".into());
-        assert_eq!(snap.session.utilization_pct, 100);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 100);
         assert_eq!(snap.weekly.utilization_pct, 100); // rounds to 101, saturated
     }
 
@@ -1083,7 +1157,7 @@ mod tests {
             Some("2026-10-22T16:00:00Z".parse().unwrap())
         );
         // The rest of the payload is untouched by the added query parameter.
-        assert_eq!(snap.session.utilization_pct, 2);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 2);
         assert_eq!(snap.weekly.utilization_pct, 63);
     }
 
@@ -1180,8 +1254,8 @@ mod tests {
         }"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Pro".into());
-        assert!(snap.session.resets_at.is_none());
-        assert_eq!(snap.session.utilization_pct, 50);
+        assert!(snap.session.as_ref().unwrap().resets_at.is_none());
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 50);
     }
 
     /// The two credit blocks as the endpoint actually returned them on
@@ -1215,7 +1289,7 @@ mod tests {
         // absent, never a fabricated $0.00.
         assert!(snap.usage_credits.is_none());
         // The windows keep parsing around the two new blocks.
-        assert_eq!(snap.session.utilization_pct, 12);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 12);
         assert_eq!(snap.weekly.utilization_pct, 34);
     }
 
@@ -1265,7 +1339,14 @@ mod tests {
             r#"{"five_hour": {"utilization": 5}, "iguana_necktie": "hostile"}"#,
         )
         .unwrap();
-        assert_eq!(resp.into_snapshot("Pro".into()).session.utilization_pct, 5);
+        assert_eq!(
+            resp.into_snapshot("Pro".into())
+                .session
+                .as_ref()
+                .unwrap()
+                .utilization_pct,
+            5
+        );
     }
 
     #[test]
@@ -1444,7 +1525,14 @@ mod tests {
         let resp: UsageResponse =
             serde_json::from_str(r#"{"five_hour": {"utilization": 5}, "spend": "hostile"}"#)
                 .unwrap();
-        assert_eq!(resp.into_snapshot("Pro".into()).session.utilization_pct, 5);
+        assert_eq!(
+            resp.into_snapshot("Pro".into())
+                .session
+                .as_ref()
+                .unwrap()
+                .utilization_pct,
+            5
+        );
     }
 
     // ----------------------------------------------------------------
@@ -1461,7 +1549,7 @@ mod tests {
         let resp: UsageResponse =
             serde_json::from_str(raw).unwrap_or_else(|e| panic!("{raw}: {e}"));
         let snap = resp.into_snapshot("Pro".into());
-        assert_eq!(snap.session.utilization_pct, 5);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 5);
         assert!(snap.cloud_credits.is_none(), "1e400 dollars is not a limit");
         assert!(
             snap.usage_credits.is_none(),
@@ -1476,7 +1564,7 @@ mod tests {
         let raw = r#"{"five_hour":{"utilization":5},"iguana_necktie":{"limit_dollars":1e300,"remaining_dollars":1}}"#;
         let resp: UsageResponse = serde_json::from_str(raw).unwrap();
         let snap = resp.into_snapshot("Pro".into());
-        assert_eq!(snap.session.utilization_pct, 5);
+        assert_eq!(snap.session.as_ref().unwrap().utilization_pct, 5);
         assert!(snap.cloud_credits.is_none());
     }
 
