@@ -213,6 +213,7 @@ fn render_tooltip(
 mod tests {
     use super::*;
     use crate::copilot::types::Quota;
+    use chrono::TimeZone;
 
     fn sample() -> Snapshot {
         Snapshot {
@@ -264,6 +265,11 @@ mod tests {
     /// bar must still show a figure rather than the unavailable marker.
     #[test]
     fn a_plan_without_premium_puts_its_next_quota_on_the_bar() {
+        // One fixed instant for both the reset and the render clock. Taking
+        // two `Utc::now()` readings made the countdown depend on the gap
+        // between them: on a coarse clock the delta stayed exactly 29 days and
+        // the bar read "29d 0h" instead of "28d 23h".
+        let now = Utc.with_ymd_and_hms(2026, 11, 3, 0, 0, 0).unwrap();
         let free = Snapshot {
             plan: "Free".into(),
             premium: None,
@@ -274,7 +280,7 @@ mod tests {
                 unlimited: false,
             }),
             completions: None,
-            reset_at: Some(Utc::now() + chrono::Duration::days(29)),
+            reset_at: Some(now + chrono::Duration::days(29)),
         };
         assert_eq!(default_format(&free), CHAT_FORMAT);
         assert_eq!(default_format(&sample()), DEFAULT_FORMAT);
@@ -292,10 +298,10 @@ mod tests {
                 format_pace_color: false,
                 tooltip_pace_pts: false,
             },
-            Utc::now(),
+            now,
         );
         // The chat figure, not the premium bucket's unavailable marker.
-        assert!(output.text.contains("40% \u{b7} 28d"), "{}", output.text);
+        assert!(output.text.contains("40% \u{b7} 29d 0h"), "{}", output.text);
         assert!(!output.text.contains(UNAVAILABLE), "{}", output.text);
 
         // Completions-only is the last fallback; an empty snapshot never
