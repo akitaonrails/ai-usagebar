@@ -16,6 +16,29 @@
   "Claude Max 20x" and "Claude Max 5x"; they now say "Claude Ultra" and
   "Claude Max".
 
+- **Omarchy: provider tabs line up.** The panel's provider tabs share one
+  width, show each provider's brand mark and balance their rows (five
+  providers read 3 + 2), still wrapping instead of clipping (#173). They show
+  logos only by default, with the name on hover; `tabNames` adds the name
+  beside each logo, and names always show when provider logos are off.
+
+- **Omarchy: usage figures read first.** Each meter's value shows the figure
+  larger and bold in its severity colour, with the % beside it in a lighter
+  tone and words such as "left" in a secondary one, on the label's baseline.
+  The header's headline value leaves its bordered pill and sits beside
+  refresh and settings, on their line.
+
+- **Omarchy: the view switcher has an icon per view.** Usage shows a
+  speedometer and priorities the numbered list the priorities header
+  already uses; an urgent quota still swaps the list for the bar's alert
+  glyph.
+
+- **KDE: hide and reorder providers.** The Configure page's vendor list now
+  drives the popup's tab strip and card layout as well as the scroll ring:
+  untick a provider to take it off both layouts, and the arrows set the order
+  the chips appear in. A failing provider you keep ticked still shows its ⚠.
+  Every provider stays visible until you untick one, so an existing applet is
+  unchanged until you choose otherwise.
 
 ### Fixed
 
