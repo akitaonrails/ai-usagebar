@@ -38,9 +38,12 @@ One caveat worth knowing before you put a vendor in the scroll ring:
 - GNU coreutils `timeout` (standard on Plasma Linux distributions)
 
 > **plasmashell does not inherit your shell's `PATH`.** A `cargo install` into
-> `~/.cargo/bin` is typically invisible to the widget. Either install to a
-> session-visible prefix (`make install PREFIX=~/.local`) or set the full path
-> under *Configure → Binary path*.
+> `~/.cargo/bin` (or a release tarball dropped into `~/.local/bin`) is typically
+> invisible to the widget. Either install to a session-visible prefix
+> (`make install PREFIX=~/.local`, or symlink into `/usr/local/bin`) or set the
+> full path under *Configure → Binary path*. That same setting also locates
+> `ai-usagebar-tui` next to the binary, so the panel / middle-click TUI launch
+> does not fall back to an empty terminal when PATH cannot see the install.
 
 ## Install (dev)
 

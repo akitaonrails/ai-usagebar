@@ -269,7 +269,8 @@ PlasmoidItem {
     }
 
     function launchTui() {
-        launcher.exec(Logic.buildTuiCommand(Plasmoid.configuration.terminalCommand));
+        const tui = Logic.tuiPathFromBinary(Plasmoid.configuration.binaryPath);
+        launcher.exec(Logic.buildTuiCommand(Plasmoid.configuration.terminalCommand, tui));
     }
 
     // One report covers every vendor, so switching only re-picks an entry that
