@@ -6,12 +6,57 @@ use chrono::{DateTime, Utc};
 
 use crate::vendor::VendorId;
 
-use super::types::AccountSnapshot;
+use super::types::{AccountSnapshot, UsageGauge};
 
 pub const DISPLAY_NAME: &str = "Nous Research";
 pub const VENDOR_SHORT: &str = VendorId::NousResearch.short_name();
 pub const DEFAULT_FORMAT: &str = "{nous_pct}% · {nous_renewal}";
 pub const NEUTRAL_UNAVAILABLE: &str = "—";
+
+/// The product name for a portal window id. The wire `label` wins when the
+/// portal sends one; these are the fallbacks for the ids we know, so a payload
+/// with no labels still reads as windows rather than as bare ids.
+fn canonical_label(id: &str) -> Option<&'static str> {
+    match id {
+        "day" => Some("Today"),
+        "week" => Some("This week"),
+        "month" => Some("This month"),
+        "top_tier" => Some("Large models"),
+        _ => None,
+    }
+}
+
+/// Display label for one usage window, sanitized because both the id and the
+/// portal's `label` are untrusted text.
+pub fn gauge_label(gauge: &UsageGauge) -> String {
+    let raw = gauge
+        .label
+        .as_deref()
+        .filter(|label| !label.trim().is_empty())
+        .or_else(|| canonical_label(&gauge.id))
+        .unwrap_or(&gauge.id);
+    crate::display::sanitize_untrusted_field(raw)
+}
+
+/// When the account's headline window renews. Falls back to the subscription
+/// period end for pre-migration, credits-only payloads.
+fn renewal_at(snapshot: &AccountSnapshot) -> Option<DateTime<Utc>> {
+    snapshot
+        .primary_gauge()
+        .and_then(|gauge| gauge.reset_at)
+        .or(snapshot.current_period_end)
+}
+
+/// A percentage as the portal reports it: one decimal when it has one, so the
+/// 1.80 % day window does not round to "2%".
+fn format_pct(value: f64) -> String {
+    let rounded = (value * 10.0).round() / 10.0;
+    if rounded.fract() == 0.0 {
+        format!("{rounded:.0}%")
+    } else {
+        format!("{rounded:.1}%")
+    }
+}
 
 pub fn build_placeholders(
     snapshot: &AccountSnapshot,
@@ -21,7 +66,7 @@ pub fn build_placeholders(
         .usage_percent()
         .map(|value| crate::format::clamp_pct(value).to_string())
         .unwrap_or_else(|| NEUTRAL_UNAVAILABLE.into());
-    let renewal = crate::countdown::format(snapshot.current_period_end, now);
+    let renewal = crate::countdown::format(renewal_at(snapshot), now);
     let plan = snapshot
         .plan
         .as_deref()
@@ -73,7 +118,24 @@ pub fn render_tooltip(snapshot: &AccountSnapshot, now: DateTime<Utc>) -> String 
         ));
     }
     if let Some(pct) = snapshot.usage_percent() {
-        lines.push(format!("Usage: {}%", crate::format::clamp_pct(pct)));
+        if snapshot.has_usage_windows() {
+            for gauge in &snapshot.gauges {
+                let mut line = format!(
+                    "{}: {}",
+                    escape_text(&gauge_label(gauge)),
+                    format_pct(gauge.percent())
+                );
+                if let Some(reset) = gauge.reset_at {
+                    line.push_str(&format!(
+                        " · resets in {}",
+                        crate::countdown::format(Some(reset), now)
+                    ));
+                }
+                lines.push(line);
+            }
+        } else {
+            lines.push(format!("Usage: {}%", crate::format::clamp_pct(pct)));
+        }
     }
     if let Some(remaining) = snapshot.credits_remaining {
         lines.push(format!(
@@ -287,6 +349,84 @@ mod tests {
         let bidi =
             parse_account(&json!({"plan":"Pro\u{202e}spoof", "monthly_credits": 100.0})).unwrap();
         assert!(!render_tooltip(&bidi, now).contains('\u{202e}'));
+    }
+
+    fn usage_window_snapshot() -> AccountSnapshot {
+        parse_account(&json!({
+            "plan": "Ultra",
+            "monthly_credits": 0.0,
+            "credits_remaining": 0.0,
+            "period_end": "2026-12-01T00:00:00Z",
+            "usage_window": {"gauges": [
+                {"id": "day", "scope": "all", "label": "Today", "used_bp": 180, "resets_at_ms": 1793750400000i64},
+                {"id": "week", "scope": "all", "label": "This week", "used_bp": 3131, "resets_at_ms": 1794182400000i64},
+                {"id": "month", "scope": "all", "label": "This month", "used_bp": 1043, "resets_at_ms": 1796083200000i64},
+                {"id": "top_tier", "scope": "top_tier", "label": "Large models (monthly)", "used_bp": 30, "resets_at_ms": 1796083200000i64}
+            ]}
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn usage_windows_replace_the_zero_credit_headline() {
+        let snap = usage_window_snapshot();
+        let now = Utc.with_ymd_and_hms(2026, 11, 3, 0, 0, 0).unwrap();
+        let values = build_placeholders(&snap, now);
+        // The monthly window carries the headline, not the zeroed credits.
+        assert_eq!(values["nous_pct"], "10");
+        assert_eq!(values["nous_renewal"], "28d 0h");
+        // Credits stay as a secondary, still-formatted balance.
+        assert_eq!(values["nous_balance"], "$0.00");
+
+        let tooltip = render_tooltip(&snap, now);
+        assert!(tooltip.contains("Today: 1.8% · resets in 1d 0h"));
+        assert!(tooltip.contains("This week: 31.3% · resets in 6d 0h"));
+        assert!(tooltip.contains("This month: 10.4% · resets in 28d 0h"));
+        assert!(tooltip.contains("Large models (monthly): 0.3% · resets in 28d 0h"));
+        assert!(tooltip.contains("Renews: 28d 0h"));
+        assert!(!tooltip.contains("0%"));
+
+        let outcome = crate::vendor::VendorOutcome {
+            snapshot: crate::usage::VendorSnapshot::NousResearch(snap.clone()),
+            stale: false,
+            last_error: None,
+            cache_age: None,
+        };
+        let rendered = render(
+            &outcome,
+            &snap,
+            &crate::theme::Theme::default(),
+            &crate::vendor::RenderOpts {
+                format: None,
+                tooltip_format: None,
+                icon: None,
+                pace_tolerance: 10,
+                format_pace_color: false,
+                tooltip_pace_pts: false,
+            },
+            now,
+        );
+        assert!(rendered.text.contains("10% · 28d 0h"));
+        assert!(!rendered.text.contains('$'));
+    }
+
+    #[test]
+    fn gauge_labels_fall_back_to_canonical_names_and_sanitize_wire_text() {
+        let snap = parse_account(&json!({
+            "plan": "Ultra",
+            "usage_window": {"gauges": [
+                {"id": "day", "used_bp": 180},
+                {"id": "week", "used_bp": 3131, "label": ""},
+                {"id": "month", "used_bp": 1043, "label": "<This>\u{202e} month"}
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(gauge_label(&snap.gauges[0]), "Today");
+        assert_eq!(gauge_label(&snap.gauges[1]), "This week");
+        // Wire text is untrusted: bidi controls are stripped; markup is left
+        // for the sink to escape (Pango here, plain text in the TUI).
+        assert!(!gauge_label(&snap.gauges[2]).contains('\u{202e}'));
+        assert!(gauge_label(&snap.gauges[2]).contains("This"));
     }
 
     #[test]
