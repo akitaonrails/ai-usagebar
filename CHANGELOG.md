@@ -51,6 +51,12 @@
   unverified Ultra account keeps its temporary five-hour limit, and other
   plans are unchanged.
 
+- **KDE: the TUI opens from a binary path off `PATH`.** plasmashell does not
+  inherit your shell's `PATH`, so an install under `~/.cargo/bin` or
+  `~/.local/bin` left the middle-click and panel TUI launch calling a bare
+  `ai-usagebar-tui` and opening an empty terminal. With an absolute *Binary
+  path* set, it now launches the `ai-usagebar-tui` sitting next to it.
+
 ## [1.47.0] — 2026-10-30
 
 ### Added
