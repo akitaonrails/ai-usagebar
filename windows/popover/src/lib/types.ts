@@ -49,6 +49,10 @@ export interface MetricRow {
   modelPool?: boolean;
   label: string;
   leftPercent: number;
+  /** What a refilling window (Synthetic's weekly credits) gets back at
+   * `resetAt`, such as "2%"; the report's `regen`. Its countdown reads
+   * "Regenerates 2% in …" instead of "Resets in …". */
+  regen?: string;
   reset: string;
   resetAt: string;
   severity: string;

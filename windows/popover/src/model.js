@@ -484,6 +484,9 @@ function normalizeSection(raw) {
       // One model's own limit (Antigravity's "Gemini 4 Argon"), not a window
       // the whole provider shares.
       modelPool: raw.model_pool === true,
+      // What a refilling window (Synthetic's weekly credits) gets back at
+      // `reset_at`, such as "2%"; "" for a window that resets.
+      regen: clean(raw.regen, 40),
     };
   }
   // A text row that meters a cap (Cursor's On-Demand spend) carries `percent`
@@ -519,7 +522,11 @@ export function resetLabel(section, nowMs, locale) {
   if (!section || section.type !== "metric") return "";
   if (section.resetAt) {
     const at = Date.parse(section.resetAt);
-    if (!Number.isNaN(at)) return m.resets_in({ duration: formatDuration(at - nowMs, locale) }, { locale: lang(locale) });
+    if (!Number.isNaN(at)) {
+      const duration = formatDuration(at - nowMs, locale);
+      if (section.regen) return m.regenerates_in({ amount: section.regen, duration }, { locale: lang(locale) });
+      return m.resets_in({ duration }, { locale: lang(locale) });
+    }
   }
   const detail = section.detail || "";
   if (/reset/i.test(detail)) return detail;
@@ -760,8 +767,16 @@ export function resetText(row, mode, nowMs, opts) {
     const resetFallback = /^Resets in (.*)$/.exec(fallback);
     return resetFallback ? m.resets_in({ duration: resetFallback[1] }, { locale: lang(opts && opts.locale) }) : fallback;
   }
-  if (mode === "exact") return m.resets_at({ exact: formatResetExact(at, Number(nowMs) || 0, opts) }, { locale: lang(opts && opts.locale) });
-  return m.resets_in({ duration: formatDuration(at - (Number(nowMs) || 0), opts && opts.locale) }, { locale: lang(opts && opts.locale) });
+  // A refilling window gets `regen` back at that instant instead of resetting.
+  const amount = row.regen;
+  if (mode === "exact") {
+    const exact = formatResetExact(at, Number(nowMs) || 0, opts);
+    if (amount) return m.regenerates_at({ amount, exact }, { locale: lang(opts && opts.locale) });
+    return m.resets_at({ exact }, { locale: lang(opts && opts.locale) });
+  }
+  const duration = formatDuration(at - (Number(nowMs) || 0), opts && opts.locale);
+  if (amount) return m.regenerates_in({ amount, duration }, { locale: lang(opts && opts.locale) });
+  return m.resets_in({ duration }, { locale: lang(opts && opts.locale) });
 }
 
 // Same row in the other mode, for hover tooltips; "" without a timestamp.
@@ -977,6 +992,7 @@ export function projectCards(payload, nowMs, locale) {
           severity: section.severity,
           reset: resetLabel(section, now, locale),
           resetAt: section.resetAt || "",
+          regen: section.regen || "",
           window: section.window || 0,
           grouped: Boolean(metricGroup),
           modelPool: Boolean(section.modelPool),

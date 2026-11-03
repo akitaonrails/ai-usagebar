@@ -18,6 +18,13 @@
   budget held at its cap notified again after every tick. A refilling window
   now re-arms only when usage drops 7 points below the threshold (#562).
 
+- **Tray popover: Synthetic's countdown says what regenerates.** The weekly
+  credit budget gets about 2% back at each tick, but the macOS and Windows
+  popover printed "Resets in 2h 48m", and "Resets today at ..." in the exact
+  time mode and the hover, as if the whole budget returned. It now reads
+  "Regenerates 2% in 2h 48m" in all four languages, like the Omarchy, GNOME
+  and KDE frontends (#564).
+
 ## [1.47.0] — 2026-10-30
 
 ### Added
