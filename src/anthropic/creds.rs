@@ -79,7 +79,13 @@ impl OauthCreds {
     /// what tells Ultra apart. claudebar's `"${sub_type^} [5x|20x]"`
     /// (claudebar:547-550) would still print the retired "Max 20x".
     pub fn plan_label(&self) -> String {
-        if self.rate_limit_tier.contains("20x") {
+        // Both halves matter: the label now decides whether a missing
+        // `five_hour` means "no limit" or "idle at 0%", so claim Ultra only
+        // for the subscription Anthropic documented it for, not for any
+        // future tier id that happens to carry the same multiplier.
+        if self.subscription_type.eq_ignore_ascii_case("max")
+            && self.rate_limit_tier.contains("20x")
+        {
             return ULTRA.into();
         }
         let name = crate::format::capitalize(&self.subscription_type);
@@ -438,6 +444,21 @@ mod tests {
         );
         let creds = read_from(f.path()).unwrap();
         assert_eq!(creds.claude_ai_oauth.plan_label(), "Ultra");
+    }
+
+    /// The Ultra label is load-bearing: `into_snapshot` drops the five-hour
+    /// window for it. A 20x tier on some other subscription is not that plan,
+    /// so it must not inherit the name or the suppression.
+    #[test]
+    fn plan_label_claims_ultra_only_for_a_max_subscription() {
+        let f = write_creds(
+            r#"{"claudeAiOauth":{
+                "accessToken":"A","refreshToken":"R","expiresAt": 0,
+                "subscriptionType":"team","rateLimitTier":"default_claude_team_20x"
+            }}"#,
+        );
+        let creds = read_from(f.path()).unwrap();
+        assert_eq!(creds.claude_ai_oauth.plan_label(), "Team");
     }
 
     #[test]
