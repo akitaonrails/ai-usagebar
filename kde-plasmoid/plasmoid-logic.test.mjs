@@ -2,7 +2,7 @@
 // gnome-extension/marker-logic.test.mjs: node:assert/strict, no framework, no
 // dependency. Run with `node kde-plasmoid/plasmoid-logic.test.mjs`.
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {
     buildArgv, buildCommand, buildTuiCommand, tuiPathFromBinary, cardFor, cardModel, cardState,
@@ -11,7 +11,8 @@ import {
     detailRows, entryFor, errorMessage, EXIT_KILLED, EXIT_TIMED_OUT, formatDuration,
     headline, isAlarming, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
     metricChoices, metricDetail, metricKeys, nextVendor, paletteFromTheme, panelCells,
-    parseHiddenMetrics, parseReport,
+    PROVIDER_ICON_SLUGS,
+    parseHiddenMetrics, parseReport, providerIconSlug,
     resetRemainingMs, safeText, severityColor, severityOf, SEVERITIES, shellQuote,
     shortLabel, shouldStartFetch, TIMEOUT_KILL_GRACE_SECS, timeoutSeconds,
     updatedAgeMs, vendorTabs, visibleEntry,
@@ -311,6 +312,31 @@ assert.match(mainQml,
     /Logic\.nextVendor\(\s*Logic\.ringOrder\(root\.report, Plasmoid\.configuration\.vendorRing\)/,
     'scroll must cycle the vendors the popup shows, not the raw ring');
 
+assert.deepEqual(vendorTabs(report, 'anthropic').map(t => t.iconSlug),
+    ['anthropic', 'openai', 'zai']);
+
+assert.equal(providerIconSlug('anthropic'), 'anthropic');
+assert.equal(providerIconSlug('anthropic@work'), 'anthropic');
+assert.equal(providerIconSlug('supergrok'), 'grok');
+assert.equal(providerIconSlug('unknown-vendor'), '');
+assert.equal(providerIconSlug(''), '');
+
+// The slug list is a hand-kept mirror of a directory QML cannot read, and the
+// same mirror pattern has shipped three vendors short before (see the macOS
+// FORMAT guard in src/guard.rs). Diff it against the real catalog both ways:
+// an extra stem asks plasmashell for a file that is not there, a missing one
+// silently drops that provider's mark.
+{
+    const catalog = readdirSync(at('../windows/popover/src/icons/providers'))
+        .filter(name => name.endsWith('.svg'))
+        .map(name => name.slice(0, -'.svg'.length))
+        .sort();
+    assert.deepEqual([...PROVIDER_ICON_SLUGS].sort(), catalog,
+        'PROVIDER_ICON_SLUGS must list exactly the SVGs in windows/popover/src/icons/providers/');
+    for (const slug of catalog)
+        assert.equal(providerIconSlug(slug), slug, `every shipped mark must resolve: ${slug}`);
+}
+
 // ---------------------------------------------------------------------------
 // projection
 // ---------------------------------------------------------------------------
@@ -319,7 +345,9 @@ const openai = entryFor(report, 'openai');
 const zai = entryFor(report, 'zai');
 
 assert.equal(anthropic.label, 'Claude');
+assert.equal(anthropic.iconSlug, 'anthropic');
 assert.equal(anthropic.plan, 'Max 20x');
+assert.equal(cardFor(anthropic).iconSlug, 'anthropic');
 assert.equal(openai.stale, true);
 assert.equal(zai.status, 'error');
 

@@ -29,6 +29,10 @@ packaging/aur/*.tar.gz
 # GNOME extension - compiled schema (build artifact)
 gnome-extension/schemas/gschemas.compiled
 
+# KDE plasmoid provider marks — symlink/copy from windows/popover/src/icons/providers
+# via kde-plasmoid/sync-provider-icons.sh (or make install-plasmoid). Not duplicated in git.
+kde-plasmoid/package/contents/icons/providers
+
 # Compiled macOS menu bar app (built by macos/build.sh)
 macos/ai-usagebar-menubar
 macos/__pycache__/
