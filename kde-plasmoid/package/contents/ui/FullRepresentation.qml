@@ -113,10 +113,9 @@ Item {
         }
 
         // --- provider tabs -------------------------------------------------
-        // Every configured vendor, including the ones currently failing. Hiding
-        // a broken vendor is what made "not configured" indistinguishable from
-        // "configured and erroring". Only in the tab layout; the cards layout
-        // shows every entry side by side instead.
+        // Membership and order come from the Configure ring. Unticked vendors
+        // stay off the strip; failing ones that remain ticked keep the ⚠ so a
+        // broken credential is still visible where you already look.
         Flow {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.smallSpacing

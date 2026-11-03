@@ -33,6 +33,13 @@
   already uses; an urgent quota still swaps the list for the bar's alert
   glyph.
 
+- **KDE: hide and reorder providers.** The Configure page's vendor list now
+  drives the popup's tab strip and card layout as well as the scroll ring:
+  untick a provider to take it off both layouts, and the arrows set the order
+  the chips appear in. A failing provider you keep ticked still shows its ⚠.
+  Every provider stays visible until you untick one, so an existing applet is
+  unchanged until you choose otherwise.
+
 ### Fixed
 
 - **Synthetic alerts no longer repeat at every refill tick.** Each tick
