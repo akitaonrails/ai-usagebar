@@ -174,6 +174,32 @@ pub fn clamp_pct(v: f64) -> u16 {
     }
 }
 
+/// A percentage with the decimal the vendor reported, and none it did not:
+/// one decimal place when the figure has one, no `.0` when it does not.
+///
+/// The meter stays on the rounded integer from [`clamp_pct`]; this is the
+/// printed figure beside it, so a 1.8 % window does not read "2%". It lives
+/// here because both the panel rows and the Waybar tooltip print it, and a
+/// second copy of this rounding is how the money formatters once drifted into
+/// four disagreeing versions.
+///
+/// ```
+/// use ai_usagebar::format::precise_pct;
+///
+/// assert_eq!(precise_pct(1.8), "1.8%");
+/// assert_eq!(precise_pct(31.31), "31.3%");
+/// assert_eq!(precise_pct(10.0), "10%");
+/// assert_eq!(precise_pct(0.04), "0%");
+/// ```
+pub fn precise_pct(value: f64) -> String {
+    let rounded = (value * 10.0).round() / 10.0;
+    if rounded == rounded.trunc() {
+        format!("{rounded:.0}%")
+    } else {
+        format!("{rounded:.1}%")
+    }
+}
+
 pub fn local_time_hm(when: DateTime<Utc>) -> String {
     when.with_timezone(&Local).format("%H:%M").to_string()
 }

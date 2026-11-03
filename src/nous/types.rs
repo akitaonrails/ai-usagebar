@@ -124,16 +124,30 @@ pub struct AccountSnapshot {
 // reflexive.
 impl Eq for AccountSnapshot {}
 
-/// Window ids in headline priority: the broadest window that exists wins, so
-/// a migrated plan shows the monthly figure rather than a nearly-empty day.
-const WINDOW_PRIORITY: [&str; 4] = ["month", "top_tier", "week", "day"];
+/// The window ids this build understands, broadest first. The order breaks a
+/// tie between two equally consumed windows, so the headline figure does not
+/// flip between them while both sit at the same percentage; it is not itself a
+/// priority, because the window that matters is the one closest to its limit.
+const KNOWN_WINDOWS: [&str; 4] = ["month", "top_tier", "week", "day"];
 
 impl AccountSnapshot {
-    /// The window whose percentage stands for the account as a whole.
+    /// The window whose percentage stands for the account as a whole: the
+    /// most-exhausted one the portal reported.
+    ///
+    /// Not the broadest. `tui::panels::headline_pct` is the contract every
+    /// multi-window vendor here meets — the Overview bar, the macOS headline
+    /// and the Waybar severity all read this figure — and a plan at 99 % of
+    /// today's limit and 10 % of the month is blocked today. Windows whose id
+    /// this build does not know still render as their own rows, but they never
+    /// become the headline: we cannot say what an unknown window measures.
     pub fn primary_gauge(&self) -> Option<&UsageGauge> {
-        WINDOW_PRIORITY
+        // Walked narrowest-first because `max_by` keeps the last of equal
+        // elements, so a tie settles on the broadest window.
+        KNOWN_WINDOWS
             .iter()
-            .find_map(|id| self.gauges.iter().find(|gauge| gauge.id == *id))
+            .rev()
+            .filter_map(|id| self.gauges.iter().find(|gauge| gauge.id == *id))
+            .max_by(|a, b| a.percent().total_cmp(&b.percent()))
     }
 
     /// Window with a given portal id, if the response carried it.

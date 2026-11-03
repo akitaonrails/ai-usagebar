@@ -189,7 +189,7 @@ impl SectionBuilder {
         };
         last.percent_precise = Some(pct);
         if let Section::Metric { value_label, .. } = &mut last.section {
-            *value_label = format_precise_pct(pct);
+            *value_label = crate::format::precise_pct(pct);
         }
     }
 
@@ -1532,7 +1532,7 @@ fn nous_sections(
                 label: crate::nous::vendor::gauge_label(gauge),
                 pct: clamp_pct(pct),
                 severity: severity_for(i32::from(clamp_pct(pct))),
-                value_label: format_precise_pct(pct),
+                value_label: format!("{}%", clamp_pct(pct)),
                 footnote: String::new(),
             };
             match gauge.id.as_str() {
@@ -2867,15 +2867,6 @@ fn push_droid_window(
 }
 
 /// One decimal when it matters ("70.5%"), none when it does not ("70%").
-fn format_precise_pct(pct: f64) -> String {
-    let rounded = (pct * 10.0).round() / 10.0;
-    if rounded == rounded.trunc() {
-        format!("{rounded:.0}%")
-    } else {
-        format!("{rounded}%")
-    }
-}
-
 fn push_window(
     sections: &mut SectionBuilder,
     label: &str,
@@ -5200,6 +5191,22 @@ mod tests {
             headline_pct(&VendorSnapshot::Cursor(cursor_snap())),
             Some(99)
         );
+
+        // Nous: a migrated plan reports four windows, and the Overview bar
+        // shows the one closest to its limit — not the broadest, and not the
+        // credit balance the new plans leave at zero.
+        let nous = crate::nous::types::parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "monthly_credits": 0.0,
+            "credits_remaining": 0.0,
+            "usage_window": {"gauges": [
+                {"id": "day", "used_bp": 9900},
+                {"id": "week", "used_bp": 3131},
+                {"id": "month", "used_bp": 1043}
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(headline_pct(&VendorSnapshot::NousResearch(nous)), Some(99));
 
         // Balance-only vendors have no meaningful percentage → no bar.
         let kilo = VendorSnapshot::Kilo(crate::usage::KiloSnapshot {
