@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Changed
+
+- Every icon button in the tray popover has the same size, color, hover and tooltip in every style; Detect Providers is an icon beside Reset, and the providers hint moved into a help icon.
+
 ## [1.48.1] — 2026-11-03
 
 ### Fixed
