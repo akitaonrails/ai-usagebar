@@ -238,7 +238,7 @@ jobs:
 
       - name: Install cross (aarch64 cross-compile via Docker)
         if: runner.os == 'Linux' && matrix.builder == 'cross'
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
           tool: cross
 
