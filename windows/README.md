@@ -191,7 +191,8 @@ Kiro `data.sqlite3`; Kimi `~/.kimi-code/credentials`; SuperGrok
 `GITHUB_COPILOT_TOKEN` or the `gh` CLI `hosts.yml`; Antigravity a running
 local product; Nous Research the saved OAuth credential; and every API-key
 vendor (Z.AI, OpenRouter, DeepSeek, Grok, Kilo, Novita, Moonshot, MiniMax,
-OpenCode Go, Anthropic API) its env var or the `api_key` in `config.toml`.
+OpenCode Go, Anthropic API, Mistral) its env var or the `api_key` in
+`config.toml`.
 
 The first report with data then seeds the popover layout the way OpenUsage
 does: providers whose only problem is a missing API key start hidden, and a

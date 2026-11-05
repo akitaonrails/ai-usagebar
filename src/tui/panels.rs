@@ -509,6 +509,16 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             }
             (s.plan.clone(), cells)
         }
+        VendorSnapshot::Mistral(s) => (
+            s.plan.clone().unwrap_or_default(),
+            [
+                s.api.as_ref().map(|w| pct("api", w.utilization_pct)),
+                Some(pct("vibe", s.vibe.utilization_pct)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+        ),
         VendorSnapshot::Antigravity(s) => (
             s.plan.clone(),
             [
@@ -689,6 +699,12 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .max(),
         VendorSnapshot::Droid(s) => crate::droid::vendor::headline_utilization(s),
         VendorSnapshot::DeepRelay(s) => crate::deeprelay::vendor::headline_pct(s),
+        VendorSnapshot::Mistral(s) => Some(
+            s.api
+                .as_ref()
+                .map_or(0, |window| window.utilization_pct)
+                .max(s.vibe.utilization_pct),
+        ),
         VendorSnapshot::Ollama(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
@@ -793,6 +809,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Custom(s) => custom_sections(s),
                 VendorSnapshot::Cline(s) => cline_sections(s, now),
                 VendorSnapshot::DeepRelay(s) => deeprelay_sections(s, now),
+                VendorSnapshot::Mistral(s) => mistral_sections(s, now),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -2716,6 +2733,70 @@ fn deeprelay_sections(
     sections
 }
 
+/// A Mistral budget is a calendar-month allowance of unknown length, so it
+/// travels through `push_metric` (window `None`) — a zero-length window would
+/// invite a frontend to pace against or divide by zero.
+fn push_mistral_budget(
+    sections: &mut SectionBuilder,
+    label: &str,
+    window: &crate::usage::UsageWindow,
+    now: DateTime<Utc>,
+) {
+    let pct = window.utilization_pct.clamp(0, 100) as u16;
+    sections.push(Section::Spacer);
+    sections.push_metric(
+        Section::Metric {
+            label: label.into(),
+            pct,
+            severity: severity_for(pct as i32),
+            value_label: format!("{pct}%"),
+            footnote: format!("Resets in {}", countdown::format(window.resets_at, now)),
+        },
+        window.resets_at,
+    );
+}
+
+/// Mistral: the API budget is the bar's headline, the Vibe Code budget the
+/// second monthly window, and both allowances are shown beside their meters.
+/// The API budget is absent on plans that do not report one.
+fn mistral_sections(
+    snapshot: &crate::usage::MistralSnapshot,
+    now: DateTime<Utc>,
+) -> SectionBuilder {
+    let mut sections = SectionBuilder::new(vec![Section::Title {
+        left: snapshot
+            .plan
+            .clone()
+            .unwrap_or_else(|| "Mistral".to_string()),
+        right: None,
+    }]);
+    if let Some(api) = &snapshot.api {
+        push_mistral_budget(&mut sections, "API budget", api, now);
+    }
+    push_mistral_budget(&mut sections, "Vibe budget", &snapshot.vibe, now);
+    if let Some(api_budget) = snapshot.api_budget {
+        sections.push(Section::Text {
+            label: "Monthly API budget".into(),
+            value: crate::format::money(api_budget, &snapshot.currency),
+        });
+    }
+    sections.push(Section::Text {
+        label: "Monthly Vibe budget".into(),
+        value: crate::format::money(snapshot.vibe_budget, &snapshot.currency),
+    });
+    if snapshot.api_payg || snapshot.vibe_payg {
+        sections.push(Section::Text {
+            label: "Pay-as-you-go".into(),
+            value: format!(
+                "API {} · Vibe {}",
+                if snapshot.api_payg { "on" } else { "off" },
+                if snapshot.vibe_payg { "on" } else { "off" }
+            ),
+        });
+    }
+    sections
+}
+
 /// Droid reports `windowEnd: null` for a window the account has not started:
 /// there is no reset and no elapsed time to pace against, so the footnote
 /// says so instead of "Resets in — · 0% elapsed · on track".
@@ -3317,6 +3398,65 @@ mod tests {
             metrics[0].reset_at.is_none(),
             "a vendor billing period has no reset instant"
         );
+    }
+
+    #[test]
+    fn mistral_sections_carry_both_budgets_without_a_window_length() {
+        let reset_at = now() + chrono::Duration::days(10);
+        let snapshot = VendorSnapshot::Mistral(crate::usage::MistralSnapshot {
+            plan: Some("EDU".into()),
+            api: Some(UsageWindow {
+                utilization_pct: 16,
+                resets_at: Some(reset_at),
+                window_duration: chrono::Duration::zero(),
+            }),
+            vibe: UsageWindow {
+                utilization_pct: 40,
+                resets_at: Some(reset_at),
+                window_duration: chrono::Duration::zero(),
+            },
+            api_budget: Some(15.0),
+            vibe_budget: 150.0,
+            currency: "EUR".into(),
+            api_payg: false,
+            vibe_payg: true,
+        });
+        let rows = sections_with_metadata_for(&ready(snapshot), now(), 5);
+        assert!(matches!(
+            &rows[0].section,
+            Section::Title { left, .. } if left == "EDU"
+        ));
+        let metrics: Vec<_> = rows
+            .iter()
+            .filter(|p| matches!(p.section, Section::Metric { .. }))
+            .collect();
+        assert_eq!(metrics.len(), 2);
+        for metric in &metrics {
+            assert_eq!(
+                metric.window, None,
+                "a calendar month has no fixed window length"
+            );
+            assert_eq!(metric.reset_at, Some(reset_at));
+        }
+        assert!(matches!(
+            &metrics[0].section,
+            Section::Metric { label, pct, value_label, footnote, .. }
+                if label == "API budget" && *pct == 16 && value_label == "16%"
+                    && footnote.starts_with("Resets in ")
+        ));
+        assert!(matches!(
+            &metrics[1].section,
+            Section::Metric { label, pct, .. } if label == "Vibe budget" && *pct == 40
+        ));
+        let text = |label: &str| {
+            rows.iter().find_map(|p| match &p.section {
+                Section::Text { label: l, value } if l == label => Some(value.as_str()),
+                _ => None,
+            })
+        };
+        assert_eq!(text("Monthly API budget"), Some("€15.00"));
+        assert_eq!(text("Monthly Vibe budget"), Some("€150.00"));
+        assert_eq!(text("Pay-as-you-go"), Some("API off · Vibe on"));
     }
 
     #[test]

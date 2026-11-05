@@ -138,6 +138,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         note: "key needs the billing:read scope",
     },
     KeyVendor {
+        id: VendorId::Mistral,
+        label: "Mistral",
+        section: VendorId::Mistral.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "or reuse the OpenCode key",
+    },
+    KeyVendor {
         id: VendorId::Moonshot,
         label: "Moonshot",
         section: VendorId::Moonshot.config_section(),
@@ -2285,6 +2293,7 @@ mod tests {
             VendorId::Synthetic,
             VendorId::Moonshot,
             VendorId::Grok,
+            VendorId::Mistral,
         ] {
             assert!(
                 KEY_VENDORS.iter().any(|kv| kv.id == id),
@@ -3692,7 +3701,7 @@ enabled = true
         let theme = crate::theme::Theme::default();
         let mut state = blank_state(VendorId::Anthropic);
         state.focus = Focus::Vendor(0);
-        let mut terminal = Terminal::new(TestBackend::new(100, 70)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 80)).unwrap();
         let mut hits = Vec::new();
         terminal
             .draw(|f| render(f, f.area(), &mut state, &theme, &mut hits))

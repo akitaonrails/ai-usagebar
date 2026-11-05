@@ -61,6 +61,9 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::Novita => key_present(config, vendor),
         VendorId::Synthetic => key_present(config, vendor),
         VendorId::DeepRelay => key_present(config, vendor),
+        // Mistral is opt-in and key-only: the environment or an inline key is
+        // the whole credential, never a credential store it did not own.
+        VendorId::Mistral => key_present(config, vendor),
         VendorId::Moonshot => key_present(config, vendor),
         VendorId::Grok => key_present(config, vendor),
         VendorId::Supergrok => crate::supergrok::scope::ScopePaths::with_overrides(
@@ -491,6 +494,15 @@ mod tests {
         assert!(!has_local_credentials(VendorId::Lyceum, &config));
     }
 
+    #[test]
+    fn mistral_credential_detection_uses_only_an_explicit_key() {
+        let mut config = Config::default();
+        config.mistral.api_key_env.clear(); // prevents reading any ambient variable
+        assert!(!has_local_credentials(VendorId::Mistral, &config));
+        config.mistral.api_key = Some("mst-test".into());
+        assert!(has_local_credentials(VendorId::Mistral, &config));
+    }
+
     /// Vendors detection may probe: everything except opt-in-only providers.
     fn detectable_count() -> usize {
         VendorId::all()
@@ -578,7 +590,7 @@ mod tests {
         assert!(VendorId::all().iter().all(|vendor| vendor.auto_detectable()
             != matches!(
                 vendor,
-                VendorId::Devin | VendorId::MuseCode | VendorId::Droid
+                VendorId::Devin | VendorId::MuseCode | VendorId::Droid | VendorId::Mistral
             )));
     }
 
