@@ -1,12 +1,27 @@
 ## [Unreleased]
 
-### Added
+### Fixed
+
+- **`account add --desktop` works on Claude Desktop 4.16.** A fresh sign-in on
+  4.16 and later writes only `oauth:tokenCacheV2`; the capture waited for the
+  legacy `oauth:tokenCache` as well, so it sat until the five-minute timeout
+  and put the previous login back with nothing saved (#573). Either token
+  cache now counts as a complete login, a saved profile keeps only the blobs
+  that account actually has, and switching to such a profile no longer writes
+  the outgoing account's legacy blob into `config.json`.
+- **A release can no longer pass green with the Scoop bucket silently
+  skipped.** `publish-scoop` treated a missing `SCOOP_BUCKET_TOKEN` as a
+  warning and exited successfully, so three releases shipped while
+  `bucket/ai-usagebar.json` stayed at v1.45.0 (#568). The secret now exists and
+  has been publishing since v1.48.1; the job fails loudly instead of skipping
+  if it ever goes missing again.
 
 - **OrcaRouter's logomark in the Omarchy bar and panel.** The `orcarouter`
   entry already reports `brand: "orcarouter"`, but no mark shipped, so the bar
   chip and panel hero fell back to the generic robot glyph. Add the monochrome
-  OrcaRouter mark from Lobe Icons (MIT), with source provenance and the
-  existing LobeHub licence notice. Custom providers that declare
+  OrcaRouter brand mark, used to identify the provider, with its provenance
+  recorded (geometry preserved from the community lobe-icons submission, which
+  is not merged upstream) and the existing notice file. Custom providers that declare
   `brand = "orcarouter"` use the same mark.
 
 ## [1.48.1] — 2026-11-03

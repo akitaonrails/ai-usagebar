@@ -601,7 +601,11 @@ mod tests {
             if self.relaunches.get() == 1 {
                 write(
                     &self.config_json,
-                    r#"{"lastKnownAccountUuid":"uuid-new","oauth:tokenCacheV2":"half-login"}"#,
+                    // A config the app rewrote *without* a usable credential:
+                    // the V2 blob is present but empty, and 4.16+ writes no
+                    // legacy blob at all (#573). Snapshotting this must fail
+                    // and roll the partial profile back.
+                    r#"{"lastKnownAccountUuid":"uuid-new","oauth:tokenCacheV2":""}"#,
                 );
             }
             Ok(())
@@ -649,7 +653,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("oauth:tokenCache"), "{error}");
+        assert!(error.to_string().contains("OAuth token cache"), "{error}");
         assert_eq!(std::fs::read(paths.config_json()).unwrap(), before);
         assert!(!paths.profile_dir("work").exists());
         assert_eq!(
