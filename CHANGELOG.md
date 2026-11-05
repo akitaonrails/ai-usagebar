@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## [1.48.2] — 2026-11-05
+
+### Added
+
+- **OrcaRouter's logomark in the Omarchy bar and panel.** The `orcarouter`
+  entry already reports `brand: "orcarouter"`, but no mark shipped, so the bar
+  chip and panel hero fell back to the generic robot glyph. Add the monochrome
+  OrcaRouter brand mark, used to identify the provider, with its provenance
+  recorded (geometry preserved from the community lobe-icons submission, which
+  is not merged upstream) and the existing notice file. Custom providers that declare
+  `brand = "orcarouter"` use the same mark.
+
 ### Fixed
 
 - **`account add --desktop` works on Claude Desktop 4.16.** A fresh sign-in on
@@ -16,13 +28,6 @@
   has been publishing since v1.48.1; the job fails loudly instead of skipping
   if it ever goes missing again.
 
-- **OrcaRouter's logomark in the Omarchy bar and panel.** The `orcarouter`
-  entry already reports `brand: "orcarouter"`, but no mark shipped, so the bar
-  chip and panel hero fell back to the generic robot glyph. Add the monochrome
-  OrcaRouter brand mark, used to identify the provider, with its provenance
-  recorded (geometry preserved from the community lobe-icons submission, which
-  is not merged upstream) and the existing notice file. Custom providers that declare
-  `brand = "orcarouter"` use the same mark.
 
 ## [1.48.1] — 2026-11-03
 
@@ -5341,7 +5346,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...HEAD
+[1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2
 [1.48.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...v1.48.1
 [1.48.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.46.0...v1.47.0
