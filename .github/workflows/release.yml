@@ -767,11 +767,12 @@ jobs:
           SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
         run: |
           if [ -z "$SCOOP_BUCKET_TOKEN" ]; then
-            echo "set=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping Scoop bucket push — no SCOOP_BUCKET_TOKEN secret set"
-          else
-            echo "set=true" >> "$GITHUB_OUTPUT"
+            # Fail loudly: a green release with a silently skipped channel is
+            # how the bucket sat at v1.45.0 through three releases (#568).
+            echo "::error::No SCOOP_BUCKET_TOKEN secret set — the Scoop bucket cannot be published. Set the secret (a PAT with push access to akitaonrails/scoop-bucket) and re-run this workflow."
+            exit 1
           fi
+          echo "set=true" >> "$GITHUB_OUTPUT"
 
       # Pin the in-tree manifest template to this tag. The hash is recomputed
       # from the release's published `.sha256` sidecar, never from the

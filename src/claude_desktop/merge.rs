@@ -756,16 +756,29 @@ pub fn plan_scheduled_merge(
 /// window state, feature flags — is carried through untouched.
 pub fn swap_config_tokens(
     existing: &[u8],
-    token_cache: &str,
-    token_cache_v2: &str,
+    tokens: &super::SavedTokens,
     account_uuid: &str,
 ) -> Result<Vec<u8>> {
     let mut document: Value = serde_json::from_slice(existing)?;
     let object = document
         .as_object_mut()
         .ok_or_else(|| AppError::Other("Claude Desktop config.json is not a JSON object".into()))?;
-    object.insert("oauth:tokenCache".into(), token_cache.into());
-    object.insert("oauth:tokenCacheV2".into(), token_cache_v2.into());
+    // Only the blobs this account actually has. A profile captured on Claude
+    // Desktop 4.16+ carries just the V2 cache (#573), and writing the previous
+    // account's legacy blob back would install a stale credential.
+    for (key, blob) in [
+        ("oauth:tokenCache", &tokens.token_cache),
+        ("oauth:tokenCacheV2", &tokens.token_cache_v2),
+    ] {
+        match blob {
+            Some(blob) => {
+                object.insert(key.into(), blob.as_str().into());
+            }
+            None => {
+                object.remove(key);
+            }
+        }
+    }
     object.insert("lastKnownAccountUuid".into(), account_uuid.into());
     Ok(serde_json::to_vec(&document)?)
 }
@@ -792,17 +805,22 @@ pub fn clear_config_tokens(existing: &[u8]) -> Result<Vec<u8>> {
 /// is still in progress. Both fields matter: `lastKnownAccountUuid` appears
 /// before the token cache is written, so keying on it alone captures a
 /// half-finished login.
+/// The account Claude Desktop is signed into, when the login has produced a
+/// credential. Claude Desktop 4.16 stopped writing the legacy
+/// `oauth:tokenCache` and now writes only `oauth:tokenCacheV2` after a fresh
+/// sign-in (#573), so either key is accepted; requiring both left `account add
+/// --desktop` waiting forever for a key the app no longer writes.
 pub fn logged_in_account(config: &[u8]) -> Option<String> {
     let document: Value = serde_json::from_slice(config).ok()?;
-    let has_both_tokens = ["oauth:tokenCache", "oauth:tokenCacheV2"]
+    let has_a_token = ["oauth:tokenCacheV2", "oauth:tokenCache"]
         .into_iter()
-        .all(|key| {
+        .any(|key| {
             document
                 .get(key)
                 .and_then(Value::as_str)
                 .is_some_and(|token| !token.is_empty())
         });
-    if !has_both_tokens {
+    if !has_a_token {
         return None;
     }
     document
@@ -1790,7 +1808,11 @@ mod tests {
             "oauth:tokenCacheV2":"b","dxt:allowlistEnabled:org-1":true,
             "windowBounds":{"width":1200}}"#;
 
-        let bytes = swap_config_tokens(existing, "new-a", "new-b", "new-uuid").unwrap();
+        let tokens = crate::claude_desktop::SavedTokens {
+            token_cache: Some("new-a".into()),
+            token_cache_v2: Some("new-b".into()),
+        };
+        let bytes = swap_config_tokens(existing, &tokens, "new-uuid").unwrap();
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["oauth:tokenCache"], "new-a");
         assert_eq!(value["oauth:tokenCacheV2"], "new-b");
@@ -1800,8 +1822,29 @@ mod tests {
     }
 
     #[test]
+    fn a_v2_only_swap_drops_the_previous_accounts_legacy_blob() {
+        // Switching TO a profile captured on a new Desktop must not leave the
+        // outgoing account's legacy token in config.json (#573).
+        let existing = br#"{"oauth:tokenCache":"old-account-legacy",
+            "oauth:tokenCacheV2":"old-account-v2","lastKnownAccountUuid":"old"}"#;
+        let tokens = crate::claude_desktop::SavedTokens {
+            token_cache: None,
+            token_cache_v2: Some("new-v2".into()),
+        };
+        let bytes = swap_config_tokens(existing, &tokens, "new-uuid").unwrap();
+        let value: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(value.get("oauth:tokenCache").is_none());
+        assert_eq!(value["oauth:tokenCacheV2"], "new-v2");
+        assert_eq!(value["lastKnownAccountUuid"], "new-uuid");
+    }
+
+    #[test]
     fn config_swap_rejects_a_non_object_document() {
-        assert!(swap_config_tokens(b"[]", "a", "b", "u").is_err());
+        let tokens = crate::claude_desktop::SavedTokens {
+            token_cache: Some("a".into()),
+            token_cache_v2: None,
+        };
+        assert!(swap_config_tokens(b"[]", &tokens, "u").is_err());
     }
 
     #[test]
@@ -1819,7 +1862,7 @@ mod tests {
     }
 
     #[test]
-    fn a_login_counts_only_once_both_fields_are_written() {
+    fn a_login_counts_once_a_credential_and_the_uuid_are_written() {
         assert_eq!(
             logged_in_account(&clear_config_tokens(b"{}").unwrap()),
             None
@@ -1831,15 +1874,27 @@ mod tests {
             logged_in_account(br#"{"lastKnownAccountUuid":"u","oauth:tokenCacheV2":""}"#),
             None
         );
+        // Claude Desktop 4.16 writes only the V2 cache after a fresh sign-in
+        // (#573) — that is a complete login, not half of one.
         assert_eq!(
             logged_in_account(br#"{"lastKnownAccountUuid":"u","oauth:tokenCacheV2":"t"}"#),
-            None
+            Some("u".into())
+        );
+        // The legacy key alone still counts, for older app versions.
+        assert_eq!(
+            logged_in_account(br#"{"lastKnownAccountUuid":"u","oauth:tokenCache":"a"}"#),
+            Some("u".into())
         );
         assert_eq!(
             logged_in_account(
                 br#"{"lastKnownAccountUuid":"u","oauth:tokenCache":"a","oauth:tokenCacheV2":"b"}"#
             ),
             Some("u".into())
+        );
+        assert_eq!(
+            logged_in_account(br#"{"oauth:tokenCacheV2":"t"}"#),
+            None,
+            "a token without an account uuid is not a login"
         );
         assert_eq!(logged_in_account(b"not json"), None);
     }

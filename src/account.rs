@@ -1862,8 +1862,8 @@ mod tests {
             sessions: Default::default(),
             scheduled: None,
             tokens: claude_desktop::SavedTokens {
-                token_cache: "{}".into(),
-                token_cache_v2: "{}".into(),
+                token_cache: Some("{}".into()),
+                token_cache_v2: Some("{}".into()),
             },
             archive: std::path::PathBuf::from("/archives/rollback.tar"),
             archive_members: vec!["a".into()],
