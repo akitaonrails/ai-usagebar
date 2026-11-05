@@ -709,6 +709,18 @@ assert.match(ollamaMark, /<path\s/);
 // White source artwork is needed for BrandMark's runtime colorization.
 assert.match(ollamaMark, /<svg\b[^>]*\bfill="#ffffff"/);
 assert.doesNotMatch(ollamaMark, /currentColor|<(?:script|image|foreignObject|use)\b|\bhref\s*=|\bon\w+\s*=/i);
+assert.equal(model.brandIconFile({id: 'orcarouter'}), 'orcarouter.svg');
+assert.equal(model.brandIconFile({id: 'orcarouter@work'}), 'orcarouter.svg');
+assert.equal(model.brandIconFile({id: 'custom:orca-second', brand: 'orcarouter'}), 'orcarouter.svg');
+const orcaMark = fs.readFileSync(new URL('./icons/orcarouter.svg', import.meta.url), 'utf8');
+assert.match(orcaMark, /viewBox="0 0 24 24"/);
+assert.match(orcaMark, /\bwidth="24"/);
+assert.match(orcaMark, /\bheight="24"/);
+assert.match(orcaMark, /<path\s/);
+assert.match(orcaMark, /fill-rule="evenodd"/);
+// White source artwork is needed for BrandMark's runtime colorization.
+assert.match(orcaMark, /<svg\b[^>]*\bfill="#ffffff"/);
+assert.doesNotMatch(orcaMark, /currentColor|<(?:script|image|foreignObject|use)\b|\bhref\s*=|\bon\w+\s*=/i);
 assert.equal(model.brandIconFile({id: 'muse-code'}), 'muse-code.svg');
 assert.equal(model.brandIconFile({id: 'muse-code@work'}), 'muse-code.svg');
 assert.equal(model.brandIconFile({id: 'custom:muse', brand: 'muse-code'}), 'muse-code.svg');
@@ -742,7 +754,7 @@ assert.equal(model.brandIconFile({id: 'anthropic', brand: 'openai'}), 'openai.sv
 const slugs = [
   'anthropic', 'anthropic_api', 'openai', 'copilot', 'zai', 'openrouter',
   'deepseek', 'kimi', 'kilo', 'novita', 'moonshot', 'grok', 'supergrok', 'grokbot',
-  'antigravity', 'cursor', 'minimax', 'kiro', 'nous', 'opencode-go', 'lyceum', 'commandcode', 'devin', 'ollama', 'muse-code', 'droid'
+  'antigravity', 'cursor', 'minimax', 'kiro', 'nous', 'opencode-go', 'lyceum', 'commandcode', 'devin', 'ollama', 'orcarouter', 'muse-code', 'droid'
 ];
 const byMark = {};
 for (const slug of slugs) {

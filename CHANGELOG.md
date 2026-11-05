@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Added
+
+- **OrcaRouter's logomark in the Omarchy bar and panel.** The `orcarouter`
+  entry already reports `brand: "orcarouter"`, but no mark shipped, so the bar
+  chip and panel hero fell back to the generic robot glyph. Add the monochrome
+  OrcaRouter mark from Lobe Icons (MIT), with source provenance and the
+  existing LobeHub licence notice. Custom providers that declare
+  `brand = "orcarouter"` use the same mark.
+
 ## [1.48.1] — 2026-11-03
 
 ### Fixed
