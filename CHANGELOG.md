@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Kimi's default bar shows the monthly pool on newer-shape accounts.** An
+  account on the newer `/coding/v1/usages` shape has no weekly bucket, so the
+  default `5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%` read `5h 15% · 7d %`
+  and left the monthly pool, which already set the bar's color, off the bar.
+  Those accounts now get `5h {kimi_window_pct}% · mo {kimi_monthly_pct}%`;
+  legacy-shape accounts and a configured `--format` are unchanged (#583).
+
 ## [1.48.2] — 2026-11-05
 
 ### Added
