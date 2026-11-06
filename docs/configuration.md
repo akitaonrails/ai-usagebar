@@ -31,7 +31,7 @@ ai-usagebar-tui --config ./config.test.toml
 #                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
 #                         # | orcarouter | modelstudio | lyceum | devin | cline | muse-code | droid
-#                         # | synthetic
+#                         # | synthetic | mistral
 # Which vendors the Overview lists, in this order. The TUI tab bar leads with
 # the same list; enabled vendors left off it follow in the canonical order.
 # Omit for every enabled vendor. A repeated slug keeps its first occurrence;
@@ -181,6 +181,13 @@ enabled = true             # disabled by default; enable once you add an API key
 # The key needs the `billing:read` scope; the dashboard's default key has it.
 api_key_env = "DEEPRELAY_API_KEY"
 # api_key = "deeprelay_live_..."   # used if DEEPRELAY_API_KEY is unset; chmod 600!
+
+[mistral]
+enabled = true             # disabled by default; enable once you add a key
+# Reads the monthly API and Vibe Code budgets. The key must be supplied
+# explicitly: ai-usagebar never discovers credentials on its own.
+api_key_env = "MISTRAL_API_KEY"
+# api_key = "mst-..."      # used if MISTRAL_API_KEY is unset; chmod 600!
 
 [moonshot]
 enabled = true             # disabled by default; enable once you add an API key
@@ -469,6 +476,23 @@ guessing from the row's label. In the popover, `"amount"` puts the money figure
 under the meter and moves the percentage and the detail line to its hover text;
 `"percent"` keeps the popover's used/left toggle. Waybar and GNOME build their
 bar text from the per-vendor formats, so `headline` does not reach them.
+
+### Mistral
+
+Mistral reads the monthly API and Vibe Code budgets from the billing routes the
+official open-source `mistral-vibe` CLI uses. The documented Admin API is
+Enterprise-only. The key must come from `MISTRAL_API_KEY` or an inline
+`[mistral] api_key`; ai-usagebar never reads another app's credential store.
+The key needs the `see_org_inference_usage` permission: a key without it can
+still be valid but the budget read answers 403, which ai-usagebar reports as a
+permission problem rather than a rejected credential.
+
+The subscription read only names the plan and is best-effort; the budget read
+is required. `vibe_budget` is always present; `api_budget` is optional because
+some plans do not report a separate API allowance, and the panel then shows the
+Vibe budget alone. Allowances are denominated in the response's `currency`
+(USD or EUR on current accounts). Both budgets reset on the calendar-month
+boundary the response reports, so no fixed window length is assumed.
 
 ### GitHub Copilot
 

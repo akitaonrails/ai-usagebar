@@ -40,6 +40,14 @@ pub enum AppError {
     #[error("credentials error: {0}")]
     Credentials(String),
 
+    /// The credential is valid but its account may not read the resource.
+    /// Distinct from `Http { status: 403 }` because UIs render that status as
+    /// the generic authentication failure; a permission problem needs its own
+    /// actionable text (Mistral's `/billing/budget` requires the
+    /// `see_org_inference_usage` permission).
+    #[error("{0}")]
+    Permission(String),
+
     /// HTTP request failed at the transport layer (DNS, TLS, timeout, connect).
     /// Maps to claudebar's "HTTP 000" — show `Loading…`, don't write
     /// `.last_error`, retry next tick.

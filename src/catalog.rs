@@ -266,7 +266,8 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         | VendorId::Minimax
         | VendorId::Ollama
         | VendorId::OrcaRouter
-        | VendorId::Lyceum => false,
+        | VendorId::Lyceum
+        | VendorId::Mistral => false,
     }
 }
 
@@ -749,6 +750,16 @@ mod tests {
         };
         assert!(row(&statuses_with(&cfg, &signed_in), "cline").configured);
         assert!(!row(&statuses_with(&cfg, &bare()), "cline").configured);
+    }
+
+    /// Mistral is key-only: only an env var or inline key counts as
+    /// configured, never a credential store it did not own.
+    #[test]
+    fn mistral_is_configured_only_by_an_explicit_key() {
+        let mut cfg = Config::default();
+        assert!(!row(&statuses_with(&cfg, &bare()), "mistral").configured);
+        cfg.mistral.api_key = Some("mst-test".into());
+        assert!(row(&statuses_with(&cfg, &bare()), "mistral").configured);
     }
 
     /// Auth metadata has to be usable, not merely present: a key provider that

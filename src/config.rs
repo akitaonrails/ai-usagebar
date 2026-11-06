@@ -84,6 +84,7 @@ pub struct Config {
     pub custom: Vec<CustomProviderConfig>,
     pub cline: ClineConfig,
     pub deeprelay: DeepRelayConfig,
+    pub mistral: MistralConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -1849,6 +1850,28 @@ impl Default for DeepRelayConfig {
     }
 }
 
+/// Mistral's monthly API and Vibe Code budgets (`GET /v1/billing/budget`).
+///
+/// Key-only and opt-in. The key comes from `MISTRAL_API_KEY` or an inline
+/// `api_key`; ai-usagebar never discovers credentials on its own, so the
+/// configuring agent (or the user) supplies the key.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MistralConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+impl Default for MistralConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "MISTRAL_API_KEY".into(),
+            api_key: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct MinimaxConfig {
@@ -2666,6 +2689,7 @@ impl Config {
             self.antigravity.oauth_client_secret.as_deref(),
             self.cline.api_key.as_deref(),
             self.deeprelay.api_key.as_deref(),
+            self.mistral.api_key.as_deref(),
         ]
         .into_iter()
         .chain(
@@ -2773,6 +2797,7 @@ impl Config {
             VendorId::Droid => self.droid.enabled,
             VendorId::MuseCode => self.muse.enabled,
             VendorId::DeepRelay => self.deeprelay.enabled,
+            VendorId::Mistral => self.mistral.enabled,
         }
     }
 
@@ -2801,6 +2826,7 @@ impl Config {
             VendorId::OrcaRouter => &self.orcarouter.api_key_env,
             VendorId::Lyceum => &self.lyceum.api_key_env,
             VendorId::DeepRelay => &self.deeprelay.api_key_env,
+            VendorId::Mistral => &self.mistral.api_key_env,
             VendorId::Cline => &self.cline.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
             // not user-renameable, and the providers with no key at all.
@@ -2843,6 +2869,7 @@ impl Config {
             VendorId::OrcaRouter => self.orcarouter.api_key.as_deref(),
             VendorId::Lyceum => self.lyceum.api_key.as_deref(),
             VendorId::DeepRelay => self.deeprelay.api_key.as_deref(),
+            VendorId::Mistral => self.mistral.api_key.as_deref(),
             VendorId::Cline => self.cline.api_key.as_deref(),
             VendorId::Anthropic
             | VendorId::Openai
@@ -3508,6 +3535,7 @@ mod tests {
             VendorId::ModelStudio,
             VendorId::Devin,
             VendorId::Droid,
+            VendorId::Mistral,
         ] {
             assert!(!c.is_enabled(opt_in), "{opt_in:?}");
         }
@@ -3534,6 +3562,9 @@ mod tests {
         assert_eq!(config.opencode_go.api_key_env, "OPENCODE_GO_API_KEY");
         assert!(config.opencode_go.api_key.is_none());
         assert!(!config.is_enabled(VendorId::Copilot));
+        assert!(!config.is_enabled(VendorId::Mistral));
+        assert_eq!(config.mistral.api_key_env, "MISTRAL_API_KEY");
+        assert!(config.mistral.api_key.is_none());
     }
 
     #[cfg(unix)]

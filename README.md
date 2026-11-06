@@ -1,6 +1,6 @@
 # ai-usagebar
 
-Native Omarchy Quattro panel, Waybar widget, and tabbed TUI for AI plan usage across **Claude**, **Codex/ChatGPT**, **GitHub Copilot**, **Z.AI (GLM)**, **OpenRouter**, **DeepSeek**, **DeepInfra**, **Kimi**, **Nous Research**, **OpenCode Go**, **Command Code**, **Devin**, **Cline**, **Muse Code**, **Droid**, **Synthetic**, **DeepRelay**, and other supported AI coding services.
+Native Omarchy Quattro panel, Waybar widget, and tabbed TUI for AI plan usage across **Claude**, **Codex/ChatGPT**, **GitHub Copilot**, **Z.AI (GLM)**, **OpenRouter**, **DeepSeek**, **DeepInfra**, **Kimi**, **Nous Research**, **OpenCode Go**, **Command Code**, **Devin**, **Cline**, **Muse Code**, **Droid**, **Synthetic**, **DeepRelay**, **Mistral**, and other supported AI coding services.
 
 ai-usagebar began as a Rust port of
 [`claudebar`](https://github.com/mryll/claudebar) and remains drop-in
@@ -315,6 +315,7 @@ come from environment variables or `config.toml`.
 | Droid (Factory) | Existing `droid` CLI login | Opt in (`[droid]`) after signing in with `droid` on Linux. Reuses the CLI's `~/.factory/auth.v2.keyring` login read-only — the Secret Service key never leaves the keyring and ai-usagebar never refreshes or writes the token; near expiry it asks the CLI to renew its own login (`droid doctor --checks auth`). Reports Standard 5-hour/weekly/monthly windows, the Droid Core bucket, and the extra-usage balance. |
 | Cline / ClinePass | Existing `cline` CLI login | Enable `[cline]`. No key to paste; the CLI's own credential is reused. `CLINE_API_KEY` overrides it. |
 | DeepRelay | API key (`DEEPRELAY_API_KEY` env or `[deeprelay] api_key` in config) | Set either. Opt-in. The key needs the `billing:read` scope, which the dashboard's default key carries. Reports the monthly input/output allowance, the rolling 7-day caps (which slide, so they have no reset date), the per-period dollar usage ceiling, and the pay-as-you-go wallet when it matters. |
+| Mistral | API key (`MISTRAL_API_KEY` env or `[mistral] api_key` in config) | Opt in (`[mistral]`) and supply a key; ai-usagebar never discovers credentials on its own. The key needs the `see_org_inference_usage` permission. Reports the monthly API and Vibe Code budgets, plan, reset, and pay-as-you-go flags; the API budget is omitted when the plan does not expose one. |
 | Muse Code | Existing file-based Muse CLI OAuth login | Enable `[muse-code]` after `muse login`. Reports subscription session/weekly quota and resets. Credentials are read only; Meta can omit quotas while the session window is idle. [Setup and limitations](docs/muse-code.md). |
 
 ### Nous credits and OpenCode Go
@@ -453,7 +454,7 @@ take `headline`. Full rules in
 
 `enabled = true` is what makes a vendor fetch. Anthropic API, GitHub Copilot,
 DeepSeek, DeepInfra, Kimi, Kilo, Novita, Moonshot, Grok, SuperGrok, Grok Bot, Antigravity,
-Cursor, MiniMax, and Kiro CLI all default to **disabled** so that existing
+Cursor, MiniMax, Mistral, and Kiro CLI all default to **disabled** so that existing
 installs are unaffected until you opt in. Use either method:
 
 - Use the gear or `s` in the Omarchy panel, or run

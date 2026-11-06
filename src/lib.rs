@@ -47,6 +47,7 @@ pub mod kiro;
 pub mod lyceum;
 pub mod mcp;
 pub mod minimax;
+pub mod mistral;
 pub mod modelstudio;
 pub mod moonshot;
 pub mod muse;
