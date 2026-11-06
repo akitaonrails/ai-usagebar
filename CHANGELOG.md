@@ -1,5 +1,21 @@
 ## [Unreleased]
 
+### Added
+
+- **Mistral.** Reports the monthly API and Vibe Code budgets from the billing
+  routes the official `mistral-vibe` CLI uses, with plan, reset, and
+  pay-as-you-go flags. Opt in explicitly with `MISTRAL_API_KEY` or
+  `[mistral] api_key`; ai-usagebar never discovers credentials on its own, and
+  the key needs the `see_org_inference_usage` permission. Allowances render in
+  the response's currency, and the API budget is omitted on plans that do not
+  report one instead of showing 0%. The Omarchy panel ships the provider mark.
+  If you added Mistral as a `[[custom]]` provider, remove that table; the id is
+  now a built-in vendor.
+
+- **Mistral: several keys side by side.** `[[mistral.accounts]]` joins the
+  API-key account array, so each Mistral key gets its own tab, report entry,
+  cache directory, and both budgets. `--account` selects one.
+
 ## [1.48.2] — 2026-11-05
 
 ### Added

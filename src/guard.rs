@@ -359,6 +359,10 @@ mod tests {
             // `weekly_pct` the rolling cap. DeepRelay's own Swift dispatch case
             // only relabels them ("Monthly" / "Weekly").
             VendorId::DeepRelay => MacosMirror::Generic(CORE),
+            // Two monthly budgets ride the generic slots: `session_pct` carries
+            // the API budget and `weekly_pct` the Vibe Code budget. Mistral's
+            // own Swift dispatch case relabels them.
+            VendorId::Mistral => MacosMirror::Generic(CORE),
         }
     }
 
