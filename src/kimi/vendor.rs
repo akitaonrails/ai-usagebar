@@ -709,6 +709,18 @@ mod tests {
     }
 
     #[test]
+    fn default_format_follows_the_long_window_the_account_has() {
+        assert_eq!(default_format(&sample_snap()), DEFAULT_FORMAT);
+        assert_eq!(default_format(&monthly_snap()), MONTHLY_FORMAT);
+        // Neither long window: keep the historical default, never "mo %".
+        let neither = KimiSnapshot {
+            monthly_pct: None,
+            ..monthly_snap()
+        };
+        assert_eq!(default_format(&neither), DEFAULT_FORMAT);
+    }
+
+    #[test]
     fn severity_is_the_max_over_the_present_windows() {
         let mut snap = monthly_snap();
         snap.window_used = 10;
