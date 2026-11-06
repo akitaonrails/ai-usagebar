@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A Claude Desktop account captured on Desktop 4.16 gets its usage tab.**
+  Since #573 such a profile holds only the V2 token cache, which switching and
+  the usage reader already accept, but the profile listing still required the
+  legacy blob as well. The account read `creds=no` in `account status` and was
+  left out of the TUI, `usage --json` and the menu bar's account list (#580).
+
 ## [1.48.2] — 2026-11-05
 
 ### Added
