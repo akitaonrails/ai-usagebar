@@ -186,6 +186,8 @@ pub struct ProfileMeta {
     /// without it the history merges are skipped but the credential swap
     /// still works.
     pub org_uuid: Option<String>,
+    /// At least one saved token cache. Claude Desktop 4.16 writes only the V2
+    /// blob, so a profile captured there has no legacy file (#573).
     pub has_credentials: bool,
     pub has_desktop_state: bool,
 }
@@ -220,7 +222,7 @@ pub fn load_profiles(profiles_dir: &Path) -> Vec<ProfileMeta> {
                 account_uuid,
                 org_uuid: raw.org_uuid.filter(|uuid| !uuid.is_empty()),
                 has_credentials: dir.join(TOKEN_CACHE).is_file()
-                    && dir.join(TOKEN_CACHE_V2).is_file(),
+                    || dir.join(TOKEN_CACHE_V2).is_file(),
                 has_desktop_state: dir.join(DESKTOP_STATE).is_dir(),
             })
         })
