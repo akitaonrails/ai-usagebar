@@ -40,6 +40,21 @@ pub fn warning_kind(code: u16, message: &str) -> WarningKind {
 /// Kimi has two independent quota percentages. Keep both on the individual
 /// widget in the same order as the detail panel: current 5h window, then 7d.
 pub const DEFAULT_FORMAT: &str = "5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%";
+/// Accounts on the newer response shape have no weekly bucket; their long
+/// window is the monthly pool, under the `mo` label the TUI overview uses.
+const MONTHLY_FORMAT: &str = "5h {kimi_window_pct}% · mo {kimi_monthly_pct}%";
+
+/// The bar text used when `--format` is omitted: the long window this account
+/// actually has. On the newer shape the weekly placeholders are empty, so
+/// [`DEFAULT_FORMAT`] would read "5h 15% · 7d %" and leave the monthly pool,
+/// which still sets the bar's color, off the bar.
+pub fn default_format(snap: &KimiSnapshot) -> &'static str {
+    if !snap.has_weekly && snap.monthly_pct.is_some() {
+        MONTHLY_FORMAT
+    } else {
+        DEFAULT_FORMAT
+    }
+}
 
 /// Kimi reports the weekly quota's reset instant but never its length; the
 /// subscription bucket rolls every 7 days.
@@ -143,7 +158,7 @@ pub fn render(
     let format = opts
         .format
         .clone()
-        .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
+        .unwrap_or_else(|| default_format(snap).to_string());
     let values = build_placeholders(snap, now);
     // User formats are Pango markup after Waybar renders them. Escape API
     // strings there, while retaining raw values for the default tooltip (which
@@ -680,18 +695,17 @@ mod tests {
         );
     }
 
-    /// DEFAULT_FORMAT stays `5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%`:
-    /// with the weekly placeholder resolving to empty, substitution must
-    /// tolerate the shape — no literal braces left behind.
+    /// #583: the newer shape has no weekly bucket, so the default bar names
+    /// the monthly pool in its place rather than an empty `7d %`.
     #[test]
-    fn monthly_shape_default_format_tolerates_the_empty_weekly_placeholder() {
+    fn monthly_shape_default_format_shows_the_monthly_pool() {
         let snap = monthly_snap();
         let outcome = sample_outcome(snap.clone());
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
         assert!(!out.text.contains('{'), "{}", out.text);
         assert!(!out.text.contains('}'), "{}", out.text);
-        assert!(out.text.contains("5h 15%"), "{}", out.text);
-        assert!(out.text.contains("7d %"), "{}", out.text);
+        assert!(out.text.contains("5h 15% · mo 42%"), "{}", out.text);
+        assert!(!out.text.contains("· 7d"), "{}", out.text);
     }
 
     #[test]
