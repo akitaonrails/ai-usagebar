@@ -1517,6 +1517,19 @@ mod tests {
         assert!(profiles[1].has_desktop_state);
     }
 
+    // #580: a profile captured on Claude Desktop 4.16 holds only the V2 blob
+    // (#573). It is a usable credential, so the listing must not drop it.
+    #[test]
+    fn a_v2_only_profile_counts_as_having_credentials() {
+        let fixture = fixture();
+        std::fs::remove_file(fixture.paths.profile_dir("there").join(TOKEN_CACHE)).unwrap();
+
+        let profiles = load_profiles(&fixture.paths.profiles_dir);
+
+        assert_eq!(profiles[1].label, "there");
+        assert!(profiles[1].has_credentials);
+    }
+
     #[test]
     fn a_malformed_profile_is_skipped_not_fatal() {
         let fixture = fixture();
