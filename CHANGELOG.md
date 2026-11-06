@@ -12,6 +12,10 @@
   If you added Mistral as a `[[custom]]` provider, remove that table; the id is
   now a built-in vendor.
 
+- **Mistral: several keys side by side.** `[[mistral.accounts]]` joins the
+  API-key account array, so each Mistral key gets its own tab, report entry,
+  cache directory, and both budgets. `--account` selects one.
+
 ## [1.48.2] — 2026-11-05
 
 ### Added

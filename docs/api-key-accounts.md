@@ -20,6 +20,7 @@ The array works for these sections:
 | `[minimax]` | MiniMax |
 | `[orcarouter]` | OrcaRouter |
 | `[lyceum]` | Lyceum |
+| `[mistral]` | Mistral — each key reports its own API and Vibe Code budgets |
 
 Kimi is not on the list: its fallback is the Kimi Code CLI's single OAuth
 login, not a second key. Claude and Codex have their own account arrays — see

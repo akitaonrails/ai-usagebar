@@ -1957,6 +1957,37 @@ mod tests {
     }
 
     #[test]
+    fn mistral_named_account_uses_its_key_and_cache_subdir() {
+        let mut config = Config::default();
+        config.mistral.api_key_env.clear();
+        config.mistral.api_key = Some("default-key".into());
+        config.mistral.accounts.push(crate::config::ApiKeyAccount {
+            label: "work".into(),
+            api_key_env: None,
+            api_key: Some("work-key".into()),
+            management_api_key_env: None,
+        });
+        let root = tempfile::tempdir().unwrap();
+        let root_str = root.path().to_str().unwrap();
+
+        let cli = cli_with(Some("work"), None, Some(root_str));
+        let (key, cache) = api_key_target(&cli, &config, VendorId::Mistral).unwrap();
+        assert_eq!(key, "work-key");
+        assert_eq!(cache.dir(), root.path().join("mistral/work"));
+
+        let default_cli = cli_with(None, None, Some(root_str));
+        let (key, cache) = api_key_target(&default_cli, &config, VendorId::Mistral).unwrap();
+        assert_eq!(key, "default-key");
+        assert_eq!(cache.dir(), root.path().join("mistral"));
+
+        let unknown = cli_with(Some("typo"), None, Some(root_str));
+        let err = api_key_target(&unknown, &config, VendorId::Mistral)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("[[mistral.accounts]]"), "{err}");
+    }
+
+    #[test]
     fn desktop_flag_remains_claude_only() {
         let mut cli = cli_with(Some("work"), None, Some("/tmp/cache"));
         cli.desktop = true;

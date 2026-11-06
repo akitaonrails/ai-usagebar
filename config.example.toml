@@ -721,3 +721,14 @@ api_key_env = "DEEPRELAY_API_KEY"   # checked first; if set + non-empty, used
 enabled = false
 api_key_env = "MISTRAL_API_KEY"   # checked first; if set + non-empty, used
 # api_key = "mst-..."             # fallback; chmod 600 the file if you use it
+# show_default_account = true     # keep the default key's entry beside named accounts
+
+# Extra Mistral keys: each gets its own tab, report entry, cache directory,
+# and both budgets. The key is supplied here; ai-usagebar never discovers it.
+# [[mistral.accounts]]
+# label = "personal"
+# api_key_env = "MISTRAL_PERSONAL_API_KEY"
+#
+# [[mistral.accounts]]
+# label = "work"
+# api_key = "mst-..."

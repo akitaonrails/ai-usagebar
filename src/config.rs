@@ -1859,6 +1859,13 @@ impl Default for DeepRelayConfig {
 #[serde(default)]
 pub struct MistralConfig {
     pub enabled: bool,
+    /// Extra accounts beyond the default key. Each account gets a separate
+    /// aggregate-view entry and cache directory, so every key's two budgets
+    /// are reported side by side.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist.
+    pub show_default_account: bool,
     pub api_key_env: String,
     pub api_key: Option<String>,
 }
@@ -1866,6 +1873,8 @@ impl Default for MistralConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "MISTRAL_API_KEY".into(),
             api_key: None,
         }
@@ -2892,7 +2901,7 @@ impl Config {
     /// The API-key vendors that take a `[[<vendor>.accounts]]` array —
     /// OpenRouter's (#221), generalized. Kimi is left out on purpose: its
     /// fallback is the Kimi Code CLI's single OAuth login, not a key.
-    pub const API_KEY_ACCOUNT_VENDORS: [VendorId; 11] = [
+    pub const API_KEY_ACCOUNT_VENDORS: [VendorId; 12] = [
         VendorId::Zai,
         VendorId::Openrouter,
         VendorId::Deepseek,
@@ -2904,6 +2913,7 @@ impl Config {
         VendorId::Minimax,
         VendorId::OrcaRouter,
         VendorId::Lyceum,
+        VendorId::Mistral,
     ];
 
     /// The named `[[<vendor>.accounts]]` array, or `None` for a vendor that
@@ -2921,6 +2931,7 @@ impl Config {
             VendorId::Minimax => Some(&self.minimax.accounts),
             VendorId::OrcaRouter => Some(&self.orcarouter.accounts),
             VendorId::Lyceum => Some(&self.lyceum.accounts),
+            VendorId::Mistral => Some(&self.mistral.accounts),
             _ => None,
         }
     }
@@ -2940,6 +2951,7 @@ impl Config {
             VendorId::Minimax => self.minimax.show_default_account,
             VendorId::OrcaRouter => self.orcarouter.show_default_account,
             VendorId::Lyceum => self.lyceum.show_default_account,
+            VendorId::Mistral => self.mistral.show_default_account,
             _ => true,
         }
     }
@@ -3565,6 +3577,8 @@ mod tests {
         assert!(!config.is_enabled(VendorId::Mistral));
         assert_eq!(config.mistral.api_key_env, "MISTRAL_API_KEY");
         assert!(config.mistral.api_key.is_none());
+        assert!(config.mistral.accounts.is_empty());
+        assert!(config.mistral.show_default_account);
     }
 
     #[cfg(unix)]

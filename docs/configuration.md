@@ -487,6 +487,10 @@ The key needs the `see_org_inference_usage` permission: a key without it can
 still be valid but the budget read answers 403, which ai-usagebar reports as a
 permission problem rather than a rejected credential.
 
+Several keys can be reported side by side through `[[mistral.accounts]]`; each
+account gets its own tab, report entry, cache directory, and both budgets. See
+the [API-key account guide](api-key-accounts.md).
+
 The subscription read only names the plan and is best-effort; the budget read
 is required. `vibe_budget` is always present; `api_budget` is optional because
 some plans do not report a separate API allowance, and the panel then shows the
