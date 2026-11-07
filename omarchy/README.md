@@ -317,6 +317,8 @@ pace, exhausted, unavailable or no forecast) and a one-line summary. Hover for
 300 ms to preview the numbers behind it, or click (Enter/Space) to pin them:
 the weekly window and its reset, what is left now, the projected unused quota,
 your pace, the recent and cycle rates, and the rate that would use it all.
+Windows whose reported reset has passed are excluded from the forecast and
+the session exhaustion warning until the next reading supplies a new window.
 **View limits** opens that provider's usage view.
 
 | Setting | Default | Meaning |

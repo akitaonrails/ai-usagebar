@@ -1,7 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import MdiInformationOutline from "~icons/mdi/information-outline";
+import MdiMagnifyScan from "~icons/mdi/magnify-scan";
+import MdiRestore from "~icons/mdi/restore";
 import MdiTune from "~icons/mdi/tune-variant";
 import { ScreenCrossLinkRow } from "@/components/Chrome";
+import { IconButton } from "@/components/IconButton";
 import { ProviderList } from "@/components/ProviderList";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -132,12 +135,21 @@ export function Settings({
           <ProviderList
             cards={cards}
             error={payload.providersError}
-            headerExtra={
-              cards.length > 0 ? (
-                <button type="button" className="text-[length:var(--sz-badge)] text-label-2 hover:text-foreground" onClick={onResetCustomization}>
-                  {resetArmed ? m.click_again_to_confirm() : m.reset_all_customization()}
-                </button>
-              ) : null
+            headerActions={
+              <>
+                {cards.length > 0 ? (
+                  <IconButton
+                    label={resetArmed ? m.click_again_to_confirm() : m.reset_all_customization()}
+                    data-armed={resetArmed ? "" : undefined}
+                    onClick={onResetCustomization}
+                  >
+                    <MdiRestore />
+                  </IconButton>
+                ) : null}
+                <IconButton label={m.detect_providers()} onClick={() => sendCommand("detect")}>
+                  <MdiMagnifyScan />
+                </IconButton>
+              </>
             }
             layout={layout}
             onOpen={onOpenProvider}

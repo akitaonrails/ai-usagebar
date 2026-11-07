@@ -574,6 +574,7 @@ export default function App() {
           title={title}
           resetLabel={screen === "customize" ? m.reset_all_customization({}, { locale: layout.language }) : screen === "provider" ? `${m.reset({}, { locale: layout.language })} ${title}` : undefined}
           onBack={goBack}
+          onDetect={screen === "customize" && !native ? () => sendCommand("detect") : undefined}
           onReset={screen === "customize" ? resetAll : screen === "provider" ? () => resetProviderRows(providerId) : undefined}
         />
       ) : null}

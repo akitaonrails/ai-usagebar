@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import MdiClose from "~icons/mdi/close";
-import { Hint } from "@/components/Hint";
+import { IconButton } from "@/components/IconButton";
 import { TruncatedText } from "@/components/TruncatedText";
 import { m } from "@/paraglide/messages.js";
 
@@ -37,16 +37,9 @@ export function HintCard({
         <span className="grid shrink-0 place-items-center text-label-2 [&_svg]:size-[var(--icon-row)]">{icon}</span>
         <TruncatedText className="min-w-0 flex-1 text-[length:var(--sz-label)] font-semibold">{title}</TruncatedText>
         {onDismiss ? (
-          <Hint align="end" content={dismissTitle}>
-            <button
-              type="button"
-              aria-label={m.dismiss()}
-              className="plain-btn hover-icon grid size-[var(--dismiss-box)] shrink-0 place-items-center text-label-2"
-              onClick={onDismiss}
-            >
-              <MdiClose className="size-[var(--icon-dismiss)]" />
-            </button>
-          </Hint>
+          <IconButton align="end" label={dismissTitle || m.dismiss()} onClick={onDismiss}>
+            <MdiClose />
+          </IconButton>
         ) : null}
       </div>
       <span className="text-[length:var(--sz-support)] leading-[var(--leading-note)] text-label-2">{message}</span>
