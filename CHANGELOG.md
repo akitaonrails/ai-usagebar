@@ -2,12 +2,20 @@
 
 ### Fixed
 
+- **Kimi stops inventing a `5h 0%` window.** When `/coding/v1/usages` omits
+  `limits` — Kimi does that for accounts without a rolling quota, and has also
+  sent `null` — the snapshot carried a zeroed window, so the default bar read
+  `5h 0% · 7d 26%`, the `{kimi_window_*}`/`{session_*}` placeholders resolved to
+  `0`/`now` instead of empty, and the TUI Overview always drew a `5h 0%` pill.
+  The bar now shows only the long window the account reports
+  (`7d …` or `mo …`), those placeholders resolve empty, and the Overview drops
+  the cell; a genuine rolling window still leads as before (#590).
+
 - **Kimi accounts without a rolling window omit the 5h figure.** When
   Kimi reports no rolling rate-limit window, the default bar shows only
   the account's long window (`7d` or `mo`) rather than a fabricated
   `5h 0%`, the TUI overview drops the `5h` cell, and the window
   placeholders render empty (#590).
-
 ## [1.48.3] — 2026-11-07
 
 ### Changed

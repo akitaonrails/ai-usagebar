@@ -46,18 +46,25 @@ const MONTHLY_FORMAT: &str = "5h {kimi_window_pct}% · mo {kimi_monthly_pct}%";
 const WEEKLY_ONLY_FORMAT: &str = "7d {kimi_weekly_pct}%";
 const MONTHLY_ONLY_FORMAT: &str = "mo {kimi_monthly_pct}%";
 const SESSION_ONLY_FORMAT: &str = "5h {kimi_window_pct}%";
+/// Nothing this account reports a number for: an empty bar beats a made-up
+/// `5h 0%`.
+const NO_WINDOWS_FORMAT: &str = "";
 
 /// The bar text used when `--format` is omitted: the windows this account
 /// actually has. On the newer shape the weekly placeholders are empty, and
 /// accounts where Kimi omits the rolling quota have no 5h window.
 pub fn default_format(snap: &KimiSnapshot) -> &'static str {
-    match (snap.window_limit > 0, snap.has_weekly, snap.monthly_pct.is_some()) {
+    match (
+        snap.window_limit > 0,
+        snap.has_weekly,
+        snap.monthly_pct.is_some(),
+    ) {
         (true, true, _) => DEFAULT_FORMAT,
         (true, false, true) => MONTHLY_FORMAT,
         (true, false, false) => SESSION_ONLY_FORMAT,
         (false, true, _) => WEEKLY_ONLY_FORMAT,
         (false, false, true) => MONTHLY_ONLY_FORMAT,
-        (false, false, false) => DEFAULT_FORMAT,
+        (false, false, false) => NO_WINDOWS_FORMAT,
     }
 }
 
@@ -147,7 +154,10 @@ pub fn build_placeholders(
         ("kimi_window_pct", window(window_pct.to_string())),
         ("kimi_window_used", window(snap.window_used.to_string())),
         ("kimi_window_limit", window(snap.window_limit.to_string())),
-        ("kimi_window_remaining", window(snap.window_remaining.to_string())),
+        (
+            "kimi_window_remaining",
+            window(snap.window_remaining.to_string()),
+        ),
         (
             "kimi_window_reset",
             window(countdown::format(snap.window_reset_at, now)),
@@ -451,7 +461,9 @@ mod tests {
         snap.window_limit = 0;
         let outcome = sample_outcome(snap.clone());
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
-        assert_eq!(out.text, "7d 26%");
+        // The render colours the value, so match the substring like the other
+        // bar tests do.
+        assert!(out.text.contains("7d 26%"), "{}", out.text);
         assert!(!out.text.contains("5h"));
 
         let values = build_placeholders(&snap, now());
@@ -478,7 +490,7 @@ mod tests {
         snap.window_limit = 0;
         let outcome = sample_outcome(snap.clone());
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
-        assert_eq!(out.text, "mo 42%");
+        assert!(out.text.contains("mo 42%"), "{}", out.text);
         assert!(!out.text.contains("5h"));
         assert!(!out.text.contains('·'));
 
@@ -796,14 +808,14 @@ mod tests {
         };
         assert_eq!(default_format(&session_only), SESSION_ONLY_FORMAT);
 
-        // Neither window: keep the historical default.
+        // Neither window: an empty bar, never a fabricated figure.
         let neither = KimiSnapshot {
             window_limit: 0,
             has_weekly: false,
             monthly_pct: None,
             ..sample_snap()
         };
-        assert_eq!(default_format(&neither), DEFAULT_FORMAT);
+        assert_eq!(default_format(&neither), NO_WINDOWS_FORMAT);
     }
 
     #[test]
