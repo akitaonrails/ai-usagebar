@@ -76,6 +76,17 @@ pub async fn fetch_snapshot(
                 AppError::Http { status, .. } => *status,
                 _ => 0,
             };
+            // 401/403 mean the key itself was rejected. Serving the stale
+            // payload here would keep rendering a wallet the key can no
+            // longer see, so the failure is surfaced instead: the cache is
+            // marked stale for the age line, the diagnostic is recorded,
+            // and the error propagates. Only transient failures (transport,
+            // 5xx, 429) fall back to the cached payload.
+            if matches!(code, 401 | 403) {
+                cache.mark_stale();
+                let _diagnostic = cache.write_last_error(code, &error.to_string());
+                return Err(error);
+            }
             cache.mark_stale();
             let diagnostic = cache.write_last_error(code, &error.to_string());
             crate::outcome::fallback(cache, Some(diagnostic), error, parse_cache)
@@ -91,9 +102,9 @@ async fn request(
     let credits: Credits = get_json(client, api_key, &endpoints.credits, "credits").await?;
     // The key's cap is supplementary: a failure leaves the balance figures up.
     let key: Option<KeyInfo> = get_json(client, api_key, &endpoints.key, "key").await.ok();
-    let events: Vec<UsageEvent> = get_json_vec(client, api_key, &endpoints.usage, "usage export")
-        .await
-        .unwrap_or_default();
+    // The settled export is the daily meters' source; a failure here is a
+    // real failure and must not silently become an empty day.
+    let events: Vec<UsageEvent> = get_json_vec(client, api_key, &endpoints.usage, "usage export").await?;
     let payload = CachedPayload {
         credits,
         key,
@@ -203,7 +214,7 @@ fn http_error(status: u16, bytes: &[u8]) -> AppError {
     let detail = crate::display::sanitize_untrusted_line(&detail);
     let body = match code {
         Some("insufficient_scope") => format!(
-            "{detail} — this key needs the `usage:read` scope; create one with that scope at platform.experientiallabs.ai/settings/api-keys"
+            "{detail} — the presented key lacks a scope this call needs; create a key with the documented reads at platform.experientiallabs.ai/settings/api-keys"
         ),
         Some("unauthenticated" | "invalid_api_key") => {
             format!(
@@ -338,6 +349,13 @@ mod tests {
             .mock("GET", "/api/v1/key")
             .with_status(200)
             .with_body(KEY)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/api/v1/usage")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_body(EVENTS)
             .create_async()
             .await;
         let (_dir, cache) = cache();

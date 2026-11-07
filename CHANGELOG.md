@@ -3,7 +3,7 @@
 ### Added
 
 - **Experiential Labs.** The platform's wallet and settled usage, fetched with
-  the same `xpl_` key the dashboard mints (`usage:read` scope, which the
+  the same `xpl_` key the dashboard mints (the
   default key carries): the spendable credit balance from `/api/v1/credits`
   (which may go negative — usage past the wallet is real, and clamping it to
   zero would report a healthy-looking $0.00 to someone who has to top up),

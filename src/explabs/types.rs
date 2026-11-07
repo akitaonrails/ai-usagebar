@@ -30,7 +30,7 @@ use crate::usage::{ExperientialLabsMeter, ExperientialLabsModelUsage};
 /// are the binding figures the tooltip leads with.
 pub const FREE_DAILY_TOKEN_LIMIT: i64 = 1_000_000;
 
-/// `GET /api/v1/credits` (`usage:read` on the same xpl_ key). The response
+/// `GET /api/v1/credits` on the same `xpl_` key. The response
 /// wraps the figures in `data`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Credits {

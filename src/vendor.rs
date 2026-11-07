@@ -50,6 +50,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "OLLAMA_API_KEY",
     "CLINE_API_KEY",
     "DEEPRELAY_API_KEY",
+    "EXPLABS_API_KEY",
 ];
 
 /// Env var names a `[[custom]]` provider reads its token from. They are not

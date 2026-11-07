@@ -1853,7 +1853,7 @@ impl Default for DeepRelayConfig {
 /// Experiential Labs' wallet and settled usage (`/api/v1/{credits,key,usage}`
 /// on the same xpl_ key).
 ///
-/// Key-only and opt-in like DeepRelay's: the key needs the `usage:read` scope,
+/// Key-only and opt-in like DeepRelay's: the key carries the dashboard's own
 /// which the dashboard's default key carries.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]

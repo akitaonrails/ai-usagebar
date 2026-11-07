@@ -184,7 +184,7 @@ api_key_env = "DEEPRELAY_API_KEY"
 
 [explabs]
 enabled = true             # disabled by default; enable once you add an API key
-# The key needs the `usage:read` scope; the dashboard's default key has it.
+# The key carries the dashboard's own `usage:read` scope.
 api_key_env = "EXPLABS_API_KEY"
 # api_key = "xpl_..."             # used if EXPLABS_API_KEY is unset; chmod 600!
 

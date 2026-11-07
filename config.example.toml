@@ -714,7 +714,7 @@ api_key_env = "DEEPRELAY_API_KEY"   # checked first; if set + non-empty, used
 [explabs]
 # Disabled by default — enable once you've set a key (env var or inline).
 # Reads the wallet from https://api.experientiallabs.ai/api/v1/credits
-# (scope `usage:read`, which the dashboard's default key carries): the
+# (the dashboard's own `usage:read` scope): the
 # spendable credit balance (which may go negative), the key's daily USD cap
 # when it has one, and the settled usage export rolled up per model. The
 # Free tier shares one 1,000,000 input+output token pool per UTC day, so the
