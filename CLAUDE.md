@@ -236,6 +236,17 @@ patch version instead.
   USERPROFILE is the production input being verified, not ambient state
   the test is incidentally coupled to.
 
+  **Auth failures and the cache (#589).** A `401`/`403` from an API-key
+  vendor keeps the last good payload, marked stale, plus the fixed
+  `AUTH_FAILURE_MESSAGE` diagnostic — the cached reading is still what that
+  account last used, and every key vendor (DeepRelay, OpenRouter, DeepInfra,
+  Mistral, the rest) behaves this way; DeepRelay's PAYG wallet path is pinned
+  by `a_payg_wallet_401_keeps_the_balance_stale_and_redacted`. Antigravity is
+  the deliberate exception: a signed-out local app's cached quota is not a
+  reading at all, so its `401 | 403` returns `Err` without the fallback.
+  Do not flip one vendor to the other rule without deciding both and adding
+  the matching test.
+
 ## Secret-discipline rules (learned the hard way)
 
 Two separate leaks in early sessions where real keys appeared in the

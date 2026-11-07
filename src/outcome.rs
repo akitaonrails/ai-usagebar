@@ -162,6 +162,9 @@ fn redact_api_key_error(error: AppError, key: &str) -> AppError {
         AppError::Credentials(message) => {
             AppError::Credentials(crate::display::redact_secret(&message, key))
         }
+        AppError::Permission(message) => {
+            AppError::Permission(crate::display::redact_secret(&message, key))
+        }
         AppError::Other(message) => AppError::Other(crate::display::redact_secret(&message, key)),
         AppError::WithPlan { plan, source } => AppError::WithPlan {
             plan,

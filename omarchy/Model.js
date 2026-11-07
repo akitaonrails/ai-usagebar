@@ -613,6 +613,9 @@ function brandFileFor(provider) {
       return "synthetic.svg"
     case "orcarouter":
       return "orcarouter.svg"
+    case "mistral":
+    case "custom:mistral":
+      return "mistral.svg"
     default:
       return ""
   }

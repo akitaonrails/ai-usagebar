@@ -519,6 +519,7 @@ pub enum VendorSnapshot {
     Devin(DevinSnapshot),
     Droid(DroidSnapshot),
     DeepRelay(DeepRelaySnapshot),
+    Mistral(MistralSnapshot),
     MuseCode(MuseSnapshot),
     /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
     /// that fetched it holds the `CustomProviderConfig`, and the cache
@@ -1268,6 +1269,38 @@ fn worst<'a>(
         .flatten()
         .max_by_key(|meter| meter.pct().unwrap_or(0))
 }
+
+/// Mistral — the two monthly budgets the plan shares across Studio and Vibe
+/// Code. Both reset on the calendar-month boundary the billing response
+/// reports; the exact cycle length is not stated, so `window_duration` is zero
+/// and the renderers do not pace against a guessed month.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MistralSnapshot {
+    /// `plan_name` from `/v1/billing/subscription`; `None` when that optional
+    /// read failed.
+    pub plan: Option<String>,
+    /// Studio / API usage allowance. `None` when the plan does not expose the
+    /// API budget — the official `mistral-vibe` client only requires
+    /// `vibe_budget`, and some accounts report no `api_budget` at all.
+    pub api: Option<UsageWindow>,
+    /// Vibe Code usage allowance.
+    pub vibe: UsageWindow,
+    /// Monthly API allowance in `currency`; `None` when [`Self::api`] is.
+    pub api_budget: Option<f64>,
+    /// Monthly Vibe Code allowance in `currency`.
+    pub vibe_budget: f64,
+    /// ISO 4217 code the two allowances are denominated in.
+    pub currency: String,
+    /// Pay-as-you-go covers API usage past the included allowance.
+    pub api_payg: bool,
+    /// Pay-as-you-go covers Vibe Code usage past the included allowance.
+    pub vibe_payg: bool,
+}
+
+// The allowances are validated finite and non-negative at the parse boundary,
+// so the snapshot is total in the sense `Eq` asks for — the same reasoning as
+// `DeepRelaySnapshot` and `OpenRouterSnapshot`.
+impl Eq for MistralSnapshot {}
 
 /// OpenRouter — credit balance + lifetime/daily/weekly/monthly usage from
 /// `/api/v1/credits` and `/api/v1/key`.
