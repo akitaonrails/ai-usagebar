@@ -191,7 +191,7 @@ mod tests {
 
         let providers = structured(server.list_providers().await);
         assert_eq!(providers["vendors"][0]["configured"], true);
-        assert!(providers.to_string().find("credential_value").is_none());
+        assert!(!providers.to_string().contains("credential_value"));
     }
 
     #[tokio::test]

@@ -250,7 +250,7 @@ where
 /// a fabricated one.
 fn dollars_to_cents(n: &serde_json::Number) -> Option<i64> {
     let v = n.as_f64()?;
-    if !v.is_finite() || v < 0.0 || v > 1e13 {
+    if !v.is_finite() || !(0.0..=1e13).contains(&v) {
         return None;
     }
     // -0 passes the sign check but prints as "-0.0", which the digit walk
