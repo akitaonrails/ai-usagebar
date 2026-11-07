@@ -14,6 +14,7 @@ import MdiArrowTopRight from "~icons/mdi/arrow-top-right";
 import MdiClockStart from "~icons/mdi/clock-start";
 import MdiCheck from "~icons/mdi/check";
 import { Chip } from "@/components/Chip";
+import { IconButton } from "@/components/IconButton";
 import { Hint } from "@/components/Hint";
 import { AccountTabs } from "@/components/AccountTabs";
 import { ProviderIcon } from "@/components/ProviderIcon";
@@ -373,7 +374,7 @@ function AccountControl({ account, title, onSwitch }: AccountControlProps) {
   if (account.active) {
     const label = `${title} is the active account`;
     return (
-      <span aria-label={label} className="header-action is-active [&_svg]:size-[14px]" role="img" title={label}>
+      <span aria-label={label} className="icon-btn header-action is-active" role="img" title={label}>
         <MdiStar />
       </span>
     );
@@ -381,7 +382,7 @@ function AccountControl({ account, title, onSwitch }: AccountControlProps) {
   if (account.switching) {
     const label = `Switching to ${title}…`;
     return (
-      <span aria-label={label} className="header-action [&_svg]:size-[14px]" role="status" title={label}>
+      <span aria-label={label} className="icon-btn header-action" role="status" title={label}>
         <MdiLoading className="animate-spin" />
       </span>
     );
@@ -420,18 +421,15 @@ interface HeaderActionProps {
 
 function HeaderAction({ className, icon, label, onClick }: HeaderActionProps) {
   return (
-    <Hint content={label}>
-      <button
-        type="button"
-        aria-label={label}
-        className={cn("header-action [&_svg]:size-[var(--icon-row)]", className)}
-        onClick={onClick}
-        onKeyDown={(event) => event.stopPropagation()}
-        onPointerDown={(event) => event.stopPropagation()}
-      >
-        {icon}
-      </button>
-    </Hint>
+    <IconButton
+      label={label}
+      className={cn("header-action", className)}
+      onClick={onClick}
+      onKeyDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      {icon}
+    </IconButton>
   );
 }
 
