@@ -789,6 +789,15 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         weeklyTag = "wk"
         sessionLabel = "Monthly"
         weeklyLabel = "Weekly"
+    case "mistral":
+        // Both figures are monthly budgets; the generic slots carry the API
+        // budget first and the Vibe Code budget second. Neither has a fixed
+        // cycle length, so no elapsed marker.
+        weeklyWindow = quotaWindow(3, 4, -1)
+        sessionTag = "api"
+        weeklyTag = "vibe"
+        sessionLabel = "API budget"
+        weeklyLabel = "Vibe budget"
     default:
         weeklyWindow = quotaWindow(3, 4, 14)
         sessionTag = "5h"

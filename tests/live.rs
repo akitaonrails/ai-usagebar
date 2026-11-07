@@ -85,6 +85,7 @@ use ai_usagebar::error::AppError;
 use ai_usagebar::kimi;
 use ai_usagebar::kiro;
 use ai_usagebar::minimax;
+use ai_usagebar::mistral;
 use ai_usagebar::ollama;
 use ai_usagebar::openai;
 use ai_usagebar::openrouter;
@@ -338,6 +339,69 @@ async fn deepinfra_live() {
         out.snapshot.monthly_spend,
         out.snapshot.monthly_limit,
         out.snapshot.period,
+    );
+}
+
+/// Mistral's monthly API and Vibe Code budgets. Skips when `MISTRAL_API_KEY`
+/// is unset, so the opt-in smoke run stays usable on a machine without an
+/// account.
+#[tokio::test]
+#[ignore = "live API; run with --ignored"]
+async fn mistral_live() {
+    let Ok(api_key) = std::env::var("MISTRAL_API_KEY") else {
+        eprintln!("mistral_live: MISTRAL_API_KEY is unset — skipping");
+        return;
+    };
+    if api_key.trim().is_empty() {
+        eprintln!("mistral_live: MISTRAL_API_KEY is empty — skipping");
+        return;
+    }
+    let cache = xdg_cache_for("mistral");
+    let client = reqwest::Client::builder()
+        .timeout(ai_usagebar::vendor::HTTP_CLIENT_TIMEOUT)
+        .redirect(ai_usagebar::vendor::same_origin_redirect_policy())
+        .build()
+        .unwrap();
+    let out = mistral::fetch::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &mistral::fetch::Endpoints::default(),
+        Duration::ZERO,
+    )
+    .await
+    .expect("mistral fetch should succeed against the real API");
+
+    if let Some(api) = &out.snapshot.api {
+        assert_pct("mistral API budget", api.utilization_pct);
+    }
+    assert_pct("mistral Vibe budget", out.snapshot.vibe.utilization_pct);
+    if let Some(api_budget) = out.snapshot.api_budget {
+        assert!(api_budget >= 0.0, "mistral API allowance is negative");
+    }
+    assert!(
+        out.snapshot.vibe_budget >= 0.0,
+        "mistral Vibe allowance is negative"
+    );
+    assert_eq!(
+        out.snapshot.currency.len(),
+        3,
+        "mistral currency is not a 3-letter code"
+    );
+    println!(
+        "mistral — plan={:?}, API={:?}% of {} {}, Vibe={}% of {} {}, payg={}/{}",
+        out.snapshot.plan,
+        out.snapshot.api.as_ref().map(|w| w.utilization_pct),
+        ai_usagebar::format::money(
+            out.snapshot.api_budget.unwrap_or_default(),
+            &out.snapshot.currency
+        ),
+        out.snapshot.currency,
+        out.snapshot.vibe.utilization_pct,
+        ai_usagebar::format::money(out.snapshot.vibe_budget, &out.snapshot.currency),
+        out.snapshot.currency,
+        out.snapshot.api_payg,
+        out.snapshot.vibe_payg,
     );
 }
 

@@ -502,11 +502,25 @@ pub fn acquire_lock(path: &Path, timeout: Duration) -> Result<LockGuard> {
         .open(path)
         .map_err(|e| AppError::io_at(path, e))?;
 
+    wait_for_lock(path, timeout, || f.try_lock_exclusive())?;
+    Ok(LockGuard { file: f })
+}
+
+/// Inject only the lock syscall so unsupported filesystems are testable
+/// without touching a real user's credentials or requiring a WSL mount.
+fn wait_for_lock(
+    path: &Path,
+    timeout: Duration,
+    mut try_lock: impl FnMut() -> std::io::Result<()>,
+) -> Result<()> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        match f.try_lock_exclusive() {
-            Ok(()) => return Ok(LockGuard { file: f }),
-            Err(_) => {
+        match try_lock() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    || error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+            {
                 if std::time::Instant::now() >= deadline {
                     return Err(AppError::Other(format!(
                         "cache lock timeout after {:?}",
@@ -515,6 +529,7 @@ pub fn acquire_lock(path: &Path, timeout: Duration) -> Result<LockGuard> {
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
+            Err(error) => return Err(AppError::io_at(path, error)),
         }
     }
 }
@@ -1554,6 +1569,44 @@ mod tests {
         // A non-numeric first line is still no error at all, never a fake 0.
         fs::write(cache.last_error_path(), "not-a-code\nboom").unwrap();
         assert!(cache.read_last_error().is_none());
+    }
+
+    #[test]
+    fn unsupported_lock_preserves_io_error_instead_of_timeout() {
+        let path = Path::new("synthetic-credentials.lock");
+        let mut attempts = 0;
+        let result = wait_for_lock(path, Duration::ZERO, || {
+            attempts += 1;
+            Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+        });
+        assert_eq!(attempts, 1);
+        match result {
+            Err(AppError::Io {
+                path: actual,
+                source,
+            }) => {
+                assert_eq!(actual, path);
+                assert_eq!(source.kind(), std::io::ErrorKind::Unsupported);
+            }
+            _ => panic!("unsupported locking must preserve the I/O error"),
+        }
+    }
+
+    #[test]
+    fn permission_denied_lock_is_not_retried_as_contention() {
+        let result = wait_for_lock(Path::new("synthetic.lock"), Duration::ZERO, || {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        });
+        assert!(matches!(result, Err(AppError::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::PermissionDenied));
+    }
+
+    #[test]
+    fn contended_lock_still_reports_timeout() {
+        let result = wait_for_lock(Path::new("synthetic.lock"), Duration::ZERO, || {
+            Err(fs2::lock_contended_error())
+        });
+        assert!(matches!(result, Err(AppError::Other(message)) if message.contains("timeout")));
     }
 
     #[test]

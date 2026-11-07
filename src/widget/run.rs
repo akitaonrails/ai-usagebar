@@ -26,6 +26,7 @@ use crate::kimi;
 use crate::kiro;
 use crate::lyceum;
 use crate::minimax;
+use crate::mistral;
 use crate::modelstudio;
 use crate::moonshot;
 use crate::novita;
@@ -184,6 +185,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::MuseCode => muse_output(cli, &config).await,
         Vendor::Cline => cline_output(cli, &config).await,
         Vendor::DeepRelay => deeprelay_output(cli, &config).await,
+        Vendor::Mistral => mistral_output(cli, &config).await,
     }
 }
 
@@ -784,6 +786,33 @@ async fn deeprelay_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let snapshot = outcome.snapshot.clone();
     let vendor_outcome: VendorOutcome = outcome.into();
     Ok(deeprelay::vendor::render(
+        &vendor_outcome,
+        &snapshot,
+        &theme_from_cli(cli),
+        &RenderOpts::from_cli(cli),
+        Utc::now(),
+    ))
+}
+
+async fn mistral_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let (api_key, cache) = api_key_target(cli, config, VendorId::Mistral)?;
+    let client = http_client()?;
+    let endpoints = mistral::fetch::Endpoints::default();
+    let outcome = match fetch_api_keyed(
+        async { mistral::fetch_snapshot(&client, &api_key, &cache, &endpoints, DEFAULT_TTL).await },
+        &api_key,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
+    let snapshot = outcome.snapshot.clone();
+    let vendor_outcome: VendorOutcome = outcome.into();
+    Ok(mistral::vendor::render(
         &vendor_outcome,
         &snapshot,
         &theme_from_cli(cli),
@@ -1481,6 +1510,7 @@ fn theme_from_cli(cli: &Cli) -> Theme {
 fn fallback(err: &AppError, _cli: &Cli) -> WaybarOutput {
     let tooltip = match err {
         AppError::Credentials(m) => format!("Credentials error.\n{m}"),
+        AppError::Permission(m) => m.clone(),
         AppError::Http { status, .. } if matches!(status, 401 | 403) => {
             format!("HTTP {status}\n{}", crate::error::AUTH_FAILURE_MESSAGE)
         }

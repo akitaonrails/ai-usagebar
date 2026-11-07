@@ -4,6 +4,30 @@
 
 - Anthropic API distinguishes rejected credentials from missing report permissions and no longer serves old spend after 401/403. Document organization report credential scope separately from inference access and prepaid credit.
 
+## [1.49.0] — 2026-11-07
+
+### Added
+
+- **Mistral.** Reports the monthly API and Vibe Code budgets from the billing
+  routes the official `mistral-vibe` CLI uses, with plan, reset, and
+  pay-as-you-go flags. Opt in explicitly with `MISTRAL_API_KEY` or
+  `[mistral] api_key`; ai-usagebar never discovers credentials on its own, and
+  the key needs the `see_org_inference_usage` permission. Allowances render in
+  the response's currency, and the API budget is omitted on plans that do not
+  report one instead of showing 0%. The Omarchy panel ships the provider mark.
+  If you added Mistral as a `[[custom]]` provider, remove that table; the id is
+  now a built-in vendor.
+
+### Fixed
+
+- **A DeepRelay PAYG wallet that rejects the key keeps the last balance,
+  stale and explained.** The wallet read added in 1.48.3 inherits the
+  key-vendor rule rather than the Antigravity one: a 401 keeps the cached
+  balance marked stale with the fixed auth message, so the panel does not
+  blank the figure over a revoked key. Pinned by a test, and the split between
+  the two rules is now written down in CLAUDE.md (#589).
+
+- File-lock errors other than contention now report the original I/O error immediately, instead of waiting for a misleading timeout on unsupported filesystems such as WSL UNC mounts.
 - **Kimi stops inventing a `5h 0%` window.** When `/coding/v1/usages` omits
   `limits` — Kimi does that for accounts without a rolling quota, and has also
   sent `null` — the snapshot carried a zeroed window, so the default bar read
@@ -13,11 +37,6 @@
   (`7d …` or `mo …`), those placeholders resolve empty, and the Overview drops
   the cell; a genuine rolling window still leads as before (#590).
 
-- **Kimi accounts without a rolling window omit the 5h figure.** When
-  Kimi reports no rolling rate-limit window, the default bar shows only
-  the account's long window (`7d` or `mo`) rather than a fabricated
-  `5h 0%`, the TUI overview drops the `5h` cell, and the window
-  placeholders render empty (#590).
 ## [1.48.3] — 2026-11-07
 
 ### Changed
@@ -5400,7 +5419,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...HEAD
+[1.49.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...v1.49.0
 [1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3
 [1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2
 [1.48.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...v1.48.1
