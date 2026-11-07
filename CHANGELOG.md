@@ -3,10 +3,11 @@
 ### Fixed
 
 - **Antigravity's live-session cards refresh their complete quota.** A status
-  line can report an unused weekly bucket while the local server already
-  records usage. The report now prefers fresh local quota for the verified
-  same account, including its reset times and per-model pools, while keeping
-  the status-line reading when that refresh cannot be attributed or fails.
+  line can report an unused weekly bucket while `/quota` already records
+  usage. The report prefers fresh local RPC or `agy` quota for the verified
+  same account, including reset times and per-model pools. The CLI fallback
+  checks its saved ID-token identity before and after fetching; unmatched,
+  unverified and stale readings keep the session's own data.
 
 ## [1.49.0] — 2026-11-07
 

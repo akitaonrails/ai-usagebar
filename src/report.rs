@@ -444,10 +444,12 @@ async fn entry_for_report_target(
         ReportTarget::Tab(tab) => entry_for(client, config, tab, freshness).await,
         ReportTarget::AntigravityAccount(tab, account) => {
             let live = match crate::cache::Cache::for_vendor("antigravity") {
-                Ok(cache) => crate::antigravity::fetch::fetch_local_snapshot(
+                Ok(cache) => crate::antigravity::fetch::fetch_account_snapshot(
                     client,
                     &cache,
                     freshness.ttl(),
+                    &account.snapshot.account,
+                    config.antigravity.agy_binary.as_deref(),
                     config.antigravity.ide_language_server,
                 )
                 .await
@@ -637,11 +639,14 @@ fn entry_from_antigravity_reading(
     now: DateTime<Utc>,
 ) -> Entry {
     // A status line can keep sending a zero weekly bucket after /quota has
-    // recorded usage. Only a fresh, same-account local RPC may replace it:
-    // remote credentials and another account's server cannot identify it.
+    // recorded usage. A fresh local RPC or identity-verified agy reading may
+    // replace it; Cloud Code's separate tracker cannot stand in for /quota.
     if let Some(live) = live
         && !live.stale
-        && live.snapshot.source == crate::usage::AntigravitySource::Local
+        && matches!(
+            live.snapshot.source,
+            crate::usage::AntigravitySource::Local | crate::usage::AntigravitySource::Agy
+        )
         && live.snapshot.account.strip_prefix("acct:") == Some(account.snapshot.account.as_str())
     {
         let mut refreshed = account.clone();
@@ -1493,6 +1498,27 @@ mod tests {
         assert_eq!(metrics[2]["percent"], 0);
     }
 
+    #[test]
+    fn antigravity_verified_agy_quota_replaces_zero_weekly_in_the_report() {
+        let (account, mut live, now) = antigravity_readings();
+        live.snapshot.source = crate::usage::AntigravitySource::Agy;
+        let entry = entry_from_antigravity_reading(
+            &TabId::vendor(VendorId::Antigravity),
+            &account,
+            Some(&live),
+            now,
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[entry])).unwrap();
+        let metrics = value["entries"][0]["metrics"].as_array().unwrap();
+        assert_eq!(metrics[1]["percent"], 23);
+        assert_eq!(metrics[2]["label"], "Gemini 4 Argon");
+        assert_eq!(
+            value["entries"][0]["id"],
+            format!("antigravity@{}", account.id_suffix)
+        );
+    }
+
     // Mutations captured: removing the account, source or freshness guard
     // substitutes another account's quota, an unattributed remote reading,
     // or a stale reading for the active session.
@@ -1501,13 +1527,16 @@ mod tests {
         let tab = TabId::vendor(VendorId::Antigravity);
         let (account, original, now) = antigravity_readings();
         let expected = render_json_entries(&[entry_from_antigravity_account(&tab, &account, now)]);
-        for rejected in ["account", "remote", "agy", "stale"] {
+        for rejected in ["account", "remote", "unverified_agy", "stale"] {
             let mut live = original.clone();
             let snapshot = &mut live.snapshot;
             match rejected {
                 "account" => snapshot.account = "acct:other".into(),
                 "remote" => snapshot.source = crate::usage::AntigravitySource::Remote,
-                "agy" => snapshot.source = crate::usage::AntigravitySource::Agy,
+                "unverified_agy" => {
+                    snapshot.source = crate::usage::AntigravitySource::Agy;
+                    snapshot.account = "acct:credential-fingerprint".into();
+                }
                 "stale" => live.stale = true,
                 _ => unreachable!(),
             }
@@ -1522,27 +1551,39 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    #[ignore = "reads the configured account and a running Antigravity local server"]
-    async fn antigravity_live_account_report_matches_local_quota() {
+    #[ignore = "reads the configured account and live Antigravity quota"]
+    async fn antigravity_live_account_report_matches_complete_quota() {
         let config = Config::load().unwrap();
         let client = crate::widget::run::http_client().unwrap();
         let tab = TabId::vendor(VendorId::Antigravity);
         let state = refresh_one(&client, &config, &tab, Freshness::Wire).await;
         let TabState::Ready(ready) = &state else {
-            panic!("a working local Antigravity server is required");
+            panic!("a working Antigravity quota source is required");
         };
         let crate::usage::VendorSnapshot::Antigravity(snapshot) = &ready.snapshot else {
             unreachable!();
         };
         assert!(!ready.stale);
-        assert_eq!(snapshot.source, crate::usage::AntigravitySource::Local);
+        let identity = match snapshot.source {
+            crate::usage::AntigravitySource::Local => {
+                snapshot.account.strip_prefix("acct:").map(str::to_owned)
+            }
+            crate::usage::AntigravitySource::Agy => {
+                let raw = crate::antigravity::credential::read()
+                    .unwrap()
+                    .expect("the agy sign-in must identify its account");
+                crate::antigravity::credential::parse_keyring_blob(&raw)
+                    .unwrap()
+                    .account_hash
+            }
+            other => panic!("a local or agy quota source is required, got {other:?}"),
+        }
+        .expect("the complete quota must identify its account");
         let accounts = crate::antigravity::statusline::active_accounts().unwrap();
         let account = accounts
             .iter()
-            .find(|account| {
-                snapshot.account.strip_prefix("acct:") == Some(&account.snapshot.account)
-            })
-            .expect("the local server must match a running status-line account");
+            .find(|account| identity == account.snapshot.account)
+            .expect("the quota source must match a running status-line account");
         let expected: serde_json::Value =
             serde_json::from_str(&render_json_entries(&[entry_from_state(
                 &tab,

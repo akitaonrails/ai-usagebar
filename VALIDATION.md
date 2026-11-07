@@ -26,19 +26,21 @@ browser rendering alone does not verify it.
 
 ## Antigravity live-session quota
 
-The regression tests check that a same-account local reading replaces an
+The regression tests check that a same-account local or verified `agy` reading replaces an
 incorrect zero weekly status-line bucket, including reset times and model
-pools. Different accounts, remote sources and stale readings must retain the
-session's own data.
+pools. Different accounts, Cloud Code readings, missing CLI identity, sign-in
+changes during a fetch and stale readings must retain the session's own data.
+The CLI's `id_token_email` is hashed for matching; raw email and credentials
+are never copied into quota caches or reports.
 
-On macOS, with an enabled Antigravity provider, a running local server and a
+On macOS, with an enabled Antigravity provider, a usable local server or `agy` and a
 status-line session of the same account, exercise the actual report path:
 
 ```sh
-cargo test --lib report::tests::antigravity_live_account_report_matches_local_quota --locked -- --ignored --nocapture
+cargo test --lib report::tests::antigravity_live_account_report_matches_complete_quota --locked -- --ignored --nocapture
 ```
 
-The test compares the session card's metrics with newly fetched local quota.
+The test compares the session card's metrics with the complete quota source.
 If those prerequisites are unavailable, record this check as NOT RUN or BLOCKED.
 After installing a changed app, compare its card with Antigravity's Models &
 Quota screen, including remaining percentages, reset times and model pools.
