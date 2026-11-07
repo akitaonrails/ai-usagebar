@@ -353,7 +353,7 @@ where
                     }
                     InputEvent::Mouse(m) => {
                         match handle_mouse(app, &m) {
-                            Some(MouseAction::Settings(action)) => {
+                            Some(MouseAction::Settings(action))
                                 if apply_settings_action(
                                     action,
                                     app,
@@ -361,10 +361,11 @@ where
                                     client,
                                     &tx,
                                     &mut last_config_stamp,
-                                ) {
-                                    return Ok(());
-                                }
+                                ) =>
+                            {
+                                return Ok(());
                             }
+                            Some(MouseAction::Settings(_)) => {}
                             Some(MouseAction::Footer(FooterAction::Refresh)) => {
                                 refresh_active(app, client, config, &tx);
                             }
