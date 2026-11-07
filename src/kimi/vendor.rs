@@ -43,16 +43,21 @@ pub const DEFAULT_FORMAT: &str = "5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%
 /// Accounts on the newer response shape have no weekly bucket; their long
 /// window is the monthly pool, under the `mo` label the TUI overview uses.
 const MONTHLY_FORMAT: &str = "5h {kimi_window_pct}% · mo {kimi_monthly_pct}%";
+const WEEKLY_ONLY_FORMAT: &str = "7d {kimi_weekly_pct}%";
+const MONTHLY_ONLY_FORMAT: &str = "mo {kimi_monthly_pct}%";
+const SESSION_ONLY_FORMAT: &str = "5h {kimi_window_pct}%";
 
-/// The bar text used when `--format` is omitted: the long window this account
-/// actually has. On the newer shape the weekly placeholders are empty, so
-/// [`DEFAULT_FORMAT`] would read "5h 15% · 7d %" and leave the monthly pool,
-/// which still sets the bar's color, off the bar.
+/// The bar text used when `--format` is omitted: the windows this account
+/// actually has. On the newer shape the weekly placeholders are empty, and
+/// accounts where Kimi omits the rolling quota have no 5h window.
 pub fn default_format(snap: &KimiSnapshot) -> &'static str {
-    if !snap.has_weekly && snap.monthly_pct.is_some() {
-        MONTHLY_FORMAT
-    } else {
-        DEFAULT_FORMAT
+    match (snap.window_limit > 0, snap.has_weekly, snap.monthly_pct.is_some()) {
+        (true, true, _) => DEFAULT_FORMAT,
+        (true, false, true) => MONTHLY_FORMAT,
+        (true, false, false) => SESSION_ONLY_FORMAT,
+        (false, true, _) => WEEKLY_ONLY_FORMAT,
+        (false, false, true) => MONTHLY_ONLY_FORMAT,
+        (false, false, false) => DEFAULT_FORMAT,
     }
 }
 
@@ -96,6 +101,13 @@ pub fn build_placeholders(
             String::new()
         }
     };
+    let window = |value: String| {
+        if snap.window_limit > 0 {
+            value
+        } else {
+            String::new()
+        }
+    };
     placeholders(vec![
         ("icon", VendorId::Kimi.bar_icon().to_string()),
         ("vendor_short", VendorId::Kimi.short_name().to_string()),
@@ -106,10 +118,10 @@ pub fn build_placeholders(
             "weekly_reset",
             weekly(countdown::format(snap.weekly_reset_at, now)),
         ),
-        ("session_pct", window_pct.to_string()),
+        ("session_pct", window(window_pct.to_string())),
         (
             "session_reset",
-            countdown::format(snap.window_reset_at, now),
+            window(countdown::format(snap.window_reset_at, now)),
         ),
         // Kimi-specific placeholders.
         ("kimi_plan", plan.to_string()),
@@ -132,13 +144,13 @@ pub fn build_placeholders(
             "kimi_monthly_reset",
             monthly(countdown::format(snap.monthly_reset_at, now)),
         ),
-        ("kimi_window_pct", window_pct.to_string()),
-        ("kimi_window_used", snap.window_used.to_string()),
-        ("kimi_window_limit", snap.window_limit.to_string()),
-        ("kimi_window_remaining", snap.window_remaining.to_string()),
+        ("kimi_window_pct", window(window_pct.to_string())),
+        ("kimi_window_used", window(snap.window_used.to_string())),
+        ("kimi_window_limit", window(snap.window_limit.to_string())),
+        ("kimi_window_remaining", window(snap.window_remaining.to_string())),
         (
             "kimi_window_reset",
-            countdown::format(snap.window_reset_at, now),
+            window(countdown::format(snap.window_reset_at, now)),
         ),
     ])
 }

@@ -410,12 +410,18 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             vec![(usd(s.balance), crate::deepinfra::vendor::severity(s))],
         ),
         VendorSnapshot::Kimi(s) => {
-            let mut cells = vec![pct("5h", s.window_pct())];
+            let mut cells = Vec::new();
+            if s.window_limit > 0 {
+                cells.push(pct("5h", s.window_pct()));
+            }
             if s.has_weekly {
                 cells.push(pct("wk", s.weekly_pct()));
             }
             if let Some(monthly) = s.monthly_pct {
                 cells.push(pct("mo", monthly));
+            }
+            if cells.is_empty() {
+                cells.push(("—".into(), PaceSeverity::Low));
             }
             (s.plan.clone().unwrap_or_default(), cells)
         }
