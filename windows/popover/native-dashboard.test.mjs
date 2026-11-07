@@ -11,7 +11,7 @@ try {
   const { NativeDashboard } = await server.ssrLoadModule('/src/screens/NativeDashboard.tsx');
   const { ProviderSection } = await server.ssrLoadModule('/src/components/ProviderSection.tsx');
   const { Settings } = await server.ssrLoadModule('/src/screens/Settings.tsx');
-  const { Footer } = await server.ssrLoadModule('/src/components/Chrome.tsx');
+  const { Footer, TopBar } = await server.ssrLoadModule('/src/components/Chrome.tsx');
   const { TooltipProvider } = await server.ssrLoadModule('/src/components/ui/tooltip.tsx');
   const { LanguageProvider, translateUsage } = await server.ssrLoadModule('/src/lib/i18n.tsx');
   const { emptyLayout, emptyPayload } = await server.ssrLoadModule('/src/model.js');
@@ -50,11 +50,31 @@ try {
         }))));
   }
 
+  // The one icon button of the popover (IconButton.tsx): the same <button> tag
+  // carries the accessible name, the icon-btn box and the tooltip trigger — the
+  // assertions read each opening tag whole, so attribute order is no contract.
+  const buttonTags = (markup) => markup.match(/<button[^>]*>/g) ?? [];
+  const iconButtonTag = (markup, label) => {
+    const tags = buttonTags(markup).filter((tag) => tag.includes(`aria-label="${label}"`));
+    assert.ok(tags.length > 0, `expected an icon button named "${label}"`);
+    for (const tag of tags) {
+      assert.match(tag, /class="[^"]*icon-btn[^"]*"/, `the "${label}" button is the icon-btn box`);
+      assert.match(tag, /data-slot="tooltip-trigger"/, `the "${label}" button triggers the tooltip`);
+    }
+    return tags;
+  };
+
   for (const popoverStyle of ['classic', 'native']) {
     const header = sectionMarkup({ ...emptyLayout(), popoverStyle }, 'en');
     // The header keeps only the Customize shortcut; the per-card Reset button is gone.
     assert.doesNotMatch(header, /aria-label="Reset Claude"/);
     assert.match(header, /aria-label="Customize Claude"/);
+    // The header's shortcut is the uniform icon button and keeps the
+    // header-action hook (the image export and the actions rely on it).
+    const headerActionTag = buttonTags(header).find((tag) => tag.includes('aria-label="Customize Claude"'));
+    assert.ok(headerActionTag, 'the header renders the Customize action');
+    assert.match(headerActionTag, /class="[^"]*icon-btn[^"]*"/);
+    assert.match(headerActionTag, /class="[^"]*header-action[^"]*"/);
     // 4h of the 5h window have passed: the goal reads 20% left beside `54% restantes`,
     // and 80% used once the meter shows what is used.
     const withGoal = sectionMarkup({ ...emptyLayout(), popoverStyle, usageGoal: true });
@@ -126,6 +146,9 @@ try {
   assert.doesNotMatch(nativeDashboard, />cld</);
   assert.match(nativeDashboard, /data-card-id="anthropic"/);
   assert.match(nativeDashboard, /aria-expanded="true"/);
+  // The header's Refresh and Settings are the uniform icon buttons, with tooltips.
+  iconButtonTag(nativeDashboard, 'Atualizar');
+  iconButtonTag(nativeDashboard, 'Configurações');
   // The tab reads the highest-percent window, like the Quattro bar: Z.AI with the weekly limit
   // spent and the 5h session idle read "0%". A grouped row never outranks a quota window.
   const quotaRow = (label, usedPercent, extra = {}) => ({
@@ -321,6 +344,22 @@ try {
   assert.match(providers, /Redefinir toda a personalização/);
   assert.match(providers, /Claude/);
   assert.doesNotMatch(providers, /Iniciar ao entrar/);
+  // The tab keeps its "Provedores" label and the list's own title is gone, so
+  // the visible word appears exactly once (the tab), not twice.
+  assert.equal(providers.split('>Provedores<').length - 1, 1);
+  // The Providers header actions are the uniform icon buttons: reset (only
+  // with cards) and Detect on its right, both with tooltips.
+  iconButtonTag(providers, 'Redefinir toda a personalização');
+  iconButtonTag(providers, 'Detectar provedores');
+  assert.ok(providers.indexOf('Redefinir toda a personalização') < providers.indexOf('Detectar provedores'));
+  // Armed: the confirm label on the data-armed box, not the reset label.
+  const providersArmed = settingsTab('providers', { ...settingsProps, resetArmed: true });
+  assert.match(iconButtonTag(providersArmed, 'Clique novamente para confirmar')[0], /data-armed=""/);
+  assert.doesNotMatch(providersArmed, /aria-label="Redefinir toda a personalização"/);
+  // Without cards there is nothing to reset: Detect only.
+  const providersNoCards = settingsTab('providers', { ...settingsProps, cards: [] });
+  assert.doesNotMatch(providersNoCards, /Redefinir toda a personalização|Clique novamente para confirmar/);
+  iconButtonTag(providersNoCards, 'Detectar provedores');
   const alerts = settingsTab('alerts');
   assert.match(alerts, /Alertas de limite/);
   assert.doesNotMatch(alerts, /Iniciar ao entrar/);
@@ -396,6 +435,26 @@ try {
     const chromeSource = await readFile(new URL('./src/components/Chrome.tsx', import.meta.url), 'utf8');
     assert.doesNotMatch(chromeSource, /m\.native_style\(\)|Native Style/);
   }
+  // The TopBar's Back/Reset/Detect are the uniform icon buttons; Detect is
+  // offered only by the screen (Customize Classic) and the armed reset wears
+  // the confirm label on the data-armed box.
+  const topBar = (props) => renderToStaticMarkup(React.createElement(TooltipProvider, {},
+    React.createElement(LanguageProvider, { language: 'en' },
+      React.createElement(TopBar, { onBack() {}, title: 'Customize', ...props }))));
+  const topBarFull = topBar({ onReset() {}, resetArmed: false, resetLabel: 'Reset All Customization', onDetect() {} });
+  iconButtonTag(topBarFull, 'Back');
+  iconButtonTag(topBarFull, 'Reset All Customization');
+  iconButtonTag(topBarFull, 'Detect Providers');
+  assert.ok(topBarFull.indexOf('Reset All Customization') < topBarFull.indexOf('Detect Providers'));
+  // The fallback: without onDetect the bar keeps Back and Reset only.
+  const topBarBare = topBar({ onReset() {}, resetLabel: 'Reset All Customization' });
+  assert.doesNotMatch(topBarBare, /aria-label="Detect Providers"/);
+  iconButtonTag(topBarBare, 'Back');
+  iconButtonTag(topBarBare, 'Reset All Customization');
+  assert.match(iconButtonTag(topBar({ onReset() {}, resetArmed: true, resetLabel: 'Reset All Customization', onDetect() {} }), 'Click again to confirm')[0], /data-armed=""/);
+  // The wiring (static): App offers Detect only on the Classic Customize screen.
+  const appSource = await readFile(new URL('./src/App.tsx', import.meta.url), 'utf8');
+  assert.match(appSource, /onDetect=\{screen === "customize" && !native \?/);
   // The single provider list: an enabled row that still needs its credential
   // keeps the hint off the row's text — it rides an alert icon beside the name
   // — and its sign-in action takes the "+" column as an icon.
@@ -406,6 +465,8 @@ try {
     { id: 'cursor', name: 'Cursor', enabled: true, configured: false, env: '', signIn: 'Sign in to the Cursor app, then Refresh.', action: 'app', addAccounts: [] },
     { id: 'zai', name: 'Z.AI', enabled: true, configured: false, env: 'ZAI_API_KEY', signIn: 'Set the ZAI_API_KEY, then Refresh.', action: '', addAccounts: [] },
     { id: 'moonshot', name: 'Moonshot', enabled: true, configured: true, env: '', signIn: '', action: '', addAccounts: ['code'] },
+    { id: 'antigravity', name: 'Antigravity', enabled: true, configured: true, env: '', signIn: '', action: '', addAccounts: ['code', 'desktop'] },
+    { id: 'deepseek', name: 'DeepSeek', enabled: true, configured: true, env: '', signIn: '', action: '', addAccounts: [] },
   ];
   // Every row already has its card, as once the report brings the error card.
   const needsCards = [
@@ -414,6 +475,7 @@ try {
     { id: 'cursor', title: 'Cursor', icon: 'cursor', rows: [{ kind: 'metric' }] },
     { id: 'zai', title: 'Z.AI', icon: 'zai', rows: [{ kind: 'metric' }] },
     { id: 'moonshot', title: 'Moonshot', icon: 'moonshot', rows: [{ kind: 'metric' }, { kind: 'metric' }] },
+    { id: 'antigravity', title: 'Antigravity', icon: 'antigravity', rows: [{ kind: 'metric' }] },
   ];
   const listMarkup = renderToStaticMarkup(React.createElement(TooltipProvider, {},
     React.createElement(LanguageProvider, { language: 'en' },
@@ -447,12 +509,61 @@ try {
   const noActionRow = rowOf('zai', 'moonshot');
   assert.match(noActionRow, /<span tabindex="0" role="img" aria-label="Set the ZAI_API_KEY, then Refresh\."/);
   assert.doesNotMatch(noActionRow, /aria-label="(Add key|Sign in|Open app)"/);
-  assert.match(noActionRow, /<span aria-hidden="true" class="size-\[var\(--row-icon-box\)\]">/);
+  assert.match(noActionRow, /<span aria-hidden="true" class="size-\[var\(--icon-btn\)\]">/);
   // A ready row keeps its metrics subtitle and the add-account "+".
-  const readyRow = rowOf('moonshot');
+  const readyRow = rowOf('moonshot', 'antigravity');
   assert.match(readyRow, />2 metrics</);
   assert.match(readyRow, /<button[^>]*aria-label="Add account"/);
   assert.doesNotMatch(readyRow, /text-notice/);
+  // The "+" column is the uniform icon button now: the direct "+" (one account
+  // kind) and the menu trigger (two kinds) keep the name and the tooltip on
+  // the button itself; the active chevron opens the provider's card the same
+  // way, and a provider without a card keeps the column with the same box,
+  // inert and out of the interaction.
+  const directAdd = iconButtonTag(readyRow, 'Add account');
+  assert.equal(directAdd.length, 1);
+  assert.doesNotMatch(directAdd[0], /aria-haspopup/);
+  const menuRow = rowOf('antigravity', 'deepseek');
+  // The menu trigger is the same contract as the direct "+": the icon-btn box,
+  // the name and the tooltip trigger on the button itself — the asChild merge
+  // may not drop the tooltip's slot — plus the menu wiring on the same tag.
+  const menuAdd = iconButtonTag(menuRow, 'Add account');
+  assert.equal(menuAdd.length, 1);
+  assert.match(menuAdd[0], /aria-haspopup="menu"/);
+  iconButtonTag(readyRow, 'Open Moonshot');
+  const inertRow = rowOf('deepseek');
+  const inertTag = (inertRow.match(/<span[^>]*data-inert[^>]*>/g) ?? [])[0];
+  assert.ok(inertTag, 'the inert chevron keeps its column');
+  assert.match(inertTag, /aria-hidden="true"/);
+  assert.match(inertTag, /class="[^"]*icon-btn[^"]*"/);
+  assert.doesNotMatch(inertTag, /data-slot/);
+  // The hint is no longer a text line: it rides the list's help icon in the
+  // header — focusable, labelled with the hint itself, tooltip trigger — and
+  // the group no longer carries a visible "Providers" title of its own.
+  // "Detect Providers" is out of the list (the screen passes it as a header
+  // action). An error stays the red text under the list; without one there is
+  // no hint line at all.
+  const providersHint = 'Turn a provider on to fetch it. Changes are saved to config.toml.';
+  assert.equal(listMarkup.split(providersHint).length - 1, 1);
+  const helpTag = (listMarkup.match(/<span[^>]*>/g) ?? []).find((tag) => tag.includes(`aria-label="${providersHint}"`));
+  assert.ok(helpTag, 'the help icon carries the hint as its accessible name');
+  assert.match(helpTag, /tabindex="0"/);
+  assert.match(helpTag, /role="img"/);
+  assert.match(helpTag, /data-slot="tooltip-trigger"/);
+  assert.doesNotMatch(listMarkup, new RegExp(`>${escaped(providersHint)}`));
+  // The group's visible "Providers" title is gone: the header keeps only the
+  // help icon (plus the screen's header actions, when it passes them).
+  assert.doesNotMatch(listMarkup, />Providers</);
+  assert.doesNotMatch(listMarkup, /Detect Providers/);
+  const listWithError = renderToStaticMarkup(React.createElement(TooltipProvider, {},
+    React.createElement(LanguageProvider, { language: 'en' },
+      React.createElement(ProviderList, {
+        cards: needsCards, error: 'Could not load providers', layout: emptyLayout(), providers: needsProviders,
+        onOpen() {}, onReorder() {}, onToggle() {},
+      }))));
+  const errorTag = (listWithError.match(/<div[^>]*>/g) ?? []).find((tag) => tag.includes('text-meter-red'));
+  assert.ok(errorTag, 'the error renders as its own line');
+  assert.match(listWithError, />Could not load providers</);
   // The key dialog. Radix keeps portaled content out of static markup (as it
   // does the menus), so the contract is tested on `ApiKeyDialogView`, the
   // content the dialog renders, under a `Dialog` root whose context
@@ -460,14 +571,15 @@ try {
   const { ApiKeyDialog, ApiKeyDialogView } = await server.ssrLoadModule('/src/components/ApiKeyDialog.tsx');
   const { Dialog } = await server.ssrLoadModule('/src/components/ui/dialog.tsx');
   const keyProvider = { icon: 'zai', id: 'zai', name: 'Z.AI', keyLabel: 'API key', keyNote: 'coding-plan usage' };
-  const keyView = (props) => renderToStaticMarkup(React.createElement(LanguageProvider, { language: 'en' },
-    React.createElement(Dialog, { open: true, onOpenChange() {} },
-      React.createElement(ApiKeyDialogView, {
-        checking: false, error: '', keyDraft: '', language: 'en', noAnswer: false,
-        provider: keyProvider, revealed: false,
-        onKeyChange() {}, onRevealToggle() {}, onCancel() {}, onSave() {},
-        ...props,
-      }))));
+  const keyView = (props) => renderToStaticMarkup(React.createElement(TooltipProvider, {},
+    React.createElement(LanguageProvider, { language: 'en' },
+      React.createElement(Dialog, { open: true, onOpenChange() {} },
+        React.createElement(ApiKeyDialogView, {
+          checking: false, error: '', keyDraft: '', language: 'en', noAnswer: false,
+          provider: keyProvider, revealed: false,
+          onKeyChange() {}, onRevealToggle() {}, onCancel() {}, onSave() {},
+          ...props,
+        })))));
   const enabledButtons = (markup) => (markup.match(/<button[^>]*>/g) ?? []).filter((b) => !/\sdisabled=""/.test(b));
   // The approved layout: the provider's mark beside "<provider> key" and the
   // host's note (first letter raised); the field is masked, with the reveal
@@ -480,6 +592,9 @@ try {
   assert.match(keyIdle, /Saved in config\.toml, readable only by you\./);
   assert.match(keyIdle, /<input[^>]*type="password"/);
   assert.doesNotMatch(keyIdle, /<input[^>]*\sdisabled=""/);
+  // The reveal toggle is the uniform icon button (name and tooltip on the tag).
+  iconButtonTag(keyIdle, 'Show key');
+  iconButtonTag(keyView({ revealed: true }), 'Hide key');
   // A form: Enter in the field submits, the same as Save.
   assert.match(keyIdle, /<form[^>]*>/);
   assert.match(keyIdle, /<button type="submit"[^>]*disabled=""/);
@@ -619,9 +734,25 @@ try {
     return deviceList.slice(start, next === -1 ? undefined : next);
   };
   assert.match(listRow('openai'), /aria-label="Sign in with your ChatGPT account to track usage\."/);
-  assert.match(listRow('openai'), /<button[^>]*aria-label="Sign in"[^>]*data-key-row="openai"/);
+  // The credential action's button keeps the name and the row's focus hook
+  // on the icon button itself (attribute order is no contract).
+  const signInTag = buttonTags(listRow('openai')).find((tag) => tag.includes('aria-label="Sign in"'));
+  assert.ok(signInTag, 'the sign-in action is a button');
+  assert.match(signInTag, /class="[^"]*icon-btn[^"]*"/);
+  assert.match(signInTag, /data-key-row="openai"/);
   assert.doesNotMatch(listRow('openai'), /codex login/);
   assert.match(listRow('anthropic'), /aria-label="Run `claude` in a terminal, then Refresh\."/);
+  // The dismissable hint card: the ✕ is the uniform icon button — a specific
+  // dismissTitle is its name and tooltip, the fallback is Dismiss.
+  const { HintCard } = await server.ssrLoadModule('/src/components/HintCard.tsx');
+  const hintCard = (props) => renderToStaticMarkup(React.createElement(TooltipProvider, {},
+    React.createElement(LanguageProvider, { language: 'en' },
+      React.createElement(HintCard, {
+        buttonTitle: 'Open TUI', icon: null, message: 'The TUI is the full screen.', title: 'Usage needs the TUI',
+        onAction() {}, onDismiss() {}, ...props,
+      }))));
+  iconButtonTag(hintCard({ dismissTitle: 'Close this notice' }), 'Close this notice');
+  iconButtonTag(hintCard({}), 'Dismiss');
   console.log('native dashboard: ok');
 } finally {
   await server.close();

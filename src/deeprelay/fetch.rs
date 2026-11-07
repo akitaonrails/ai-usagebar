@@ -102,9 +102,11 @@ async fn request(
 ) -> Result<(CachedPayload, DeepRelaySnapshot)> {
     let subscription: Subscription =
         get_json(client, api_key, &endpoints.subscription, "subscription").await?;
-    // A wallet failure must leave the plan figures up: the subscription is the
-    // primary reading, the balance is supplementary.
-    let balance = if wants_balance(&subscription) {
+    // PAYG has no plan figures to fall back on: the wallet is its primary
+    // reading. Only a subscriber's supplementary wallet may fail independently.
+    let balance = if !subscription.subscribed {
+        Some(get_json::<Balance>(client, api_key, &endpoints.balance, "balance").await?)
+    } else if wants_balance(&subscription) {
         get_json::<Balance>(client, api_key, &endpoints.balance, "balance")
             .await
             .ok()
@@ -198,6 +200,11 @@ mod tests {
         format!(r#"{{"subscription":{SUBSCRIPTION}}}"#).into_bytes()
     }
     const BALANCE: &str = r#"{"balance_cents":1234,"auto_pay_enabled":false,"auto_pay_threshold_cents":0,"auto_pay_amount_cents":0,"burn_cents_per_hour":0}"#;
+    const PAYG_SUBSCRIPTION: &str = r#"{"subscribed":false,"plan":null,"quota":null,"usage":null}"#;
+
+    fn cached_payg_body() -> Vec<u8> {
+        format!(r#"{{"subscription":{PAYG_SUBSCRIPTION},"balance":{BALANCE}}}"#).into_bytes()
+    }
 
     fn endpoints(server: &mockito::Server) -> Endpoints {
         Endpoints {
@@ -283,13 +290,15 @@ mod tests {
     #[tokio::test]
     async fn a_failed_balance_call_keeps_the_plan_figures() {
         let mut server = mockito::Server::new_async().await;
-        server
+        let mut body: serde_json::Value = serde_json::from_str(SUBSCRIPTION).unwrap();
+        body["usage"]["recent_payg_calls_24h"] = 1.into();
+        let subscription = server
             .mock("GET", "/billing/subscription")
             .with_status(200)
-            .with_body(SUBSCRIPTION)
+            .with_body(body.to_string())
             .create_async()
             .await;
-        server
+        let balance = server
             .mock("GET", "/billing/balance")
             .with_status(500)
             .with_body("{}")
@@ -309,6 +318,188 @@ mod tests {
         assert_eq!(outcome.snapshot.plan, "Plus");
         assert_eq!(outcome.snapshot.balance_usd, None);
         assert!(!outcome.stale);
+        subscription.assert_async().await;
+        balance.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn payg_balance_failures_preserve_cache_or_report_the_original_error() {
+        for warm_cache in [false, true] {
+            for (status, body, error_code) in [
+                (500, r#"{"detail":"wallet unavailable"}"#, 500),
+                (429, r#"{"detail":"rate limited"}"#, 429),
+                (200, r#"{"unexpected":true}"#, 0),
+            ] {
+                let mut server = mockito::Server::new_async().await;
+                let subscription = server
+                    .mock("GET", "/billing/subscription")
+                    .with_status(200)
+                    .with_body(PAYG_SUBSCRIPTION)
+                    .expect(1)
+                    .create_async()
+                    .await;
+                let balance = server
+                    .mock("GET", "/billing/balance")
+                    .with_status(status)
+                    .with_body(body)
+                    .expect(1)
+                    .create_async()
+                    .await;
+                let (_dir, cache) = cache();
+                let cached = cached_payg_body();
+                if warm_cache {
+                    cache.write_payload(&cached).unwrap();
+                }
+                let client = reqwest::Client::new();
+                let endpoints = endpoints(&server);
+
+                let result =
+                    fetch_snapshot(&client, "drl-test", &cache, &endpoints, Duration::ZERO).await;
+                if warm_cache {
+                    let outcome = result.unwrap();
+                    assert_eq!(outcome.snapshot.balance_usd, Some(12.34));
+                    assert!(outcome.stale);
+                    assert!(!outcome.off_the_wire());
+                    assert_eq!(
+                        outcome.last_error.as_ref().map(|(code, _)| *code),
+                        Some(error_code)
+                    );
+                    assert_eq!(std::fs::read(cache.payload_path()).unwrap(), cached);
+                } else {
+                    let error = result.expect_err("PAYG requires a usable wallet balance");
+                    assert!(
+                        matches!(
+                            error,
+                            AppError::Http { status, .. } if status == error_code
+                        ) || matches!(error, AppError::Schema(_)) && error_code == 0
+                    );
+                    assert!(!cache.payload_path().exists());
+                }
+                assert!(cache.is_stale());
+                assert_eq!(
+                    cache.read_last_error().map(|(code, _)| code),
+                    Some(error_code)
+                );
+                if status == 429 {
+                    let deadline = std::fs::read(cache.retry_after_path()).unwrap();
+                    let retry = fetch_snapshot(
+                        &client,
+                        "drl-test",
+                        &cache,
+                        &endpoints,
+                        Duration::from_secs(60),
+                    )
+                    .await;
+                    if warm_cache {
+                        let outcome = retry.unwrap();
+                        assert!(outcome.stale);
+                        assert_eq!(outcome.snapshot.balance_usd, Some(12.34));
+                    } else {
+                        assert!(matches!(retry, Err(AppError::Http { status: 429, .. })));
+                    }
+                    let wire_only =
+                        fetch_snapshot(&client, "drl-test", &cache, &endpoints, Duration::ZERO)
+                            .await;
+                    assert!(matches!(wire_only, Err(AppError::Http { status: 429, .. })));
+                    assert_eq!(std::fs::read(cache.retry_after_path()).unwrap(), deadline);
+                }
+                subscription.assert_async().await;
+                balance.assert_async().await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn payg_balance_transport_failure_keeps_the_previous_wallet_stale() {
+        let mut server = mockito::Server::new_async().await;
+        let subscription = server
+            .mock("GET", "/billing/subscription")
+            .with_status(200)
+            .with_body(PAYG_SUBSCRIPTION)
+            .create_async()
+            .await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let unavailable = listener.local_addr().unwrap();
+        let reset_connection = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            drop(socket);
+        });
+        let mut endpoints = endpoints(&server);
+        endpoints.balance = format!("http://{unavailable}/billing/balance");
+        let (_dir, cache) = cache();
+        let cached = cached_payg_body();
+        cache.write_payload(&cached).unwrap();
+
+        let outcome = fetch_snapshot(
+            &reqwest::Client::new(),
+            "drl-test",
+            &cache,
+            &endpoints,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.snapshot.balance_usd, Some(12.34));
+        assert!(outcome.stale);
+        assert!(outcome.last_error.is_none());
+        assert_eq!(std::fs::read(cache.payload_path()).unwrap(), cached);
+        subscription.assert_async().await;
+        reset_connection.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn payg_cache_without_a_balance_is_refetched_unless_backed_off() {
+        for backed_off in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let expected_requests = usize::from(!backed_off);
+            let subscription = server
+                .mock("GET", "/billing/subscription")
+                .with_status(200)
+                .with_body(PAYG_SUBSCRIPTION)
+                .expect(expected_requests)
+                .create_async()
+                .await;
+            let balance = server
+                .mock("GET", "/billing/balance")
+                .with_status(200)
+                .with_body(BALANCE)
+                .expect(expected_requests)
+                .create_async()
+                .await;
+            let (_dir, cache) = cache();
+            let incomplete = format!(r#"{{"subscription":{PAYG_SUBSCRIPTION}}}"#);
+            cache.write_payload(incomplete.as_bytes()).unwrap();
+            let deadline = backed_off.then(|| {
+                cache.write_last_error(429, "rate limited");
+                std::fs::read(cache.retry_after_path()).unwrap()
+            });
+
+            let result = fetch_snapshot(
+                &reqwest::Client::new(),
+                "drl-test",
+                &cache,
+                &endpoints(&server),
+                Duration::from_secs(60),
+            )
+            .await;
+
+            if let Some(deadline) = deadline {
+                assert!(matches!(result, Err(AppError::Http { status: 429, .. })));
+                assert_eq!(std::fs::read(cache.retry_after_path()).unwrap(), deadline);
+                assert_eq!(
+                    std::fs::read(cache.payload_path()).unwrap(),
+                    incomplete.as_bytes()
+                );
+            } else {
+                let outcome = result.unwrap();
+                assert_eq!(outcome.snapshot.balance_usd, Some(12.34));
+                assert!(outcome.off_the_wire());
+                assert!(!outcome.stale);
+            }
+            subscription.assert_async().await;
+            balance.assert_async().await;
+        }
     }
 
     #[tokio::test]

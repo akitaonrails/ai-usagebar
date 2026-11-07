@@ -10,6 +10,7 @@ import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { useRef, useState } from "react";
 import { DragHandle } from "@/components/DragHandle";
 import { AccountTabs } from "@/components/AccountTabs";
+import { IconButton } from "@/components/IconButton";
 import { TruncatedText } from "@/components/TruncatedText";
 import {
   handleRowDragEnd,
@@ -212,15 +213,14 @@ function MetricTuneRow({ enabled, handle, row, starred, onStar, onToggle }: Metr
       <DragHandle attributes={handle?.attributes} listeners={handle?.listeners} />
       <TruncatedText className="min-w-0 flex-1">{title}</TruncatedText>
       {onStar ? (
-        <button
-          type="button"
-          aria-label={starred ? `${m.unstar()} ${title}` : `${m.star()} ${title} ${m.for_menu_bar()}`}
+        <IconButton
+          label={starred ? `${m.unstar()} ${title}` : `${m.star()} ${title} ${m.for_menu_bar()}`}
           aria-pressed={starred === true}
-          className="hover-icon inline-flex size-[var(--row-icon-box)] items-center justify-center text-label-2 hover:text-foreground"
+          className={starred ? "is-active" : undefined}
           onClick={onStar}
         >
-          {starred ? <MdiStar className="size-[var(--icon-row)] text-primary" /> : <MdiStarOutline className="size-[var(--icon-row)]" />}
-        </button>
+          {starred ? <MdiStar /> : <MdiStarOutline />}
+        </IconButton>
       ) : null}
       <Switch checked={enabled} aria-label={`${m.show()} ${title}`} onCheckedChange={(on) => onToggle?.(on === true)} />
     </div>

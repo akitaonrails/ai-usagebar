@@ -2,12 +2,14 @@ import { useEffect, useLayoutEffect, useRef, type ComponentType, type MouseEvent
 import MdiAlert from "~icons/mdi/alert";
 import MdiChevronRight from "~icons/mdi/chevron-right";
 import MdiConsole from "~icons/mdi/console";
+import MdiHelpCircleOutline from "~icons/mdi/help-circle-outline";
 import MdiKeyPlus from "~icons/mdi/key-plus";
 import MdiLogin from "~icons/mdi/login";
 import MdiOpenInApp from "~icons/mdi/open-in-app";
 import MdiPlus from "~icons/mdi/plus";
 import { DragHandle } from "@/components/DragHandle";
 import { Hint } from "@/components/Hint";
+import { IconButton } from "@/components/IconButton";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { TruncatedText } from "@/components/TruncatedText";
 import { SortableItem, VerticalDnd } from "@/components/dnd";
@@ -34,8 +36,15 @@ interface ProviderListProps {
   onReorder: (ids: string[]) => void;
   onToggle: (id: string, on: boolean) => void;
   providers: ProviderInfo[];
-  /** The header's right side next to Detect (Settings' reset button). */
-  headerExtra?: ReactNode;
+  /** The header's right side beside the title (Settings passes reset and Detect). */
+  headerActions?: ReactNode;
+  /**
+   * Draw the "Providers" title and the visible how-to line. Settings has a tab
+   * that supplies the heading, so it stays compact (icon only); Customize is
+   * this list alone and keeps both, which is what it looked like before the
+   * header was unified.
+   */
+  heading?: boolean;
 }
 
 const ADD_ACCOUNT_LABELS: Record<string, () => string> = { code: m.add_claude_code_account, desktop: m.add_claude_desktop_account, codex: m.add_codex_account };
@@ -50,7 +59,7 @@ const ADD_ACCOUNT_LABELS: Record<string, () => string> = { code: m.add_claude_co
  * live in its subtitle; the accounts themselves are chosen there, in the
  * detail, not in this list.
  */
-export function ProviderList({ cards, error, headerExtra, layout, onOpen, onReorder, onToggle, providers }: ProviderListProps) {
+export function ProviderList({ cards, error, headerActions, heading = false, layout, onOpen, onReorder, onToggle, providers }: ProviderListProps) {
   // The host re-reads credentials only when asked, so ask whenever the list opens.
   useEffect(() => {
     sendCommand("providers");
@@ -67,13 +76,19 @@ export function ProviderList({ cards, error, headerExtra, layout, onOpen, onReor
   return (
     <div className="flex flex-col gap-[var(--header-card-gap)]">
       <div className="flex items-center justify-between gap-2">
-        <div className="section-title">{m.providers()}</div>
-        <div className="flex items-center gap-2">
-          {headerExtra}
-          <button type="button" className="text-[length:var(--sz-badge)] text-[var(--accent)]" onClick={() => sendCommand("detect")}>
-            {m.detect_providers()}
-          </button>
+        <div className="section-title flex items-center gap-[var(--gap-inline)]">
+          {heading ? <span>{m.providers()}</span> : null}
+          <Hint content={m.all_providers_hint()}>
+            <span tabIndex={0} role="img" aria-label={m.all_providers_hint()}>
+              <MdiHelpCircleOutline className="size-[var(--icon-help)] shrink-0 text-label-2" />
+            </span>
+          </Hint>
         </div>
+        {headerActions ? (
+          <div className="flex items-center gap-2">
+            {headerActions}
+          </div>
+        ) : null}
       </div>
       {enabled.length + disabled.length > 0 ? (
         <div className="card-surface">
@@ -103,9 +118,17 @@ export function ProviderList({ cards, error, headerExtra, layout, onOpen, onReor
           </VerticalDnd>
         </div>
       ) : null}
-      <div className={cn("px-[var(--card-pad)] text-[length:var(--sz-badge)]", error ? "text-meter-red" : "text-label-2")}>
-        {error || m.all_providers_hint()}
-      </div>
+      {error ? (
+        <div className="px-[var(--card-pad)] text-[length:var(--sz-badge)] text-meter-red">
+          {error}
+        </div>
+      ) : heading ? (
+        // Customize has no tab to explain the list; keep the instruction
+        // visible instead of hiding it behind the help icon.
+        <div className="px-[var(--card-pad)] text-[length:var(--sz-badge)] text-label-2">
+          {m.all_providers_hint()}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -212,15 +235,15 @@ function ProviderRow({ row, handle, off = false, onAddKey, onOpen, onToggle }: P
           />
         ) : add ? (
           add.kind === "direct" ? (
-            <button type="button" aria-label={m.add_account()} className="plain-btn hover-icon grid size-[var(--row-icon-box)] place-items-center" onClick={() => sendCommand("add-account", { kind: add.value })}>
-              <MdiPlus className="size-[var(--icon-row)] text-label-2" />
-            </button>
+            <IconButton label={m.add_account()} onClick={() => sendCommand("add-account", { kind: add.value })}>
+              <MdiPlus />
+            </IconButton>
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button type="button" aria-label={m.add_account()} className="plain-btn hover-icon grid size-[var(--row-icon-box)] place-items-center">
-                  <MdiPlus className="size-[var(--icon-row)] text-label-2" />
-                </button>
+                <IconButton label={m.add_account()}>
+                  <MdiPlus />
+                </IconButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={2}>
                 {add.value.map((kind) => (
@@ -235,7 +258,7 @@ function ProviderRow({ row, handle, off = false, onAddKey, onOpen, onToggle }: P
         ) : (
           // No account kinds (or the provider is off): keep the column so the
           // switch and chevron stay aligned across rows.
-          <span aria-hidden className="size-[var(--row-icon-box)]" />
+          <span aria-hidden className="size-[var(--icon-btn)]" />
         )}
         {row.switchable ? (
           <Switch
@@ -249,14 +272,14 @@ function ProviderRow({ row, handle, off = false, onAddKey, onOpen, onToggle }: P
           <span aria-hidden className="w-[var(--switch-w)]" />
         )}
         {first ? (
-          <button type="button" aria-label={`${m.open()} ${row.cards.length > 1 ? row.name : first.title}`} className="plain-btn hover-icon grid size-[var(--row-icon-box)] place-items-center" onClick={() => onOpen(first.id)}>
-            <MdiChevronRight className="size-[var(--icon-row)] text-label-3" />
-          </button>
+          <IconButton label={`${m.open()} ${row.cards.length > 1 ? row.name : first.title}`} onClick={() => onOpen(first.id)}>
+            <MdiChevronRight />
+          </IconButton>
         ) : (
           // Nothing to open (the provider is off, or has no card yet): the
           // chevron stays, inert and dimmed, so every switch keeps its column.
-          <span aria-hidden className="grid size-[var(--row-icon-box)] place-items-center">
-            <MdiChevronRight className="size-[var(--icon-row)] text-label-3 opacity-40" />
+          <span aria-hidden className="icon-btn" data-inert>
+            <MdiChevronRight />
           </span>
         )}
       </div>
@@ -286,17 +309,8 @@ function CredentialAction({ icon: Icon, label, onClick, rowId }: CredentialActio
     return () => handFocusOnRemoval(node, rowId);
   }, [rowId]);
   return (
-    <Hint content={label}>
-      <button
-        ref={button}
-        type="button"
-        aria-label={label}
-        data-key-row={rowId}
-        className="plain-btn hover-icon grid size-[var(--row-icon-box)] place-items-center"
-        onClick={onClick}
-      >
-        <Icon className="size-[var(--icon-row)] text-label-2" />
-      </button>
-    </Hint>
+    <IconButton ref={button} label={label} data-key-row={rowId} onClick={onClick}>
+      <Icon />
+    </IconButton>
   );
 }

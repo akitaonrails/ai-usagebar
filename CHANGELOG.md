@@ -1,6 +1,32 @@
 ## [Unreleased]
 
+### Changed
+
+- Every icon button in the tray popover has the same size, color, hover and tooltip in every style; Detect Providers is an icon beside Reset, and the providers hint moved into a help icon.
+
 ### Fixed
+
+- **A Claude Desktop account captured on Desktop 4.16 gets its usage tab.**
+  Since #573 such a profile holds only the V2 token cache, which switching and
+  the usage reader already accept, but the profile listing still required the
+  legacy blob as well. The account read `creds=no` in `account status` and was
+  left out of the TUI, `usage --json` and the menu bar's account list (#580).
+
+- **Kimi's default bar shows the monthly pool on newer-shape accounts.** An
+  account on the newer `/coding/v1/usages` shape has no weekly bucket, so the
+  default `5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%` read `5h 15% · 7d %`
+  and left the monthly pool, which already set the bar's color, off the bar.
+  Those accounts now get `5h {kimi_window_pct}% · mo {kimi_monthly_pct}%`;
+  legacy-shape accounts and a configured `--format` are unchanged (#583).
+
+- **Usage priorities ignore windows that have already reset.** An expired
+  window in a cached reading no longer marks a provider exhausted or hides
+  its current weekly quota from the forecast.
+
+- **DeepRelay:** a failed pay-as-you-go wallet request now preserves the last
+  balance as stale, or reports the error when no usable cache exists, instead
+  of saving an empty successful reading. Wallet rate limits honor the shared
+  backoff. A subscriber's supplementary wallet remains optional.
 
 - **Rejected tray API keys are rolled back in TOML inline tables.** If a
   provider rejects a key, or its cache cannot be cleared before checking,
@@ -8,7 +34,6 @@
   tables too. Previously the rollback rejected that valid table format,
   leaving the candidate key saved and the provider enabled. Unrelated
   settings, comments, and later edits remain intact.
-
 ## [1.48.2] — 2026-11-05
 
 ### Added

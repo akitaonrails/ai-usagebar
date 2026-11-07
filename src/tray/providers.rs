@@ -1142,9 +1142,10 @@ mod tests {
 
                 assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
                 assert_eq!(fetched.get(), !cache_failure);
-                let fact = crate::tray::payload::facts_snapshot(&facts)
-                    .key_check
-                    .unwrap();
+                // Read the shared record directly: `facts_snapshot` is
+                // compiled only for the window/menu-bar hosts, and this test
+                // is meant to run on every platform.
+                let fact = facts.lock().unwrap().key_check.clone().unwrap();
                 assert_eq!(fact.state, KeyCheckState::Failed);
                 assert_eq!(
                     fact.error,
