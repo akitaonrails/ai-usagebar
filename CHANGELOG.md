@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Usage priorities ignore windows that have already reset.** An expired
+  window in a cached reading no longer marks a provider exhausted or hides
+  its current weekly quota from the forecast.
+
 ## [1.48.2] — 2026-11-05
 
 ### Added
