@@ -443,7 +443,20 @@ async fn entry_for_report_target(
     match target {
         ReportTarget::Tab(tab) => entry_for(client, config, tab, freshness).await,
         ReportTarget::AntigravityAccount(tab, account) => {
-            entry_from_antigravity_account(tab, account, Utc::now())
+            let live = match crate::cache::Cache::for_vendor("antigravity") {
+                Ok(cache) => crate::antigravity::fetch::fetch_account_snapshot(
+                    client,
+                    &cache,
+                    freshness.ttl(),
+                    &account.snapshot.account,
+                    config.antigravity.agy_binary.as_deref(),
+                    config.antigravity.ide_language_server,
+                )
+                .await
+                .ok(),
+                Err(_) => None,
+            };
+            entry_from_antigravity_reading(tab, account, live.as_ref(), Utc::now())
         }
     }
 }
@@ -617,6 +630,35 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         }
     }
     entry
+}
+
+fn entry_from_antigravity_reading(
+    tab: &TabId,
+    account: &crate::antigravity::statusline::AccountSession,
+    live: Option<&crate::antigravity::fetch::FetchOutcome>,
+    now: DateTime<Utc>,
+) -> Entry {
+    // A status line can keep sending a zero weekly bucket after /quota has
+    // recorded usage. A fresh local RPC or identity-verified agy reading may
+    // replace it; Cloud Code's separate tracker cannot stand in for /quota.
+    if let Some(live) = live
+        && !live.stale
+        && matches!(
+            live.snapshot.source,
+            crate::usage::AntigravitySource::Local | crate::usage::AntigravitySource::Agy
+        )
+        && live.snapshot.account.strip_prefix("acct:") == Some(account.snapshot.account.as_str())
+    {
+        let mut refreshed = account.clone();
+        refreshed.snapshot = live.snapshot.clone();
+        refreshed.snapshot.account = account.snapshot.account.clone();
+        refreshed.updated_at = live
+            .cache_age
+            .and_then(|age| chrono::Duration::from_std(age).ok())
+            .map_or(now, |age| now - age);
+        return entry_from_antigravity_account(tab, &refreshed, now);
+    }
+    entry_from_antigravity_account(tab, account, now)
 }
 
 fn entry_from_antigravity_account(
@@ -1391,6 +1433,228 @@ mod tests {
         assert_eq!(entry.display_name, "Antigravity · a***@example.com");
         assert_eq!(entry.fetched_at, Some(account.updated_at));
         assert!(!entry.display_name.contains("account0"));
+    }
+
+    fn antigravity_readings() -> (
+        crate::antigravity::statusline::AccountSession,
+        crate::antigravity::fetch::FetchOutcome,
+        DateTime<Utc>,
+    ) {
+        let now = DateTime::parse_from_rfc3339("2026-11-07T16:50:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let window = |pct, duration| crate::usage::UsageWindow {
+            utilization_pct: pct,
+            resets_at: Some(now + duration),
+            window_duration: duration,
+        };
+        let mut account = antigravity_account(0);
+        account.snapshot.account = crate::antigravity::account_hash("same@example.com");
+        account.snapshot.session = Some(window(25, chrono::Duration::hours(5)));
+        account.snapshot.weekly = Some(window(0, chrono::Duration::days(7)));
+        account.updated_at = now - chrono::Duration::seconds(10);
+        let mut snapshot = account.snapshot.clone();
+        snapshot.source = crate::usage::AntigravitySource::Local;
+        snapshot.account = format!("acct:{}", account.snapshot.account);
+        snapshot.session.as_mut().unwrap().utilization_pct = 28;
+        let weekly = snapshot.weekly.as_mut().unwrap();
+        weekly.utilization_pct = 23;
+        weekly.resets_at = Some(now + chrono::Duration::hours(153));
+        snapshot.model_pools.push(crate::usage::ModelPoolWindow {
+            name: "Gemini 4 Argon".into(),
+            window: window(0, chrono::Duration::days(7)),
+        });
+        let mut live = crate::antigravity::fetch::FetchOutcome::fresh(snapshot);
+        live.cache_age = Some(std::time::Duration::from_secs(5));
+        (account, live, now)
+    }
+
+    // Mutation captured: using the status-line entry unconditionally reports
+    // 0% weekly usage and omits Argon despite the same-account live quota.
+    #[test]
+    fn antigravity_live_quota_replaces_zero_weekly_in_the_report() {
+        let (account, live, now) = antigravity_readings();
+        let fetched_at = Some(now - chrono::Duration::seconds(5));
+        let entry = entry_from_antigravity_reading(
+            &TabId::vendor(VendorId::Antigravity),
+            &account,
+            Some(&live),
+            now,
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[entry])).unwrap();
+        let entry = &value["entries"][0];
+        assert_eq!(entry["id"], format!("antigravity@{}", account.id_suffix));
+        assert_eq!(entry["display_name"], "Antigravity · a***@example.com");
+        assert_eq!(entry["fetched_at"], json!(fetched_at));
+        let metrics = entry["metrics"].as_array().unwrap();
+        assert_eq!(metrics[0]["percent"], 28);
+        assert_eq!(metrics[1]["percent"], 23);
+        assert_eq!(
+            metrics[1]["reset_at"],
+            json!(now + chrono::Duration::hours(153))
+        );
+        assert_eq!(metrics[2]["label"], "Gemini 4 Argon");
+        assert_eq!(metrics[2]["percent"], 0);
+    }
+
+    #[test]
+    fn antigravity_verified_agy_quota_replaces_zero_weekly_in_the_report() {
+        let (account, mut live, now) = antigravity_readings();
+        live.snapshot.source = crate::usage::AntigravitySource::Agy;
+        let entry = entry_from_antigravity_reading(
+            &TabId::vendor(VendorId::Antigravity),
+            &account,
+            Some(&live),
+            now,
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[entry])).unwrap();
+        let metrics = value["entries"][0]["metrics"].as_array().unwrap();
+        assert_eq!(metrics[1]["percent"], 23);
+        assert_eq!(metrics[2]["label"], "Gemini 4 Argon");
+        assert_eq!(
+            value["entries"][0]["id"],
+            format!("antigravity@{}", account.id_suffix)
+        );
+    }
+
+    // Mutations captured: removing the account, source or freshness guard
+    // substitutes another account's quota, an unattributed remote reading,
+    // or a stale reading for the active session.
+    #[test]
+    fn antigravity_unverified_quota_keeps_the_statusline_report() {
+        let tab = TabId::vendor(VendorId::Antigravity);
+        let (account, original, now) = antigravity_readings();
+        let expected = render_json_entries(&[entry_from_antigravity_account(&tab, &account, now)]);
+        for rejected in ["account", "remote", "unverified_agy", "stale"] {
+            let mut live = original.clone();
+            let snapshot = &mut live.snapshot;
+            match rejected {
+                "account" => snapshot.account = "acct:other".into(),
+                "remote" => snapshot.source = crate::usage::AntigravitySource::Remote,
+                "unverified_agy" => {
+                    snapshot.source = crate::usage::AntigravitySource::Agy;
+                    snapshot.account = "acct:credential-fingerprint".into();
+                }
+                "stale" => live.stale = true,
+                _ => unreachable!(),
+            }
+            let entry = entry_from_antigravity_reading(&tab, &account, Some(&live), now);
+            assert_eq!(render_json_entries(&[entry]), expected, "{rejected}");
+        }
+        assert_eq!(
+            render_json_entries(&[entry_from_antigravity_reading(&tab, &account, None, now)]),
+            expected,
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "reads the configured account and live Antigravity quota"]
+    async fn antigravity_live_account_report_matches_complete_quota() {
+        let config = Config::load().unwrap();
+        let client = crate::widget::run::http_client().unwrap();
+        let tab = TabId::vendor(VendorId::Antigravity);
+        let mut state = refresh_one(&client, &config, &tab, Freshness::Wire).await;
+        let TabState::Ready(ready) = &state else {
+            panic!("a working Antigravity quota source is required");
+        };
+        let crate::usage::VendorSnapshot::Antigravity(snapshot) = &ready.snapshot else {
+            unreachable!();
+        };
+        assert!(!ready.stale);
+        let (identity, cli_reference) =
+            match snapshot.source {
+                crate::usage::AntigravitySource::Local => (
+                    snapshot.account.strip_prefix("acct:").map(str::to_owned),
+                    None,
+                ),
+                crate::usage::AntigravitySource::Agy => {
+                    let raw = crate::antigravity::credential::read()
+                        .unwrap()
+                        .expect("the agy sign-in must identify its account");
+                    let token = crate::antigravity::credential::parse_keyring_blob(&raw).unwrap();
+                    let root = crate::cache::Cache::for_vendor("antigravity").unwrap();
+                    let cache =
+                        crate::cache::Cache::at(root.dir().join("agy").join(&token.fingerprint));
+                    let reading =
+                        crate::antigravity::fetch::fetch_snapshot_at(
+                            &client,
+                            &cache,
+                            std::time::Duration::from_secs(60),
+                            None,
+                            crate::antigravity::fetch::RemoteOverride {
+                                local_bases: Some(Vec::new()),
+                                agy: config.antigravity.agy_binary.as_ref().map_or(
+                                    crate::antigravity::agy::AgyCommand::Discover,
+                                    |path| crate::antigravity::agy::AgyCommand::At(path.clone()),
+                                ),
+                                ..Default::default()
+                            },
+                            Utc::now(),
+                        )
+                        .await
+                        .unwrap();
+                    assert!(!reading.stale);
+                    assert_eq!(
+                        reading.snapshot.source,
+                        crate::usage::AntigravitySource::Agy
+                    );
+                    (token.account_hash, Some(reading))
+                }
+                other => panic!("a local or agy quota source is required, got {other:?}"),
+            };
+        let identity = identity.expect("the complete quota must identify its account");
+        if let Some(reading) = cli_reference {
+            // The CLI's unused windows slide with the clock. Compare with
+            // the exact complete reading the consumer will use, rather than
+            // an independent default-cache refresh taken seconds earlier.
+            state = TabState::Ready(Box::new(crate::tui::app::ReadyTab {
+                snapshot: crate::usage::VendorSnapshot::Antigravity(reading.snapshot),
+                stale: false,
+                last_error: None,
+                fetched_at: Some(Utc::now()),
+                display: crate::balance::DisplayPrefs::default(),
+            }));
+        }
+        let accounts = crate::antigravity::statusline::active_accounts().unwrap();
+        let account = accounts
+            .iter()
+            .find(|account| identity == account.snapshot.account)
+            .expect("the quota source must match a running status-line account");
+        let expected: serde_json::Value =
+            serde_json::from_str(&render_json_entries(&[entry_from_state(
+                &tab,
+                &state,
+                Utc::now(),
+            )]))
+            .unwrap();
+        let actual: serde_json::Value = serde_json::from_str(
+            &collect_entry_json(&format!("antigravity@{}", account.id_suffix))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let readings = |document: &serde_json::Value| {
+            document["entries"][0]["metrics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|metric| {
+                    json!({
+                        "label": metric["label"],
+                        "percent": metric["percent"],
+                        "reset_at": metric["reset_at"],
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(readings(&actual), readings(&expected));
+        println!(
+            "verified Antigravity account metrics: {}",
+            json!(readings(&actual))
+        );
     }
 
     #[test]
