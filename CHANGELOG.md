@@ -14,6 +14,13 @@
 
 ### Fixed
 
+- **A DeepRelay PAYG wallet that rejects the key keeps the last balance,
+  stale and explained.** The wallet read added in 1.48.3 inherits the
+  key-vendor rule rather than the Antigravity one: a 401 keeps the cached
+  balance marked stale with the fixed auth message, so the panel does not
+  blank the figure over a revoked key. Pinned by a test, and the split between
+  the two rules is now written down in CLAUDE.md (#589).
+
 - **Kimi stops inventing a `5h 0%` window.** When `/coding/v1/usages` omits
   `limits` — Kimi does that for accounts without a rolling quota, and has also
   sent `null` — the snapshot carried a zeroed window, so the default bar read

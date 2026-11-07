@@ -448,6 +448,47 @@ mod tests {
         reset_connection.await.unwrap();
     }
 
+    // #589: key vendors serve the last good reading with an explicit auth
+    // message rather than a bare error — the cached figure is still what this
+    // account last used, and it is marked stale. Antigravity is the deliberate
+    // exception (a signed-out app's quota is not a reading at all).
+    #[tokio::test]
+    async fn a_payg_wallet_401_keeps_the_balance_stale_and_redacted() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/billing/subscription")
+            .with_status(200)
+            .with_body(PAYG_SUBSCRIPTION)
+            .create_async()
+            .await;
+        server
+            .mock("GET", "/billing/balance")
+            .with_status(401)
+            .with_body(r#"{"detail":"wallet key canary","code":"unauthenticated"}"#)
+            .create_async()
+            .await;
+        let (_dir, cache) = cache();
+        let cached = cached_payg_body();
+        cache.write_payload(&cached).unwrap();
+
+        let outcome = fetch_snapshot(
+            &reqwest::Client::new(),
+            "drl-test",
+            &cache,
+            &endpoints(&server),
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.snapshot.balance_usd, Some(12.34));
+        assert!(outcome.stale);
+        let (_, message) = outcome.last_error.expect("auth diagnostic");
+        assert_eq!(message, crate::error::AUTH_FAILURE_MESSAGE);
+        assert!(!message.contains("canary"));
+        assert_eq!(std::fs::read(cache.payload_path()).unwrap(), cached);
+    }
+
     #[tokio::test]
     async fn payg_cache_without_a_balance_is_refetched_unless_backed_off() {
         for backed_off in [false, true] {
