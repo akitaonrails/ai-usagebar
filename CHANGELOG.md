@@ -11,6 +11,11 @@
 - **Popover favorites follow the theme's blue accent.** Selected metric stars
   use the app's accent in light and dark themes.
 
+- **Provider headers keep account labels out of the title.** Classic and
+  Native use the catalog name even for a single account; multiple accounts
+  keep their labels in the account tabs. Keyboard focus stays visible on
+  those tabs in every style, including Native Windows.
+
 ## [1.49.0] — 2026-11-07
 
 ### Added

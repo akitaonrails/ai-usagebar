@@ -9,6 +9,7 @@ const server = await createServer({ server: { middlewareMode: true, hmr: false, 
 
 try {
   const { NativeDashboard } = await server.ssrLoadModule('/src/screens/NativeDashboard.tsx');
+  const { Dashboard } = await server.ssrLoadModule('/src/screens/Dashboard.tsx');
   const { ProviderSection } = await server.ssrLoadModule('/src/components/ProviderSection.tsx');
   const { Settings } = await server.ssrLoadModule('/src/screens/Settings.tsx');
   const { About } = await server.ssrLoadModule('/src/screens/About.tsx');
@@ -321,6 +322,39 @@ try {
   assert.match(multiAccount({ anthropic: 'anthropic@gone' }, 'anthropic@work'), /data-card-id="anthropic@work"/);
   // ASSERT: the single-account dashboard keeps no account tabs (the old screen).
   assert.doesNotMatch(nativeDashboard, /role="tablist"/);
+
+  // One live account still titles the provider after the catalog. Account
+  // labels belong to the account tabs, not the header or its tooltips.
+  const liveAccounts = ['one', 'two'].map((id, index) => ({
+    ...card, id: `antigravity@${id}`, icon: 'antigravity',
+    title: `Antigravity · ${index ? 'b' : 'a'}***@example.com`,
+  }));
+  for (const [Component, popoverStyle] of [[Dashboard, 'classic'], [NativeDashboard, 'native']]) {
+    for (const count of [1, 2]) {
+      const cards = liveAccounts.slice(0, count);
+      const markup = renderToStaticMarkup(React.createElement(TooltipProvider, {},
+        React.createElement(LanguageProvider, { language: 'en' },
+          React.createElement(Component, {
+            cards, visible: cards, hint: false, layout: { ...emptyLayout(), popoverStyle }, nowMs,
+            payload: { ...payload, primary: cards[0].id, providers: [{ id: 'antigravity', name: 'Antigravity' }] },
+            onCustomizeProvider() {}, onDismissHint() {}, onOpenCustomize() {}, onOpenSettings() {},
+            onRowAction() {}, onRowMenuOpenChange() {}, onSelectAccount() {}, onReorder() {},
+            onSwitchAccount() {}, onToggleCollapse() {}, onToggleShowAs() {},
+          }))));
+      const header = markup.match(/<section\b[^>]*data-card-id="antigravity@one"[\s\S]*?<\/header>/)?.[0];
+      assert.ok(header);
+      assert.match(header, />Antigravity</);
+      assert.doesNotMatch(header, /example\.com|Antigravity ·/);
+      assert.match(markup, /data-card-id="antigravity@one"/);
+      if (count === 2) {
+        assert.match(markup, /role="tablist" aria-label="Accounts"/);
+        assert.match(markup, /a\*\*\*@example\.com/);
+        assert.match(markup, /b\*\*\*@example\.com/);
+      } else {
+        assert.doesNotMatch(markup, /role="tablist" aria-label="Accounts"/);
+      }
+    }
+  }
   const settingsPayload = { ...emptyPayload(''), os: 'macos' };
   const settingsProps = {
     cards: [card], layout: { ...emptyLayout(), popoverStyle: 'native' }, nowMs, payload: settingsPayload,

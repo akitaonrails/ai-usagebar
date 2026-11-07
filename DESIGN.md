@@ -23,3 +23,10 @@ About tile's existing accent treatment. Selecting App Icon preserves favorites.
 
 Start at Login identifies the host platform: Apple on macOS, Windows on
 Windows, and a generic login symbol elsewhere.
+
+## Provider headers
+
+Dashboard headers and their tooltips use the provider's catalog name, including
+when only one named account is present. Account labels stay in account tabs
+and account management. Keep account IDs and stored preferences unchanged.
+Account tabs share the existing visible outline used by native provider tabs.
