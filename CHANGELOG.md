@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+
+- **DeepRelay:** a failed pay-as-you-go wallet request now preserves the last
+  balance as stale, or reports the error when no usable cache exists, instead
+  of saving an empty successful reading. Wallet rate limits honor the shared
+  backoff. A subscriber's supplementary wallet remains optional.
+
 ## [1.48.2] — 2026-11-05
 
 ### Added
