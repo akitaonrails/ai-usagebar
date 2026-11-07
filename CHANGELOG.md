@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Rejected tray API keys are rolled back in TOML inline tables.** If a
+  provider rejects a key, or its cache cannot be cleared before checking,
+  the previous key and enabled state are restored for inline provider
+  tables too. Previously the rollback rejected that valid table format,
+  leaving the candidate key saved and the provider enabled. Unrelated
+  settings, comments, and later edits remain intact.
+
 ## [1.48.2] — 2026-11-05
 
 ### Added
