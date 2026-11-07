@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.48.3] — 2026-11-07
+
 ### Changed
 
 - Every icon button in the tray popover has the same size, color, hover and tooltip in every style; Detect Providers is an icon beside Reset, and the providers hint moved into a help icon.
@@ -5380,7 +5382,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...HEAD
+[1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3
 [1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2
 [1.48.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...v1.48.1
 [1.48.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.47.0...v1.48.0
