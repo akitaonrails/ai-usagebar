@@ -23,11 +23,6 @@
   (`7d …` or `mo …`), those placeholders resolve empty, and the Overview drops
   the cell; a genuine rolling window still leads as before (#590).
 
-- **Kimi accounts without a rolling window omit the 5h figure.** When
-  Kimi reports no rolling rate-limit window, the default bar shows only
-  the account's long window (`7d` or `mo`) rather than a fabricated
-  `5h 0%`, the TUI overview drops the `5h` cell, and the window
-  placeholders render empty (#590).
 ## [1.48.3] — 2026-11-07
 
 ### Changed
