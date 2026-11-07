@@ -67,14 +67,14 @@ fn plan_line(snapshot: &DeepRelaySnapshot) -> String {
     line
 }
 
-pub(crate) fn meter_pct(meter: Option<&DeepRelayMeter>) -> String {
+fn meter_pct(meter: Option<&DeepRelayMeter>) -> String {
     meter
         .and_then(DeepRelayMeter::pct)
         .map(|pct| pct.to_string())
         .unwrap_or_default()
 }
 
-pub(crate) fn meter_detail(meter: Option<&DeepRelayMeter>) -> String {
+fn meter_detail(meter: Option<&DeepRelayMeter>) -> String {
     meter.map(DeepRelayMeter::used_of_limit).unwrap_or_default()
 }
 
