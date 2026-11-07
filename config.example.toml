@@ -11,7 +11,7 @@
 # Valid: anthropic | anthropic_api | openai | copilot | zai | openrouter | deepseek
 #        | kimi | kilo | novita | moonshot | grok | supergrok | grokbot | antigravity
 #        | cursor | minimax | kiro | nous | opencode-go | commandcode | ollama
-#        | orcarouter | modelstudio | lyceum | devin | cline | muse-code | droid | synthetic
+#        | orcarouter | modelstudio | lyceum | devin | cline | muse-code | droid | synthetic | mistral
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
 # open directly on a vendor's tab instead.
 # primary = "anthropic"
@@ -710,3 +710,14 @@ enabled = false
 enabled = false
 api_key_env = "DEEPRELAY_API_KEY"   # checked first; if set + non-empty, used
 # api_key = "deeprelay_live_..."     # fallback; chmod 600 the file if you use it
+
+[mistral]
+# Disabled by default — enable once you've set a key. Reads the monthly API
+# and Vibe Code budgets from https://api.mistral.ai/v1/billing/budget, the
+# routes the official mistral-vibe CLI uses; the documented Admin API is
+# Enterprise-only. The key is supplied explicitly; credentials are never
+# discovered from another app's store. The key needs the
+# `see_org_inference_usage` permission.
+enabled = false
+api_key_env = "MISTRAL_API_KEY"   # checked first; if set + non-empty, used
+# api_key = "mst-..."             # fallback; chmod 600 the file if you use it

@@ -484,6 +484,17 @@ func testParserBalances() {
     assertEqual(ocgFloat?.weekly?.pct, 12, "opencode-go parses floating weekly")
     assertEqual(ocgFloat?.sonnet?.pct, 34, "opencode-go parses floating monthly")
 
+    let mistral = snapshot(FORMAT, vendor: "mistral",
+                           fields: fields(through: 4, set: [
+                              0: "EDU", 1: "16", 2: "25d", 3: "0", 4: "25d"
+                           ]))
+    assertEqual(mistral?.session?.pct, 16, "mistral API pct")
+    assertEqual(mistral?.sessionLabel, "API budget", "mistral API label")
+    assertEqual(mistral?.sessionTag, "api", "mistral API tag")
+    assertEqual(mistral?.weekly?.pct, 0, "mistral Vibe pct")
+    assertEqual(mistral?.weeklyLabel, "Vibe budget", "mistral Vibe label")
+    assertEqual(mistral?.weeklyTag, "vibe", "mistral Vibe tag")
+
     let cmd = snapshot(FORMAT, vendor: "commandcode",
                        fields: fields(through: 37, set: [
                           0: "Command Code", 1: "15", 2: "4h 30m", 3: "40", 4: "5d", 16: "cmd",

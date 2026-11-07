@@ -44,6 +44,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "COMMANDCODE_API_KEY",
     "ORCAROUTER_API_KEY",
     "LYCEUM_API_KEY",
+    "MISTRAL_API_KEY",
     "GITHUB_COPILOT_TOKEN",
     "GH_TOKEN",
     "GITHUB_TOKEN",
@@ -196,6 +197,7 @@ pub enum VendorId {
     MuseCode,
     Droid,
     DeepRelay,
+    Mistral,
 }
 
 /// How a provider authenticates. Drives what a frontend offers a provider that
@@ -258,6 +260,7 @@ impl VendorId {
             VendorId::Cline => "cline",
             VendorId::Droid => "droid",
             VendorId::DeepRelay => "deeprelay",
+            VendorId::Mistral => "mistral",
         }
     }
 
@@ -298,6 +301,7 @@ impl VendorId {
             VendorId::MuseCode => "Muse Code",
             VendorId::Droid => "Droid",
             VendorId::DeepRelay => "DeepRelay",
+            VendorId::Mistral => "Mistral",
         }
     }
 
@@ -343,6 +347,8 @@ impl VendorId {
             // No distinct Nerd Font mark for DeepRelay; `drl` is unique by
             // construction and cannot render as tofu.
             VendorId::DeepRelay => VendorId::DeepRelay.short_name(),
+            // Same story for Mistral: the `mis` short name is unique.
+            VendorId::Mistral => VendorId::Mistral.short_name(),
         }
     }
 
@@ -384,6 +390,7 @@ impl VendorId {
             VendorId::Cline => "cln",
             VendorId::Droid => "drd",
             VendorId::DeepRelay => "drl",
+            VendorId::Mistral => "mis",
         }
     }
 
@@ -428,6 +435,7 @@ impl VendorId {
             VendorId::MuseCode => "muse-code",
             VendorId::Droid => "droid",
             VendorId::DeepRelay => "deeprelay",
+            VendorId::Mistral => "mistral",
         }
     }
 
@@ -460,7 +468,8 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
-            | VendorId::DeepRelay => AuthKind::ApiKey,
+            | VendorId::DeepRelay
+            | VendorId::Mistral => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
             // the login. Antigravity has no credential file at all (the binary
             // probes whichever local server answers), Cursor and Kiro read the
@@ -505,6 +514,7 @@ impl VendorId {
             VendorId::OrcaRouter => "ORCAROUTER_API_KEY",
             VendorId::Lyceum => "LYCEUM_API_KEY",
             VendorId::DeepRelay => "DEEPRELAY_API_KEY",
+            VendorId::Mistral => "MISTRAL_API_KEY",
             // OAuth-first, with an environment override for CI and headless
             // use. Neither name is configurable, so neither has an
             // `api_key_env` field in its config section.
@@ -580,7 +590,8 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
-            | VendorId::DeepRelay => "Add an API key in Settings, then Refresh.",
+            | VendorId::DeepRelay
+            | VendorId::Mistral => "Add an API key in Settings, then Refresh.",
         }
     }
 
@@ -620,15 +631,20 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
-            | VendorId::DeepRelay => "",
+            | VendorId::DeepRelay
+            | VendorId::Mistral => "",
         }
     }
 
     /// Whether first-run detection may enable this provider from local
-    /// credentials. Devin, Muse Code and Droid stay opt-in even when their
-    /// CLI credential files are discoverable.
+    /// credentials. Devin, Muse Code, Droid and Mistral stay opt-in even when
+    /// a credential is findable: Mistral's key is supplied by the configuring
+    /// agent, never discovered on its own.
     pub const fn auto_detectable(self) -> bool {
-        !matches!(self, VendorId::Devin | VendorId::MuseCode | VendorId::Droid)
+        !matches!(
+            self,
+            VendorId::Devin | VendorId::MuseCode | VendorId::Droid | VendorId::Mistral
+        )
     }
 
     pub const fn all() -> &'static [VendorId] {
@@ -665,6 +681,7 @@ impl VendorId {
             VendorId::MuseCode,
             VendorId::Droid,
             VendorId::DeepRelay,
+            VendorId::Mistral,
         ]
     }
 
@@ -852,6 +869,7 @@ mod tests {
             "GITHUB_COPILOT_TOKEN",
             "ORCAROUTER_API_KEY",
             "LYCEUM_API_KEY",
+            "MISTRAL_API_KEY",
         ];
         for name in configured_defaults {
             assert!(VENDOR_SECRET_ENV_VARS.contains(&name), "missing {name}");
