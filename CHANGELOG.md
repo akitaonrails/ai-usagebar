@@ -2,6 +2,8 @@
 
 ### Fixed
 
+- Anthropic API distinguishes rejected credentials from missing report permissions and no longer serves old spend after 401/403. Document organization report credential scope separately from inference access and prepaid credit.
+
 - **Kimi stops inventing a `5h 0%` window.** When `/coding/v1/usages` omits
   `limits` — Kimi does that for accounts without a rolling quota, and has also
   sent `null` — the snapshot carried a zeroed window, so the default bar read
