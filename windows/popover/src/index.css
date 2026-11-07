@@ -1254,6 +1254,12 @@ body:has(.native-panel[data-os="windows"]) {
   color: #ffffff;
 }
 
+/* Favorited metrics use the same accent as the app's other selected controls. */
+.icon-btn[aria-pressed="true"],
+.icon-btn[aria-pressed="true"]:hover {
+  color: var(--accent);
+}
+
 /* Account switch: the login in use is a static yellow star, and a switch that failed keeps
    its mark tinted red until the next attempt. */
 .icon-btn.is-active,

@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### Added
+
+- **macOS App Icon menu-bar mode.** Settings can keep About's gauge in the
+  menu bar instead of usage charts or provider logos, without clearing
+  starred metrics. The symbol follows the menu bar's light and dark ink.
+
+### Fixed
+
+- **Popover favorites follow the theme's blue accent.** Selected metric stars
+  use the app's accent in light and dark themes.
+
 ## [1.49.0] — 2026-11-07
 
 ### Added

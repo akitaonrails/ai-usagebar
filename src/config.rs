@@ -124,8 +124,8 @@ pub struct TrayConfig {
     pub refresh_minutes: Option<u64>,
     /// What the tray does when a newer release is published.
     pub updates: Option<UpdateMode>,
-    /// macOS menu-bar presentation: `bars` (default), `provider` (logos) or
-    /// `name` (the selected provider's logo, short name and value).
+    /// macOS menu-bar presentation: `icon`, `bars` (default), `provider`
+    /// (logos) or `quattro` (selected provider's logo, short name and value).
     pub menu_bar_style: Option<String>,
     /// Whether the `name` style draws the short name beside the logo.
     /// `None` → shown. A provider with no logo shows its name regardless.

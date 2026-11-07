@@ -39,6 +39,13 @@ Logos and Quattro values follow **Preferences → Show Usage As**, like the popo
 tabs and meters: what is left, by default, or what is used. With
 nothing starred it shows the app icon. Left-click opens the popover; right-click opens the Options menu.
 
+**App Icon** shows the same gauge as About, as a monochrome menu-bar symbol.
+It stays visible even with starred metrics and keeps those favorites for
+switching back to Chart or Logos. The glyph is Material Design Icons'
+`mdi/gauge` by Pictogrammers, under Apache 2.0; see
+[`menu-bar-icon.LICENSE`](menu-bar-icon.LICENSE).
+
+
 ```bash
 cargo build --release --bin ai-usagebar-tray
 ./target/release/ai-usagebar-tray

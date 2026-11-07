@@ -38,6 +38,11 @@ class PackageAppTests(unittest.TestCase):
         self.assertEqual(info["CFBundleExecutable"], "ai-usagebar-tray")
         icon = contents / "Resources" / (info["CFBundleIconFile"] + ".icns")
         self.assertEqual(icon.read_bytes()[:4], b"icns")
+        for name in ("menu-bar-icon.LICENSE", "LICENSE-APACHE-2.0"):
+            self.assertEqual(
+                (contents / "Resources" / name).read_bytes(),
+                Path(__file__).with_name(name).read_bytes(),
+            )
         for name in package.BINARIES:
             binary = contents / "MacOS" / name
             self.assertEqual(binary.read_bytes(), (self.bins / name).read_bytes())

@@ -82,7 +82,8 @@
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"
-# macOS menu bar: "bars" (default) draws the usage chart; "provider" draws each
+# macOS menu bar: "icon" shows the app gauge without changing favorites;
+# "bars" (default) draws the usage chart; "provider" draws each
 # provider's logo followed by its value; "quattro" draws one chip, the logo, the
 # short name (cld, cdx, …) and the highest percentage among all the windows of
 # the provider selected in the popover, like the Quattro bar, leaving out any

@@ -216,7 +216,6 @@ function MetricTuneRow({ enabled, handle, row, starred, onStar, onToggle }: Metr
         <IconButton
           label={starred ? `${m.unstar()} ${title}` : `${m.star()} ${title} ${m.for_menu_bar()}`}
           aria-pressed={starred === true}
-          className={starred ? "is-active" : undefined}
           onClick={onStar}
         >
           {starred ? <MdiStar /> : <MdiStarOutline />}

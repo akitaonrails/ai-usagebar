@@ -38,6 +38,7 @@
 /** @typedef {{}} Api_Key_SaveInputs */
 /** @typedef {{}} Api_Key_Stored_NoteInputs */
 /** @typedef {{}} Api_KeysInputs */
+/** @typedef {{}} App_IconInputs */
 /** @typedef {{}} AppearanceInputs */
 /** @typedef {{}} AutoInputs */
 /** @typedef {{}} AutomaticInputs */
@@ -473,6 +474,10 @@ export const api_keys = /** @type {(inputs: Api_KeysInputs) => LocalizedString} 
 	return /** @type {LocalizedString} */ (`API Keys`)
 };
 
+export const app_icon = /** @type {(inputs: App_IconInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`App Icon`)
+};
+
 export const appearance = /** @type {(inputs: AppearanceInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`Appearance`)
 };
@@ -862,7 +867,7 @@ export const menu_bar_shows = /** @type {(inputs: Menu_Bar_ShowsInputs) => Local
 };
 
 export const menu_bar_shows_hint = /** @type {(inputs: Menu_Bar_Shows_HintInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.`)
+	return /** @type {LocalizedString} */ (`App Icon shows the app's gauge. Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.`)
 };
 
 export const metric_plural = /** @type {(inputs: Metric_PluralInputs) => LocalizedString} */ () => {
