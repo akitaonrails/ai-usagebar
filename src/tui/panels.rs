@@ -591,6 +591,23 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
                 .map(|metric| pct(&metric.label, i32::from(metric.pct)))
                 .collect(),
         ),
+        VendorSnapshot::ExperientialLabs(s) => {
+            // The daily token pool is what the bar headlines; the wallet and
+            // the key's cap ride their own dollar cells.
+            let mut cells = [
+                ("in", s.daily_input.as_ref()),
+                ("out", s.daily_output.as_ref()),
+            ]
+            .into_iter()
+            .filter_map(|(label, meter)| meter.and_then(|m| m.pct()).map(|p| pct(label, p)))
+            .collect::<Vec<_>>();
+            if let Some(balance) = s.balance_usd {
+                cells.push(usd_cell(balance));
+            }
+            // The caller prints the vendor name; an empty plan label keeps it
+            // from appearing twice (Devin and Lyceum do the same).
+            (String::new(), cells)
+        }
     };
 
     for (text, _) in &mut cells {
@@ -689,6 +706,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .max(),
         VendorSnapshot::Droid(s) => crate::droid::vendor::headline_utilization(s),
         VendorSnapshot::DeepRelay(s) => crate::deeprelay::vendor::headline_pct(s),
+        VendorSnapshot::ExperientialLabs(s) => crate::explabs::vendor::headline_pct(s),
         VendorSnapshot::Ollama(s) => [
             s.session.as_ref().map(|w| w.utilization_pct),
             s.weekly.as_ref().map(|w| w.utilization_pct),
@@ -793,6 +811,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Custom(s) => custom_sections(s),
                 VendorSnapshot::Cline(s) => cline_sections(s, now),
                 VendorSnapshot::DeepRelay(s) => deeprelay_sections(s, now),
+                VendorSnapshot::ExperientialLabs(s) => explabs_sections(s, now),
             };
             // Inject the (already-absolute) fetched-at instant into the title
             // row, right-aligned. Pre-snapshotted in app::refresh_one so it
@@ -2707,6 +2726,95 @@ fn deeprelay_sections(
                         "{}  {}",
                         crate::pango::escape(&model.model),
                         crate::format::tokens(model.weighted_total())
+                    )
+                })
+                .collect(),
+        });
+    }
+
+    sections
+}
+
+/// Experiential Labs — the daily token pool headline, the credit wallet and
+/// the key's cap as rows, and the per-model table from the settled export.
+/// The plan has no price or interval on the wire, so the title carries the
+/// vendor label and every figure is a plain row or a meter.
+fn explabs_sections(
+    snapshot: &crate::usage::ExperientialLabsSnapshot,
+    now: DateTime<Utc>,
+) -> SectionBuilder {
+    let title = if snapshot.plan.is_empty() {
+        "Experiential Labs".to_string()
+    } else {
+        snapshot.plan.clone()
+    };
+
+    let mut sections = SectionBuilder::new(vec![Section::Title {
+        left: title,
+        right: None,
+    }]);
+
+    if snapshot.daily_input.is_some() || snapshot.daily_output.is_some() {
+        sections.push(Section::Spacer);
+        for (label, meter) in [
+            ("Daily input", snapshot.daily_input.as_ref()),
+            ("Daily output", snapshot.daily_output.as_ref()),
+        ] {
+            let Some(meter) = meter else { continue };
+            let Some(pct) = meter.pct() else { continue };
+            let footnote = match snapshot.period_end {
+                Some(reset) => format!("Resets in {}", countdown::format(Some(reset), now)),
+                None => "Resets at 00:00 UTC".into(),
+            };
+            sections.push_metric_in_window(
+                Section::Metric {
+                    label: label.into(),
+                    pct: pct.clamp(0, 100) as u16,
+                    severity: severity_for(pct),
+                    value_label: meter.used_of_limit(),
+                    footnote,
+                },
+                snapshot.period_end,
+                snapshot
+                    .period_start
+                    .zip(snapshot.period_end)
+                    .map(|(start, end)| end - start)
+                    .unwrap_or_default(),
+            );
+        }
+    }
+
+    if let Some(limit) = snapshot.key_limit_usd {
+        sections.push(Section::Spacer);
+        sections.push(Section::Text {
+            label: "Key cap".into(),
+            value: match snapshot.key_limit_remaining_usd {
+                Some(remaining) => format!("{} / {} left", usd(remaining), usd(limit)),
+                None => usd(limit),
+            },
+        });
+    }
+
+    if let Some(balance) = snapshot.balance_usd {
+        sections.push(Section::Spacer);
+        sections.push(Section::Text {
+            label: "Balance".into(),
+            value: usd(balance),
+        });
+    }
+
+    if !snapshot.models.is_empty() {
+        sections.push(Section::Spacer);
+        sections.push(Section::Block {
+            label: "Top models this period".into(),
+            body: snapshot
+                .models
+                .iter()
+                .map(|model| {
+                    format!(
+                        "{}  {}",
+                        crate::pango::escape(&model.model),
+                        crate::format::tokens(model.weighted_total() as i64)
                     )
                 })
                 .collect(),

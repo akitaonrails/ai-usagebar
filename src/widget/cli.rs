@@ -457,6 +457,8 @@ pub enum Vendor {
     // The slug is one word; clap's derived spelling would be `deep-relay`.
     #[value(name = "deeprelay")]
     DeepRelay,
+    #[value(name = "explabs")]
+    ExperientialLabs,
 }
 
 impl Vendor {
@@ -494,6 +496,7 @@ impl Vendor {
             Vendor::Cline => crate::vendor::VendorId::Cline,
             Vendor::Droid => crate::vendor::VendorId::Droid,
             Vendor::DeepRelay => crate::vendor::VendorId::DeepRelay,
+            Vendor::ExperientialLabs => crate::vendor::VendorId::ExperientialLabs,
         }
     }
 }
@@ -598,6 +601,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Cline => Vendor::Cline,
         crate::vendor::VendorId::Droid => Vendor::Droid,
         crate::vendor::VendorId::DeepRelay => Vendor::DeepRelay,
+        crate::vendor::VendorId::ExperientialLabs => Vendor::ExperientialLabs,
     }
 }
 

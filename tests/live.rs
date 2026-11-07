@@ -71,6 +71,12 @@
 //!   keyring holds no session, or an expired one it cannot renew; set
 //!   `ANTIGRAVITY_OAUTH_CLIENT_ID` / `ANTIGRAVITY_OAUTH_CLIENT_SECRET` to
 //!   exercise the refresh as well.
+//! - **Experiential Labs**: `/api/v1/credits` supplies the spendable wallet,
+//!   `/api/v1/key` the presented key's daily USD cap (both cap fields null on
+//!   an uncapped key), and `/api/v1/usage?limit=200` the settled per-request
+//!   export. Asserts the balance is present, the daily pool percentage is
+//!   bounded, and every model row carries a name and non-negative tokens.
+//!   `explabs_live` skips when `EXPLABS_API_KEY` is unset.
 
 use std::time::Duration;
 
@@ -82,6 +88,7 @@ use ai_usagebar::deepinfra;
 use ai_usagebar::deeprelay;
 use ai_usagebar::devin;
 use ai_usagebar::error::AppError;
+use ai_usagebar::explabs;
 use ai_usagebar::kimi;
 use ai_usagebar::kiro;
 use ai_usagebar::minimax;
@@ -415,6 +422,67 @@ async fn deeprelay_live() {
         out.snapshot.backstop_used_usd,
         out.snapshot.backstop_limit_usd,
         out.snapshot.balance_usd,
+    );
+}
+
+/// Experiential Labs' wallet, key cap and settled export. Skips when
+/// `EXPLABS_API_KEY` is unset, so the opt-in smoke run stays usable on a
+/// machine without an account.
+#[tokio::test]
+#[ignore = "live API; run with --ignored"]
+async fn explabs_live() {
+    let Ok(api_key) = std::env::var("EXPLABS_API_KEY") else {
+        eprintln!("explabs_live: EXPLABS_API_KEY is unset — skipping");
+        return;
+    };
+    if api_key.trim().is_empty() {
+        eprintln!("explabs_live: EXPLABS_API_KEY is empty — skipping");
+        return;
+    }
+    let cache = xdg_cache_for("explabs");
+    let client = reqwest::Client::builder()
+        .timeout(ai_usagebar::vendor::HTTP_CLIENT_TIMEOUT)
+        .redirect(ai_usagebar::vendor::same_origin_redirect_policy())
+        .build()
+        .unwrap();
+    let out = explabs::fetch::fetch_snapshot(
+        &client,
+        &api_key,
+        &cache,
+        &explabs::fetch::Endpoints::default(),
+        Duration::ZERO,
+    )
+    .await
+    .expect("explabs fetch should succeed against the real API");
+
+    let balance = out
+        .snapshot
+        .balance_usd
+        .expect("explabs wallet balance is missing");
+    if let Some(meter) = out.snapshot.daily_worst() {
+        assert!(meter.used >= 0, "explabs daily used tokens are negative");
+        assert!(meter.limit > 0, "explabs daily pool is not positive");
+        assert_pct(
+            "explabs daily pool",
+            meter.pct().expect("a positive pool has a pct"),
+        );
+    }
+    assert!(
+        !out.snapshot.models.is_empty(),
+        "explabs settled export produced no model rows"
+    );
+    for row in &out.snapshot.models {
+        assert!(!row.model.is_empty(), "explabs model row has no model name");
+        assert!(row.input_tokens >= 0, "explabs input tokens are negative");
+        assert!(row.output_tokens >= 0, "explabs output tokens are negative");
+    }
+    println!(
+        "explabs — balance={:?}, key cap={:?}/{:?}, daily pct={:?}, models={}",
+        balance,
+        out.snapshot.key_limit_remaining_usd,
+        out.snapshot.key_limit_usd,
+        out.snapshot.daily_worst().and_then(|m| m.pct()),
+        out.snapshot.models.len(),
     );
 }
 

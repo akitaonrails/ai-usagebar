@@ -1,0 +1,43 @@
+{
+  "data": [
+    {
+      "id": "evt_01JABCDEFGHJKLMNPQRSTVWXYZ",
+      "created_at": "2026-11-06T18:04:11Z",
+      "model": "claude-xpl",
+      "input_tokens": 812400,
+      "output_tokens": 187600,
+      "cost_usd": 1.75,
+      "estimated_cost_usd": 0.0,
+      "real_cost_usd": 1.75,
+      "pricing_known": true,
+      "key_id": "key_01JABCDEFGHJKLMNPQRSTVWXYZ",
+      "request_id": "req_01JABCDEFGHJKLMNPQRSTVWXYZ"
+    },
+    {
+      "id": "evt_01JABCDEFGHJKLMNPQRSTVWXY2",
+      "created_at": "2026-11-06T09:41:52Z",
+      "model": "claude-xpl",
+      "input_tokens": 64000,
+      "output_tokens": 16000,
+      "cost_usd": 0.25,
+      "estimated_cost_usd": 0.0,
+      "real_cost_usd": 0.25,
+      "pricing_known": true,
+      "key_id": "key_01JABCDEFGHJKLMNPQRSTVWXYZ",
+      "request_id": "req_01JABCDEFGHJKLMNPQRSTVWXY2"
+    },
+    {
+      "id": "evt_01JABCDEFGHJKLMNPQRSTVWXY3",
+      "created_at": "2026-11-19T22:10:03Z",
+      "model": "glm-xpl",
+      "input_tokens": 150000,
+      "output_tokens": 50000,
+      "cost_usd": 0.5,
+      "estimated_cost_usd": 0.12,
+      "real_cost_usd": 0.62,
+      "pricing_known": true,
+      "key_id": "key_01JABCDEFGHJKLMNPQRSTVWXYZ",
+      "request_id": "req_01JABCDEFGHJKLMNPQRSTVWXY3"
+    }
+  ]
+}

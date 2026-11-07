@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Added
+
+- **Experiential Labs.** The platform's wallet and settled usage, fetched with
+  the same `xpl_` key the dashboard mints (`usage:read` scope, which the
+  default key carries): the spendable credit balance from `/api/v1/credits`
+  (which may go negative — usage past the wallet is real, and clamping it to
+  zero would report a healthy-looking $0.00 to someone who has to top up),
+  the presented key's daily USD cap from `/api/v1/key` when it has one, and
+  the `/api/v1/usage?limit=200` settled export rolled up per model. The Free
+  tier shares one 1,000,000 input+output token pool per UTC day, so the bar's
+  headline percentage is the combined draw against that ceiling and resets at
+  the next 00:00 UTC. Key from `EXPLABS_API_KEY` or an inline `api_key`;
+  opt-in under `[explabs]` like DeepRelay.
+
 ## [1.48.2] — 2026-11-05
 
 ### Added

@@ -519,6 +519,7 @@ pub enum VendorSnapshot {
     Devin(DevinSnapshot),
     Droid(DroidSnapshot),
     DeepRelay(DeepRelaySnapshot),
+    ExperientialLabs(crate::usage::ExperientialLabsSnapshot),
     MuseCode(MuseSnapshot),
     /// A `[[custom]]` provider. Which one is not in the snapshot: the caller
     /// that fetched it holds the `CustomProviderConfig`, and the cache
@@ -1259,10 +1260,24 @@ impl DeepRelaySnapshot {
 // `Eq` asks for — the same reasoning as `OpenRouterSnapshot`.
 impl Eq for DeepRelaySnapshot {}
 
-fn worst<'a>(
-    left: &'a Option<DeepRelayMeter>,
-    right: &'a Option<DeepRelayMeter>,
-) -> Option<&'a DeepRelayMeter> {
+/// Used share of the allowance, for any meter with a percentage.
+pub trait Pct {
+    fn pct(&self) -> Option<i32>;
+}
+
+impl Pct for DeepRelayMeter {
+    fn pct(&self) -> Option<i32> {
+        DeepRelayMeter::pct(self)
+    }
+}
+
+impl Pct for ExperientialLabsMeter {
+    fn pct(&self) -> Option<i32> {
+        ExperientialLabsMeter::pct(self)
+    }
+}
+
+fn worst<'a, M: Pct>(left: &'a Option<M>, right: &'a Option<M>) -> Option<&'a M> {
     [left.as_ref(), right.as_ref()]
         .into_iter()
         .flatten()
@@ -1417,6 +1432,141 @@ pub struct DroidSnapshot {
     /// `extraUsageBalanceCents`, verbatim; renderers convert cents to dollars.
     pub extra_balance_cents: Option<i64>,
 }
+
+/// One Experiential Labs plan meter: tokens used against the allowance.
+///
+/// The gateway meters platform-funded tokens directly (input and output are
+/// metered separately; a BYOK call is never metered), so every figure here is
+/// already in allowance units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExperientialLabsMeter {
+    pub used: i64,
+    pub limit: i64,
+}
+
+impl ExperientialLabsMeter {
+    /// Used share of the allowance. `None` only for a zero ceiling, which is
+    /// "uncapped", not "0% used".
+    pub fn pct(&self) -> Option<i32> {
+        if self.limit <= 0 {
+            return None;
+        }
+        let pct = (self.used as f64 / self.limit as f64 * 100.0).round();
+        Some(pct.clamp(0.0, 100.0) as i32)
+    }
+
+    /// `"812.4M / 1B"` — the raw figure next to its ceiling.
+    pub fn used_of_limit(&self) -> String {
+        format!(
+            "{} / {}",
+            crate::format::tokens(self.used),
+            crate::format::tokens(self.limit)
+        )
+    }
+}
+
+/// One row of [`ExperientialLabsSnapshot::models`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExperientialLabsModelUsage {
+    pub model: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    /// Charged credits, in dollars (`cost_usd`). Estimated BYOK value is
+    /// deliberately not folded into this: it is an estimate, not a charge.
+    pub cost_usd: f64,
+}
+
+impl ExperientialLabsModelUsage {
+    pub fn weighted_total(&self) -> f64 {
+        self.input_tokens as f64 + self.output_tokens as f64
+    }
+}
+
+/// Experiential Labs — a daily plan: a shared input/output token pool, a
+/// dollar credit wallet, and per-model rollups.
+///
+/// The daily meters reset at 00:00 UTC by design ("resetting at 00:00 UTC").
+/// The credit wallet is the same shape as OpenRouter's: spendable, and allowed
+/// to go negative only by usage it did not meter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExperientialLabsSnapshot {
+    /// `plan.name`, or "Pay as you go" when the organization has no plan.
+    pub plan: String,
+    /// Wallet balance in dollars: `total_credits - total_usage` from
+    /// `GET /api/v1/credits`. Can be negative (usage past the wallet), and
+    /// the sign belongs outside the symbol.
+    pub balance_usd: Option<f64>,
+    /// Daily input-token meter against the documented Free-tier shared pool
+    /// (1,000,000 tokens/day). The gateway reports no token allowance, so
+    /// this ceiling is the documented one, not a wire figure.
+    pub daily_input: Option<ExperientialLabsMeter>,
+    /// Daily output-token meter against the same pool.
+    pub daily_output: Option<ExperientialLabsMeter>,
+    /// The presented key's daily USD cap and what is left of it
+    /// (`GET /api/v1/key`). `None` when the key reports no cap.
+    pub key_limit_usd: Option<f64>,
+    pub key_limit_remaining_usd: Option<f64>,
+    /// Window start/end. The daily meters reset at 00:00 UTC, so the period
+    /// end is exact rather than a guessed "24 hours".
+    pub period_start: Option<chrono::DateTime<chrono::Utc>>,
+    pub period_end: Option<chrono::DateTime<chrono::Utc>>,
+    pub models: Vec<ExperientialLabsModelUsage>,
+}
+
+impl ExperientialLabsSnapshot {
+    /// The daily pool's consumption as one meter. Input and output draw down
+    /// the same shared allowance, so the figure that caps the account is
+    /// their sum against the documented ceiling — not either meter's own
+    /// share. Drives the bar headline, its severity class and the TUI
+    /// overview cell.
+    pub fn daily_worst(&self) -> Option<ExperientialLabsMeter> {
+        match (&self.daily_input, &self.daily_output) {
+            (Some(input), Some(output)) => Some(ExperientialLabsMeter {
+                used: input.used + output.used,
+                limit: input.limit,
+            }),
+            (Some(meter), None) | (None, Some(meter)) => Some(*meter),
+            (None, None) => None,
+        }
+    }
+
+    /// Daily allowance as the shared window shape, for `--format` pacing.
+    ///
+    /// The period end comes from the server (the next 00:00 UTC reset), so the
+    /// length is exact rather than a guessed "24 hours" — but the report still
+    /// exposes no `window_secs` for these rows (they go through
+    /// `push_metric`), because a frontend reads that field as a rolling window.
+    /// Pacing here is local to a placeholder.
+    pub fn daily_window(&self) -> Option<UsageWindow> {
+        let meter = self.daily_worst()?;
+        Some(UsageWindow {
+            utilization_pct: meter.pct()?,
+            resets_at: self.period_end,
+            window_duration: match (self.period_start, self.period_end) {
+                (Some(start), Some(end)) if end > start => end - start,
+                _ => chrono::Duration::zero(),
+            },
+        })
+    }
+
+    /// Spendable credit, **which can be negative**: usage past the wallet is
+    /// real, and clamping that to zero would report a healthy-looking `$0.00`
+    /// to someone who has to top up before anything works again.
+    pub fn balance(&self) -> f64 {
+        self.balance_usd.unwrap_or(0.0)
+    }
+
+    /// Percentage of the daily pool consumed (0..=100). Returns 0 when the
+    /// pool is unreported — there is no denominator to be a percentage of.
+    pub fn daily_consumed_pct(&self) -> i32 {
+        let Some(meter) = self.daily_worst() else {
+            return 0;
+        };
+        i32::from(crate::format::clamp_pct(meter.pct().unwrap_or(0) as f64))
+    }
+}
+
+impl Eq for ExperientialLabsSnapshot {}
 
 /// Worst-of severity class for the Waybar bar text color. Mirrors
 /// claudebar:606-620 — "extra usage only matters when a rate limit hits 100%".

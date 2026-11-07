@@ -789,6 +789,15 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         weeklyTag = "wk"
         sessionLabel = "Monthly"
         weeklyLabel = "Weekly"
+    case "explabs":
+        // The generic session slot carries the shared daily token pool, which
+        // resets at 00:00 UTC; there is no rolling weekly window, so the
+        // weekly slot stays empty.
+        weeklyWindow = nil
+        sessionTag = "day"
+        weeklyTag = "7d"
+        sessionLabel = "Daily"
+        weeklyLabel = ""
     default:
         weeklyWindow = quotaWindow(3, 4, 14)
         sessionTag = "5h"
