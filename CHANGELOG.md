@@ -6,8 +6,9 @@
   line can report an unused weekly bucket while `/quota` already records
   usage. The report prefers fresh local RPC or `agy` quota for the verified
   same account, including reset times and per-model pools. The CLI fallback
-  checks its saved ID-token identity before and after fetching; unmatched,
-  unverified and stale readings keep the session's own data.
+  checks its saved ID-token identity before fetching and before caching, and
+  uses an independent credential-scoped cache. Unmatched, unverified and stale
+  readings keep the session's own data.
 
 ## [1.49.0] — 2026-11-07
 

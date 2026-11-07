@@ -56,6 +56,8 @@ use crate::usage::{AntigravitySnapshot, AntigravitySource, ModelPoolWindow, Usag
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(15);
+const ACCOUNT_CHANGED_DURING_QUOTA: &str =
+    "Antigravity's sign-in changed while reading quota; refresh to read the current account";
 
 const QUOTA_RPC: &str = "exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary";
 const STATUS_RPC: &str = "exa.language_server_pb.LanguageServerService/GetUserStatus";
@@ -269,7 +271,8 @@ async fn fetch_account_snapshot_at(
     }
     // A local server for another account must not block this account's CLI.
     remote.local_bases = Some(Vec::new());
-    let Ok(mut reading) = fetch_snapshot_at(client, cache, cache_ttl, None, remote, now).await
+    let cli_cache = Cache::at(cache.dir().join("agy").join(&before.fingerprint));
+    let Ok(mut reading) = fetch_snapshot_at(client, &cli_cache, cache_ttl, None, remote, now).await
     else {
         return local;
     };
@@ -374,6 +377,10 @@ pub async fn fetch_snapshot_at(
             let bytes = serde_json::to_vec(&snap_to_json(&snap))?;
             cache.write_payload(&bytes)?;
             Ok(crate::outcome::Outcome::fresh(snap))
+        }
+        Err(AppError::Credentials(message)) if message == ACCOUNT_CHANGED_DURING_QUOTA => {
+            cache.mark_stale();
+            Err(AppError::Credentials(message))
         }
         Err(e) if e.is_transient() => fallback_silent(cache, now, e),
         Err(AppError::Http { status, body }) if matches!(status, 401 | 403) => {
@@ -844,6 +851,16 @@ async fn fetch_remote(
                 None => None,
             }
             .unwrap_or_else(|| DEFAULT_PLAN.to_string());
+            // The CLI can switch or renew a sign-in while it runs. Verify
+            // its binding under the fetch lock, before this payload can be
+            // persisted or replace a known-good reading.
+            let current = saved_session(renewal.credential, RemoteFallbackReason::NoLocalServer);
+            if !current.is_ok_and(|current| {
+                current.fingerprint == token.fingerprint
+                    && current.account_hash == token.account_hash
+            }) {
+                return Err(AppError::Credentials(ACCOUNT_CHANGED_DURING_QUOTA.into()));
+            }
             snap.account = remote_account(&token.fingerprint);
             snap.source = AntigravitySource::Agy;
             return Ok(RemoteReading::Live(snap));
@@ -4540,8 +4557,11 @@ mod tests {
             assert_eq!(out.snapshot.model_pools[0].name, "Gemini 4 Argon");
         }
         assert_eq!(std::fs::read_to_string(runs).unwrap().lines().count(), 1);
+        assert!(!cache.payload_path().exists());
+        let fingerprint = credential::parse_keyring_blob(&blob).unwrap().fingerprint;
+        let cli_cache = Cache::at(cache.dir().join("agy").join(fingerprint));
         let cached = parse_cache_at(
-            &cache
+            &cli_cache
                 .fresh_payload(Duration::from_secs(60))
                 .unwrap()
                 .unwrap(),
@@ -4555,6 +4575,90 @@ mod tests {
         );
         root.assert_async().await;
         status.assert_async().await;
+        plan.assert_async().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_and_agy_accounts_keep_independent_quota_caches() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let root = server
+            .mock("GET", "/")
+            .with_status(404)
+            .expect(4)
+            .create_async()
+            .await;
+        let status = server
+            .mock("POST", format!("/{STATUS_RPC}").as_str())
+            .with_status(200)
+            .with_body(r#"{"userStatus":{"email":"local@example.com"}}"#)
+            .expect(4)
+            .create_async()
+            .await;
+        let quota = server
+            .mock("POST", format!("/{QUOTA_RPC}").as_str())
+            .with_status(200)
+            .with_body(QUOTA_JSON)
+            .expect(1)
+            .create_async()
+            .await;
+        let plan = server
+            .mock("POST", "/daily/plan")
+            .with_status(200)
+            .with_body(r#"{"currentTier":{"name":"google_ai_pro"}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut blob: serde_json::Value = serde_json::from_str(&keyring_blob(VALID, true)).unwrap();
+        blob["id_token_email"] = serde_json::json!("cli@example.com");
+        let blob = blob.to_string();
+        let local_account = super::super::account_hash("local@example.com");
+        let cli_account = super::super::account_hash("cli@example.com");
+        let (td, cache) = fixture();
+        let runs = td.path().join("runs");
+        let agy = agy_reading(td.path(), &runs);
+        for _ in 0..2 {
+            for (account, percent, source) in [
+                (&local_account, 8, AntigravitySource::Local),
+                (&cli_account, 37, AntigravitySource::Agy),
+            ] {
+                let out = fetch_account_snapshot_at(
+                    &reqwest::Client::new(),
+                    &cache,
+                    Duration::from_secs(60),
+                    account,
+                    RemoteOverride {
+                        credential: SavedCredential::Blob(&blob),
+                        endpoints: Some(&eps),
+                        local_bases: Some(vec![server.url().into()]),
+                        agy: super::super::agy::AgyCommand::At(agy.clone()),
+                        ..Default::default()
+                    },
+                    now(),
+                )
+                .await
+                .unwrap();
+                assert_eq!(out.snapshot.source, source);
+                assert_eq!(out.snapshot.account, format!("acct:{account}"));
+                assert_eq!(out.snapshot.weekly.unwrap().utilization_pct, percent);
+            }
+        }
+        assert_eq!(std::fs::read_to_string(runs).unwrap().lines().count(), 1);
+        let cached = parse_cache_at(
+            &cache
+                .fresh_payload(Duration::from_secs(60))
+                .unwrap()
+                .unwrap(),
+            None,
+            now(),
+        )
+        .unwrap();
+        assert_eq!(cached.source, AntigravitySource::Local);
+        assert_eq!(cached.account, format!("acct:{local_account}"));
+        root.assert_async().await;
+        status.assert_async().await;
+        quota.assert_async().await;
         plan.assert_async().await;
     }
 
@@ -4661,15 +4765,21 @@ mod tests {
                 .mock("POST", "/daily/plan")
                 .with_status(200)
                 .with_body(r#"{"currentTier":{"name":"google_ai_pro"}}"#)
-                .expect(1)
+                .expect(2)
                 .create_async()
                 .await;
             let (td, cache) = fixture();
             let file = td.path().join("credential");
+            let runs = td.path().join("runs");
             let mut blob: serde_json::Value =
                 serde_json::from_str(&keyring_blob(VALID, true)).unwrap();
             blob["id_token_email"] = serde_json::json!("same@example.com");
-            std::fs::write(&file, blob.to_string()).unwrap();
+            let original = blob.to_string();
+            let fingerprint = credential::parse_keyring_blob(&original)
+                .unwrap()
+                .fingerprint;
+            let cli_cache = Cache::at(cache.dir().join("agy").join(fingerprint));
+            std::fs::write(&file, &original).unwrap();
             if changed == "identity" {
                 blob["id_token_email"] = serde_json::json!("other@example.com");
             } else {
@@ -4679,24 +4789,26 @@ mod tests {
             super::super::agy::test_support::write_script(
                 &agy,
                 &format!(
-                    "printf '%s' '{}' > '{}'\ncat <<'EOF'\n{AGY_QUOTA}\nEOF",
+                    "echo run >> '{}'\nprintf '%s' '{}' > '{}'\ncat <<'EOF'\n{AGY_QUOTA}\nEOF",
+                    runs.display(),
                     blob,
                     file.display()
                 ),
             );
             let account = super::super::account_hash("same@example.com");
+            let options = || RemoteOverride {
+                credential: SavedCredential::File(&file),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![]),
+                agy: super::super::agy::AgyCommand::At(agy.clone()),
+                ..Default::default()
+            };
             let out = fetch_account_snapshot_at(
                 &reqwest::Client::new(),
                 &cache,
                 Duration::ZERO,
                 &account,
-                RemoteOverride {
-                    credential: SavedCredential::File(&file),
-                    endpoints: Some(&eps),
-                    local_bases: Some(vec![]),
-                    agy: super::super::agy::AgyCommand::At(agy),
-                    ..Default::default()
-                },
+                options(),
                 now(),
             )
             .await;
@@ -4704,6 +4816,37 @@ mod tests {
                 out.is_err(),
                 "{changed} changed while agy was reading quota"
             );
+            assert!(!cache.payload_path().exists());
+            assert!(
+                !cli_cache.payload_path().exists(),
+                "a rejected reading must not poison the CLI cache"
+            );
+
+            // Restoring the old login must run the CLI again, rather than
+            // relabel the rejected account's cached quota as this account's.
+            std::fs::write(&file, &original).unwrap();
+            let fresh =
+                AGY_QUOTA.replace("\"remaining_fraction\":0.63", "\"remaining_fraction\":0.42");
+            super::super::agy::test_support::write_script(
+                &agy,
+                &format!(
+                    "echo run >> '{}'\ncat <<'EOF'\n{fresh}\nEOF",
+                    runs.display()
+                ),
+            );
+            let out = fetch_account_snapshot_at(
+                &reqwest::Client::new(),
+                &cache,
+                Duration::from_secs(60),
+                &account,
+                options(),
+                now(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(out.snapshot.account, format!("acct:{account}"));
+            assert_eq!(out.snapshot.weekly.unwrap().utilization_pct, 58);
+            assert_eq!(std::fs::read_to_string(&runs).unwrap().lines().count(), 2);
             plan.assert_async().await;
         }
     }

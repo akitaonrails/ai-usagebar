@@ -30,6 +30,9 @@ The regression tests check that a same-account local or verified `agy` reading r
 incorrect zero weekly status-line bucket, including reset times and model
 pools. Different accounts, Cloud Code readings, missing CLI identity, sign-in
 changes during a fetch and stale readings must retain the session's own data.
+An account switch must reject the CLI payload before it can be cached; restoring
+the previous login must perform a new read. Local and CLI accounts keep separate
+caches so alternating sources cannot defeat the CLI's refresh interval.
 The CLI's `id_token_email` is hashed for matching; raw email and credentials
 are never copied into quota caches or reports.
 

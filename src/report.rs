@@ -1556,7 +1556,7 @@ mod tests {
         let config = Config::load().unwrap();
         let client = crate::widget::run::http_client().unwrap();
         let tab = TabId::vendor(VendorId::Antigravity);
-        let state = refresh_one(&client, &config, &tab, Freshness::Wire).await;
+        let mut state = refresh_one(&client, &config, &tab, Freshness::Wire).await;
         let TabState::Ready(ready) = &state else {
             panic!("a working Antigravity quota source is required");
         };
@@ -1564,21 +1564,60 @@ mod tests {
             unreachable!();
         };
         assert!(!ready.stale);
-        let identity = match snapshot.source {
-            crate::usage::AntigravitySource::Local => {
-                snapshot.account.strip_prefix("acct:").map(str::to_owned)
-            }
-            crate::usage::AntigravitySource::Agy => {
-                let raw = crate::antigravity::credential::read()
-                    .unwrap()
-                    .expect("the agy sign-in must identify its account");
-                crate::antigravity::credential::parse_keyring_blob(&raw)
-                    .unwrap()
-                    .account_hash
-            }
-            other => panic!("a local or agy quota source is required, got {other:?}"),
+        let (identity, cli_reference) =
+            match snapshot.source {
+                crate::usage::AntigravitySource::Local => (
+                    snapshot.account.strip_prefix("acct:").map(str::to_owned),
+                    None,
+                ),
+                crate::usage::AntigravitySource::Agy => {
+                    let raw = crate::antigravity::credential::read()
+                        .unwrap()
+                        .expect("the agy sign-in must identify its account");
+                    let token = crate::antigravity::credential::parse_keyring_blob(&raw).unwrap();
+                    let root = crate::cache::Cache::for_vendor("antigravity").unwrap();
+                    let cache =
+                        crate::cache::Cache::at(root.dir().join("agy").join(&token.fingerprint));
+                    let reading =
+                        crate::antigravity::fetch::fetch_snapshot_at(
+                            &client,
+                            &cache,
+                            std::time::Duration::from_secs(60),
+                            None,
+                            crate::antigravity::fetch::RemoteOverride {
+                                local_bases: Some(Vec::new()),
+                                agy: config.antigravity.agy_binary.as_ref().map_or(
+                                    crate::antigravity::agy::AgyCommand::Discover,
+                                    |path| crate::antigravity::agy::AgyCommand::At(path.clone()),
+                                ),
+                                ..Default::default()
+                            },
+                            Utc::now(),
+                        )
+                        .await
+                        .unwrap();
+                    assert!(!reading.stale);
+                    assert_eq!(
+                        reading.snapshot.source,
+                        crate::usage::AntigravitySource::Agy
+                    );
+                    (token.account_hash, Some(reading))
+                }
+                other => panic!("a local or agy quota source is required, got {other:?}"),
+            };
+        let identity = identity.expect("the complete quota must identify its account");
+        if let Some(reading) = cli_reference {
+            // The CLI's unused windows slide with the clock. Compare with
+            // the exact complete reading the consumer will use, rather than
+            // an independent default-cache refresh taken seconds earlier.
+            state = TabState::Ready(Box::new(crate::tui::app::ReadyTab {
+                snapshot: crate::usage::VendorSnapshot::Antigravity(reading.snapshot),
+                stale: false,
+                last_error: None,
+                fetched_at: Some(Utc::now()),
+                display: crate::balance::DisplayPrefs::default(),
+            }));
         }
-        .expect("the complete quota must identify its account");
         let accounts = crate::antigravity::statusline::active_accounts().unwrap();
         let account = accounts
             .iter()
