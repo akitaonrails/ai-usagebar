@@ -33,10 +33,12 @@ pub struct Subscription {
 /// `GET /v1/billing/budget`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Budget {
-    /// Absent on plans that do not report a separate API allowance; the
-    /// official client only requires `vibe_budget`.
+    /// Absent on plans that do not report a separate API allowance.
     #[serde(default)]
     pub api_budget: Option<BudgetDetail>,
+    /// Present on every response observed so far; the official client's type
+    /// declares it as optional, so it is documented rather than enforced —
+    /// see `BudgetDetail::currency`.
     pub vibe_budget: BudgetDetail,
 }
 
@@ -44,6 +46,11 @@ pub struct Budget {
 pub struct BudgetDetail {
     pub usage_percentage: f64,
     pub initial_budget: f64,
+    /// ISO-4217 code the allowance is denominated in. Every observed response
+    /// carries it, but the official client's `BudgetDetail` declares no
+    /// `currency` field, so a missing one falls back to [`DEFAULT_CURRENCY`]
+    /// rather than failing the read.
+    #[serde(default = "default_currency")]
     pub currency: String,
     #[serde(default)]
     pub reset_at: Option<String>,
@@ -136,6 +143,14 @@ fn parse_instant(raw: &str) -> Result<DateTime<Utc>> {
         .map_err(|_| AppError::Schema("Mistral budget reset is not RFC 3339".into()))
 }
 
+/// Fallback when a response omits `currency`; `validate_currency` still runs
+/// on whatever ends up here.
+const DEFAULT_CURRENCY: &str = "USD";
+
+fn default_currency() -> String {
+    DEFAULT_CURRENCY.to_string()
+}
+
 fn validate_currency(currency: &str) -> Result<()> {
     if currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_uppercase()) {
         Ok(())
@@ -209,6 +224,23 @@ mod tests {
         assert_eq!(snapshot.vibe.utilization_pct, 0);
         assert!((snapshot.vibe_budget - 150.0).abs() < 1e-9);
         assert_eq!(snapshot.currency, "USD");
+    }
+
+    // The official client's `BudgetDetail` declares no `currency` field, so a
+    // response without one must not fail the whole read.
+    #[test]
+    fn a_response_without_currency_falls_back_to_usd() {
+        let body = r#"{"api_budget":{"usage_percentage":16.0,"initial_budget":10.0},
+            "vibe_budget":{"usage_percentage":0.0,"initial_budget":150.0}}"#;
+        let budget: Budget = serde_json::from_str(body).unwrap();
+        assert_eq!(budget.vibe_budget.currency, DEFAULT_CURRENCY);
+        let payload = CachedPayload {
+            budget,
+            subscription: None,
+            target: "t".into(),
+        };
+        let snapshot = payload.snapshot().unwrap();
+        assert_eq!(snapshot.currency, DEFAULT_CURRENCY);
     }
 
     #[test]

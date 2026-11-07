@@ -12,6 +12,58 @@
   If you added Mistral as a `[[custom]]` provider, remove that table; the id is
   now a built-in vendor.
 
+### Fixed
+
+- **Kimi stops inventing a `5h 0%` window.** When `/coding/v1/usages` omits
+  `limits` — Kimi does that for accounts without a rolling quota, and has also
+  sent `null` — the snapshot carried a zeroed window, so the default bar read
+  `5h 0% · 7d 26%`, the `{kimi_window_*}`/`{session_*}` placeholders resolved to
+  `0`/`now` instead of empty, and the TUI Overview always drew a `5h 0%` pill.
+  The bar now shows only the long window the account reports
+  (`7d …` or `mo …`), those placeholders resolve empty, and the Overview drops
+  the cell; a genuine rolling window still leads as before (#590).
+
+- **Kimi accounts without a rolling window omit the 5h figure.** When
+  Kimi reports no rolling rate-limit window, the default bar shows only
+  the account's long window (`7d` or `mo`) rather than a fabricated
+  `5h 0%`, the TUI overview drops the `5h` cell, and the window
+  placeholders render empty (#590).
+## [1.48.3] — 2026-11-07
+
+### Changed
+
+- Every icon button in the tray popover has the same size, color, hover and tooltip in every style; Detect Providers is an icon beside Reset, and the providers hint moved into a help icon.
+
+### Fixed
+
+- **A Claude Desktop account captured on Desktop 4.16 gets its usage tab.**
+  Since #573 such a profile holds only the V2 token cache, which switching and
+  the usage reader already accept, but the profile listing still required the
+  legacy blob as well. The account read `creds=no` in `account status` and was
+  left out of the TUI, `usage --json` and the menu bar's account list (#580).
+
+- **Kimi's default bar shows the monthly pool on newer-shape accounts.** An
+  account on the newer `/coding/v1/usages` shape has no weekly bucket, so the
+  default `5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%` read `5h 15% · 7d %`
+  and left the monthly pool, which already set the bar's color, off the bar.
+  Those accounts now get `5h {kimi_window_pct}% · mo {kimi_monthly_pct}%`;
+  legacy-shape accounts and a configured `--format` are unchanged (#583).
+
+- **Usage priorities ignore windows that have already reset.** An expired
+  window in a cached reading no longer marks a provider exhausted or hides
+  its current weekly quota from the forecast.
+
+- **DeepRelay:** a failed pay-as-you-go wallet request now preserves the last
+  balance as stale, or reports the error when no usable cache exists, instead
+  of saving an empty successful reading. Wallet rate limits honor the shared
+  backoff. A subscriber's supplementary wallet remains optional.
+
+- **Rejected tray API keys are rolled back in TOML inline tables.** If a
+  provider rejects a key, or its cache cannot be cleared before checking,
+  the previous key and enabled state are restored for inline provider
+  tables too. Previously the rollback rejected that valid table format,
+  leaving the candidate key saved and the provider enabled. Unrelated
+  settings, comments, and later edits remain intact.
 ## [1.48.2] — 2026-11-05
 
 ### Added
@@ -5358,7 +5410,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...HEAD
+[1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3
 [1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2
 [1.48.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...v1.48.1
 [1.48.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.47.0...v1.48.0

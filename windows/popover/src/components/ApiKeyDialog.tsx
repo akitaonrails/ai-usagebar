@@ -3,6 +3,7 @@ import MdiEye from "~icons/mdi/eye";
 import MdiEyeOff from "~icons/mdi/eye-off";
 import MdiLoading from "~icons/mdi/loading";
 import MdiLockOutline from "~icons/mdi/lock-outline";
+import { IconButton } from "@/components/IconButton";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
 import type { KeyCheck, Language } from "@/lib/types";
@@ -183,15 +184,13 @@ export function ApiKeyDialogView({
           aria-invalid={error ? true : undefined}
           onChange={(event) => onKeyChange(event.target.value)}
         />
-        <button
-          type="button"
-          className="plain-btn hover-icon grid size-[var(--row-icon-box)] shrink-0 place-items-center text-label-2 [&_svg]:size-[var(--icon-row)]"
+        <IconButton
           disabled={checking}
-          aria-label={revealed ? m.hide_key(locale) : m.show_key(locale)}
+          label={revealed ? m.hide_key(locale) : m.show_key(locale)}
           onClick={onRevealToggle}
         >
           {revealed ? <MdiEyeOff /> : <MdiEye />}
-        </button>
+        </IconButton>
       </div>
       {checking ? (
         <p className="m-0 text-[length:var(--sz-badge)] leading-[var(--leading-note)] text-label-2">

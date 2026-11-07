@@ -186,6 +186,8 @@ pub struct ProfileMeta {
     /// without it the history merges are skipped but the credential swap
     /// still works.
     pub org_uuid: Option<String>,
+    /// At least one saved token cache. Claude Desktop 4.16 writes only the V2
+    /// blob, so a profile captured there has no legacy file (#573).
     pub has_credentials: bool,
     pub has_desktop_state: bool,
 }
@@ -220,7 +222,7 @@ pub fn load_profiles(profiles_dir: &Path) -> Vec<ProfileMeta> {
                 account_uuid,
                 org_uuid: raw.org_uuid.filter(|uuid| !uuid.is_empty()),
                 has_credentials: dir.join(TOKEN_CACHE).is_file()
-                    && dir.join(TOKEN_CACHE_V2).is_file(),
+                    || dir.join(TOKEN_CACHE_V2).is_file(),
                 has_desktop_state: dir.join(DESKTOP_STATE).is_dir(),
             })
         })
@@ -1513,6 +1515,19 @@ mod tests {
         assert_eq!(profiles[1].label, "there");
         assert!(profiles[1].has_credentials);
         assert!(profiles[1].has_desktop_state);
+    }
+
+    // #580: a profile captured on Claude Desktop 4.16 holds only the V2 blob
+    // (#573). It is a usable credential, so the listing must not drop it.
+    #[test]
+    fn a_v2_only_profile_counts_as_having_credentials() {
+        let fixture = fixture();
+        std::fs::remove_file(fixture.paths.profile_dir("there").join(TOKEN_CACHE)).unwrap();
+
+        let profiles = load_profiles(&fixture.paths.profiles_dir);
+
+        assert_eq!(profiles[1].label, "there");
+        assert!(profiles[1].has_credentials);
     }
 
     #[test]

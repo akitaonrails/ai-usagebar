@@ -1090,6 +1090,76 @@ mod tests {
     }
 
     #[test]
+    fn key_check_failure_restores_inline_tables() {
+        for original in [
+            "zai = { plan_tier = \"pro\" } # keep me\n[ui]\nprimary = \"anthropic\"\n",
+            "zai = { enabled = false, plan_tier = \"pro\" } # keep me\n[ui]\nprimary = \"anthropic\"\n",
+            "zai = { enabled = false, api_key = '', plan_tier = \"pro\" } # keep me\n[ui]\nprimary = \"anthropic\"\n",
+        ] {
+            for cache_failure in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("config.toml");
+                std::fs::write(&path, original).unwrap();
+                let facts = Arc::new(std::sync::Mutex::new(HostFacts {
+                    key_check: Some(KeyCheckFact {
+                        id: "zai".into(),
+                        seq: 1,
+                        state: KeyCheckState::Checking,
+                        error: String::new(),
+                    }),
+                    ..Default::default()
+                }));
+                let fetched = std::cell::Cell::new(false);
+
+                // Exercise the worker shared by both tray hosts, with only
+                // the provider/cache operations replaced. Its config path
+                // is explicit, so this also runs on Linux without HOME or a
+                // process-wide config override.
+                run_key_check(
+                    &facts,
+                    &path,
+                    "zai",
+                    "test-key-value".into(),
+                    1,
+                    |_| {
+                        fetched.set(true);
+                        Err("HTTP 401: invalid key".into())
+                    },
+                    |_| {
+                        let written = crate::config::Config::load_from(&path).unwrap();
+                        assert!(written.zai.enabled);
+                        assert_eq!(written.zai.api_key.as_deref(), Some("test-key-value"));
+                        if cache_failure {
+                            Err("fixture cache failure".into())
+                        } else {
+                            Ok(())
+                        }
+                    },
+                    |_, _| {},
+                    || {},
+                    || {},
+                );
+
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+                assert_eq!(fetched.get(), !cache_failure);
+                // Read the shared record directly: `facts_snapshot` is
+                // compiled only for the window/menu-bar hosts, and this test
+                // is meant to run on every platform.
+                let fact = facts.lock().unwrap().key_check.clone().unwrap();
+                assert_eq!(fact.state, KeyCheckState::Failed);
+                assert_eq!(
+                    fact.error,
+                    if cache_failure {
+                        "Could not clear the provider's cache, so the key was not checked."
+                    } else {
+                        "HTTP 401: invalid key"
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
     #[cfg(any(windows, target_os = "macos"))]
     fn key_check_keeps_the_key_when_the_provider_accepts() {
         let guard = override_guard();

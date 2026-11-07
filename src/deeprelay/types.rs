@@ -143,6 +143,11 @@ const MODEL_ROWS: usize = 5;
 
 impl CachedPayload {
     pub fn snapshot(&self) -> Result<DeepRelaySnapshot> {
+        if !self.subscription.subscribed && self.balance.is_none() {
+            return Err(AppError::Schema(
+                "DeepRelay pay-as-you-go balance is missing".into(),
+            ));
+        }
         let mut snapshot = self.subscription.snapshot()?;
         if let Some(balance) = &self.balance {
             snapshot.balance_usd = Some(cents_to_dollars(balance.balance_cents));
@@ -462,5 +467,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(payload.snapshot().unwrap().balance_usd, Some(12.34));
+    }
+
+    #[test]
+    fn payg_payload_requires_a_balance_but_accepts_zero_and_overruns() {
+        let mut payload: CachedPayload =
+            serde_json::from_str(r#"{"subscription":{"subscribed":false}}"#).unwrap();
+        assert!(matches!(payload.snapshot(), Err(AppError::Schema(_))));
+
+        for balance_cents in [0, -100] {
+            payload.balance = Some(Balance {
+                balance_cents,
+                auto_pay_enabled: false,
+                auto_pay_threshold_cents: None,
+                burn_cents_per_hour: None,
+            });
+            assert_eq!(
+                payload.snapshot().unwrap().balance_usd,
+                Some(balance_cents as f64 / 100.0)
+            );
+        }
+
+        payload.subscription.subscribed = true;
+        payload.balance = None;
+        assert!(payload.snapshot().unwrap().balance_usd.is_none());
     }
 }

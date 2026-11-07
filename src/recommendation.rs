@@ -183,11 +183,12 @@ pub fn rank_with_recent_hours(
     let recent_hours = recent_hours.clamp(1, MAX_RECENT_HOURS);
     let alert = alert.clamped();
     let horizon = f64::from(alert.hours) * 3600.0;
+    let now_ts = now.timestamp();
     let mut ranking = Vec::new();
     for e in entries {
         let mut row = json!({"entry_id":e["id"],"name":e["display_name"],"status":"unknown", "reason":"No reset window with a known duration", "score":-1.0, "urgent":false, "reason_code":"unknown"});
         let fetched = timestamp(&e["fetched_at"]);
-        let too_old = fetched.is_none_or(|t| now.timestamp() - t > MAX_STALE_SECONDS);
+        let too_old = fetched.is_none_or(|t| now_ts - t > MAX_STALE_SECONDS);
         if e["status"] != "ready" || (e["stale"] == true && too_old) {
             row["status"] = json!("unavailable");
             row["reason_code"] = json!("unavailable");
@@ -205,6 +206,7 @@ pub fn rank_with_recent_hours(
             m["window_secs"]
                 .as_f64()
                 .is_some_and(|w| w < WEEK_SECONDS - DAY_SECONDS)
+                && timestamp(&m["reset_at"]).is_none_or(|reset| reset > now_ts)
                 && m["percent"].as_f64().unwrap_or(0.0) >= 100.0
         });
         // Quota is lost at the weekly reset, so the weekly window is the
@@ -212,6 +214,8 @@ pub fn rank_with_recent_hours(
         // weekly windows (Claude's shared week and a per-model week) the most
         // used one binds what can still be spent. Providers without a weekly
         // window fall back to their longest known window of at least a day.
+        // Expired windows cannot bind the current quota, even if a recent
+        // cached report still shows them at 100%.
         let windowed: Vec<(&Value, f64, i64, f64)> = metrics
             .iter()
             .filter(shared)
@@ -219,7 +223,7 @@ pub fn rank_with_recent_hours(
                 Some((
                     m,
                     m["window_secs"].as_f64().filter(|w| *w >= DAY_SECONDS)?,
-                    timestamp(&m["reset_at"])?,
+                    timestamp(&m["reset_at"]).filter(|reset| *reset > now_ts)?,
                     m["percent"].as_f64()?,
                 ))
             })
@@ -249,8 +253,8 @@ pub fn rank_with_recent_hours(
             ranking.push(row);
             continue;
         }
-        let remaining = (reset - now.timestamp()) as f64;
-        if remaining <= 0.0 || window <= 0.0 || used < 0.0 {
+        let remaining = (reset - now_ts) as f64;
+        if used < 0.0 {
             ranking.push(row);
             continue;
         }
@@ -259,7 +263,7 @@ pub fn rank_with_recent_hours(
         // over a whole day instead of being extrapolated around the clock.
         let elapsed = (window - remaining).max(0.0);
         let cycle = used / (elapsed.max(DAY_SECONDS) / 3600.0);
-        let recent = recent_rate(samples, e, m, now.timestamp(), recent_hours);
+        let recent = recent_rate(samples, e, m, now_ts, recent_hours);
         let weight = recent
             .map(|(_, h)| (h / f64::from(recent_hours) * 0.75).min(0.75))
             .unwrap_or(0.0);
@@ -596,6 +600,41 @@ mod tests {
             unused > 0.0 && unused <= 69.0,
             "never more than what is left: {unused}"
         );
+    }
+    #[test]
+    fn expired_windows_do_not_mask_a_current_weekly_quota() {
+        let mut cached = provider(
+            "anthropic",
+            vec![
+                metric("Session (5h)", 100.0, Some(18000), -60),
+                metric("Weekly (7d)", 31.0, Some(604800), 23 * 3600),
+                metric("Fable (7d)", 100.0, Some(604800), -60),
+            ],
+        );
+        cached["stale"] = json!(true);
+        cached["fetched_at"] = json!(DateTime::from_timestamp(NOW - 120, 0).unwrap().to_rfc3339());
+        let document = with_priorities(
+            json!({"entries": [cached]}),
+            Options {
+                recent_hours: DEFAULT_RECENT_HOURS,
+                alert: Alert::default(),
+            },
+            None,
+            now(),
+        );
+        let row = &document["ranking"][0];
+        assert_eq!(row["status"], "priority");
+        assert_eq!(row["window"], "Weekly (7d)");
+        assert_eq!(row["session_exhausted"], false);
+        assert_eq!(document["recommendation"]["entry_id"], "anthropic");
+    }
+
+    #[test]
+    fn exhaustion_at_the_reset_instant_is_no_forecast() {
+        let spent = provider("a", vec![metric("Weekly", 100.0, Some(604800), 0)]);
+        let row = &rank(&[spent], &[], now())[0];
+        assert_eq!(row["status"], "unknown");
+        assert_eq!(row["urgent"], false);
     }
     #[test]
     fn early_cycle_usage_is_not_extrapolated_around_the_clock() {

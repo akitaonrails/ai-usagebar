@@ -2,6 +2,7 @@ import { useState } from "react";
 import MdiCogOutline from "~icons/mdi/cog-outline";
 import MdiRefresh from "~icons/mdi/refresh";
 import { Hint } from "@/components/Hint";
+import { IconButton } from "@/components/IconButton";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ProviderSection } from "@/components/ProviderSection";
 import type { RowAction } from "@/components/RowMenu";
@@ -130,16 +131,12 @@ export function NativeDashboard({
           <p>{m.usage_and_balance_subtitle()}</p>
         </div>
         <div className="native-dashboard-actions">
-          <Hint content={m.refresh()}>
-            <button type="button" className="native-icon-button" aria-label={m.refresh()} onClick={() => sendCommand("refresh")}>
-              <MdiRefresh aria-hidden />
-            </button>
-          </Hint>
-          <Hint content={m.settings()}>
-            <button type="button" className="native-icon-button" aria-label={m.settings()} onClick={onOpenSettings}>
-              <MdiCogOutline aria-hidden />
-            </button>
-          </Hint>
+          <IconButton className="native-header-action" label={m.refresh()} onClick={() => sendCommand("refresh")}>
+            <MdiRefresh aria-hidden />
+          </IconButton>
+          <IconButton className="native-header-action" label={m.settings()} onClick={onOpenSettings}>
+            <MdiCogOutline aria-hidden />
+          </IconButton>
         </div>
       </header>
 

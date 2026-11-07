@@ -40,6 +40,33 @@ pub fn warning_kind(code: u16, message: &str) -> WarningKind {
 /// Kimi has two independent quota percentages. Keep both on the individual
 /// widget in the same order as the detail panel: current 5h window, then 7d.
 pub const DEFAULT_FORMAT: &str = "5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%";
+/// Accounts on the newer response shape have no weekly bucket; their long
+/// window is the monthly pool, under the `mo` label the TUI overview uses.
+const MONTHLY_FORMAT: &str = "5h {kimi_window_pct}% · mo {kimi_monthly_pct}%";
+const WEEKLY_ONLY_FORMAT: &str = "7d {kimi_weekly_pct}%";
+const MONTHLY_ONLY_FORMAT: &str = "mo {kimi_monthly_pct}%";
+const SESSION_ONLY_FORMAT: &str = "5h {kimi_window_pct}%";
+/// Nothing this account reports a number for: an empty bar beats a made-up
+/// `5h 0%`.
+const NO_WINDOWS_FORMAT: &str = "";
+
+/// The bar text used when `--format` is omitted: the windows this account
+/// actually has. On the newer shape the weekly placeholders are empty, and
+/// accounts where Kimi omits the rolling quota have no 5h window.
+pub fn default_format(snap: &KimiSnapshot) -> &'static str {
+    match (
+        snap.window_limit > 0,
+        snap.has_weekly,
+        snap.monthly_pct.is_some(),
+    ) {
+        (true, true, _) => DEFAULT_FORMAT,
+        (true, false, true) => MONTHLY_FORMAT,
+        (true, false, false) => SESSION_ONLY_FORMAT,
+        (false, true, _) => WEEKLY_ONLY_FORMAT,
+        (false, false, true) => MONTHLY_ONLY_FORMAT,
+        (false, false, false) => NO_WINDOWS_FORMAT,
+    }
+}
 
 /// Kimi reports the weekly quota's reset instant but never its length; the
 /// subscription bucket rolls every 7 days.
@@ -81,6 +108,13 @@ pub fn build_placeholders(
             String::new()
         }
     };
+    let window = |value: String| {
+        if snap.window_limit > 0 {
+            value
+        } else {
+            String::new()
+        }
+    };
     placeholders(vec![
         ("icon", VendorId::Kimi.bar_icon().to_string()),
         ("vendor_short", VendorId::Kimi.short_name().to_string()),
@@ -91,10 +125,10 @@ pub fn build_placeholders(
             "weekly_reset",
             weekly(countdown::format(snap.weekly_reset_at, now)),
         ),
-        ("session_pct", window_pct.to_string()),
+        ("session_pct", window(window_pct.to_string())),
         (
             "session_reset",
-            countdown::format(snap.window_reset_at, now),
+            window(countdown::format(snap.window_reset_at, now)),
         ),
         // Kimi-specific placeholders.
         ("kimi_plan", plan.to_string()),
@@ -117,13 +151,16 @@ pub fn build_placeholders(
             "kimi_monthly_reset",
             monthly(countdown::format(snap.monthly_reset_at, now)),
         ),
-        ("kimi_window_pct", window_pct.to_string()),
-        ("kimi_window_used", snap.window_used.to_string()),
-        ("kimi_window_limit", snap.window_limit.to_string()),
-        ("kimi_window_remaining", snap.window_remaining.to_string()),
+        ("kimi_window_pct", window(window_pct.to_string())),
+        ("kimi_window_used", window(snap.window_used.to_string())),
+        ("kimi_window_limit", window(snap.window_limit.to_string())),
+        (
+            "kimi_window_remaining",
+            window(snap.window_remaining.to_string()),
+        ),
         (
             "kimi_window_reset",
-            countdown::format(snap.window_reset_at, now),
+            window(countdown::format(snap.window_reset_at, now)),
         ),
     ])
 }
@@ -143,7 +180,7 @@ pub fn render(
     let format = opts
         .format
         .clone()
-        .unwrap_or_else(|| DEFAULT_FORMAT.to_string());
+        .unwrap_or_else(|| default_format(snap).to_string());
     let values = build_placeholders(snap, now);
     // User formats are Pango markup after Waybar renders them. Escape API
     // strings there, while retaining raw values for the default tooltip (which
@@ -416,6 +453,64 @@ mod tests {
         assert!(!out.tooltip.contains("Rolling window"));
     }
 
+    /// When Kimi reports no rolling rate-limit window, the default bar shows
+    /// only the weekly quota and window placeholders render empty.
+    #[test]
+    fn missing_window_omitted_from_default_bar_and_placeholders_render_empty() {
+        let mut snap = sample_snap();
+        snap.window_limit = 0;
+        let outcome = sample_outcome(snap.clone());
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        // The render colours the value, so match the substring like the other
+        // bar tests do.
+        assert!(out.text.contains("7d 26%"), "{}", out.text);
+        assert!(!out.text.contains("5h"));
+
+        let values = build_placeholders(&snap, now());
+        for key in [
+            "kimi_window_pct",
+            "kimi_window_used",
+            "kimi_window_limit",
+            "kimi_window_remaining",
+            "kimi_window_reset",
+            "session_pct",
+            "session_reset",
+        ] {
+            assert_eq!(values[key], "", "{key} must render empty");
+        }
+        assert_eq!(values["kimi_weekly_pct"], "26");
+        assert_eq!(values["weekly_pct"], "26");
+    }
+
+    /// On the newer shape without a rolling window, the default bar shows
+    /// only the monthly pool.
+    #[test]
+    fn monthly_shape_without_window_default_bar_shows_only_monthly() {
+        let mut snap = monthly_snap();
+        snap.window_limit = 0;
+        let outcome = sample_outcome(snap.clone());
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        assert!(out.text.contains("mo 42%"), "{}", out.text);
+        assert!(!out.text.contains("5h"));
+        assert!(!out.text.contains('·'));
+
+        let values = build_placeholders(&snap, now());
+        for key in [
+            "kimi_window_pct",
+            "kimi_window_used",
+            "kimi_window_limit",
+            "kimi_window_remaining",
+            "kimi_window_reset",
+            "session_pct",
+            "session_reset",
+            "kimi_weekly_pct",
+            "weekly_pct",
+        ] {
+            assert_eq!(values[key], "", "{key} must render empty");
+        }
+        assert_eq!(values["kimi_monthly_pct"], "42");
+    }
+
     #[test]
     fn custom_tooltip_format_substitutes_exactly() {
         let snap = sample_snap();
@@ -680,18 +775,47 @@ mod tests {
         );
     }
 
-    /// DEFAULT_FORMAT stays `5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%`:
-    /// with the weekly placeholder resolving to empty, substitution must
-    /// tolerate the shape — no literal braces left behind.
+    /// #583: the newer shape has no weekly bucket, so the default bar names
+    /// the monthly pool in its place rather than an empty `7d %`.
     #[test]
-    fn monthly_shape_default_format_tolerates_the_empty_weekly_placeholder() {
+    fn monthly_shape_default_format_shows_the_monthly_pool() {
         let snap = monthly_snap();
         let outcome = sample_outcome(snap.clone());
         let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
         assert!(!out.text.contains('{'), "{}", out.text);
         assert!(!out.text.contains('}'), "{}", out.text);
-        assert!(out.text.contains("5h 15%"), "{}", out.text);
-        assert!(out.text.contains("7d %"), "{}", out.text);
+        assert!(out.text.contains("5h 15% · mo 42%"), "{}", out.text);
+        assert!(!out.text.contains("· 7d"), "{}", out.text);
+    }
+
+    #[test]
+    fn default_format_follows_the_windows_the_account_has() {
+        assert_eq!(default_format(&sample_snap()), DEFAULT_FORMAT);
+        assert_eq!(default_format(&monthly_snap()), MONTHLY_FORMAT);
+
+        let mut no_window = sample_snap();
+        no_window.window_limit = 0;
+        assert_eq!(default_format(&no_window), WEEKLY_ONLY_FORMAT);
+
+        let mut monthly_no_window = monthly_snap();
+        monthly_no_window.window_limit = 0;
+        assert_eq!(default_format(&monthly_no_window), MONTHLY_ONLY_FORMAT);
+
+        let session_only = KimiSnapshot {
+            has_weekly: false,
+            monthly_pct: None,
+            ..sample_snap()
+        };
+        assert_eq!(default_format(&session_only), SESSION_ONLY_FORMAT);
+
+        // Neither window: an empty bar, never a fabricated figure.
+        let neither = KimiSnapshot {
+            window_limit: 0,
+            has_weekly: false,
+            monthly_pct: None,
+            ..sample_snap()
+        };
+        assert_eq!(default_format(&neither), NO_WINDOWS_FORMAT);
     }
 
     #[test]

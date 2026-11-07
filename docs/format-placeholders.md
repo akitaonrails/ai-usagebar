@@ -305,6 +305,12 @@ combined monthly pool — so the weekly placeholders (`kimi_weekly_*` and the
 `weekly_pct`/`weekly_reset` aliases) render empty there, and
 `{kimi_monthly_pct}` / `{kimi_monthly_reset}` carry the monthly pool
 instead. On legacy-shape accounts the monthly placeholders render empty.
+The default format follows the shape: newer-shape accounts get
+`5h {kimi_window_pct}% · mo {kimi_monthly_pct}%`. When Kimi reports no rolling
+five-hour window, the window placeholders (`kimi_window_*` and the
+`session_pct`/`session_reset` aliases) render empty, and the default format
+shows only the long window the account has (`7d {kimi_weekly_pct}%` or
+`mo {kimi_monthly_pct}%`).
 
 ## Grok Bot
 

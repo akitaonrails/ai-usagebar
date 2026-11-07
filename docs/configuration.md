@@ -21,6 +21,12 @@ ai-usagebar --vendor kimi --config ./config.test.toml --watch 5
 ai-usagebar-tui --config ./config.test.toml
 ```
 
+The macOS and Windows tray's **Add key** dialog checks a new API key with
+the provider. If the check fails or cannot clear the provider's cache first,
+it restores the previous key and enabled state, in both standard and inline
+TOML provider tables. Other settings and comments are preserved, as are edits
+you make while the check is running.
+
 ```toml
 [ui]
 # Which vendor the widget shows when --vendor is omitted, AND which tab
