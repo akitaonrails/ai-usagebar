@@ -26,7 +26,7 @@ api_key_env = "ANTHROPIC_ADMIN_KEY"
 ```
 
 Supply the report credential separately from any executor's inference key.
-Do not replace a working Claude Code/slave login to configure this monitor.
+Do not replace a working Claude Code login to configure this monitor.
 
 ## Errors
 
@@ -37,9 +37,22 @@ Do not replace a working Claude Code/slave login to configure this monitor.
   Buying API credit does not grant those permissions.
 - HTTP 429: the shared backoff applies.
 
-401/403 do not serve an older organization's spend as an available reading.
-Transport/server failures retain the existing shared stale-cache policy.
-No error body containing account data is shown for 401/403.
+Like other API-key providers, a failed refresh (including 401/403) retains the
+last good payload as stale when it is within the shared stale-cache window and
+matches both the current key fingerprint and UTC month. An authentication failure
+uses the shared fixed message, never the upstream authentication response body.
+Transport/server failures keep the same fallback policy, including after 401/403.
+A successful refresh replaces the cached reading and clears the recorded error.
+
+Without a usable matching cache, the original error is reported. A different
+key's payload and a previous month's spend are never used as the current reading.
+The TUI may retain its last Ready snapshot with a stale badge after failed
+revalidation; changing this presentation is outside this provider's scope.
+
+Diagnostics are stored per provider, not per key. When keys share a cache
+directory, a failure for key A can leave its diagnostic and stale marker on a
+later read of key B's matching cached payload. This does not reuse A's payload
+or suppress B's matching cache; a successful live refresh clears the markers.
 
 References: [Admin API](https://platform.claude.com/docs/en/manage-claude/admin-api),
 [authentication](https://platform.claude.com/docs/en/manage-claude/authentication),

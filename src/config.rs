@@ -2130,8 +2130,8 @@ pub struct KiroConfig {
 #[serde(default)]
 pub struct AnthropicApiConfig {
     pub enabled: bool,
-    /// Env var for the Console **Admin key** (`sk-ant-admin01-…`), distinct from
-    /// an inference key and from the Claude Code OAuth login.
+    /// Env var for a Console key authorized to read organization cost reports.
+    /// This is separate from the Claude Code OAuth login.
     pub api_key_env: String,
     pub api_key: Option<String>,
     /// Monthly USD spend limit, used only for the spend-vs-limit % display. The
@@ -2141,7 +2141,7 @@ pub struct AnthropicApiConfig {
 
 impl Default for AnthropicApiConfig {
     fn default() -> Self {
-        // Opt-in: needs an explicit Admin key.
+        // Opt-in: needs an explicit organization report credential.
         Self {
             enabled: false,
             api_key_env: "ANTHROPIC_ADMIN_KEY".to_string(),

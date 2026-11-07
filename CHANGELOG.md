@@ -2,7 +2,10 @@
 
 ### Fixed
 
-- Anthropic API distinguishes rejected credentials from missing report permissions and no longer serves old spend after 401/403. Document organization report credential scope separately from inference access and prepaid credit.
+- **Anthropic API report setup guidance** now describes organization report
+  permissions instead of requiring an Admin-key prefix, including the widget
+  tooltip and translated credential notes. Document 401/403 troubleshooting
+  and preserve the shared same-key, same-month stale-cache policy.
 
 ## [1.49.0] — 2026-11-07
 
