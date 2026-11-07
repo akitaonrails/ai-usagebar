@@ -20,6 +20,7 @@ export function Customize({ cards, layout, onOpen, onOpenSettings, onReorder, on
   return (
     <div className="flex flex-col gap-[var(--section-gap)]">
       <ProviderList
+        heading
         cards={cards}
         error={payload.providersError}
         layout={layout}

@@ -611,6 +611,8 @@ function brandFileFor(provider) {
       return "muse-code.svg"
     case "synthetic":
       return "synthetic.svg"
+    case "orcarouter":
+      return "orcarouter.svg"
     default:
       return ""
   }

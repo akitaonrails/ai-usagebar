@@ -34,3 +34,4 @@ back to its `short_name` (`cmc`).
 | `opencode.svg` | OpenCode Go | lobe-icons `opencode` | MIT |
 | `ollama.svg` | Ollama Cloud | lobe-icons `ollama` | MIT |
 | `muse-code.svg` | Muse Code (Meta infinity mark) | [lobe-icons static SVG](https://github.com/lobehub/lobe-icons/blob/05a9b8c41e4735a4a2b6d2f1e43574bd8ec6c8cb/packages/static-svg/icons/meta.svg), path geometry preserved; white fill and fixed 24px dimensions for Qt | MIT; notice in [LICENSE-lobe-icons.txt](LICENSE-lobe-icons.txt) |
+| `orcarouter.svg` | OrcaRouter | OrcaRouter brand mark, identification use only; path geometry preserved from the (unmerged) [lobe-icons PR #397](https://github.com/lobehub/lobe-icons/pull/397); white fill and fixed 24px dimensions for Qt | OrcaRouter trademark, used to identify the provider; notice in [LICENSE-lobe-icons.txt](LICENSE-lobe-icons.txt) |

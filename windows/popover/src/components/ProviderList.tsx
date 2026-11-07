@@ -38,6 +38,13 @@ interface ProviderListProps {
   providers: ProviderInfo[];
   /** The header's right side beside the title (Settings passes reset and Detect). */
   headerActions?: ReactNode;
+  /**
+   * Draw the "Providers" title and the visible how-to line. Settings has a tab
+   * that supplies the heading, so it stays compact (icon only); Customize is
+   * this list alone and keeps both, which is what it looked like before the
+   * header was unified.
+   */
+  heading?: boolean;
 }
 
 const ADD_ACCOUNT_LABELS: Record<string, () => string> = { code: m.add_claude_code_account, desktop: m.add_claude_desktop_account, codex: m.add_codex_account };
@@ -52,7 +59,7 @@ const ADD_ACCOUNT_LABELS: Record<string, () => string> = { code: m.add_claude_co
  * live in its subtitle; the accounts themselves are chosen there, in the
  * detail, not in this list.
  */
-export function ProviderList({ cards, error, headerActions, layout, onOpen, onReorder, onToggle, providers }: ProviderListProps) {
+export function ProviderList({ cards, error, headerActions, heading = false, layout, onOpen, onReorder, onToggle, providers }: ProviderListProps) {
   // The host re-reads credentials only when asked, so ask whenever the list opens.
   useEffect(() => {
     sendCommand("providers");
@@ -70,6 +77,7 @@ export function ProviderList({ cards, error, headerActions, layout, onOpen, onRe
     <div className="flex flex-col gap-[var(--header-card-gap)]">
       <div className="flex items-center justify-between gap-2">
         <div className="section-title flex items-center gap-[var(--gap-inline)]">
+          {heading ? <span>{m.providers()}</span> : null}
           <Hint content={m.all_providers_hint()}>
             <span tabIndex={0} role="img" aria-label={m.all_providers_hint()}>
               <MdiHelpCircleOutline className="size-[var(--icon-help)] shrink-0 text-label-2" />
@@ -113,6 +121,12 @@ export function ProviderList({ cards, error, headerActions, layout, onOpen, onRe
       {error ? (
         <div className="px-[var(--card-pad)] text-[length:var(--sz-badge)] text-meter-red">
           {error}
+        </div>
+      ) : heading ? (
+        // Customize has no tab to explain the list; keep the instruction
+        // visible instead of hiding it behind the help icon.
+        <div className="px-[var(--card-pad)] text-[length:var(--sz-badge)] text-label-2">
+          {m.all_providers_hint()}
         </div>
       ) : null}
     </div>

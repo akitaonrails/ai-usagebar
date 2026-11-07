@@ -238,7 +238,7 @@ jobs:
 
       - name: Install cross (aarch64 cross-compile via Docker)
         if: runner.os == 'Linux' && matrix.builder == 'cross'
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
           tool: cross
 
@@ -767,11 +767,12 @@ jobs:
           SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
         run: |
           if [ -z "$SCOOP_BUCKET_TOKEN" ]; then
-            echo "set=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Skipping Scoop bucket push — no SCOOP_BUCKET_TOKEN secret set"
-          else
-            echo "set=true" >> "$GITHUB_OUTPUT"
+            # Fail loudly: a green release with a silently skipped channel is
+            # how the bucket sat at v1.45.0 through three releases (#568).
+            echo "::error::No SCOOP_BUCKET_TOKEN secret set — the Scoop bucket cannot be published. Set the secret (a PAT with push access to akitaonrails/scoop-bucket) and re-run this workflow."
+            exit 1
           fi
+          echo "set=true" >> "$GITHUB_OUTPUT"
 
       # Pin the in-tree manifest template to this tag. The hash is recomputed
       # from the release's published `.sha256` sidecar, never from the

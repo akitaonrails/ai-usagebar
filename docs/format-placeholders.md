@@ -289,6 +289,8 @@ combined monthly pool — so the weekly placeholders (`kimi_weekly_*` and the
 `weekly_pct`/`weekly_reset` aliases) render empty there, and
 `{kimi_monthly_pct}` / `{kimi_monthly_reset}` carry the monthly pool
 instead. On legacy-shape accounts the monthly placeholders render empty.
+The default format follows the shape: newer-shape accounts get
+`5h {kimi_window_pct}% · mo {kimi_monthly_pct}%`.
 
 ## Grok Bot
 

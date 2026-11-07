@@ -186,6 +186,8 @@ pub struct ProfileMeta {
     /// without it the history merges are skipped but the credential swap
     /// still works.
     pub org_uuid: Option<String>,
+    /// At least one saved token cache. Claude Desktop 4.16 writes only the V2
+    /// blob, so a profile captured there has no legacy file (#573).
     pub has_credentials: bool,
     pub has_desktop_state: bool,
 }
@@ -220,7 +222,7 @@ pub fn load_profiles(profiles_dir: &Path) -> Vec<ProfileMeta> {
                 account_uuid,
                 org_uuid: raw.org_uuid.filter(|uuid| !uuid.is_empty()),
                 has_credentials: dir.join(TOKEN_CACHE).is_file()
-                    && dir.join(TOKEN_CACHE_V2).is_file(),
+                    || dir.join(TOKEN_CACHE_V2).is_file(),
                 has_desktop_state: dir.join(DESKTOP_STATE).is_dir(),
             })
         })
@@ -330,8 +332,18 @@ impl Default for SwitchOpts {
 /// blobs; never logged or printed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedTokens {
-    pub token_cache: String,
-    pub token_cache_v2: String,
+    /// The legacy `oauth:tokenCache` blob. Claude Desktop 4.16 stopped
+    /// writing it (#573), so it is absent for accounts captured on a new app.
+    pub token_cache: Option<String>,
+    /// The current `oauth:tokenCacheV2` blob.
+    pub token_cache_v2: Option<String>,
+}
+
+impl SavedTokens {
+    /// At least one credential blob has to exist for a profile to be usable.
+    fn is_empty(&self) -> bool {
+        self.token_cache.is_none() && self.token_cache_v2.is_none()
+    }
 }
 
 /// Everything a switch would do, decided before anything is touched.
@@ -404,28 +416,16 @@ pub fn plan_switch(paths: &Paths, label: &str, opts: SwitchOpts) -> Result<Switc
         .and_then(|uuid| label_for_uuid(&profiles, &uuid).map(str::to_string));
 
     let profile_dir = paths.profile_dir(label);
-    let token_cache = std::fs::read_to_string(profile_dir.join(TOKEN_CACHE)).map_err(|_| {
-        AppError::Credentials(format!(
+    let tokens = SavedTokens {
+        token_cache: non_empty_file(&profile_dir.join(TOKEN_CACHE))?,
+        token_cache_v2: non_empty_file(&profile_dir.join(TOKEN_CACHE_V2))?,
+    };
+    if tokens.is_empty() {
+        return Err(AppError::Credentials(format!(
             "no complete saved Desktop credential for {label:?}; capture or sign into that \
              account before switching"
-        ))
-    })?;
-    let token_cache_v2 =
-        std::fs::read_to_string(profile_dir.join(TOKEN_CACHE_V2)).map_err(|_| {
-            AppError::Credentials(format!(
-                "no complete saved Desktop credential for {label:?}; capture or sign into that \
-                 account before switching"
-            ))
-        })?;
-    if token_cache.is_empty() || token_cache_v2.is_empty() {
-        return Err(AppError::Credentials(format!(
-            "the saved Desktop credential for {label:?} is empty; capture it again before switching"
         )));
     }
-    let tokens = SavedTokens {
-        token_cache,
-        token_cache_v2,
-    };
     if !profile_dir.join(DESKTOP_STATE).is_dir() {
         return Err(AppError::Credentials(format!(
             "no saved Desktop browser state for {label:?}; capture that account again before switching"
@@ -990,9 +990,16 @@ fn snapshot_profile(paths: &Paths, label: &str, notes: &mut Vec<String>) -> Resu
         std::fs::read(paths.config_json()).map_err(|e| AppError::io_at(paths.config_json(), e))?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     let live_tokens = SavedTokens {
-        token_cache: required_token(&value, "oauth:tokenCache")?.to_string(),
-        token_cache_v2: required_token(&value, "oauth:tokenCacheV2")?.to_string(),
+        token_cache: optional_token(&value, "oauth:tokenCache"),
+        token_cache_v2: optional_token(&value, "oauth:tokenCacheV2"),
     };
+    if live_tokens.is_empty() {
+        return Err(AppError::Credentials(
+            "the live Desktop login has no OAuth token cache; refusing to overwrite its saved \
+             profile"
+                .into(),
+        ));
+    }
     write_saved_tokens(&profile_dir, &live_tokens, notes)?;
 
     // The registry is account-keyed and shared, so it is snapshotted (never
@@ -1008,16 +1015,23 @@ fn snapshot_profile(paths: &Paths, label: &str, notes: &mut Vec<String>) -> Resu
     Ok(())
 }
 
-fn required_token<'a>(value: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+fn optional_token(value: &serde_json::Value, key: &str) -> Option<String> {
     value
         .get(key)
         .and_then(serde_json::Value::as_str)
         .filter(|blob| !blob.is_empty())
-        .ok_or_else(|| {
-            AppError::Credentials(format!(
-                "the live Desktop login is missing {key}; refusing to overwrite its saved profile"
-            ))
-        })
+        .map(str::to_string)
+}
+
+/// A saved credential file's contents, or `None` when the file is absent or
+/// empty — a new-format profile legitimately has no legacy blob (#573).
+fn non_empty_file(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) if !text.is_empty() => Ok(Some(text)),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::io_at(path, error)),
+    }
 }
 
 fn write_saved_tokens(
@@ -1030,8 +1044,18 @@ fn write_saved_tokens(
     let original = read_optional_file(&token_path)?;
     let original_v2 = read_optional_file(&token_v2_path)?;
     let write_result = (|| {
-        crate::cache::atomic_write(&token_path, tokens.token_cache.as_bytes())?;
-        crate::cache::atomic_write(&token_v2_path, tokens.token_cache_v2.as_bytes())?;
+        match &tokens.token_cache {
+            Some(blob) => crate::cache::atomic_write(&token_path, blob.as_bytes())?,
+            None => {
+                let _ = std::fs::remove_file(&token_path);
+            }
+        }
+        match &tokens.token_cache_v2 {
+            Some(blob) => crate::cache::atomic_write(&token_v2_path, blob.as_bytes())?,
+            None => {
+                let _ = std::fs::remove_file(&token_v2_path);
+            }
+        }
         Ok(())
     })();
     if let Err(error) = write_result {
@@ -1118,12 +1142,7 @@ fn snapshot_desktop_state(
 
 fn swap_credentials(config_json: &Path, tokens: &SavedTokens, account_uuid: &str) -> Result<()> {
     let existing = std::fs::read(config_json).map_err(|e| AppError::io_at(config_json, e))?;
-    let bytes = merge::swap_config_tokens(
-        &existing,
-        &tokens.token_cache,
-        &tokens.token_cache_v2,
-        account_uuid,
-    )?;
+    let bytes = merge::swap_config_tokens(&existing, tokens, account_uuid)?;
     // Atomic, unlike claude-acc's truncating write: a crash mid-write here
     // would take every account's tokens with it.
     crate::cache::atomic_write(config_json, &bytes)
@@ -1498,6 +1517,19 @@ mod tests {
         assert!(profiles[1].has_desktop_state);
     }
 
+    // #580: a profile captured on Claude Desktop 4.16 holds only the V2 blob
+    // (#573). It is a usable credential, so the listing must not drop it.
+    #[test]
+    fn a_v2_only_profile_counts_as_having_credentials() {
+        let fixture = fixture();
+        std::fs::remove_file(fixture.paths.profile_dir("there").join(TOKEN_CACHE)).unwrap();
+
+        let profiles = load_profiles(&fixture.paths.profiles_dir);
+
+        assert_eq!(profiles[1].label, "there");
+        assert!(profiles[1].has_credentials);
+    }
+
     #[test]
     fn a_malformed_profile_is_skipped_not_fatal() {
         let fixture = fixture();
@@ -1535,6 +1567,31 @@ mod tests {
         assert_eq!(session_count(&sessions_root, &profiles[1]), 0);
     }
 
+    // #573: Claude Desktop 4.16 writes only `oauth:tokenCacheV2` after a
+    // fresh sign-in. A capture on that app must succeed and save only the V2
+    // blob — requiring the legacy one left `account add --desktop` waiting
+    // forever for a key the app no longer writes.
+    #[test]
+    fn a_v2_only_login_is_captured_without_a_legacy_blob() {
+        let fixture = fixture();
+        write(
+            &fixture.paths.config_json(),
+            r#"{"lastKnownAccountUuid":"uuid-v2-only","oauth:tokenCacheV2":"v2-blob"}"#,
+        );
+        let mut notes = Vec::new();
+        snapshot_profile(&fixture.paths, "work", &mut notes).unwrap();
+
+        let dir = fixture.paths.profile_dir("work");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(TOKEN_CACHE_V2)).unwrap(),
+            "v2-blob"
+        );
+        assert!(
+            !dir.join(TOKEN_CACHE).exists(),
+            "no legacy blob is invented for a new-format login"
+        );
+    }
+
     #[test]
     fn planning_a_switch_changes_nothing_on_disk() {
         let fixture = fixture();
@@ -1543,7 +1600,7 @@ mod tests {
         let plan = plan_switch(&fixture.paths, "there", SwitchOpts::default()).unwrap();
 
         assert_eq!(plan.outgoing.as_deref(), Some("here"));
-        assert_eq!(plan.tokens.token_cache, "saved-a");
+        assert_eq!(plan.tokens.token_cache.as_deref(), Some("saved-a"));
         assert!(plan.restores_desktop_state);
         assert_eq!(plan.sessions.copied.len(), 1, "{:?}", plan.sessions);
         assert_eq!(manifest(&fixture.paths.data_dir), before);

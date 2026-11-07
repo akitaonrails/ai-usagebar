@@ -1219,11 +1219,25 @@ body:has(.native-panel[data-os="windows"]) {
   height: var(--icon-btn-glyph);
 }
 
-.icon-btn:hover,
+.icon-btn:hover {
+  background: var(--icon-btn-hover);
+  color: var(--label-1);
+}
+
+/* Keyboard focus keeps a visible ring: a background tint alone disappears on
+   the armed (red) state and is too weak for WCAG 2.4.7 on the native panel. */
 .icon-btn:focus-visible {
   background: var(--icon-btn-hover);
   color: var(--label-1);
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The native panel's header actions were 29px before the icon buttons were
+   unified; keep that surface at its old size rather than shrinking the two
+   controls a macOS user hits most. Everything else stays at 24px. */
+.native-panel .native-header-action {
+  --icon-btn: 29px;
 }
 
 .icon-btn:active {

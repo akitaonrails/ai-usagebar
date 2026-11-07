@@ -4,6 +4,49 @@
 
 - Every icon button in the tray popover has the same size, color, hover and tooltip in every style; Detect Providers is an icon beside Reset, and the providers hint moved into a help icon.
 
+### Fixed
+
+- **A Claude Desktop account captured on Desktop 4.16 gets its usage tab.**
+  Since #573 such a profile holds only the V2 token cache, which switching and
+  the usage reader already accept, but the profile listing still required the
+  legacy blob as well. The account read `creds=no` in `account status` and was
+  left out of the TUI, `usage --json` and the menu bar's account list (#580).
+
+- **Kimi's default bar shows the monthly pool on newer-shape accounts.** An
+  account on the newer `/coding/v1/usages` shape has no weekly bucket, so the
+  default `5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%` read `5h 15% · 7d %`
+  and left the monthly pool, which already set the bar's color, off the bar.
+  Those accounts now get `5h {kimi_window_pct}% · mo {kimi_monthly_pct}%`;
+  legacy-shape accounts and a configured `--format` are unchanged (#583).
+## [1.48.2] — 2026-11-05
+
+### Added
+
+- **OrcaRouter's logomark in the Omarchy bar and panel.** The `orcarouter`
+  entry already reports `brand: "orcarouter"`, but no mark shipped, so the bar
+  chip and panel hero fell back to the generic robot glyph. Add the monochrome
+  OrcaRouter brand mark, used to identify the provider, with its provenance
+  recorded (geometry preserved from the community lobe-icons submission, which
+  is not merged upstream) and the existing notice file. Custom providers that declare
+  `brand = "orcarouter"` use the same mark.
+
+### Fixed
+
+- **`account add --desktop` works on Claude Desktop 4.16.** A fresh sign-in on
+  4.16 and later writes only `oauth:tokenCacheV2`; the capture waited for the
+  legacy `oauth:tokenCache` as well, so it sat until the five-minute timeout
+  and put the previous login back with nothing saved (#573). Either token
+  cache now counts as a complete login, a saved profile keeps only the blobs
+  that account actually has, and switching to such a profile no longer writes
+  the outgoing account's legacy blob into `config.json`.
+- **A release can no longer pass green with the Scoop bucket silently
+  skipped.** `publish-scoop` treated a missing `SCOOP_BUCKET_TOKEN` as a
+  warning and exited successfully, so three releases shipped while
+  `bucket/ai-usagebar.json` stayed at v1.45.0 (#568). The secret now exists and
+  has been publishing since v1.48.1; the job fails loudly instead of skipping
+  if it ever goes missing again.
+
+
 ## [1.48.1] — 2026-11-03
 
 ### Fixed
@@ -5321,7 +5364,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...HEAD
+[1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2
 [1.48.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...v1.48.1
 [1.48.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.47.0...v1.48.0
 [1.47.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.46.0...v1.47.0

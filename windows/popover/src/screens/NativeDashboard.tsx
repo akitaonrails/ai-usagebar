@@ -131,10 +131,10 @@ export function NativeDashboard({
           <p>{m.usage_and_balance_subtitle()}</p>
         </div>
         <div className="native-dashboard-actions">
-          <IconButton label={m.refresh()} onClick={() => sendCommand("refresh")}>
+          <IconButton className="native-header-action" label={m.refresh()} onClick={() => sendCommand("refresh")}>
             <MdiRefresh aria-hidden />
           </IconButton>
-          <IconButton label={m.settings()} onClick={onOpenSettings}>
+          <IconButton className="native-header-action" label={m.settings()} onClick={onOpenSettings}>
             <MdiCogOutline aria-hidden />
           </IconButton>
         </div>
