@@ -443,6 +443,62 @@ mod tests {
         assert!(!out.tooltip.contains("Rolling window"));
     }
 
+    /// When Kimi reports no rolling rate-limit window, the default bar shows
+    /// only the weekly quota and window placeholders render empty.
+    #[test]
+    fn missing_window_omitted_from_default_bar_and_placeholders_render_empty() {
+        let mut snap = sample_snap();
+        snap.window_limit = 0;
+        let outcome = sample_outcome(snap.clone());
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        assert_eq!(out.text, "7d 26%");
+        assert!(!out.text.contains("5h"));
+
+        let values = build_placeholders(&snap, now());
+        for key in [
+            "kimi_window_pct",
+            "kimi_window_used",
+            "kimi_window_limit",
+            "kimi_window_remaining",
+            "kimi_window_reset",
+            "session_pct",
+            "session_reset",
+        ] {
+            assert_eq!(values[key], "", "{key} must render empty");
+        }
+        assert_eq!(values["kimi_weekly_pct"], "26");
+        assert_eq!(values["weekly_pct"], "26");
+    }
+
+    /// On the newer shape without a rolling window, the default bar shows
+    /// only the monthly pool.
+    #[test]
+    fn monthly_shape_without_window_default_bar_shows_only_monthly() {
+        let mut snap = monthly_snap();
+        snap.window_limit = 0;
+        let outcome = sample_outcome(snap.clone());
+        let out = render(&outcome, &snap, &Theme::default(), &opts(), now());
+        assert_eq!(out.text, "mo 42%");
+        assert!(!out.text.contains("5h"));
+        assert!(!out.text.contains('·'));
+
+        let values = build_placeholders(&snap, now());
+        for key in [
+            "kimi_window_pct",
+            "kimi_window_used",
+            "kimi_window_limit",
+            "kimi_window_remaining",
+            "kimi_window_reset",
+            "session_pct",
+            "session_reset",
+            "kimi_weekly_pct",
+            "weekly_pct",
+        ] {
+            assert_eq!(values[key], "", "{key} must render empty");
+        }
+        assert_eq!(values["kimi_monthly_pct"], "42");
+    }
+
     #[test]
     fn custom_tooltip_format_substitutes_exactly() {
         let snap = sample_snap();
@@ -721,13 +777,31 @@ mod tests {
     }
 
     #[test]
-    fn default_format_follows_the_long_window_the_account_has() {
+    fn default_format_follows_the_windows_the_account_has() {
         assert_eq!(default_format(&sample_snap()), DEFAULT_FORMAT);
         assert_eq!(default_format(&monthly_snap()), MONTHLY_FORMAT);
-        // Neither long window: keep the historical default, never "mo %".
-        let neither = KimiSnapshot {
+
+        let mut no_window = sample_snap();
+        no_window.window_limit = 0;
+        assert_eq!(default_format(&no_window), WEEKLY_ONLY_FORMAT);
+
+        let mut monthly_no_window = monthly_snap();
+        monthly_no_window.window_limit = 0;
+        assert_eq!(default_format(&monthly_no_window), MONTHLY_ONLY_FORMAT);
+
+        let session_only = KimiSnapshot {
+            has_weekly: false,
             monthly_pct: None,
-            ..monthly_snap()
+            ..sample_snap()
+        };
+        assert_eq!(default_format(&session_only), SESSION_ONLY_FORMAT);
+
+        // Neither window: keep the historical default.
+        let neither = KimiSnapshot {
+            window_limit: 0,
+            has_weekly: false,
+            monthly_pct: None,
+            ..sample_snap()
         };
         assert_eq!(default_format(&neither), DEFAULT_FORMAT);
     }

@@ -4749,6 +4749,63 @@ mod tests {
         assert_eq!(metric_count, 1);
     }
 
+    #[test]
+    fn kimi_overview_cells_omit_window_when_limit_zero() {
+        let snap = KimiSnapshot {
+            plan: None,
+            weekly_limit: 100,
+            weekly_used: 10,
+            weekly_remaining: 90,
+            weekly_reset_at: None,
+            has_weekly: true,
+            monthly_pct: None,
+            monthly_reset_at: None,
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        let (_, cells) = compact_cells(&VendorSnapshot::Kimi(snap));
+        let texts: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(texts, ["wk 10%"]);
+
+        let monthly_snap = KimiSnapshot {
+            plan: None,
+            weekly_limit: 0,
+            weekly_used: 0,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            has_weekly: false,
+            monthly_pct: Some(42),
+            monthly_reset_at: None,
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        let (_, cells) = compact_cells(&VendorSnapshot::Kimi(monthly_snap));
+        let texts: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(texts, ["mo 42%"]);
+
+        let neither = KimiSnapshot {
+            plan: None,
+            weekly_limit: 0,
+            weekly_used: 0,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            has_weekly: false,
+            monthly_pct: None,
+            monthly_reset_at: None,
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        let (_, cells) = compact_cells(&VendorSnapshot::Kimi(neither));
+        let texts: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(texts, ["—"]);
+    }
+
     /// The newer `usages`-map shape has no weekly bucket: the panel drops the
     /// weekly row and lists the monthly pool — with its reset, but with no
     /// window metadata, because the reset hangs on the order date and there
