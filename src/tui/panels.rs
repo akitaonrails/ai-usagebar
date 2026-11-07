@@ -410,7 +410,12 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             vec![(usd(s.balance), crate::deepinfra::vendor::severity(s))],
         ),
         VendorSnapshot::Kimi(s) => {
-            let mut cells = vec![pct("5h", s.window_pct())];
+            // #590: no rolling quota on this account, so no 5h cell — the
+            // Overview follows the same presence rule as the detail rows.
+            let mut cells = Vec::new();
+            if s.window_limit > 0 {
+                cells.push(pct("5h", s.window_pct()));
+            }
             if s.has_weekly {
                 cells.push(pct("wk", s.weekly_pct()));
             }
@@ -4824,6 +4829,38 @@ mod tests {
         }));
         assert!(plan.is_empty());
         assert_eq!(cells, vec![("$8.42".to_string(), PaceSeverity::Low)]);
+    }
+
+    // #590: an account with no rolling quota gets no 5h cell in the Overview,
+    // matching the detail rows' presence rule.
+    #[test]
+    fn a_kimi_account_without_a_rolling_window_has_no_five_hour_cell() {
+        let snap = crate::usage::KimiSnapshot {
+            plan: Some("Allegretto".into()),
+            weekly_limit: 0,
+            weekly_used: 0,
+            weekly_remaining: 0,
+            weekly_reset_at: None,
+            has_weekly: false,
+            monthly_pct: Some(42),
+            monthly_reset_at: None,
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+        };
+        let (_, cells) = compact_cells(&VendorSnapshot::Kimi(snap.clone()));
+        assert_eq!(cells, vec![("mo 42%".to_string(), PaceSeverity::Low)]);
+
+        // The rolling window, when present, still leads.
+        let with_window = crate::usage::KimiSnapshot {
+            window_limit: 100,
+            window_used: 15,
+            window_remaining: 85,
+            ..snap
+        };
+        let (_, cells) = compact_cells(&VendorSnapshot::Kimi(with_window));
+        assert_eq!(cells[0].0, "5h 15%");
     }
 
     #[test]

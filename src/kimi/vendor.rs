@@ -43,16 +43,29 @@ pub const DEFAULT_FORMAT: &str = "5h {kimi_window_pct}% · 7d {kimi_weekly_pct}%
 /// Accounts on the newer response shape have no weekly bucket; their long
 /// window is the monthly pool, under the `mo` label the TUI overview uses.
 const MONTHLY_FORMAT: &str = "5h {kimi_window_pct}% · mo {kimi_monthly_pct}%";
+/// Kimi omits the rolling window for accounts without one (#590); the bar then
+/// shows only the long window it does report.
+const WEEKLY_ONLY_FORMAT: &str = "7d {kimi_weekly_pct}%";
+const MONTHLY_ONLY_FORMAT: &str = "mo {kimi_monthly_pct}%";
+/// Nothing this account reports a number for: an empty bar beats a made-up
+/// `5h 0%`.
+const NO_WINDOWS_FORMAT: &str = "";
 
 /// The bar text used when `--format` is omitted: the long window this account
 /// actually has. On the newer shape the weekly placeholders are empty, so
 /// [`DEFAULT_FORMAT`] would read "5h 15% · 7d %" and leave the monthly pool,
 /// which still sets the bar's color, off the bar.
 pub fn default_format(snap: &KimiSnapshot) -> &'static str {
-    if !snap.has_weekly && snap.monthly_pct.is_some() {
-        MONTHLY_FORMAT
-    } else {
-        DEFAULT_FORMAT
+    match (
+        snap.window_limit > 0,
+        snap.has_weekly,
+        snap.monthly_pct.is_some(),
+    ) {
+        (true, false, true) => MONTHLY_FORMAT,
+        (true, _, _) => DEFAULT_FORMAT,
+        (false, true, _) => WEEKLY_ONLY_FORMAT,
+        (false, false, true) => MONTHLY_ONLY_FORMAT,
+        (false, false, false) => NO_WINDOWS_FORMAT,
     }
 }
 
@@ -96,6 +109,15 @@ pub fn build_placeholders(
             String::new()
         }
     };
+    // Kimi omits `limits` for accounts without a rolling quota (#590); those
+    // placeholders must resolve empty, not to a fabricated `0`/`now`.
+    let window = |value: String| {
+        if snap.window_limit > 0 {
+            value
+        } else {
+            String::new()
+        }
+    };
     placeholders(vec![
         ("icon", VendorId::Kimi.bar_icon().to_string()),
         ("vendor_short", VendorId::Kimi.short_name().to_string()),
@@ -106,10 +128,10 @@ pub fn build_placeholders(
             "weekly_reset",
             weekly(countdown::format(snap.weekly_reset_at, now)),
         ),
-        ("session_pct", window_pct.to_string()),
+        ("session_pct", window(window_pct.to_string())),
         (
             "session_reset",
-            countdown::format(snap.window_reset_at, now),
+            window(countdown::format(snap.window_reset_at, now)),
         ),
         // Kimi-specific placeholders.
         ("kimi_plan", plan.to_string()),
@@ -132,13 +154,16 @@ pub fn build_placeholders(
             "kimi_monthly_reset",
             monthly(countdown::format(snap.monthly_reset_at, now)),
         ),
-        ("kimi_window_pct", window_pct.to_string()),
-        ("kimi_window_used", snap.window_used.to_string()),
-        ("kimi_window_limit", snap.window_limit.to_string()),
-        ("kimi_window_remaining", snap.window_remaining.to_string()),
+        ("kimi_window_pct", window(window_pct.to_string())),
+        ("kimi_window_used", window(snap.window_used.to_string())),
+        ("kimi_window_limit", window(snap.window_limit.to_string())),
+        (
+            "kimi_window_remaining",
+            window(snap.window_remaining.to_string()),
+        ),
         (
             "kimi_window_reset",
-            countdown::format(snap.window_reset_at, now),
+            window(countdown::format(snap.window_reset_at, now)),
         ),
     ])
 }
@@ -671,6 +696,32 @@ mod tests {
         );
     }
 
+    // #590: no rolling quota on the account, so its placeholders resolve empty
+    // (not "0"/"now") and the remaining long window still renders.
+    #[test]
+    fn a_missing_rolling_window_leaves_its_placeholders_empty() {
+        let snap = KimiSnapshot {
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+            ..monthly_snap()
+        };
+        let values = build_placeholders(&snap, now());
+        for key in [
+            "session_pct",
+            "session_reset",
+            "kimi_window_pct",
+            "kimi_window_used",
+            "kimi_window_limit",
+            "kimi_window_remaining",
+            "kimi_window_reset",
+        ] {
+            assert_eq!(values[key], "", "{key} must render empty");
+        }
+        assert_eq!(values["kimi_monthly_pct"], "42");
+    }
+
     #[test]
     fn monthly_shape_weekly_placeholders_render_empty_and_monthly_ones_resolve() {
         let snap = monthly_snap();
@@ -712,12 +763,29 @@ mod tests {
     fn default_format_follows_the_long_window_the_account_has() {
         assert_eq!(default_format(&sample_snap()), DEFAULT_FORMAT);
         assert_eq!(default_format(&monthly_snap()), MONTHLY_FORMAT);
-        // Neither long window: keep the historical default, never "mo %".
-        let neither = KimiSnapshot {
-            monthly_pct: None,
+        // #590: accounts without a rolling quota never get a fabricated "5h 0%".
+        let weekly_only = KimiSnapshot {
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
+            ..sample_snap()
+        };
+        assert_eq!(default_format(&weekly_only), WEEKLY_ONLY_FORMAT);
+        let monthly_only = KimiSnapshot {
+            window_limit: 0,
+            window_used: 0,
+            window_remaining: 0,
+            window_reset_at: None,
             ..monthly_snap()
         };
-        assert_eq!(default_format(&neither), DEFAULT_FORMAT);
+        assert_eq!(default_format(&monthly_only), MONTHLY_ONLY_FORMAT);
+        // No long window either: an empty bar, never "mo %".
+        let neither = KimiSnapshot {
+            monthly_pct: None,
+            ..monthly_only
+        };
+        assert_eq!(default_format(&neither), NO_WINDOWS_FORMAT);
     }
 
     #[test]
