@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.49.0] — 2026-11-07
+
 ### Added
 
 - **Mistral.** Reports the monthly API and Vibe Code budgets from the billing
@@ -5413,7 +5415,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...HEAD
+[1.49.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...v1.49.0
 [1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3
 [1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2
 [1.48.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.0...v1.48.1
