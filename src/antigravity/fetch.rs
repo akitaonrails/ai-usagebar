@@ -198,6 +198,30 @@ pub async fn fetch_snapshot(
     .await
 }
 
+/// Refresh a status-line account without starting another `agy` process or
+/// consulting the machine's saved Google login. The caller verifies the
+/// local snapshot's account before using it for the session card.
+pub(crate) async fn fetch_local_snapshot(
+    client: &reqwest::Client,
+    cache: &Cache,
+    cache_ttl: Duration,
+    ide_language_server: bool,
+) -> Result<FetchOutcome> {
+    fetch_snapshot_at(
+        client,
+        cache,
+        cache_ttl,
+        None,
+        RemoteOverride {
+            credential: SavedCredential::Absent,
+            ide_language_server,
+            ..Default::default()
+        },
+        Utc::now(),
+    )
+    .await
+}
+
 /// Clock seam for [`fetch_snapshot`], so window expiry can be exercised at
 /// fixed instants instead of against the wall clock, and the seam for
 /// everything the remote fallback would otherwise read from the machine.
@@ -853,10 +877,7 @@ fn account_key(user_status: &serde_json::Value) -> String {
         .filter(|s| !s.is_empty());
     match email {
         Some(e) => {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            e.hash(&mut h);
-            format!("acct:{:016x}", h.finish())
+            format!("acct:{}", super::account_hash(e))
         }
         None => "acct:unknown".to_string(),
     }
@@ -2612,6 +2633,11 @@ mod tests {
         assert!(!a.contains("someone"), "{a}");
         assert!(!a.contains('@'), "{a}");
         assert_eq!(a, with("someone@example.com"), "must be stable");
+        assert_eq!(a, with(" Someone@Example.COM "));
+        assert_eq!(
+            a,
+            format!("acct:{}", super::super::account_hash("someone@example.com"))
+        );
         assert_ne!(a, with("other@example.com"));
         // An unidentifiable response still compares equal to itself.
         let unknown = account_key(&serde_json::json!({}));

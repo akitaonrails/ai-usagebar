@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Antigravity's live-session cards refresh their complete quota.** A status
+  line can report an unused weekly bucket while the local server already
+  records usage. The report now prefers fresh local quota for the verified
+  same account, including its reset times and per-model pools, while keeping
+  the status-line reading when that refresh cannot be attributed or fails.
+
 ## [1.49.0] — 2026-11-07
 
 ### Added
