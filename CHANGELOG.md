@@ -2,6 +2,8 @@
 
 ### Fixed
 
+- File-lock errors other than contention now report the original I/O error immediately, instead of waiting for a misleading timeout on unsupported filesystems such as WSL UNC mounts.
+
 - **Kimi stops inventing a `5h 0%` window.** When `/coding/v1/usages` omits
   `limits` — Kimi does that for accounts without a rolling quota, and has also
   sent `null` — the snapshot carried a zeroed window, so the default bar read
