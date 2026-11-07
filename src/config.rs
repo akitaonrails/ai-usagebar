@@ -84,6 +84,7 @@ pub struct Config {
     pub custom: Vec<CustomProviderConfig>,
     pub cline: ClineConfig,
     pub deeprelay: DeepRelayConfig,
+    pub explabs: ExplabsConfig,
 }
 
 /// UI / dispatch preferences. Currently just `primary` — which vendor the
@@ -1849,6 +1850,28 @@ impl Default for DeepRelayConfig {
     }
 }
 
+/// Experiential Labs' wallet and settled usage (`/api/v1/{credits,key,usage}`
+/// on the same xpl_ key).
+///
+/// Key-only and opt-in like DeepRelay's: the key needs the `usage:read` scope,
+/// which the dashboard's default key carries.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ExplabsConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+impl Default for ExplabsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: "EXPLABS_API_KEY".into(),
+            api_key: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct MinimaxConfig {
@@ -2498,6 +2521,7 @@ pub fn resolve_api_key(
 ) -> crate::error::Result<String> {
     let section = match vendor_label {
         "OpenCode Go" => "[opencode-go]".to_string(),
+        "Experiential Labs" => "[explabs]".to_string(),
         _ => format!("[{}]", vendor_label.to_lowercase()),
     };
     resolve_api_key_in_section(vendor_label, &section, env_var_name, inline)
@@ -2666,6 +2690,7 @@ impl Config {
             self.antigravity.oauth_client_secret.as_deref(),
             self.cline.api_key.as_deref(),
             self.deeprelay.api_key.as_deref(),
+            self.explabs.api_key.as_deref(),
         ]
         .into_iter()
         .chain(
@@ -2773,6 +2798,7 @@ impl Config {
             VendorId::Droid => self.droid.enabled,
             VendorId::MuseCode => self.muse.enabled,
             VendorId::DeepRelay => self.deeprelay.enabled,
+            VendorId::ExperientialLabs => self.explabs.enabled,
         }
     }
 
@@ -2801,6 +2827,7 @@ impl Config {
             VendorId::OrcaRouter => &self.orcarouter.api_key_env,
             VendorId::Lyceum => &self.lyceum.api_key_env,
             VendorId::DeepRelay => &self.deeprelay.api_key_env,
+            VendorId::ExperientialLabs => &self.explabs.api_key_env,
             VendorId::Cline => &self.cline.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
             // not user-renameable, and the providers with no key at all.
@@ -2843,6 +2870,7 @@ impl Config {
             VendorId::OrcaRouter => self.orcarouter.api_key.as_deref(),
             VendorId::Lyceum => self.lyceum.api_key.as_deref(),
             VendorId::DeepRelay => self.deeprelay.api_key.as_deref(),
+            VendorId::ExperientialLabs => self.explabs.api_key.as_deref(),
             VendorId::Cline => self.cline.api_key.as_deref(),
             VendorId::Anthropic
             | VendorId::Openai

@@ -182,6 +182,12 @@ enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "DEEPRELAY_API_KEY"
 # api_key = "deeprelay_live_..."   # used if DEEPRELAY_API_KEY is unset; chmod 600!
 
+[explabs]
+enabled = true             # disabled by default; enable once you add an API key
+# The key needs the `usage:read` scope; the dashboard's default key has it.
+api_key_env = "EXPLABS_API_KEY"
+# api_key = "xpl_..."             # used if EXPLABS_API_KEY is unset; chmod 600!
+
 [moonshot]
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "MOONSHOT_API_KEY"

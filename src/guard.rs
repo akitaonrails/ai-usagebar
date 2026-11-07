@@ -359,6 +359,10 @@ mod tests {
             // `weekly_pct` the rolling cap. DeepRelay's own Swift dispatch case
             // only relabels them ("Monthly" / "Weekly").
             VendorId::DeepRelay => MacosMirror::Generic(CORE),
+            // Same story for Experiential Labs: the `xpl` short name is
+            // unique, and its daily meters ride the generic `session_*` /
+            // `weekly_*` placeholders.
+            VendorId::ExperientialLabs => MacosMirror::Generic(CORE),
         }
     }
 

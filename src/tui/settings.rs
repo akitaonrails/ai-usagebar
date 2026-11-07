@@ -138,6 +138,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         note: "key needs the billing:read scope",
     },
     KeyVendor {
+        id: VendorId::ExperientialLabs,
+        label: "Experiential Labs",
+        section: VendorId::ExperientialLabs.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "daily token meters and the credit wallet",
+    },
+    KeyVendor {
         id: VendorId::Moonshot,
         label: "Moonshot",
         section: VendorId::Moonshot.config_section(),
@@ -3692,7 +3700,7 @@ enabled = true
         let theme = crate::theme::Theme::default();
         let mut state = blank_state(VendorId::Anthropic);
         state.focus = Focus::Vendor(0);
-        let mut terminal = Terminal::new(TestBackend::new(100, 70)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 78)).unwrap();
         let mut hits = Vec::new();
         terminal
             .draw(|f| render(f, f.area(), &mut state, &theme, &mut hits))

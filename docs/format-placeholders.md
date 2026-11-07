@@ -43,6 +43,24 @@ meter closest to its ceiling, which is also the bar's headline; the generic
 5-hour session, and `weekly_*` carries the rolling 7-day caps. The weekly caps
 slide rather than reset, so every weekly reset placeholder is empty by design.
 
+Experiential Labs (`--vendor explabs`, short name `xpl`) supplies
+`{explabs_pct}`, `{explabs_reset}`, `{explabs_elapsed}`, `{explabs_pace}`,
+`{explabs_pace_indicator}`, `{explabs_daily_input_pct}`,
+`{explabs_daily_input}` (the raw `used / limit` in metered tokens),
+`{explabs_daily_output_pct}`, `{explabs_daily_output}`, `{explabs_balance}`
+(the spendable credit wallet, which may be negative), and `{explabs_key_limit}`
+(the presented key's daily USD cap as `$remaining / $limit`, empty on an
+uncapped key), plus the generic `{icon}`, `{plan}`, `{vendor_short}`,
+`{session_pct}`, `{session_reset}`, `{session_elapsed}`, `{weekly_pct}`,
+`{weekly_reset}`, and `{weekly_elapsed}`. The Free tier shares one
+1,000,000 input+output token pool per UTC day, so `{explabs_pct}` is the
+**combined** draw against that shared ceiling — also the bar's headline — and
+the generic `session_*` aliases carry that daily window because Experiential
+Labs has no 5-hour session; the reset counts down to the next 00:00 UTC. There
+is no rolling weekly window, so every `weekly_*` placeholder is empty by
+design, and `{explabs_backstop_pct}` / `{explabs_backstop}` are parity slots
+that stay empty.
+
 ## Cross-provider formats
 
 `{vendor_short}` identifies the active provider:
@@ -64,6 +82,7 @@ slide rather than reset, so every weekly reset placeholder is empty by design.
 | Devin | `dvn` | Cline | `cln` |
 | Muse Code | `msc` | Synthetic | `syn` |
 | Droid | `drd` | DeepRelay | `drl` |
+| Experiential Labs | `xpl` | | |
 
 The same codes ride the `ai-usagebar usage --json` report as each entry's
 `short_name`, so a native frontend can draw a Waybar-style provider tag without
