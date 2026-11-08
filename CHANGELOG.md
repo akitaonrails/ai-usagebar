@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Mistral budgets in the macOS menu bar omit the elapsed pacing marker.**
+  Because calendar-month allowances have no fixed cycle length, neither budget
+  supports pacing against time. The Vibe Code budget was already set without an
+  elapsed marker, but the API budget retained the generic slot-13 default and
+  drew a phantom pacing marker at 0%. Both budgets now omit the marker (#600).
+
 ## [1.49.0] — 2026-11-07
 
 ### Added
