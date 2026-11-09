@@ -236,6 +236,28 @@ pub fn resolve(target: &CredsTarget) -> Result<(CredentialsFile, CredsSource)> {
     }
 }
 
+/// Whether the macOS login Keychain holds a Claude Code login for this
+/// `CLAUDE_CONFIG_DIR` — the `Claude Code-credentials-<hash>` item that
+/// `CLAUDE_CONFIG_DIR=<dir> claude` writes instead of `<dir>/.credentials.json`.
+/// `Ok(false)` only when the item genuinely does not exist (and always off
+/// macOS); a locked or access-denied Keychain is an `Err`, never "absent" —
+/// the same rule as [`read_named_with`].
+pub(crate) fn keychain_has_claude_for(config_dir: &Path) -> Result<bool> {
+    #[cfg(target_os = "macos")]
+    return keychain_has_claude_for_with(config_dir, keychain::read_raw_for);
+    #[cfg(not(target_os = "macos"))]
+    keychain_has_claude_for_with(config_dir, |_| Ok(None))
+}
+
+/// [`keychain_has_claude_for`] with the Keychain reader injected, so the
+/// mapping is unit-testable without a real Keychain.
+fn keychain_has_claude_for_with(
+    config_dir: &Path,
+    keychain_read: impl Fn(&Path) -> Result<Option<String>>,
+) -> Result<bool> {
+    Ok(keychain_read(config_dir)?.is_some())
+}
+
 /// Default-location read with an injectable Keychain reader, so the fallback
 /// selection is unit-testable on any platform (the hermeticity invariant —
 /// tests must never touch a real Keychain). Decision table:
@@ -809,5 +831,32 @@ mod tests {
         // A bare relative file name has an empty parent, which is no directory.
         let bare = CredsTarget::Explicit(PathBuf::from("credentials.json"));
         assert_eq!(bare.config_dir(), None);
+    }
+
+    #[test]
+    fn a_scoped_keychain_item_that_exists_is_reported_present() {
+        let dir = Path::new("/tmp/accounts/personal");
+        let found = keychain_has_claude_for_with(dir, |asked| {
+            assert_eq!(asked, dir, "probes the account's own config dir");
+            Ok(Some("{}".into()))
+        });
+        assert!(found.unwrap());
+    }
+
+    #[test]
+    fn a_missing_scoped_keychain_item_is_reported_absent() {
+        let found = keychain_has_claude_for_with(Path::new("/tmp/accounts/personal"), |_| Ok(None));
+        assert!(!found.unwrap());
+    }
+
+    #[test]
+    fn an_unreadable_scoped_keychain_item_is_an_error_not_absent() {
+        // A locked or ACL-denied Keychain must not read as "no login": the
+        // caller would fall back to the default item, which can hold another
+        // account.
+        let found = keychain_has_claude_for_with(Path::new("/tmp/accounts/personal"), |_| {
+            Err(AppError::Credentials("keychain locked".into()))
+        });
+        assert!(found.unwrap_err().to_string().contains("keychain locked"));
     }
 }

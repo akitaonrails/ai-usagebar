@@ -358,6 +358,40 @@ impl AnthropicAccount {
             .parent()
             .map_or_else(|| self.credentials_path.clone(), Path::to_path_buf)
     }
+
+    /// Whether this account's own slot still holds a credential: its
+    /// credentials file, or on macOS its `CLAUDE_CONFIG_DIR`-scoped Keychain
+    /// item — where `claude` actually keeps a login there, never writing the
+    /// file. `account switch` empties exactly this slot when it moves the
+    /// account into the CLI's default one. The file is asked first because it
+    /// costs no subprocess. An unreadable Keychain is an `Err`, not "empty".
+    pub fn holds_own_credential(&self) -> Result<bool> {
+        if self.credentials_path.exists() {
+            return Ok(true);
+        }
+        crate::anthropic::creds::keychain_has_claude_for(&self.config_dir())
+    }
+}
+
+/// The two ambient lookups that decide a named account's credential target:
+/// the CLI's default credential path and "does this account's own slot still
+/// hold a credential". Injected so target selection is testable without a
+/// real `$HOME` or Keychain; production uses [`CredentialProbes::system`].
+pub(crate) struct CredentialProbes<'a> {
+    pub(crate) default_path: &'a dyn Fn() -> Result<PathBuf>,
+    pub(crate) holds_own_credential: &'a dyn Fn(&AnthropicAccount) -> Result<bool>,
+}
+
+impl CredentialProbes<'static> {
+    /// The real lookups: `~/.claude/.credentials.json` and
+    /// [`AnthropicAccount::holds_own_credential`] (which asks the macOS
+    /// Keychain).
+    pub(crate) fn system() -> Self {
+        Self {
+            default_path: &crate::anthropic::creds::default_path,
+            holds_own_credential: &AnthropicAccount::holds_own_credential,
+        }
+    }
 }
 
 impl AnthropicConfig {
@@ -435,21 +469,20 @@ impl AnthropicConfig {
 
     /// The pure half of [`account_target`](AnthropicConfig::account_target),
     /// with "which account the `claude` CLI is signed into" injected — the same
-    /// shape as `Cli::resolve_vendor_with`. Probes the account's own credential
-    /// file with [`Path::exists`]; [`account_target_probing`] takes that probe
-    /// as an argument.
-    ///
-    /// [`account_target_probing`]: AnthropicConfig::account_target_probing
+    /// shape as `Cli::resolve_vendor_with`. The cache depends on the label
+    /// alone, so it cannot move when the credential target does: the tab keeps
+    /// its identity and its cached usage across a switch.
     pub fn account_target_with(
         &self,
         label: &str,
         cli_active: Option<&str>,
     ) -> Result<(CredsTarget, Cache)> {
-        self.account_target_probing(label, cli_active, |path| path.exists())
+        let target = self.account_creds_target(label, cli_active, &CredentialProbes::system())?;
+        let cache = Cache::for_vendor_account("anthropic", label)?;
+        Ok((target, cache))
     }
 
-    /// The pure core: `exists` answers whether the account's own credential
-    /// file is there.
+    /// The pure core: which credential target a named account reads.
     ///
     /// When `label` *is* the live CLI login, `account switch` has moved its
     /// credential into the default slot **and removed it from the named
@@ -463,31 +496,28 @@ impl AnthropicConfig {
     /// fetch for that label to `~/.claude/.credentials.json` — a slot the user
     /// never logs into, whose refresh token had expired, so a working account
     /// reported "run `claude` to re-auth" while its own file sat live and
-    /// unread next to it.
+    /// unread next to it. On macOS that directory's login lives only in the
+    /// scoped Keychain item, so the probe asks the Keychain too: probing the
+    /// file alone read the default Keychain item instead, and when that held
+    /// another account the tab showed that account's plan and quota. For the
+    /// same reason a probe error propagates rather than counting as "empty".
     ///
-    /// The cache directory is unchanged either way, so the tab keeps its
-    /// identity and its cached usage across a switch.
-    pub fn account_target_probing(
+    /// Only the live account is probed; every other account reads its own
+    /// slot without a Keychain round trip.
+    pub(crate) fn account_creds_target(
         &self,
         label: &str,
         cli_active: Option<&str>,
-        exists: impl Fn(&Path) -> bool,
-    ) -> Result<(CredsTarget, Cache)> {
+        probes: &CredentialProbes<'_>,
+    ) -> Result<CredsTarget> {
         let account = self.account(label)?;
-        let cache = Cache::for_vendor_account("anthropic", label)?;
-        if cli_active == Some(label) && !exists(&account.credentials_path) {
-            return Ok((
-                CredsTarget::Default(crate::anthropic::creds::default_path()?),
-                cache,
-            ));
+        if cli_active == Some(label) && !(probes.holds_own_credential)(&account)? {
+            return Ok(CredsTarget::Default((probes.default_path)()?));
         }
-        Ok((
-            CredsTarget::Named {
-                config_dir: account.config_dir(),
-                path: account.credentials_path,
-            },
-            cache,
-        ))
+        Ok(CredsTarget::Named {
+            config_dir: account.config_dir(),
+            path: account.credentials_path,
+        })
     }
 }
 
@@ -5408,6 +5438,22 @@ api_key = "synthetic-account"
         );
     }
 
+    const FAKE_DEFAULT_CREDS: &str = "/nonexistent-home/.claude/.credentials.json";
+
+    fn fake_default_path() -> Result<PathBuf> {
+        Ok(PathBuf::from(FAKE_DEFAULT_CREDS))
+    }
+
+    /// Target selection with no real `$HOME`, cache dir or Keychain.
+    fn probes<'a>(
+        holds_own_credential: &'a dyn Fn(&AnthropicAccount) -> Result<bool>,
+    ) -> CredentialProbes<'a> {
+        CredentialProbes {
+            default_path: &fake_default_path,
+            holds_own_credential,
+        }
+    }
+
     #[test]
     fn the_live_cli_account_is_read_from_the_default_credential_slot() {
         let cfg = AnthropicConfig {
@@ -5423,29 +5469,41 @@ api_key = "synthetic-account"
             ],
             ..Default::default()
         };
+        let not_probed =
+            |_: &AnthropicAccount| -> Result<bool> { panic!("only the live account is probed") };
 
-        let (idle, idle_cache) = cfg.account_target_with("work", Some("personal")).unwrap();
+        let idle = cfg
+            .account_creds_target("work", Some("personal"), &probes(&not_probed))
+            .unwrap();
         assert!(
             matches!(&idle, CredsTarget::Named { config_dir, .. }
-                if config_dir == std::path::Path::new("/tmp/accounts/work")),
+                if config_dir == Path::new("/tmp/accounts/work")),
             "{idle:?}"
         );
 
-        // Same label, but it is the login `claude` itself is using: one lineage.
-        let (live, live_cache) = cfg.account_target_with("work", Some("work")).unwrap();
-        assert!(matches!(live, CredsTarget::Default(_)), "{live:?}");
-
-        // The cache must not move, or a switch would silently orphan the tab's
-        // usage history and show "Loading…" until the next fetch.
-        assert_eq!(idle_cache.dir(), live_cache.dir());
+        // Same label, but it is the login `claude` itself is using, and
+        // `account switch` emptied its own slot: one lineage.
+        let live = cfg
+            .account_creds_target("work", Some("work"), &probes(&|_| Ok(false)))
+            .unwrap();
+        assert!(
+            matches!(&live, CredsTarget::Default(path) if path == Path::new(FAKE_DEFAULT_CREDS)),
+            "{live:?}"
+        );
+        // The cache no longer passes through target selection at all:
+        // `account_target_with` builds it from the label alone, so a switch
+        // cannot orphan the tab's usage history.
     }
 
     #[test]
-    fn the_live_cli_account_keeps_its_own_slot_while_that_file_is_there() {
+    fn the_live_cli_account_keeps_its_own_slot_while_that_slot_holds_a_credential() {
         // Two CLAUDE_CONFIG_DIRs can hold the same account, and each keeps its
         // own live credential — `resolve_active_label` matches the account, not
         // the lineage. Reading the default slot then hands back a credential
-        // the user never logs into.
+        // the user never logs into. On macOS that own slot is the scoped
+        // Keychain item `claude` writes instead of the file; probing only the
+        // file sent the account to the default item, which can hold a
+        // different account.
         let cfg = AnthropicConfig {
             accounts: vec![AnthropicAccount {
                 label: "personal".into(),
@@ -5454,43 +5512,58 @@ api_key = "synthetic-account"
             ..Default::default()
         };
 
-        let (present, _) = cfg
-            .account_target_probing("personal", Some("personal"), |_| true)
+        let present = cfg
+            .account_creds_target(
+                "personal",
+                Some("personal"),
+                &probes(&|account| {
+                    assert_eq!(account.label, "personal");
+                    Ok(true)
+                }),
+            )
             .unwrap();
         assert!(
-            matches!(&present, CredsTarget::Named { path, .. }
-                if path == Path::new("/tmp/accounts/personal/.credentials.json")),
+            matches!(&present, CredsTarget::Named { path, config_dir }
+                if path == Path::new("/tmp/accounts/personal/.credentials.json")
+                    && config_dir == Path::new("/tmp/accounts/personal")),
             "{present:?}"
         );
 
         // Emptied by `account switch`: the credential really did move.
-        let (moved, _) = cfg
-            .account_target_probing("personal", Some("personal"), |_| false)
+        let moved = cfg
+            .account_creds_target("personal", Some("personal"), &probes(&|_| Ok(false)))
             .unwrap();
-        assert!(matches!(moved, CredsTarget::Default(_)), "{moved:?}");
+        assert!(
+            matches!(&moved, CredsTarget::Default(path) if path == Path::new(FAKE_DEFAULT_CREDS)),
+            "{moved:?}"
+        );
     }
 
     #[test]
-    fn the_default_entry_reads_config_credentials_path_strictly() {
+    fn an_unreadable_slot_is_reported_not_read_from_the_default() {
+        // A locked or access-denied Keychain is not an empty slot: falling back
+        // would read the default item, which can belong to another account.
         let cfg = AnthropicConfig {
-            credentials_path: Some("/tmp/claude-home/.credentials.json".into()),
+            accounts: vec![AnthropicAccount {
+                label: "personal".into(),
+                credentials_path: "/tmp/accounts/personal/.credentials.json".into(),
+            }],
             ..Default::default()
         };
 
-        assert!(
-            matches!(&cfg.default_creds_target(), CredsTarget::Explicit(path)
-                if path == Path::new("/tmp/claude-home/.credentials.json")),
-        );
-        // Without one, the platform default — the only target with a Keychain fallback.
-        assert!(matches!(
-            AnthropicConfig::default().default_creds_target(),
-            CredsTarget::Default(_)
-        ));
+        let error = cfg
+            .account_creds_target(
+                "personal",
+                Some("personal"),
+                &probes(&|_| Err(AppError::Credentials("keychain locked".into()))),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("keychain locked"), "{error}");
     }
 
     #[test]
     fn the_live_cli_accounts_own_file_is_probed_on_disk() {
-        // `account_target_probing` proves the decision; only the entry point
+        // `account_creds_target` proves the decision; only the entry point
         // proves that the shipping caller probes at all. Fails on main, where
         // the live label is routed to the default slot unconditionally.
         let creds = NamedTempFile::new().unwrap();

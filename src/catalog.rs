@@ -86,7 +86,11 @@ pub fn statuses(cfg: &Config) -> Vec<VendorStatus> {
         env_set: &|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()),
         exists: &|path| path.exists(),
         keychain_has_claude: &keychain_has_claude,
-        keychain_has_claude_for: &keychain_has_claude_for,
+        // Status only: an unreadable Keychain reads as "not configured" here;
+        // the fetch itself reports the Keychain error.
+        keychain_has_claude_for: &|dir| {
+            crate::anthropic::creds::keychain_has_claude_for(dir).unwrap_or(false)
+        },
         commandcode_signed_in: &|paths| {
             paths
                 .iter()
@@ -306,19 +310,6 @@ fn keychain_has_claude() -> bool {
 
 #[cfg(not(target_os = "macos"))]
 fn keychain_has_claude() -> bool {
-    false
-}
-
-#[cfg(target_os = "macos")]
-fn keychain_has_claude_for(config_dir: &Path) -> bool {
-    matches!(
-        crate::anthropic::keychain::read_raw_for(config_dir),
-        Ok(Some(_))
-    )
-}
-
-#[cfg(not(target_os = "macos"))]
-fn keychain_has_claude_for(_config_dir: &Path) -> bool {
     false
 }
 
