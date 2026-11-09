@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Added
+
+- **`[anthropic] default_label` names the unnamed Claude account.** Set it to
+  a label such as `home` and the default account's tab reads `Claude ·
+  home`, the same way a named account's label is appended. Display only:
+  its credentials, cache and `--account` selection are unchanged, and the key
+  is optional, so an unset config renders exactly as before.
+
 ## [1.49.0] — 2026-11-07
 
 ### Added

@@ -130,10 +130,23 @@ fn compact_source_label(tab: &TabId) -> &str {
     }
 }
 
+/// The account name a tab shows after its source: its own label for a named
+/// account, or `[anthropic] default_label` for the unnamed Claude account when
+/// that is set (display only; the tab's identity stays `account: None`).
+fn shown_account<'a>(tab: &'a TabId, default_label: Option<&'a str>) -> Option<&'a str> {
+    match (&tab.account, &tab.source) {
+        (Some(acct), _) => Some(acct),
+        (None, TabSource::Builtin(VendorId::Anthropic)) => default_label
+            .map(str::trim)
+            .filter(|label| !label.is_empty()),
+        (None, _) => None,
+    }
+}
+
 /// Tab label for the header/sidebar/detail title. A named account appends its
 /// label, e.g. `Claude · work` or `OpenRouter · personal`.
-fn tab_label(tab: &TabId) -> String {
-    let label = match &tab.account {
+fn tab_label(tab: &TabId, default_label: Option<&str>) -> String {
+    let label = match shown_account(tab, default_label) {
         Some(acct) => format!("{} · {}", source_label(tab), acct),
         None => source_label(tab).to_string(),
     };
@@ -141,8 +154,8 @@ fn tab_label(tab: &TabId) -> String {
 }
 
 /// Compact variant for the narrow top-nav strip.
-fn compact_tab_label(tab: &TabId) -> String {
-    let label = match &tab.account {
+fn compact_tab_label(tab: &TabId, default_label: Option<&str>) -> String {
+    let label = match shown_account(tab, default_label) {
         Some(acct) => format!("{} · {}", compact_source_label(tab), acct),
         None => compact_source_label(tab).to_string(),
     };
@@ -159,7 +172,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         "Overview".to_string()
     } else {
         app.active_tab_id()
-            .map(tab_label)
+            .map(|tab| tab_label(tab, app.anthropic_default_label.as_deref()))
             .unwrap_or_else(|| "no vendor".to_string())
     };
     let line = Line::from(vec![
@@ -238,10 +251,9 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     // The Overview is the virtual first entry, before the per-vendor tabs.
     let mut items = vec![ListItem::new("Overview").description("all vendors")];
     items.extend(app.tabs_meta.iter().enumerate().map(|(index, tab)| {
-        ListItem::new(tab_label(tab)).description(tab_status(
-            app.tabs.get(index),
-            app.tab_is_refreshing(index),
-        ))
+        ListItem::new(tab_label(tab, app.anthropic_default_label.as_deref())).description(
+            tab_status(app.tabs.get(index), app.tab_is_refreshing(index)),
+        )
     }));
     let mut list = SelectList::new(items).theme(theme);
     list.select(Some(if app.overview { 0 } else { app.active + 1 }));
@@ -286,7 +298,11 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
         vec![(NavTarget::Overview, "Overview".to_string(), app.overview)];
     for (index, tab) in app.tabs_meta.iter().enumerate() {
         let selected = !app.overview && index == app.active;
-        entries.push((NavTarget::Tab(index), compact_tab_label(tab), selected));
+        entries.push((
+            NavTarget::Tab(index),
+            compact_tab_label(tab, app.anthropic_default_label.as_deref()),
+            selected,
+        ));
     }
 
     let mut spans = vec![theme.muted(" ")];
@@ -331,7 +347,10 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         app.active_tab_id()
             .map(|tab| {
                 let refreshing = if app.is_refreshing(tab) { " ↻" } else { "" };
-                format!(" {}{refreshing} ", tab_label(tab))
+                format!(
+                    " {}{refreshing} ",
+                    tab_label(tab, app.anthropic_default_label.as_deref())
+                )
             })
             .unwrap_or_else(|| " details ".to_string())
     };
@@ -370,14 +389,19 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     // widest name (bounded so one long account label can't blow out the layout).
     let name_w = idxs
         .iter()
-        .map(|&i| crate::display::text_width(&tab_label(&app.tabs_meta[i])))
+        .map(|&i| {
+            crate::display::text_width(&tab_label(
+                &app.tabs_meta[i],
+                app.anthropic_default_label.as_deref(),
+            ))
+        })
         .max()
         .unwrap_or(6)
         .clamp(6, 22);
 
     let mut lines: Vec<Line> = Vec::new();
     for &i in &idxs {
-        let name = tab_label(&app.tabs_meta[i]);
+        let name = tab_label(&app.tabs_meta[i], app.anthropic_default_label.as_deref());
         let pad = name_w.saturating_sub(crate::display::text_width(&name));
         let mut spans = vec![
             Span::styled(name, theme.text),
@@ -900,7 +924,7 @@ mod tests {
 
         let hit = app.hit.borrow();
         let tab = &hit.nav_entries[1];
-        let label = compact_tab_label(&app.tabs_meta[0]);
+        let label = compact_tab_label(&app.tabs_meta[0], app.anthropic_default_label.as_deref());
         assert_eq!(tab.0, NavTarget::Tab(0));
         // Marker (1) + gap (1) + label columns == clickable width.
         assert_eq!(tab.1.width, crate::display::text_width(&label) as u16 + 2);
@@ -939,7 +963,7 @@ mod tests {
 
         let hit = app.hit.borrow();
         let tab = &hit.nav_entries[1];
-        let label = compact_tab_label(&app.tabs_meta[0]);
+        let label = compact_tab_label(&app.tabs_meta[0], app.anthropic_default_label.as_deref());
         assert_eq!(tab.0, NavTarget::Tab(0));
         assert_eq!(tab.1.width, crate::display::text_width(&label) as u16 + 2);
         // Column-aware width (1) means the rect ends exactly at the label, not
@@ -1073,5 +1097,31 @@ mod tests {
             })
             .count();
         assert_eq!(toggles, 1, "exactly one frame's toggle link recorded");
+    }
+}
+
+#[cfg(test)]
+mod default_label_tests {
+    use super::*;
+
+    #[test]
+    fn default_label_names_only_the_unnamed_claude_tab() {
+        let default = TabId::vendor(VendorId::Anthropic);
+        assert_eq!(tab_label(&default, Some("home")), "Claude · home");
+        assert_eq!(compact_tab_label(&default, Some("home")), "Claude · home");
+        assert_eq!(tab_label(&default, None), "Claude");
+        assert_eq!(tab_label(&default, Some("   ")), "Claude");
+        // A named account keeps its own label, whatever the default is set to.
+        let named = TabId::account("work");
+        assert_eq!(tab_label(&named, Some("home")), "Claude · work");
+    }
+
+    #[test]
+    fn default_label_parses_from_the_anthropic_section() {
+        let config: crate::config::Config =
+            toml::from_str("[anthropic]\ndefault_label = \"home\"\n").unwrap();
+        assert_eq!(config.anthropic.default_label.as_deref(), Some("home"));
+        let unset: crate::config::Config = toml::from_str("[anthropic]\n").unwrap();
+        assert_eq!(unset.anthropic.default_label, None);
     }
 }

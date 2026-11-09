@@ -358,6 +358,9 @@ pub struct App {
     pub context: Option<crate::tui::context::ContextState>,
     /// Presentation style for the vendor navigation box (`[ui] vendor_box`).
     pub vendor_box: crate::config::VendorBoxStyle,
+    /// `[anthropic] default_label`: shown in place of the unnamed Claude
+    /// account's name. Display only; never used to select credentials or cache.
+    pub anthropic_default_label: Option<String>,
     /// Interactive rects from the most recent draw, for mouse hit-testing.
     pub hit: std::rc::Rc<std::cell::RefCell<HitTargets>>,
 }
@@ -391,6 +394,7 @@ impl App {
             context_generation: 0,
             context: None,
             vendor_box: crate::config::VendorBoxStyle::Sidebar,
+            anthropic_default_label: None,
             hit: std::rc::Rc::new(std::cell::RefCell::new(HitTargets::default())),
         }
     }

@@ -127,6 +127,7 @@ async fn run() -> io::Result<()> {
         .map_err(io::Error::other)?;
 
     let mut app = App::new_with_primary(tabs, config.ui.primary);
+    app.anthropic_default_label = config.anthropic.default_label.clone();
     app.context_enabled = config.context.enabled;
     app.overview_vendors = config.ui.overview_vendors.clone();
     app.vendor_box = config.ui.vendor_box();
@@ -226,6 +227,7 @@ fn reload_config(
     app.context_enabled = config.context.enabled;
     app.overview_vendors = config.ui.overview_vendors.clone();
     app.vendor_box = config.ui.vendor_box();
+    app.anthropic_default_label = config.anthropic.default_label.clone();
     app.set_tabs(tabs_with_desktop(config));
     if reselect_primary {
         app.select_primary(config.ui.primary);
