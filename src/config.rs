@@ -303,6 +303,11 @@ pub struct AnthropicConfig {
     /// Keychain/`~/.claude` login doesn't add a redundant "Claude" tab. Ignored
     /// when there are no named accounts, so Anthropic never loses its only tab.
     pub show_default_account: bool,
+    /// Display name for the default (unnamed) Claude account, e.g. `home`,
+    /// so its tab reads `Claude · home` as a named account's does. Display
+    /// only: the default account's credentials, cache and `--account` selection
+    /// are unchanged. Unset (or blank) keeps the plain `Claude` label.
+    pub default_label: Option<String>,
     /// Where the Claude **Desktop app**'s saved account profiles live. Defaults
     /// to `~/.claude-acc/profiles`, the store claude-acc
     /// (<https://github.com/ohmaseclaro/claude-acc>) creates — `account switch`
@@ -322,6 +327,7 @@ impl Default for AnthropicConfig {
             accounts: Vec::new(),
             accounts_dir: None,
             show_default_account: true,
+            default_label: None,
             desktop_profiles_dir: None,
             desktop_prepare_binary: None,
         }
