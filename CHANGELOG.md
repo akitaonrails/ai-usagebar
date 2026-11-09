@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Added
+
+- **Anthropic API: several Console organizations.** `[anthropic_api]` accepts
+  `[[anthropic_api.accounts]]` like the other API-key providers, one Admin key
+  per organization. Each entry gets its own tab, `anthropic_api@<label>` report
+  entry and cache directory, and may set its own `monthly_limit` (falling back
+  to the section value). Without the array nothing changes (#599).
+
 ## [1.49.0] — 2026-11-07
 
 ### Added

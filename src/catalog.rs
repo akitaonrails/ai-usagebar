@@ -492,6 +492,7 @@ mod tests {
             api_key_env: None,
             api_key: Some("sk-named".into()),
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let rows = statuses_with(&cfg, &bare());
         assert!(row(&rows, "openrouter").configured);
@@ -506,6 +507,7 @@ mod tests {
             api_key_env: Some("DEEPSEEK_WORK_API_KEY".into()),
             api_key: None,
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let set = |name: &str| name == "DEEPSEEK_WORK_API_KEY";
         let rows = statuses_with(&cfg, &probes(&set, &|_| false, &|_| false));
