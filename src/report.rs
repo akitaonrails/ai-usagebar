@@ -1162,6 +1162,72 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Width of the right-aligned value column in the text report.
+const VALUE_WIDTH: usize = 9;
+
+/// Separator between the parts of a metric's detail
+/// (`Resets in 3h 15m · 34% elapsed · 19pts under`).
+const DETAIL_SEPARATOR: &str = " · ";
+
+/// Column widths for the `·`-separated parts of metric details, so the parts
+/// line up down the whole report: `Resets in 3d 3h` and `Resets in 1h 25m`
+/// differ in width, and without padding every part after them drifts.
+///
+/// Widths are kept per part count, so rows of the same shape (every Claude
+/// window: reset · elapsed · pace) align with each other without a
+/// differently shaped row (Cursor's four-part detail) pushing them apart.
+struct DetailColumns {
+    widths: std::collections::HashMap<usize, Vec<usize>>,
+}
+
+impl DetailColumns {
+    fn new(entries: &[Entry]) -> Self {
+        let mut widths: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        let details = entries
+            .iter()
+            .filter(|entry| entry.error.is_none())
+            .flat_map(|entry| entry.sections.iter())
+            .filter_map(|section| match section {
+                ReportSection::Metric { detail, .. } if !detail.is_empty() => Some(detail),
+                _ => None,
+            });
+        for detail in details {
+            let parts: Vec<&str> = detail.split(DETAIL_SEPARATOR).collect();
+            let row = widths
+                .entry(parts.len())
+                .or_insert_with(|| vec![0; parts.len()]);
+            for (width, part) in row.iter_mut().zip(&parts) {
+                *width = (*width).max(crate::display::text_width(part));
+            }
+        }
+        Self { widths }
+    }
+
+    /// `detail` with every part but the last padded to its column width. The
+    /// last part is left as is so no line ends in trailing spaces.
+    fn align(&self, detail: &str) -> String {
+        let parts: Vec<&str> = detail.split(DETAIL_SEPARATOR).collect();
+        let Some(widths) = self.widths.get(&parts.len()) else {
+            return detail.to_string();
+        };
+        let last = parts.len() - 1;
+        parts
+            .iter()
+            .zip(widths)
+            .enumerate()
+            .map(|(i, (part, &width))| {
+                if i == last {
+                    (*part).to_string()
+                } else {
+                    crate::display::pad_end(part, width)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(DETAIL_SEPARATOR)
+    }
+}
+
 fn render_text(entries: &[Entry]) -> String {
     // Widest label across every entry, so the value column lines up down the
     // whole report rather than per-section.
@@ -1172,6 +1238,7 @@ fn render_text(entries: &[Entry]) -> String {
         .map(crate::display::text_width)
         .max()
         .unwrap_or(0);
+    let details = DetailColumns::new(entries);
 
     let mut out = String::new();
     for entry in entries {
@@ -1211,10 +1278,18 @@ fn render_text(entries: &[Entry]) -> String {
                     ..
                 } => {
                     let label = crate::display::pad_end(label, width);
-                    let value = format!("{value:>9}");
+                    // A value too wide for the value column (`R$0.00 of
+                    // R$450.00`) starts in the detail column instead of
+                    // pushing its detail out of line.
+                    let value = if crate::display::text_width(value) <= VALUE_WIDTH {
+                        crate::display::pad_start(value, VALUE_WIDTH)
+                    } else {
+                        format!("{}   {value}", " ".repeat(VALUE_WIDTH))
+                    };
                     if detail.is_empty() {
                         body.push_str(&format!("  {label}  {value}\n"));
                     } else {
+                        let detail = details.align(detail);
                         body.push_str(&format!("  {label}  {value}   {detail}\n"));
                     }
                 }
@@ -1224,8 +1299,17 @@ fn render_text(entries: &[Entry]) -> String {
                     } else if value.is_empty() {
                         body.push_str(&format!("  {label}\n"));
                     } else {
+                        // A short value (an amount, a reset countdown)
+                        // sits right-aligned in the value column like a
+                        // percentage; free text starts in the detail column.
                         let label = crate::display::pad_end(label, width);
-                        body.push_str(&format!("  {label}  {value}\n"));
+                        if crate::display::text_width(value) <= VALUE_WIDTH {
+                            let value = crate::display::pad_start(value, VALUE_WIDTH);
+                            body.push_str(&format!("  {label}  {value}\n"));
+                        } else {
+                            let gap = " ".repeat(VALUE_WIDTH);
+                            body.push_str(&format!("  {label}  {gap}   {value}\n"));
+                        }
                     }
                 }
                 ReportSection::Block { label, body: lines } => {
@@ -1603,6 +1687,89 @@ mod tests {
             .collect();
         assert_eq!(columns.len(), 2);
         assert_eq!(columns[0], columns[1], "{text}");
+    }
+
+    /// The parts of a metric detail line up across rows and entries: a reset
+    /// countdown of `3d 3h` is narrower than `1h 25m`, and the `·` after it
+    /// used to drift with it.
+    #[test]
+    fn detail_parts_align_across_entries() {
+        let text = render_text(&[
+            entry(
+                "anthropic · a",
+                vec![
+                    metric(
+                        "Session (5h)",
+                        21,
+                        "21%",
+                        "Resets in 1h 25m · 71% elapsed · 50pts under",
+                    ),
+                    metric(
+                        "Weekly (7d)",
+                        67,
+                        "67%",
+                        "Resets in 3d 3h · 5% elapsed · 12pts ahead",
+                    ),
+                ],
+            ),
+            entry(
+                "anthropic · b",
+                vec![metric(
+                    "Weekly (7d)",
+                    1,
+                    "1%",
+                    "Resets in 6d 13h · 6% elapsed · 5pts under",
+                )],
+            ),
+        ]);
+        let separators: Vec<Vec<usize>> = text
+            .lines()
+            .filter(|line| line.contains("Resets in"))
+            .map(|line| {
+                line.match_indices('·')
+                    .map(|(byte, _)| crate::display::text_width(&line[..byte]))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(separators.len(), 3, "{text}");
+        assert!(separators.iter().all(|s| s == &separators[0]), "{text}");
+        assert!(text.lines().all(|line| !line.ends_with(' ')), "{text}");
+    }
+
+    /// A short text value sits right-aligned in the value column with the
+    /// percentages; a long one starts in the detail column.
+    #[test]
+    fn text_rows_share_the_metric_columns() {
+        let text_row = |label: &str, value: &str| ReportSection::Text {
+            label: label.into(),
+            value: value.into(),
+            used_cents: None,
+            limit_cents: None,
+            percent: None,
+            severity: None,
+        };
+        let text = render_text(&[entry(
+            "cursor",
+            vec![
+                metric("Cursor Models", 7, "7%", "Auto + Composer · 41% elapsed"),
+                text_row("Resets", "18d 1h"),
+                text_row("HTTP 429", "Rate limited. Please try again later."),
+                metric(
+                    "Extra usage",
+                    0,
+                    "R$0.00 of R$450.00",
+                    "0% of monthly limit consumed",
+                ),
+            ],
+        )]);
+        let column = |needle: &str| {
+            let line = text.lines().find(|line| line.contains(needle)).unwrap();
+            let byte = line.find(needle).unwrap();
+            crate::display::text_width(&line[..byte])
+        };
+        assert_eq!(column("7%") + 2, column("18d 1h") + 6, "{text}");
+        assert_eq!(column("Auto + Composer"), column("Rate limited"), "{text}");
+        assert_eq!(column("Auto + Composer"), column("R$0.00 of"), "{text}");
     }
 
     /// One dead vendor must not hide the others — it reports inline and the

@@ -195,6 +195,19 @@ pub fn pad_end(s: &str, width: usize) -> String {
     out
 }
 
+/// Right-align `s` in a field `width` columns wide — the [`pad_end`]
+/// counterpart, measured in display width for the same reason.
+pub fn pad_start(s: &str, width: usize) -> String {
+    let w = text_width(s);
+    if w >= width {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + (width - w));
+    out.extend(std::iter::repeat_n(' ', width - w));
+    out.push_str(s);
+    out
+}
+
 #[cfg(test)]
 mod width_tests {
     use super::{pad_end, text_width};
