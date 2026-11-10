@@ -1,5 +1,43 @@
 ## [Unreleased]
 
+### Added
+
+- **Anthropic API: several Console organizations.** `[anthropic_api]` accepts
+  `[[anthropic_api.accounts]]` like the other API-key providers, one Admin key
+  per organization. Each entry gets its own tab, `anthropic_api@<label>` report
+  entry and cache directory, and may set its own `monthly_limit` (falling back
+  to the section value). Without the array nothing changes (#599).
+
+### Changed
+
+- **Anthropic API report setup guidance** now describes organization report
+  permissions instead of requiring an Admin-key prefix, including the widget
+  tooltip and translated credential notes. Document 401/403 troubleshooting
+  and preserve the shared same-key, same-month stale-cache policy.
+
+### Fixed
+
+- **Mistral budgets in the macOS menu bar omit the elapsed pacing marker.**
+  Because calendar-month allowances have no fixed cycle length, neither budget
+  supports pacing against time. The Vibe Code budget was already set without an
+  elapsed marker, but the API budget retained the generic slot-13 default and
+  drew a phantom pacing marker at 0%. Both budgets now omit the marker (#600).
+- **The Anthropic usage request presents a current `claude-cli` version.**
+  Anthropic began refusing older client versions on the usage endpoint, so a
+  pinned User-Agent the server no longer accepts left a valid login reporting an
+  auth error. It now identifies as `claude-cli/2.1.319`; the token endpoint
+  keeps its own agent, and the existing test still pins the `claude-cli/`
+  prefix.
+- **macOS App Icon menu-bar mode.** Settings can keep About's gauge in the
+  menu bar instead of usage charts or provider logos, without clearing
+  starred metrics. The symbol follows the menu bar's light and dark ink.
+- **Popover favorites follow the theme's blue accent.** Selected metric stars
+  use the app's accent in light and dark themes.
+- **Provider headers keep account labels out of the title.** Classic and
+  Native use the catalog name even for a single account; multiple accounts
+  keep their labels in the account tabs. Keyboard focus stays visible on
+  those tabs in every style, including Native Windows.
+
 ## [1.49.0] — 2026-11-07
 
 ### Added

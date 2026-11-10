@@ -668,6 +668,13 @@ fn static_icon() -> Result<Icon, tray_icon::BadIcon> {
 
 fn set_static_status_icon(state: &mut TrayState) {
     let _ = state.tray.set_icon_templated(None);
+    if let Some(image) = svg_image(include_bytes!("../../macos/menu-bar-icon.svg")) {
+        let side = f64::from(BARS_POINT_SIDE);
+        image.setSize(NSSize::new(side, side));
+        image.setTemplate(true);
+        set_status_button_image(Some(&image));
+        return;
+    }
     set_status_button_image(None);
     if let Ok(icon) = static_icon() {
         let _ = state.tray.set_icon_templated(Some(icon));

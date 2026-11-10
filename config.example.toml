@@ -82,7 +82,8 @@
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"
-# macOS menu bar: "bars" (default) draws the usage chart; "provider" draws each
+# macOS menu bar: "icon" shows the app gauge without changing favorites;
+# "bars" (default) draws the usage chart; "provider" draws each
 # provider's logo followed by its value; "quattro" draws one chip, the logo, the
 # short name (cld, cdx, …) and the highest percentage among all the windows of
 # the provider selected in the popover, like the Quattro bar, leaving out any
@@ -172,11 +173,10 @@ enabled = true
 # real total spend. See
 # https://platform.claude.com/docs/en/manage-claude/usage-cost-api
 #
-# Opt-in (disabled until you set a key). Requires a Console *Admin key*
-# (`sk-ant-admin01-...`, sent as the `x-api-key` header), distinct from an
-# inference key. Admin keys exist only for ORGANIZATION accounts: set one up
-# first (Console > Settings > Organization) — the .../settings/admin-keys page
-# 404s for individual accounts.
+# Opt-in organization cost reports. Use an Admin API key or a personal/service
+# account key with organization scope and the required report permissions.
+# Availability depends on account type and roles; see docs/anthropic-api.md.
+# This reports spend, not prepaid balance.
 [anthropic_api]
 enabled = false
 api_key_env = "ANTHROPIC_ADMIN_KEY"  # checked first; if set + non-empty, used

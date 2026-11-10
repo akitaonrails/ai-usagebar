@@ -726,12 +726,7 @@ async fn build_outcome(
             Ok(outcome.map(crate::usage::VendorSnapshot::Anthropic))
         }
         VendorId::AnthropicApi => {
-            let key = crate::config::resolve_api_key(
-                "Anthropic_API",
-                &config.anthropic_api.api_key_env,
-                config.anthropic_api.api_key.as_deref(),
-            )?;
-            let cache = crate::cache::Cache::for_vendor("anthropic_api")?.redacting(&key);
+            let (key, cache) = api_key_and_cache(config, vendor, tab.account.as_deref())?;
             let endpoints = crate::anthropic_api::fetch::Endpoints::default();
             let outcome = fetch_api_keyed(
                 async {
@@ -741,7 +736,7 @@ async fn build_outcome(
                         &cache,
                         &endpoints,
                         ttl,
-                        config.anthropic_api.monthly_limit,
+                        config.anthropic_api_monthly_limit(tab.account.as_deref()),
                     )
                     .await
                     .map(Into::into)
@@ -1552,12 +1547,14 @@ mod tests {
                 api_key_env: Some("OPENROUTER_WORK_API_KEY".into()),
                 api_key: None,
                 management_api_key_env: None,
+                monthly_limit: None,
             },
             crate::config::ApiKeyAccount {
                 label: "personal".into(),
                 api_key_env: None,
                 api_key: Some("personal-key".into()),
                 management_api_key_env: None,
+                monthly_limit: None,
             },
         ];
         assert_eq!(
@@ -1725,6 +1722,7 @@ mod tests {
                 api_key_env: Some("OPENROUTER_WORK_API_KEY".into()),
                 api_key: None,
                 management_api_key_env: None,
+                monthly_limit: None,
             });
         assert_eq!(
             tabs_from_config(&config),

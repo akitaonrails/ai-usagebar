@@ -366,7 +366,7 @@ function normalizeOs(value) {
 
 // The menu-bar look the host reports; anything else reads as the default chart.
 function normalizeMenuBarLook(value) {
-  return value === "logos" || value === "quattro" ? value : "chart";
+  return value === "icon" || value === "logos" || value === "quattro" ? value : "chart";
 }
 
 // The host's refresh interval; anything outside the offered set reads as the

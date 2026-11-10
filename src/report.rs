@@ -2797,6 +2797,47 @@ mod tests {
         assert!(tabs_matching(&tabs, "").is_empty());
     }
 
+    /// Each `[[anthropic_api.accounts]]` entry is its own tab with its own
+    /// report id and cache directory, so one organization's spend is never
+    /// shown (or served from cache) for another.
+    #[test]
+    fn anthropic_api_accounts_get_distinct_tabs_report_ids_and_cache_dirs() {
+        use crate::config::ApiKeyAccount;
+        use crate::tui::app::tabs_from_config;
+
+        let mut config = Config::default();
+        config.anthropic_api.enabled = true;
+        config.anthropic_api.accounts = ["work", "side"]
+            .map(|label| ApiKeyAccount {
+                label: label.into(),
+                api_key_env: None,
+                api_key: Some("k".into()),
+                management_api_key_env: None,
+                monthly_limit: None,
+            })
+            .to_vec();
+        let tabs = tabs_from_config(&config);
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic_api@work"),
+            vec![TabId::account_for(VendorId::AnthropicApi, "work")]
+        );
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic_api@side"),
+            vec![TabId::account_for(VendorId::AnthropicApi, "side")]
+        );
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic_api"),
+            vec![TabId::vendor(VendorId::AnthropicApi)]
+        );
+        let dir = |label| {
+            crate::cache::Cache::for_vendor_account("anthropic_api", label)
+                .unwrap()
+                .dir()
+                .to_path_buf()
+        };
+        assert_ne!(dir("work"), dir("side"));
+    }
+
     /// Named accounts are addressed by the same `<vendor>@<label>` id the
     /// report prints, so a frontend can refresh one Claude account by itself.
     #[test]

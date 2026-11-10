@@ -449,7 +449,8 @@ body:has(.native-panel) [data-slot="switch"][data-state="unchecked"] {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 2px 8px rgba(0, 0, 0, 0.28);
 }
 
-.native-panel .native-tab:focus-visible {
+.native-panel .native-tab:focus-visible,
+.account-tab:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -1252,6 +1253,12 @@ body:has(.native-panel[data-os="windows"]) {
 .icon-btn[data-armed]:hover {
   background: var(--red);
   color: #ffffff;
+}
+
+/* Favorited metrics use the same accent as the app's other selected controls. */
+.icon-btn[aria-pressed="true"],
+.icon-btn[aria-pressed="true"]:hover {
+  color: var(--accent);
 }
 
 /* Account switch: the login in use is a static yellow star, and a switch that failed keeps

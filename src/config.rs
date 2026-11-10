@@ -124,8 +124,8 @@ pub struct TrayConfig {
     pub refresh_minutes: Option<u64>,
     /// What the tray does when a newer release is published.
     pub updates: Option<UpdateMode>,
-    /// macOS menu-bar presentation: `bars` (default), `provider` (logos) or
-    /// `name` (the selected provider's logo, short name and value).
+    /// macOS menu-bar presentation: `icon`, `bars` (default), `provider`
+    /// (logos) or `quattro` (selected provider's logo, short name and value).
     pub menu_bar_style: Option<String>,
     /// Whether the `name` style draws the short name beside the logo.
     /// `None` → shown. A provider with no logo shows its name regardless.
@@ -1577,7 +1577,7 @@ impl Default for OpenRouterConfig {
 /// shares. OpenRouter shipped it first (#221); the other API-key vendors
 /// follow the same array. The default account continues to use the singular
 /// `api_key_env` / `api_key` fields under the vendor's own section.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ApiKeyAccount {
     /// Stable CLI/report label and account-scoped cache subdirectory.
     pub label: String,
@@ -1592,6 +1592,13 @@ pub struct ApiKeyAccount {
     /// consults it.
     #[serde(default)]
     pub management_api_key_env: Option<String>,
+    /// Monthly USD spend limit for this account's organization. Only
+    /// `[[anthropic_api.accounts]]` consults it: each Console organization has
+    /// its own limit, so a named account falls back to the section-wide
+    /// `[anthropic_api] monthly_limit` only when it sets none (see
+    /// [`Config::anthropic_api_monthly_limit`]).
+    #[serde(default)]
+    pub monthly_limit: Option<f64>,
 }
 
 /// The `[[<slug>.accounts]]` lookup behind every API-key vendor: find a named
@@ -2130,8 +2137,19 @@ pub struct KiroConfig {
 #[serde(default)]
 pub struct AnthropicApiConfig {
     pub enabled: bool,
-    /// Env var for the Console **Admin key** (`sk-ant-admin01-…`), distinct from
-    /// an inference key and from the Claude Code OAuth login.
+    /// Extra Console organizations beyond the default key. An Admin key
+    /// belongs to exactly one organization, so a second organization needs a
+    /// second key. Each account gets its own tab, report entry
+    /// (`anthropic_api@<label>`) and cache directory; the fetch's
+    /// organization fingerprint keeps one account's cache from answering for
+    /// another.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so the section never
+    /// loses its only tab.
+    pub show_default_account: bool,
+    /// Env var for a Console key authorized to read organization cost reports.
+    /// This is separate from the Claude Code OAuth login.
     pub api_key_env: String,
     pub api_key: Option<String>,
     /// Monthly USD spend limit, used only for the spend-vs-limit % display. The
@@ -2141,9 +2159,11 @@ pub struct AnthropicApiConfig {
 
 impl Default for AnthropicApiConfig {
     fn default() -> Self {
-        // Opt-in: needs an explicit Admin key.
+        // Opt-in: needs an explicit organization report credential.
         Self {
             enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
             api_key_env: "ANTHROPIC_ADMIN_KEY".to_string(),
             api_key: None,
             monthly_limit: None,
@@ -2892,7 +2912,8 @@ impl Config {
     /// The API-key vendors that take a `[[<vendor>.accounts]]` array —
     /// OpenRouter's (#221), generalized. Kimi is left out on purpose: its
     /// fallback is the Kimi Code CLI's single OAuth login, not a key.
-    pub const API_KEY_ACCOUNT_VENDORS: [VendorId; 11] = [
+    pub const API_KEY_ACCOUNT_VENDORS: [VendorId; 12] = [
+        VendorId::AnthropicApi,
         VendorId::Zai,
         VendorId::Openrouter,
         VendorId::Deepseek,
@@ -2910,6 +2931,7 @@ impl Config {
     /// has no such array (see [`Self::API_KEY_ACCOUNT_VENDORS`]).
     pub fn api_key_accounts(&self, id: VendorId) -> Option<&[ApiKeyAccount]> {
         match id {
+            VendorId::AnthropicApi => Some(&self.anthropic_api.accounts),
             VendorId::Zai => Some(&self.zai.accounts),
             VendorId::Openrouter => Some(&self.openrouter.accounts),
             VendorId::Deepseek => Some(&self.deepseek.accounts),
@@ -2929,6 +2951,7 @@ impl Config {
     /// `true` for every vendor without an accounts array.
     pub fn show_default_api_key_account(&self, id: VendorId) -> bool {
         match id {
+            VendorId::AnthropicApi => self.anthropic_api.show_default_account,
             VendorId::Zai => self.zai.show_default_account,
             VendorId::Openrouter => self.openrouter.show_default_account,
             VendorId::Deepseek => self.deepseek.show_default_account,
@@ -2954,6 +2977,8 @@ impl Config {
         // "Zai", and its section is derived from this spelling.
         let name = match id {
             VendorId::Zai => "Zai",
+            // Its section is derived from this spelling (`[anthropic_api]`).
+            VendorId::AnthropicApi => "Anthropic_API",
             other => other.display_name(),
         };
         let Some(label) = label else {
@@ -2985,6 +3010,22 @@ impl Config {
             None => self.openrouter.management_api_key_env.as_str(),
         };
         optional_api_key(env_name, None)
+    }
+
+    /// The monthly USD limit for the default or a named Anthropic API
+    /// account. Each Console organization has its own spend limit, so a named
+    /// account's own `monthly_limit` wins and the section-wide value is only
+    /// the fallback; the default account always uses the section-wide one.
+    pub fn anthropic_api_monthly_limit(&self, label: Option<&str>) -> Option<f64> {
+        label
+            .and_then(|label| {
+                self.anthropic_api
+                    .accounts
+                    .iter()
+                    .find(|account| account.label == label)
+            })
+            .and_then(|account| account.monthly_limit)
+            .or(self.anthropic_api.monthly_limit)
     }
 
     /// Bar-number settings for one vendor.
@@ -3067,6 +3108,17 @@ impl Config {
                  remove it to show spend without a limit"
                     .into(),
             ));
+        }
+        for account in &self.anthropic_api.accounts {
+            if let Some(limit) = account.monthly_limit
+                && (!limit.is_finite() || limit <= 0.0)
+            {
+                return Err(AppError::Other(format!(
+                    "[[anthropic_api.accounts]] {:?} monthly_limit must be finite and \
+                     greater than zero; remove it to use the [anthropic_api] value",
+                    account.label
+                )));
+            }
         }
         // Same rule as `monthly_limit` above: a tank size that cannot divide is
         // a typo, and silently ignoring it would draw a meter the user never
@@ -3157,6 +3209,15 @@ impl Config {
             let mut labels = HashSet::new();
             for account in self.api_key_accounts(id).unwrap_or(&[]) {
                 validate_account_label_for(slug, &account.label)?;
+                // `monthly_limit` lives on the shared account type but only the
+                // Anthropic API reads it; elsewhere it would be silently ignored.
+                if id != VendorId::AnthropicApi && account.monthly_limit.is_some() {
+                    return Err(AppError::Other(format!(
+                        "[[{slug}.accounts]] {:?}: monthly_limit is only supported \
+                         on [[anthropic_api.accounts]]",
+                        account.label
+                    )));
+                }
                 if !labels.insert(&account.label) {
                     return Err(AppError::Credentials(format!(
                         "duplicate {slug} account label {:?}",
@@ -3674,6 +3735,7 @@ ide_language_server = false
             api_key_env: None,
             api_key: Some("<redacted>".into()),
             management_api_key_env: None,
+            monthly_limit: None,
         });
         assert!(config.has_inline_secrets());
     }
@@ -3808,6 +3870,19 @@ enabled = false
         assert_eq!(
             inline_key_permission_decision(0o604),
             InlineKeyPermissionDecision::Tighten
+        );
+    }
+
+    #[test]
+    fn monthly_limit_is_rejected_on_other_api_key_accounts() {
+        let config: Config = toml::from_str(
+            "[[deepseek.accounts]]\nlabel = \"work\"\napi_key_env = \"DS_WORK\"\nmonthly_limit = 5\n",
+        )
+        .unwrap();
+        let err = config.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("only supported on [[anthropic_api.accounts]]"),
+            "{err}"
         );
     }
 
@@ -4817,6 +4892,7 @@ api_key = "synthetic-account"
             api_key_env: None,
             api_key: Some("work-secret".into()),
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let message = config
             .resolve_account_api_key_for(VendorId::Openrouter, Some("missing"))
@@ -4835,6 +4911,7 @@ api_key = "synthetic-account"
             api_key_env: Some("sk_pasted_secret".into()),
             api_key: None,
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let _g = env_guard();
         unsafe { std::env::remove_var("sk_pasted_secret") };
@@ -4855,12 +4932,14 @@ api_key = "synthetic-account"
                 api_key_env: None,
                 api_key: Some("work-key".into()),
                 management_api_key_env: Some("AI_USAGEBAR_TEST_OR_MGMT_WORK".into()),
+                monthly_limit: None,
             },
             ApiKeyAccount {
                 label: "plain".into(),
                 api_key_env: None,
                 api_key: Some("plain-key".into()),
                 management_api_key_env: None,
+                monthly_limit: None,
             },
         ];
         let _g = env_guard();
@@ -4895,6 +4974,120 @@ api_key = "synthetic-account"
         unsafe { std::env::remove_var("OPENROUTER_MANAGEMENT_API_KEY") };
         unsafe { std::env::remove_var("AI_USAGEBAR_TEST_OR_MGMT_WORK") };
         unsafe { std::env::remove_var("AI_USAGEBAR_TEST_OR_MGMT_DEFAULT") };
+    }
+
+    #[test]
+    fn anthropic_api_accounts_parse_with_their_own_monthly_limit() {
+        let config: Config = toml::from_str(
+            r#"
+[anthropic_api]
+enabled = true
+monthly_limit = 1000
+
+[[anthropic_api.accounts]]
+label = "work"
+api_key_env = "ANTHROPIC_WORK_ADMIN_KEY"
+monthly_limit = 500
+
+[[anthropic_api.accounts]]
+label = "side"
+api_key = "sk-ant-admin01-side"
+"#,
+        )
+        .unwrap();
+        config.validate().unwrap();
+        let accounts = config.api_key_accounts(VendorId::AnthropicApi).unwrap();
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts[0].label, "work");
+        assert_eq!(accounts[0].monthly_limit, Some(500.0));
+        assert_eq!(accounts[1].monthly_limit, None);
+    }
+
+    #[test]
+    fn anthropic_api_account_limit_falls_back_to_the_section_limit() {
+        let mut config = Config::default();
+        config.anthropic_api.monthly_limit = Some(1000.0);
+        config.anthropic_api.accounts = vec![
+            ApiKeyAccount {
+                label: "work".into(),
+                api_key_env: None,
+                api_key: Some("k".into()),
+                management_api_key_env: None,
+                monthly_limit: Some(500.0),
+            },
+            ApiKeyAccount {
+                label: "side".into(),
+                api_key_env: None,
+                api_key: Some("k".into()),
+                management_api_key_env: None,
+                monthly_limit: None,
+            },
+        ];
+        assert_eq!(config.anthropic_api_monthly_limit(None), Some(1000.0));
+        assert_eq!(
+            config.anthropic_api_monthly_limit(Some("work")),
+            Some(500.0)
+        );
+        assert_eq!(
+            config.anthropic_api_monthly_limit(Some("side")),
+            Some(1000.0)
+        );
+    }
+
+    #[test]
+    fn anthropic_api_account_monthly_limit_must_be_positive_and_finite() {
+        for value in ["0", "-5", "nan"] {
+            let config: Config = toml::from_str(&format!(
+                "[[anthropic_api.accounts]]\nlabel = \"work\"\napi_key = \"k\"\n\
+                 monthly_limit = {value}\n"
+            ))
+            .unwrap();
+            let message = config.validate().unwrap_err().to_string();
+            assert!(message.contains("monthly_limit"), "{value}: {message}");
+        }
+    }
+
+    #[test]
+    fn anthropic_api_without_accounts_keeps_the_single_key_behavior() {
+        let config: Config =
+            toml::from_str("[anthropic_api]\nenabled = true\nmonthly_limit = 42\n").unwrap();
+        config.validate().unwrap();
+        assert!(config.anthropic_api.accounts.is_empty());
+        assert!(config.show_default_api_key_account(VendorId::AnthropicApi));
+        assert_eq!(config.anthropic_api_monthly_limit(None), Some(42.0));
+    }
+
+    #[test]
+    fn anthropic_api_accounts_resolve_distinct_keys_and_missing_key_names_the_section() {
+        let _g = env_guard();
+        unsafe { std::env::set_var("AI_USAGEBAR_TEST_ANT_WORK", "sk-ant-admin01-work") };
+        let mut config = Config::default();
+        config.anthropic_api.api_key = Some("sk-ant-admin01-default".into());
+        config.anthropic_api.api_key_env = "AI_USAGEBAR_TEST_ANT_UNSET".into();
+        config.anthropic_api.accounts = vec![ApiKeyAccount {
+            label: "work".into(),
+            api_key_env: Some("AI_USAGEBAR_TEST_ANT_WORK".into()),
+            api_key: None,
+            management_api_key_env: None,
+            monthly_limit: None,
+        }];
+        let id = VendorId::AnthropicApi;
+        assert_eq!(
+            config.resolve_account_api_key_for(id, None).unwrap(),
+            "sk-ant-admin01-default"
+        );
+        assert_eq!(
+            config
+                .resolve_account_api_key_for(id, Some("work"))
+                .unwrap(),
+            "sk-ant-admin01-work"
+        );
+        let unknown = config
+            .resolve_account_api_key_for(id, Some("nope"))
+            .unwrap_err()
+            .to_string();
+        assert!(unknown.contains("[[anthropic_api.accounts]]"), "{unknown}");
+        unsafe { std::env::remove_var("AI_USAGEBAR_TEST_ANT_WORK") };
     }
 
     #[test]
@@ -4957,6 +5150,7 @@ api_key = "synthetic-account"
             api_key_env: Some("AI_USAGEBAR_TEST_DEEPSEEK_WORK".into()),
             api_key: Some("work-inline".into()),
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let _g = env_guard();
         unsafe { std::env::set_var("AI_USAGEBAR_TEST_DEEPSEEK_WORK", "work-env") };

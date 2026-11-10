@@ -25,14 +25,16 @@ pub const USAGE_BETA_HEADER: &str = "oauth-2025-04-20";
 /// server reads the *surface* from the `claude-cli/<version> (external, cli)`
 /// shape (the older `claude-code/<version>` form answers
 /// `ineligible_reason: "surface"`), then the version itself against a floor —
-/// 2.1.279 is refused as `"cli_version"` where 2.1.280 is accepted.
+/// 2.1.279 is refused as `"cli_version"` where 2.1.280 is accepted; later the
+/// floor moved again and 2.1.281 answers `429` while the published 2.1.319 is
+/// accepted.
 ///
 /// So this pins a real published release (`latest` on npm at the time of
 /// writing), not a synthesized one: identifying as a client version that was
 /// never cut would be a lie to the server *and* to the next reader. If
 /// Anthropic raises the floor again this reverts to `ineligible`, the block
 /// arrives empty, and nothing but the resets row disappears.
-pub const USAGE_USER_AGENT: &str = "claude-cli/2.1.281 (external, cli)";
+pub const USAGE_USER_AGENT: &str = "claude-cli/2.1.319 (external, cli)";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(25);
 const LOCK_TIMEOUT: Duration = Duration::from_secs(45);

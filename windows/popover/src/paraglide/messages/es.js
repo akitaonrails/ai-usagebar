@@ -38,6 +38,7 @@
 /** @typedef {{}} Api_Key_SaveInputs */
 /** @typedef {{}} Api_Key_Stored_NoteInputs */
 /** @typedef {{}} Api_KeysInputs */
+/** @typedef {{}} App_IconInputs */
 /** @typedef {{}} AppearanceInputs */
 /** @typedef {{}} AutoInputs */
 /** @typedef {{}} AutomaticInputs */
@@ -473,6 +474,10 @@ export const api_keys = /** @type {(inputs: Api_KeysInputs) => LocalizedString} 
 	return /** @type {LocalizedString} */ (`Claves de API`)
 };
 
+export const app_icon = /** @type {(inputs: App_IconInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`Icono de la app`)
+};
+
 export const appearance = /** @type {(inputs: AppearanceInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`Apariencia`)
 };
@@ -862,7 +867,7 @@ export const menu_bar_shows = /** @type {(inputs: Menu_Bar_ShowsInputs) => Local
 };
 
 export const menu_bar_shows_hint = /** @type {(inputs: Menu_Bar_Shows_HintInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Gráfico y Logos muestran las métricas destacadas de todos los proveedores. Quattro muestra el mayor uso del proveedor seleccionado.`)
+	return /** @type {LocalizedString} */ (`Icono de la app muestra el medidor de la aplicación. Gráfico y Logos muestran las métricas destacadas de todos los proveedores. Quattro muestra el mayor uso del proveedor seleccionado.`)
 };
 
 export const metric_plural = /** @type {(inputs: Metric_PluralInputs) => LocalizedString} */ () => {
