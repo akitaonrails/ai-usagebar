@@ -366,10 +366,20 @@ impl AnthropicAccount {
     /// account into the CLI's default one. The file is asked first because it
     /// costs no subprocess. An unreadable Keychain is an `Err`, not "empty".
     pub fn holds_own_credential(&self) -> Result<bool> {
+        self.holds_own_credential_with(crate::anthropic::creds::keychain_has_claude_for)
+    }
+
+    /// [`holds_own_credential`](AnthropicAccount::holds_own_credential) with the
+    /// Keychain lookup injected, so the file-then-Keychain order is testable
+    /// without a real Keychain.
+    pub(crate) fn holds_own_credential_with(
+        &self,
+        keychain_has_claude_for: impl Fn(&Path) -> Result<bool>,
+    ) -> Result<bool> {
         if self.credentials_path.exists() {
             return Ok(true);
         }
-        crate::anthropic::creds::keychain_has_claude_for(&self.config_dir())
+        keychain_has_claude_for(&self.config_dir())
     }
 }
 
@@ -5806,10 +5816,71 @@ api_key = "sk-ant-admin01-side"
     }
 
     #[test]
+    fn a_live_account_whose_login_is_only_in_its_keychain_item_reads_its_own_slot() {
+        // The reported bug. `CLAUDE_CONFIG_DIR=<dir> claude` on macOS writes the
+        // scoped `Claude Code-credentials-<hash>` item and no credentials file.
+        let home = tempfile::TempDir::new().unwrap();
+        let config_dir = home.path().join("personal");
+        let creds = config_dir.join(".credentials.json");
+        let cfg = AnthropicConfig {
+            accounts: vec![AnthropicAccount {
+                label: "personal".into(),
+                credentials_path: creds.clone(),
+            }],
+            ..Default::default()
+        };
+        assert!(!creds.exists(), "the file must be absent for this case");
+
+        let scoped_item = |asked: &Path| -> Result<bool> { Ok(asked == config_dir) };
+        let holds = |account: &AnthropicAccount| account.holds_own_credential_with(scoped_item);
+        let target = cfg
+            .account_creds_target("personal", Some("personal"), &probes(&holds))
+            .unwrap();
+        assert!(
+            matches!(&target, CredsTarget::Named { path, config_dir: dir }
+                if path == &creds && dir == &config_dir),
+            "read {target:?} instead of the account's own Keychain item"
+        );
+
+        // Main's decision for the same input, kept verbatim in the private seam
+        // behind the deprecated file-only entry point: no file, so it read the
+        // default slot, which on the reporter's Mac held a different account.
+        let (before, _) = cfg
+            .account_target_probing_in(
+                "personal",
+                Some("personal"),
+                Path::exists,
+                &fake_default_path,
+                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
+            )
+            .unwrap();
+        assert!(matches!(before, CredsTarget::Default(_)), "{before:?}");
+    }
+
+    #[test]
+    fn the_default_entry_reads_config_credentials_path_strictly() {
+        let cfg = AnthropicConfig {
+            credentials_path: Some("/tmp/claude-home/.credentials.json".into()),
+            ..Default::default()
+        };
+
+        assert!(
+            matches!(&cfg.default_creds_target(), CredsTarget::Explicit(path)
+                if path == Path::new("/tmp/claude-home/.credentials.json")),
+        );
+        // Without one, the platform default — the only target with a Keychain fallback.
+        assert!(matches!(
+            AnthropicConfig::default().default_creds_target(),
+            CredsTarget::Default(_)
+        ));
+    }
+
+    #[test]
     fn the_live_cli_accounts_own_file_is_probed_on_disk() {
         // `account_creds_target` proves the decision; only the entry point
-        // proves that the shipping caller probes at all. Fails on main, where
-        // the live label is routed to the default slot unconditionally.
+        // proves that the shipping probes look at the file at all. Passes on
+        // main too. Here it also pins the order: an existing file wins before
+        // any Keychain lookup, so this test never spawns `security(1)`.
         let creds = NamedTempFile::new().unwrap();
         let cfg = AnthropicConfig {
             accounts: vec![AnthropicAccount {
