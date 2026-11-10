@@ -278,8 +278,8 @@ api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."  # optional fallback; chmod 600 when inline
 # management_api_key_env = "OPENROUTER_WORK_MANAGEMENT_API_KEY"  # optional
 #
-# The same array works for [zai], [deepseek], [deepinfra], [kilo], [novita],
-# [moonshot], [grok], [minimax], [orcarouter], and [lyceum] — e.g.
+# The same array works for [anthropic_api], [zai], [deepseek], [deepinfra],
+# [kilo], [novita], [moonshot], [grok], [minimax], [orcarouter], and [lyceum] - e.g.
 # [[deepinfra.accounts]] — with the same show_default_account switch.
 # Region/team/organization/display settings stay per provider. See
 # docs/api-key-accounts.md.
