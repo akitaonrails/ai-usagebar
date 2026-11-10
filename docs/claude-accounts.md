@@ -220,7 +220,12 @@ credential (its credentials file, or on macOS its
 not from the default slot. Otherwise a perfectly good account reports a re-auth
 prompt, or another account's quota, from a slot its owner never signs into. If
 macOS cannot read that Keychain item because it is locked or access is denied,
-the account reports the Keychain error instead of falling back.
+the account reports the Keychain error instead of falling back. A failed switch
+normally rolls itself back. If that rollback is itself incomplete (the error
+ends with `automatic rollback was incomplete: ...`), the account's own Keychain
+item can be left next to its copy in the default slot. While the active-account
+marker still names that account, ai-usagebar reads its own item, not the
+default slot, until a later switch completes.
 
 If the current CLI login is not managed by ai-usagebar, the switch stops before
 discarding it. `--force` overrides that safeguard and removes the unmanaged
