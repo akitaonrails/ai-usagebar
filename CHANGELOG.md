@@ -17,6 +17,13 @@
 
 ### Fixed
 
+- **The `usage` text report lines its columns up.** Provider names, metric
+  values and details now share fixed columns instead of the metric column's
+  byte-width guess, so a mixed list (a wide provider name, a short percentage,
+  a long balance) reads as a table. Widths are measured in terminal columns, so
+  CJK labels and combining marks land on the same edge; a value too wide for
+  its column moves to the detail column rather than being truncated. The JSON
+  report is untouched.
 - **Mistral budgets in the macOS menu bar omit the elapsed pacing marker.**
   Because calendar-month allowances have no fixed cycle length, neither budget
   supports pacing against time. The Vibe Code budget was already set without an
