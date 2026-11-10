@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.50.0] — 2026-11-09
+
 ### Added
 
 - **Anthropic API: several Console organizations.** `[anthropic_api]` accepts
@@ -5460,7 +5462,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...HEAD
+[1.50.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...v1.49.0
 [1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3
 [1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2
