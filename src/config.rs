@@ -495,15 +495,34 @@ impl AnthropicConfig {
         cli_active: Option<&str>,
         exists: impl Fn(&Path) -> bool,
     ) -> Result<(CredsTarget, Cache)> {
+        self.account_target_probing_in(
+            label,
+            cli_active,
+            exists,
+            &crate::anthropic::creds::default_path,
+            || Cache::for_vendor_account("anthropic", label),
+        )
+    }
+
+    /// [`account_target_probing`](AnthropicConfig::account_target_probing)
+    /// with the default credentials path and the cache injected, so tests
+    /// resolve neither from the real `$HOME`/`$XDG` environment.
+    fn account_target_probing_in(
+        &self,
+        label: &str,
+        cli_active: Option<&str>,
+        exists: impl Fn(&Path) -> bool,
+        default_path: &dyn Fn() -> Result<PathBuf>,
+        make_cache: impl FnOnce() -> Result<Cache>,
+    ) -> Result<(CredsTarget, Cache)> {
         let file_only =
             |account: &AnthropicAccount| -> Result<bool> { Ok(exists(&account.credentials_path)) };
         let probes = CredentialProbes {
-            default_path: &crate::anthropic::creds::default_path,
+            default_path,
             holds_own_credential: &file_only,
         };
         let target = self.account_creds_target(label, cli_active, &probes)?;
-        let cache = Cache::for_vendor_account("anthropic", label)?;
-        Ok((target, cache))
+        Ok((target, make_cache()?))
     }
 
     /// The pure core: which credential target a named account reads.
@@ -5815,8 +5834,7 @@ api_key = "sk-ant-admin01-side"
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn the_deprecated_probing_entry_point_keeps_its_file_only_decision() {
+    fn the_probing_seam_behind_the_deprecated_entry_point_keeps_its_file_only_decision() {
         let cfg = AnthropicConfig {
             accounts: vec![AnthropicAccount {
                 label: "personal".into(),
@@ -5826,23 +5844,39 @@ api_key = "sk-ant-admin01-side"
         };
 
         let (present, _) = cfg
-            .account_target_probing("personal", Some("personal"), |path| {
-                assert_eq!(path, Path::new("/tmp/accounts/personal/.credentials.json"));
-                true
-            })
+            .account_target_probing_in(
+                "personal",
+                Some("personal"),
+                |path| {
+                    assert_eq!(path, Path::new("/tmp/accounts/personal/.credentials.json"));
+                    true
+                },
+                &fake_default_path,
+                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
+            )
             .unwrap();
         assert!(matches!(present, CredsTarget::Named { .. }), "{present:?}");
 
         let (moved, _) = cfg
-            .account_target_probing("personal", Some("personal"), |_| false)
+            .account_target_probing_in(
+                "personal",
+                Some("personal"),
+                |_| false,
+                &fake_default_path,
+                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
+            )
             .unwrap();
         assert!(matches!(moved, CredsTarget::Default(_)), "{moved:?}");
 
         // Not the live login: the probe is never consulted.
         let (idle, _) = cfg
-            .account_target_probing("personal", None, |_| {
-                panic!("only the live account is probed")
-            })
+            .account_target_probing_in(
+                "personal",
+                None,
+                |_| panic!("only the live account is probed"),
+                &fake_default_path,
+                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
+            )
             .unwrap();
         assert!(matches!(idle, CredsTarget::Named { .. }), "{idle:?}");
     }
