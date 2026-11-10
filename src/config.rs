@@ -495,25 +495,30 @@ impl AnthropicConfig {
         cli_active: Option<&str>,
         exists: impl Fn(&Path) -> bool,
     ) -> Result<(CredsTarget, Cache)> {
+        // Main's order: the account, then the cache, then the probe and the
+        // default path. The cache is built before delegating so a cache-root
+        // failure returns before `exists` runs.
+        self.account(label)?;
+        let cache = Cache::for_vendor_account("anthropic", label)?;
         self.account_target_probing_in(
             label,
             cli_active,
             exists,
             &crate::anthropic::creds::default_path,
-            || Cache::for_vendor_account("anthropic", label),
+            cache,
         )
     }
 
     /// [`account_target_probing`](AnthropicConfig::account_target_probing)
-    /// with the default credentials path and the cache injected, so tests
-    /// resolve neither from the real `$HOME`/`$XDG` environment.
+    /// with the default credentials path and the already-built cache injected,
+    /// so tests resolve neither from the real `$HOME`/`$XDG` environment.
     fn account_target_probing_in(
         &self,
         label: &str,
         cli_active: Option<&str>,
         exists: impl Fn(&Path) -> bool,
         default_path: &dyn Fn() -> Result<PathBuf>,
-        make_cache: impl FnOnce() -> Result<Cache>,
+        cache: Cache,
     ) -> Result<(CredsTarget, Cache)> {
         let file_only =
             |account: &AnthropicAccount| -> Result<bool> { Ok(exists(&account.credentials_path)) };
@@ -522,7 +527,7 @@ impl AnthropicConfig {
             holds_own_credential: &file_only,
         };
         let target = self.account_creds_target(label, cli_active, &probes)?;
-        Ok((target, make_cache()?))
+        Ok((target, cache))
     }
 
     /// The pure core: which credential target a named account reads.
@@ -5852,7 +5857,7 @@ api_key = "sk-ant-admin01-side"
                     true
                 },
                 &fake_default_path,
-                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
+                Cache::at(PathBuf::from("/nonexistent/cache")),
             )
             .unwrap();
         assert!(matches!(present, CredsTarget::Named { .. }), "{present:?}");
@@ -5863,7 +5868,7 @@ api_key = "sk-ant-admin01-side"
                 Some("personal"),
                 |_| false,
                 &fake_default_path,
-                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
+                Cache::at(PathBuf::from("/nonexistent/cache")),
             )
             .unwrap();
         assert!(matches!(moved, CredsTarget::Default(_)), "{moved:?}");
@@ -5875,7 +5880,7 @@ api_key = "sk-ant-admin01-side"
                 None,
                 |_| panic!("only the live account is probed"),
                 &fake_default_path,
-                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
+                Cache::at(PathBuf::from("/nonexistent/cache")),
             )
             .unwrap();
         assert!(matches!(idle, CredsTarget::Named { .. }), "{idle:?}");
