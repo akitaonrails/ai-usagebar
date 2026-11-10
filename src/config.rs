@@ -495,39 +495,41 @@ impl AnthropicConfig {
         cli_active: Option<&str>,
         exists: impl Fn(&Path) -> bool,
     ) -> Result<(CredsTarget, Cache)> {
-        // Main's order: the account, then the cache, then the probe and the
-        // default path. The cache is built before delegating so a cache-root
-        // failure returns before `exists` runs.
-        self.account(label)?;
-        let cache = Cache::for_vendor_account("anthropic", label)?;
         self.account_target_probing_in(
             label,
             cli_active,
             exists,
             &crate::anthropic::creds::default_path,
-            cache,
+            || Cache::for_vendor_account("anthropic", label),
         )
     }
 
-    /// [`account_target_probing`](AnthropicConfig::account_target_probing)
-    /// with the default credentials path and the already-built cache injected,
-    /// so tests resolve neither from the real `$HOME`/`$XDG` environment.
+    /// Main's `account_target_probing` body, with the two ambient lookups
+    /// injected: `default_path` stands in for `creds::default_path()` and
+    /// `make_cache` for `Cache::for_vendor_account`, so tests resolve neither
+    /// from the real `$HOME`/`$XDG` environment. The account is looked up once,
+    /// then the cache is built, then the probe and the default path, in main's
+    /// order.
     fn account_target_probing_in(
         &self,
         label: &str,
         cli_active: Option<&str>,
         exists: impl Fn(&Path) -> bool,
         default_path: &dyn Fn() -> Result<PathBuf>,
-        cache: Cache,
+        make_cache: impl FnOnce() -> Result<Cache>,
     ) -> Result<(CredsTarget, Cache)> {
-        let file_only =
-            |account: &AnthropicAccount| -> Result<bool> { Ok(exists(&account.credentials_path)) };
-        let probes = CredentialProbes {
-            default_path,
-            holds_own_credential: &file_only,
-        };
-        let target = self.account_creds_target(label, cli_active, &probes)?;
-        Ok((target, cache))
+        let account = self.account(label)?;
+        let cache = make_cache()?;
+        if cli_active == Some(label) && !exists(&account.credentials_path) {
+            return Ok((CredsTarget::Default(default_path()?), cache));
+        }
+        Ok((
+            CredsTarget::Named {
+                config_dir: account.config_dir(),
+                path: account.credentials_path,
+            },
+            cache,
+        ))
     }
 
     /// The pure core: which credential target a named account reads.
@@ -5857,7 +5859,7 @@ api_key = "sk-ant-admin01-side"
                     true
                 },
                 &fake_default_path,
-                Cache::at(PathBuf::from("/nonexistent/cache")),
+                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
             )
             .unwrap();
         assert!(matches!(present, CredsTarget::Named { .. }), "{present:?}");
@@ -5868,7 +5870,7 @@ api_key = "sk-ant-admin01-side"
                 Some("personal"),
                 |_| false,
                 &fake_default_path,
-                Cache::at(PathBuf::from("/nonexistent/cache")),
+                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
             )
             .unwrap();
         assert!(matches!(moved, CredsTarget::Default(_)), "{moved:?}");
@@ -5880,7 +5882,7 @@ api_key = "sk-ant-admin01-side"
                 None,
                 |_| panic!("only the live account is probed"),
                 &fake_default_path,
-                Cache::at(PathBuf::from("/nonexistent/cache")),
+                || Ok(Cache::at(PathBuf::from("/nonexistent/cache"))),
             )
             .unwrap();
         assert!(matches!(idle, CredsTarget::Named { .. }), "{idle:?}");
