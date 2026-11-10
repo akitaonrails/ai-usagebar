@@ -482,6 +482,30 @@ impl AnthropicConfig {
         Ok((target, cache))
     }
 
+    /// The pre-#607 entry point, kept for library callers. It decides with
+    /// `exists` alone (is the account's credentials file there?), exactly as it
+    /// did before, so on macOS it misses a `CLAUDE_CONFIG_DIR` login that lives
+    /// only in the scoped Keychain item.
+    #[deprecated(
+        note = "probes only the credentials file and misses a macOS Keychain-only login; use `account_target_with`"
+    )]
+    pub fn account_target_probing(
+        &self,
+        label: &str,
+        cli_active: Option<&str>,
+        exists: impl Fn(&Path) -> bool,
+    ) -> Result<(CredsTarget, Cache)> {
+        let file_only =
+            |account: &AnthropicAccount| -> Result<bool> { Ok(exists(&account.credentials_path)) };
+        let probes = CredentialProbes {
+            default_path: &crate::anthropic::creds::default_path,
+            holds_own_credential: &file_only,
+        };
+        let target = self.account_creds_target(label, cli_active, &probes)?;
+        let cache = Cache::for_vendor_account("anthropic", label)?;
+        Ok((target, cache))
+    }
+
     /// The pure core: which credential target a named account reads.
     ///
     /// When `label` *is* the live CLI login, `account switch` has moved its
@@ -5788,6 +5812,39 @@ api_key = "sk-ant-admin01-side"
         };
         let (target, _) = cfg.account_target_with("work", None).unwrap();
         assert!(matches!(target, CredsTarget::Named { .. }), "{target:?}");
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn the_deprecated_probing_entry_point_keeps_its_file_only_decision() {
+        let cfg = AnthropicConfig {
+            accounts: vec![AnthropicAccount {
+                label: "personal".into(),
+                credentials_path: "/tmp/accounts/personal/.credentials.json".into(),
+            }],
+            ..Default::default()
+        };
+
+        let (present, _) = cfg
+            .account_target_probing("personal", Some("personal"), |path| {
+                assert_eq!(path, Path::new("/tmp/accounts/personal/.credentials.json"));
+                true
+            })
+            .unwrap();
+        assert!(matches!(present, CredsTarget::Named { .. }), "{present:?}");
+
+        let (moved, _) = cfg
+            .account_target_probing("personal", Some("personal"), |_| false)
+            .unwrap();
+        assert!(matches!(moved, CredsTarget::Default(_)), "{moved:?}");
+
+        // Not the live login: the probe is never consulted.
+        let (idle, _) = cfg
+            .account_target_probing("personal", None, |_| {
+                panic!("only the live account is probed")
+            })
+            .unwrap();
+        assert!(matches!(idle, CredsTarget::Named { .. }), "{idle:?}");
     }
 
     /// The shipped example, which `make install` puts in
