@@ -74,9 +74,9 @@ enabled = true
 # credentials_path = "/home/you/.claude/.credentials.json"
 
 [anthropic_api]
-enabled = true             # disabled by default; requires an organization Admin key
+enabled = true             # disabled by default; requires organization report access
 api_key_env = "ANTHROPIC_ADMIN_KEY"
-# api_key = "sk-ant-admin01-..."  # not an inference key; chmod 600 if inline
+# api_key = "..."         # authorized report credential; chmod 600 if inline
 # monthly_limit = 1000     # optional positive, finite USD display limit
 
 [openai]
@@ -570,3 +570,5 @@ detection continues to respect disabled providers. The command preserves other
 settings, comments, and credentials, and supports `--config PATH` to edit an
 existing alternate configuration. It does not sign in or select a primary
 provider. Successful writes return `{"ok":true}`; failures exit nonzero.
+
+See [Anthropic API setup and report permissions](anthropic-api.md) for supported key types and 401/403 troubleshooting.

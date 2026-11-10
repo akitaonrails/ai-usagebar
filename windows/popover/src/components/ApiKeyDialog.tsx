@@ -149,7 +149,7 @@ export function ApiKeyDialogView({
 }: ApiKeyDialogViewProps) {
   const locale = { locale: language };
   const saveDisabled = checking || keyDraft === "";
-  // The host's note says which key this is ("admin key — monthly spend").
+  // The host's note says which key this is ("organization report key — monthly spend").
   const note = provider.keyNote ? provider.keyNote.charAt(0).toUpperCase() + provider.keyNote.slice(1) : "";
   return (
     <form

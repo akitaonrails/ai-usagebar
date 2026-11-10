@@ -186,12 +186,23 @@ fn render_tooltip(
             "     <span foreground='{dim}'>{}</span>",
             escape(msg)
         )));
-        if *code == 401 || *code == 403 {
+        let guidance: &[&str] = match *code {
+            401 => &["Check that the organization report key is valid and not expired."],
+            403 => &[
+                "Check organization roles, report permissions and key scope.",
+                "Prepaid credit does not grant access.",
+            ],
+            _ => &[],
+        };
+        if !guidance.is_empty() {
+            for line in guidance {
+                lines.push(TooltipLine::Body(format!(
+                    "     <span foreground='{dim}'>{}</span>",
+                    escape(line)
+                )));
+            }
             lines.push(TooltipLine::Body(format!(
-                "     <span foreground='{dim}'>needs an org Admin key (sk-ant-admin01-); set up an</span>"
-            )));
-            lines.push(TooltipLine::Body(format!(
-                "     <span foreground='{dim}'>organization in Console → Settings → Organization</span>"
+                "     <span foreground='{dim}'>Setup and troubleshooting: docs/anthropic-api.md</span>"
             )));
         }
     }
@@ -295,5 +306,35 @@ mod tests {
             }),
             PaceSeverity::Low
         );
+    }
+
+    #[test]
+    fn rejected_report_tooltips_explain_credentials_without_requiring_an_admin_prefix() {
+        for status in [401, 403] {
+            let (snap, mut outcome) = outcome(7.0, None);
+            outcome.stale = true;
+            outcome.last_error = Some((status, crate::error::AUTH_FAILURE_MESSAGE.into()));
+            let tooltip = render(
+                &outcome,
+                &snap,
+                &Theme::default(),
+                &opts(),
+                chrono::NaiveDate::from_ymd_opt(2026, 7, 19)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap()
+                    .and_utc(),
+            )
+            .tooltip;
+            assert!(tooltip.contains("docs/anthropic-api.md"));
+            assert!(!tooltip.contains("needs an org Admin key"));
+            assert!(!tooltip.contains("sk-ant-admin01-"));
+            if status == 401 {
+                assert!(tooltip.contains("valid and not expired"));
+            } else {
+                assert!(tooltip.contains("report permissions and key scope"));
+                assert!(tooltip.contains("Prepaid credit does not grant access"));
+            }
+        }
     }
 }
