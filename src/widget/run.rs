@@ -886,13 +886,8 @@ async fn kilo_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let key = crate::config::resolve_api_key(
-        "Anthropic_API",
-        &config.anthropic_api.api_key_env,
-        config.anthropic_api.api_key.as_deref(),
-    )?;
+    let (key, cache) = api_key_target(cli, config, VendorId::AnthropicApi)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "anthropic_api")?.redacting(&key);
     let endpoints = anthropic_api::fetch::Endpoints::default();
     let outcome = match fetch_api_keyed(
         async {
@@ -902,7 +897,7 @@ async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput
                 &cache,
                 &endpoints,
                 DEFAULT_TTL,
-                config.anthropic_api.monthly_limit,
+                config.anthropic_api_monthly_limit(cli.account.as_deref()),
             )
             .await
         },
@@ -1834,6 +1829,7 @@ mod tests {
                 api_key_env: None,
                 api_key: Some("work-key".into()),
                 management_api_key_env: None,
+                monthly_limit: None,
             });
         config
             .openrouter
@@ -1843,6 +1839,7 @@ mod tests {
                 api_key_env: None,
                 api_key: Some("personal-key".into()),
                 management_api_key_env: None,
+                monthly_limit: None,
             });
         let root = tempfile::tempdir().unwrap();
         let root_str = root.path().to_str().unwrap();
@@ -1929,6 +1926,7 @@ mod tests {
             api_key_env: None,
             api_key: Some("work-key".into()),
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let root = tempfile::tempdir().unwrap();
         let root_str = root.path().to_str().unwrap();
