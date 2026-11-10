@@ -283,6 +283,44 @@ mod tests {
         std::fs::read_to_string(&path).ok()
     }
 
+    /// Every bullet in a version section must sit under a `### Category`
+    /// heading. A merge that appends a bullet where the conflict was
+    /// bullet-only can drop the heading, and the repeated-category check above
+    /// only looks for *duplicates* — an unheaded bullet used to pass every
+    /// gate while staying invisible to the release's version decision.
+    /// Every bullet in the pending section must sit under a `### Category`
+    /// heading. A merge that appends a bullet where the conflict was
+    /// bullet-only can drop the heading, and the repeated-category check above
+    /// only looks for *duplicates* — an unheaded bullet used to pass every
+    /// gate while staying invisible to the release's version decision.
+    ///
+    /// Only `[Unreleased]` is checked: released sections are frozen, already
+    /// covered byte-for-byte by `scripts/check-changelog-immutable.sh`, and
+    /// the oldest one predates the category rule.
+    #[test]
+    fn no_unreleased_changelog_bullet_sits_outside_a_category() {
+        let Some(changelog) = changelog() else { return };
+        let mut in_unreleased = false;
+        let mut in_category = false;
+        let mut offenders: Vec<String> = Vec::new();
+        for line in changelog.lines() {
+            if let Some(rest) = line.strip_prefix("## ") {
+                in_unreleased = rest.trim() == "[Unreleased]";
+                in_category = false;
+            } else if line.starts_with("### ") {
+                in_category = true;
+            } else if in_unreleased && line.starts_with("- ") && !in_category {
+                offenders.push(line.trim().to_string());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "the pending section carries bullets before any ### category \
+             heading, so they are hidden from the release's version decision: \
+             {offenders:?}"
+        );
+    }
+
     /// How the macOS menu bar mirrors one vendor's figures.
     ///
     /// Two cases, because the mirror is a deliberate *subset*: Rust emits 289
