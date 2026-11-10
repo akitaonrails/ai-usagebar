@@ -137,8 +137,8 @@ assert.equal(
 );
 assert.equal(i18n.displaySecretLabel('ru', 'API key'), 'API-ключ');
 assert.equal(
-  i18n.displayNote('ru', 'admin key — monthly spend'),
-  'admin-ключ — месячные траты',
+  i18n.displayNote('ru', 'organization report key — monthly spend'),
+  'ключ отчётов организации — месячные траты',
 );
 assert.equal(
   i18n.displayNote('ru', 'management key, not the inference key'),

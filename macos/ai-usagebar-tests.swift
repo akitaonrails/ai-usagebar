@@ -485,15 +485,29 @@ func testParserBalances() {
     assertEqual(ocgFloat?.sonnet?.pct, 34, "opencode-go parses floating monthly")
 
     let mistral = snapshot(FORMAT, vendor: "mistral",
-                           fields: fields(through: 4, set: [
-                              0: "EDU", 1: "16", 2: "25d", 3: "0", 4: "25d"
+                           fields: fields(through: 16, set: [
+                              0: "EDU", 1: "16", 2: "25d", 3: "0", 4: "25d",
+                              13: "0", 14: "0", 16: "mis"
                            ]))
     assertEqual(mistral?.session?.pct, 16, "mistral API pct")
     assertEqual(mistral?.sessionLabel, "API budget", "mistral API label")
     assertEqual(mistral?.sessionTag, "api", "mistral API tag")
+    assertEqual(mistral?.session?.elapsed, nil, "mistral API elapsed is nil")
     assertEqual(mistral?.weekly?.pct, 0, "mistral Vibe pct")
     assertEqual(mistral?.weeklyLabel, "Vibe budget", "mistral Vibe label")
     assertEqual(mistral?.weeklyTag, "vibe", "mistral Vibe tag")
+    assertEqual(mistral?.weekly?.elapsed, nil, "mistral Vibe elapsed is nil")
+
+    let mistralNoApi = snapshot(FORMAT, vendor: "mistral",
+                                fields: fields(through: 16, set: [
+                                   0: "EDU", 1: "", 2: "", 3: "40", 4: "25d",
+                                   13: "", 14: "0", 16: "mis"
+                                ]))
+    assertEqual(mistralNoApi?.session, nil, "mistral without API budget has no session window")
+    assertEqual(mistralNoApi?.weekly?.pct, 40, "mistral without API budget keeps Vibe pct")
+    assertEqual(mistralNoApi?.weeklyLabel, "Vibe budget", "mistral without API budget keeps Vibe label")
+    assertEqual(mistralNoApi?.weeklyTag, "vibe", "mistral without API budget keeps Vibe tag")
+    assertEqual(mistralNoApi?.weekly?.elapsed, nil, "mistral Vibe elapsed is nil without API budget")
 
     let cmd = snapshot(FORMAT, vendor: "commandcode",
                        fields: fields(through: 37, set: [
