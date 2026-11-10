@@ -9,8 +9,10 @@ const server = await createServer({ server: { middlewareMode: true, hmr: false, 
 
 try {
   const { NativeDashboard } = await server.ssrLoadModule('/src/screens/NativeDashboard.tsx');
+  const { Dashboard } = await server.ssrLoadModule('/src/screens/Dashboard.tsx');
   const { ProviderSection } = await server.ssrLoadModule('/src/components/ProviderSection.tsx');
   const { Settings } = await server.ssrLoadModule('/src/screens/Settings.tsx');
+  const { About } = await server.ssrLoadModule('/src/screens/About.tsx');
   const { Footer, TopBar } = await server.ssrLoadModule('/src/components/Chrome.tsx');
   const { TooltipProvider } = await server.ssrLoadModule('/src/components/ui/tooltip.tsx');
   const { LanguageProvider, translateUsage } = await server.ssrLoadModule('/src/lib/i18n.tsx');
@@ -320,6 +322,39 @@ try {
   assert.match(multiAccount({ anthropic: 'anthropic@gone' }, 'anthropic@work'), /data-card-id="anthropic@work"/);
   // ASSERT: the single-account dashboard keeps no account tabs (the old screen).
   assert.doesNotMatch(nativeDashboard, /role="tablist"/);
+
+  // One live account still titles the provider after the catalog. Account
+  // labels belong to the account tabs, not the header or its tooltips.
+  const liveAccounts = ['one', 'two'].map((id, index) => ({
+    ...card, id: `antigravity@${id}`, icon: 'antigravity',
+    title: `Antigravity · ${index ? 'b' : 'a'}***@example.com`,
+  }));
+  for (const [Component, popoverStyle] of [[Dashboard, 'classic'], [NativeDashboard, 'native']]) {
+    for (const count of [1, 2]) {
+      const cards = liveAccounts.slice(0, count);
+      const markup = renderToStaticMarkup(React.createElement(TooltipProvider, {},
+        React.createElement(LanguageProvider, { language: 'en' },
+          React.createElement(Component, {
+            cards, visible: cards, hint: false, layout: { ...emptyLayout(), popoverStyle }, nowMs,
+            payload: { ...payload, primary: cards[0].id, providers: [{ id: 'antigravity', name: 'Antigravity' }] },
+            onCustomizeProvider() {}, onDismissHint() {}, onOpenCustomize() {}, onOpenSettings() {},
+            onRowAction() {}, onRowMenuOpenChange() {}, onSelectAccount() {}, onReorder() {},
+            onSwitchAccount() {}, onToggleCollapse() {}, onToggleShowAs() {},
+          }))));
+      const header = markup.match(/<section\b[^>]*data-card-id="antigravity@one"[\s\S]*?<\/header>/)?.[0];
+      assert.ok(header);
+      assert.match(header, />Antigravity</);
+      assert.doesNotMatch(header, /example\.com|Antigravity ·/);
+      assert.match(markup, /data-card-id="antigravity@one"/);
+      if (count === 2) {
+        assert.match(markup, /role="tablist" aria-label="Accounts"/);
+        assert.match(markup, /a\*\*\*@example\.com/);
+        assert.match(markup, /b\*\*\*@example\.com/);
+      } else {
+        assert.doesNotMatch(markup, /role="tablist" aria-label="Accounts"/);
+      }
+    }
+  }
   const settingsPayload = { ...emptyPayload(''), os: 'macos' };
   const settingsProps = {
     cards: [card], layout: { ...emptyLayout(), popoverStyle: 'native' }, nowMs, payload: settingsPayload,
@@ -408,6 +443,20 @@ try {
   });
   assert.match(providersMenuBar, /Logotipos/);
   assert.doesNotMatch(providersMenuBar, /Identificar provedores por|Mostrar todos os provedores|Ocultar valor de uso/);
+  const iconMenuBar = settingsTab('menu', {
+    ...settingsProps,
+    payload: { ...settingsPayload, menuBarLook: 'icon' },
+  });
+  assert.match(iconMenuBar, /Ícone do app/);
+  assert.doesNotMatch(iconMenuBar, /Mostrar nome curto/);
+  // Contract: the native tray glyph must match the actual About SVG, even
+  // after an icon-library update. Swapping either glyph breaks this check.
+  const aboutMarkup = renderToStaticMarkup(React.createElement(LanguageProvider, { language: 'en' },
+    React.createElement(About, { payload: { ...settingsPayload, repository: '' } })));
+  const aboutMark = aboutMarkup.match(/<span class="[^"]*--app-mark[^"]*">([\s\S]*?)<\/span>/)[1];
+  const nativeMark = await readFile(new URL('../../macos/menu-bar-icon.svg', import.meta.url), 'utf8');
+  const svgPaths = (markup) => [...markup.matchAll(/<path\b[^>]*\bd="([^"]+)"/g)].map(match => match[1]);
+  assert.deepEqual(svgPaths(nativeMark), svgPaths(aboutMark));
   // The Quattro look is a third choice of the same picker, not a separate set of controls.
   const quattroMenuBar = settingsTab('general', {
     ...settingsProps,

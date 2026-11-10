@@ -195,9 +195,22 @@ pub fn pad_end(s: &str, width: usize) -> String {
     out
 }
 
+/// Right-align `s` in a field `width` columns wide — the [`pad_end`]
+/// counterpart, measured in display width for the same reason.
+pub fn pad_start(s: &str, width: usize) -> String {
+    let w = text_width(s);
+    if w >= width {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + (width - w));
+    out.extend(std::iter::repeat_n(' ', width - w));
+    out.push_str(s);
+    out
+}
+
 #[cfg(test)]
 mod width_tests {
-    use super::{pad_end, text_width};
+    use super::{pad_end, pad_start, text_width};
 
     #[test]
     fn text_width_measures_columns_not_characters() {
@@ -205,6 +218,17 @@ mod width_tests {
         assert_eq!(text_width("日本語"), 6); // 3 chars, 6 columns
         assert_eq!(text_width("사용량"), 6);
         assert_eq!(text_width("e\u{301}"), 1); // combining mark adds nothing
+    }
+
+    #[test]
+    fn pad_start_pads_by_columns_not_characters() {
+        // The right-align half of the report's columns: a wide or combining
+        // value must end at the same column as an ASCII one.
+        assert_eq!(pad_start("7", 6), "     7");
+        assert_eq!(pad_start("日本語", 8), "  日本語");
+        assert_eq!(pad_start("e\u{301}", 3), "  e\u{301}");
+        // Already wide enough: untouched, never truncated.
+        assert_eq!(pad_start("日本語", 4), "日本語");
     }
 
     #[test]

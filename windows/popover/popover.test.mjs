@@ -152,8 +152,8 @@ const portugueseMessages = JSON.parse(readFileSync(new URL('./messages/pt-BR.jso
 assert.deepEqual(Object.keys(portugueseMessages).sort(), Object.keys(englishMessages).sort());
 assert.ok(Object.values(englishMessages).every((value) => typeof value === 'string' && value.trim()));
 assert.ok(Object.values(portugueseMessages).every((value) => typeof value === 'string' && value.trim()));
-assert.equal(englishMessages.menu_bar_shows_hint, "Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.");
-assert.equal(portugueseMessages.menu_bar_shows_hint, "Gráfico e Logotipos mostram as métricas marcadas de todos os provedores. Quattro mostra o maior uso do provedor selecionado.");
+assert.equal(englishMessages.menu_bar_shows_hint, "App Icon shows the app's gauge. Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.");
+assert.equal(portugueseMessages.menu_bar_shows_hint, "Ícone do app mostra o medidor do aplicativo. Gráfico e Logotipos mostram as métricas marcadas de todos os provedores. Quattro mostra o maior uso do provedor selecionado.");
 for (const key of ['focused_provider', 'highest_consumption', 'usage_window']) {
   assert.equal(Object.hasOwn(englishMessages, key), false);
   assert.equal(Object.hasOwn(portugueseMessages, key), false);
@@ -223,6 +223,8 @@ assert.equal(parseHostPayload({ menu_bar_look: 'sparkles' }).menuBarLook, 'chart
 assert.equal(parseHostPayload({}).menuBarLook, 'chart');
 assert.equal(emptyPayload('').menuBarLook, 'chart');
 assert.equal(parseHostPayload({ menu_bar_look: 'logos' }).menuBarLook, 'logos');
+// Mutation captured: treating icon as unknown resets the host-selected mode to Chart.
+assert.equal(parseHostPayload({ menu_bar_look: 'icon' }).menuBarLook, 'icon');
 assert.equal(parseHostPayload({ menu_bar_look: 'quattro' }).menuBarLook, 'quattro');
 // The host only reports `quattro`; the 1.32.0 spelling is read on the Rust side, so `name` is unknown here.
 assert.equal(parseHostPayload({ menu_bar_look: 'name' }).menuBarLook, 'chart');

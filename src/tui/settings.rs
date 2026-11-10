@@ -63,7 +63,7 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         section: VendorId::AnthropicApi.config_section(),
         config_key: "api_key",
         secret_label: "API key",
-        note: "admin key — monthly spend",
+        note: "organization report key — monthly spend",
     },
     KeyVendor {
         id: VendorId::Zai,

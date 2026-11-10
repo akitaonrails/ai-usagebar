@@ -131,9 +131,7 @@ export function Dashboard({
         return (
           <ProviderSection
             card={card}
-            group={group.cards.length > 1
-              ? { name: nameOf(group), cards: group.cards.map((item) => ({ id: item.id, title: item.title })), activeId: card.id, onSelect: () => {} }
-              : undefined}
+            group={{ name: nameOf(group), cards: group.cards.map((item) => ({ id: item.id, title: item.title })), activeId: card.id, onSelect: () => {} }}
             layout={layout}
             lifted
             nowMs={nowMs}
@@ -144,7 +142,6 @@ export function Dashboard({
       <div className="flex flex-col gap-[var(--section-gap)]">
         {groups.map((group) => {
           const card = activeCardOf(group);
-          const multi = group.cards.length > 1;
           const name = nameOf(group);
           return (
             <SortableItem key={group.id} id={group.id}>
@@ -152,9 +149,7 @@ export function Dashboard({
                 <ProviderSection
                   account={accountSwitchFor(card.id, payload.accounts)}
                   card={card}
-                  group={multi
-                    ? { name, cards: group.cards.map((item) => ({ id: item.id, title: item.title })), activeId: card.id, onSelect: (cardId) => onSelectAccount(group.id, cardId) }
-                    : undefined}
+                  group={{ name, cards: group.cards.map((item) => ({ id: item.id, title: item.title })), activeId: card.id, onSelect: (cardId) => onSelectAccount(group.id, cardId) }}
                   handle={{ attributes, listeners }}
                   layout={layout}
                   nowMs={nowMs}
