@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Added
+
+- **Omarchy panel: pace marker on each meter.** A metric with a window length
+  and a future reset draws a tick where an even burn would sit by now, the
+  panel's take on the trays' pace tick, so "14pts under" reads at a glance. The
+  tick lives in the same space as the fill: in the "left" reading it marks the
+  share that should still remain. Grouped sub-rows
+  and value headlines get none. On by default; the **Show pace marker** switch
+  in Settings (`paceMarker`) turns it off.
+
 ## [1.50.0] — 2026-11-09
 
 ### Added

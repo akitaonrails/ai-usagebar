@@ -150,6 +150,7 @@ Panel {
   readonly property bool showProvider: Model.booleanSetting(setting("showProvider", false), false)
   readonly property bool showAll: Model.booleanSetting(setting("showAll", false), false)
   readonly property bool colorCodeUsage: Model.booleanSetting(setting("colorCodeUsage", false), false)
+  readonly property bool paceMarker: Model.booleanSetting(setting("paceMarker", true), true)
   readonly property string uiLocaleSetting: String(setting("uiLocale", "auto") || "auto")
   // Bind Qt.locale so Auto tracks the shell language without a restart.
   readonly property string uiLocale: I18n.resolveLocale(uiLocaleSetting, Qt.locale().name)
@@ -369,6 +370,12 @@ Panel {
     var next = enabled === true
     if (next === colorCodeUsage) return
     persistWidgetSettings({ colorCodeUsage: next })
+  }
+
+  function setPaceMarker(enabled) {
+    var next = enabled === true
+    if (next === paceMarker) return
+    persistWidgetSettings({ paceMarker: next })
   }
 
   function setBarWindow(value) {
@@ -1392,6 +1399,7 @@ Panel {
             showProvider: root.showProvider
             showAll: root.showAll
             colorCodeUsage: root.colorCodeUsage
+            paceMarker: root.paceMarker
             uiLocale: root.uiLocale
             uiLocaleSetting: root.uiLocaleSetting
             barWindow: root.barWindow
@@ -1406,6 +1414,7 @@ Panel {
             onShowProviderRequested: function(enabled) { root.setShowProvider(enabled) }
             onShowAllRequested: function(enabled) { root.setShowAll(enabled) }
             onColorCodeUsageRequested: function(enabled) { root.setColorCodeUsage(enabled) }
+            onPaceMarkerRequested: function(enabled) { root.setPaceMarker(enabled) }
             onUiLocaleRequested: function(value) { root.setUiLocale(value) }
             onBarWindowRequested: function(value) { root.setBarWindow(value) }
             onShowAsRequested: function(value) { root.setShowAs(value) }
@@ -1835,6 +1844,21 @@ Panel {
         Behavior on width {
           NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
         }
+      }
+
+      Rectangle {
+        id: paceMarker
+        readonly property var markerPercent: root.paceMarker
+          ? Model.paceMarkerPercent(metricRow.row, root.nowMs, root.showAs)
+          : null
+        visible: markerPercent !== null
+        width: Math.max(2, Math.round(meterTrack.height / 2))
+        height: meterTrack.height + Style.space(6)
+        radius: width / 2
+        anchors.verticalCenter: meterTrack.verticalCenter
+        x: meterTrack.x + root.clamp(meterTrack.width * (markerPercent || 0) / 100 - width / 2, 0, meterTrack.width - width)
+        color: root.foreground
+        opacity: 0.85
       }
     }
 

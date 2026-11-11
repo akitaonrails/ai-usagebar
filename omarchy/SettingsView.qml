@@ -34,6 +34,7 @@ Column {
   property bool showProvider: false
   property bool showAll: false
   property bool colorCodeUsage: false
+  property bool paceMarker: true
   property string uiLocale: "en"
   property string uiLocaleSetting: "auto"
   property string barWindow: "auto"
@@ -80,6 +81,7 @@ Column {
   signal showProviderRequested(bool enabled)
   signal showAllRequested(bool enabled)
   signal colorCodeUsageRequested(bool enabled)
+  signal paceMarkerRequested(bool enabled)
   signal uiLocaleRequested(string value)
   signal barWindowRequested(string value)
   signal showAsRequested(string value)
@@ -395,6 +397,16 @@ Column {
         fontFamily: root.fontFamily
         enabled: !root.saving
         onClicked: root.colorCodeUsageRequested(!root.colorCodeUsage)
+      }
+      Toggle {
+        width: parent.width
+        label: root.tr("toggle.pace_marker")
+        description: root.tr("toggle.pace_marker_desc")
+        checked: root.paceMarker
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        enabled: !root.saving
+        onClicked: root.paceMarkerRequested(!root.paceMarker)
       }
       Toggle {
         width: parent.width

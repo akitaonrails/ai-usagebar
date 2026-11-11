@@ -273,6 +273,10 @@ assert.equal(manifest.barWidget.defaults.colorCodeUsage, false);
 const colorCodeUsageSchema = manifest.barWidget.schema.find(row => row.key === 'colorCodeUsage');
 assert.equal(colorCodeUsageSchema.type, 'boolean');
 assert.equal(colorCodeUsageSchema.defaultValue, false);
+assert.equal(manifest.barWidget.defaults.paceMarker, true);
+const paceMarkerSchema = manifest.barWidget.schema.find(row => row.key === 'paceMarker');
+assert.equal(paceMarkerSchema.type, 'boolean');
+assert.equal(paceMarkerSchema.defaultValue, true);
 assert.equal(manifest.barWidget.defaults.uiLocale, 'auto');
 const uiLocaleSchema = manifest.barWidget.schema.find(row => row.key === 'uiLocale');
 assert.equal(uiLocaleSchema.type, 'enum');
@@ -355,6 +359,9 @@ assert.match(panelSource, /setting\("showValue",\s*true\)/);
 assert.match(panelSource, /setting\("showProvider",\s*false\)/);
 assert.match(panelSource, /setting\("showAll",\s*false\)/);
 assert.match(panelSource, /setting\("colorCodeUsage",\s*false\)/);
+assert.match(panelSource, /Model\.booleanSetting\(setting\("paceMarker",\s*true\),\s*true\)/);
+assert.match(panelSource, /persistWidgetSettings\(\{\s*paceMarker:\s*next\s*\}\)/);
+assert.match(panelSource, /markerPercent:\s*root\.paceMarker\s*\?\s*Model\.paceMarkerPercent\(/, 'the pace marker follows its setting');
 assert.match(panelSource, /Model\.normalizeBarWindow\(setting\("barWindow",\s*"auto"\)\)/);
 // The pin covers the bar value and its echoes (hero value, tooltip):
 // summary (bar label/chips) is pinned, while panel rows keep every pool.
@@ -463,6 +470,8 @@ assert.match(settingsViewSource, /root\.tr\("toggle\.show_all"\)/);
 assert.match(settingsViewSource, /signal\s+colorCodeUsageRequested\(bool\s+enabled\)/);
 assert.match(settingsViewSource, /signal\s+uiLocaleRequested\(string\s+value\)/);
 assert.match(settingsViewSource, /root\.tr\("toggle\.color_code"\)/);
+assert.match(settingsViewSource, /signal\s+paceMarkerRequested\(bool\s+enabled\)/);
+assert.match(settingsViewSource, /root\.tr\("toggle\.pace_marker"\)/);
 assert.match(settingsViewSource, /signal\s+barWindowRequested\(string\s+value\)/);
 assert.match(settingsViewSource, /text:\s*root\.tr\("section\.bar_window"\)/);
 assert.match(settingsViewSource, /value:\s*"auto",\s*label:\s*root\.tr\("bar_window\.auto"\)/);
@@ -1638,6 +1647,34 @@ assert.equal(model.shownPercent(18, 'used'), 18);
 assert.equal(model.shownPercent(18, 'left'), 82);
 assert.equal(model.shownPercent(130, 'left'), 0);
 assert.equal(model.shownPercent('x', 'left'), null);
+
+{
+  const nowMs = Date.parse('2026-11-11T19:00:00Z');
+  const sessionRow = (overrides) => ({
+    type: 'metric', percent: 45, headline: 'percent', group: '', reading: '',
+    reset_at: '2026-11-11T21:00:00Z', window_secs: 18000, ...overrides,
+  });
+  assert.equal(model.paceMarkerPercent(sessionRow(), nowMs, 'used'), 60, 'three of five hours elapsed');
+  assert.equal(model.paceMarkerPercent(sessionRow(), nowMs, 'left'), 40, 'left reading marks what should remain');
+  assert.equal(model.paceMarkerPercent(sessionRow({reading: 'left'}), nowMs, 'used'), 40, 'a row reading overrides the setting');
+  assert.equal(model.paceMarkerPercent(sessionRow({reset_at: '2026-11-12T21:00:00Z'}), nowMs, 'used'), 0, 'a reset beyond the window clamps to zero');
+  for (const [name, overrides] of [
+    ['no window', {window_secs: null}],
+    ['no reset', {reset_at: ''}],
+    ['unparseable reset', {reset_at: 'soon'}],
+    ['past reset', {reset_at: '2026-11-11T18:00:00Z'}],
+    ['grouped sub-row', {group: 'Breakdown'}],
+    ['value headline', {headline: 'value'}],
+    ['not a metric', {type: 'text'}],
+  ]) {
+    assert.equal(model.paceMarkerPercent(sessionRow(overrides), nowMs, 'used'), null, `${name} has no pace marker`);
+  }
+  assert.equal(model.paceMarkerPercent(null, nowMs, 'used'), null);
+  const parsed = model.parseReport(JSON.stringify({entries: [{id: 'claude', label: 'Claude', sections: [
+    {type: 'metric', label: 'Session (5h)', percent: 45, reset_at: '2026-11-11T21:00:00Z', window_secs: 18000},
+  ]}]}));
+  assert.equal(model.paceMarkerPercent(parsed.entries[0].sections[0], nowMs, 'used'), 60, 'a parsed report row carries what the marker needs');
+}
 assert.equal(model.percentText(18, 'left'), '82%');
 assert.equal(model.percentText(18), '18%');
 assert.equal(model.percentText('x', 'left'), '');
@@ -2214,13 +2251,13 @@ assert.equal(model.cursorPoolOf(null), '');
   assert.match(panel, /persistWidgetSettings\(\{\s*brandIcons:\s*next\s*\}\)/);
   assert.match(panel, /brand: root\.priorityOpen \|\| root\.settingsOpen \|\| !root\.brandIcons \? "" : Model\.brandIconFile\(root\.entry\)/);
   assert.match(settingsForm, /signal brandIconsRequested\(bool enabled\)/);
-  const displayKeys = ['showValue', 'brandIcons', 'tabNames', 'showProvider', 'colorCodeUsage', 'showAll'];
-  assert.deepEqual(displayKeys.map(key => manifest.barWidget.defaults[key]), [true, true, false, false, false, false]);
+  const displayKeys = ['showValue', 'brandIcons', 'tabNames', 'showProvider', 'colorCodeUsage', 'paceMarker', 'showAll'];
+  assert.deepEqual(displayKeys.map(key => manifest.barWidget.defaults[key]), [true, true, false, false, false, true, false]);
   assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.key), displayKeys);
-  assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.defaultValue), [true, true, false, false, false, false]);
+  assert.deepEqual(manifest.barWidget.schema.filter(row => displayKeys.includes(row.key)).map(row => row.defaultValue), [true, true, false, false, false, true, false]);
   assert.deepEqual(
     Array.from(settingsForm.matchAll(/label: root\.tr\("toggle\.(\w+)"\)/g), match => match[1]),
-    ['show_value', 'brand_icons', 'tab_names', 'show_provider', 'color_code', 'show_all']);
+    ['show_value', 'brand_icons', 'tab_names', 'show_provider', 'color_code', 'pace_marker', 'show_all']);
   assert.match(settingsForm, /signal tabNamesRequested\(bool enabled\)/);
   // Without logos the names always show, so the switch is locked on.
   assert.match(settingsForm, /checked: root\.tabNames \|\| !root\.brandIcons\s*foreground[\s\S]*?enabled: root\.brandIcons && !root\.saving/);
