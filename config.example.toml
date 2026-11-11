@@ -5,6 +5,16 @@
 # file (`chmod 600 ~/.config/ai-usagebar/config.toml`). Otherwise env vars
 # are the safer choice.
 
+# API keys can also live in the macOS login Keychain instead of the env or
+# the file: map a vendor (or a named account "vendor.label") to the service
+# name of a generic-password item you created, e.g.
+#   security add-generic-password -a "$USER" -s MyZaiKey -w
+# Checked only after the env var and any inline api_key miss. macOS only;
+# on other platforms the entries are ignored.
+[keychain]
+# zai = "MyZaiKey"
+# "openrouter.work" = "MyWorkKey"
+
 [ui]
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.

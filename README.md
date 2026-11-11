@@ -281,7 +281,9 @@ API-key vendors work unchanged via environment variables or `config.toml`.
 
 Claude and Codex reuse OAuth credentials from their official CLIs. Other
 providers use API keys, an existing app login, or a local service. API keys can
-come from environment variables or `config.toml`.
+come from environment variables, `config.toml`, or, on macOS, the login
+Keychain through the `[keychain]` table (see `config.example.toml`). The
+Keychain entry is checked only after the env var and any inline key miss.
 
 | Vendor | Method | Action required |
 |---|---|---|
