@@ -575,10 +575,11 @@ api_key_env = "MINIMAX_API_KEY"    # checked first; if set + non-empty, used
 #   global -> api.minimax.io   |   cn -> api.minimaxi.com
 # region = "global"
 
-# Kiro CLI — no separate login step: reads the AWS SSO OIDC session kiro-cli
-# already wrote to its own local database after `kiro-cli login`. Shows the
-# credit pool from AmazonCodeWhispererService.GetUsageLimits — the same call
-# kiro-cli's own `/usage` slash command makes.
+# Kiro CLI — no separate login step: reads the AWS SSO OIDC or social-login
+# (Google / GitHub) session kiro-cli already wrote to its own local database
+# after `kiro-cli login`. Shows the credit pool from
+# AmazonCodeWhispererService.GetUsageLimits — the same call kiro-cli's own
+# `/usage` slash command makes.
 [kiro]
 # Disabled by default — enable once you've run `kiro-cli login` at least once
 # (it needs no key from you, but it does need that one-time login to exist).

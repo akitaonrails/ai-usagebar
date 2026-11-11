@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Added
+
+- **Kiro CLI: Google and GitHub social logins.** `[kiro]` now recognizes
+  sessions stored under `kirocli:social:token` alongside AWS Builder ID and IAM
+  Identity Center (`kirocli:odic:token`), selecting the valid session with the
+  newer expiry when both rows exist, refreshing social tokens against Kiro's
+  desktop auth service (preserving any canonical `profileArn` and rebinding the
+  quota host to its region), and refusing HTTP redirects on token and quota
+  calls.
+
 ## [1.50.0] — 2026-11-09
 
 ### Added

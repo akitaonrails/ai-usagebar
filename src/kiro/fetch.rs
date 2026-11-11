@@ -1,12 +1,15 @@
 //! Orchestrates a Kiro CLI snapshot: read kiro-cli's own cached AWS SSO OIDC
-//! token (`db.rs`), refresh it if it's close to expiry (`oauth.rs` — kiro-cli's
-//! own database is never written back to), persist the refreshed credential in
-//! ai-usagebar's account-scoped cache, then call
+//! or social-login token (`db.rs`), refresh it if it's close to expiry
+//! (`oauth.rs` — kiro-cli's own live WAL database is never written back to and
+//! `kiro-cli` offers no non-interactive renewal command), persist any rotated
+//! token pair in ai-usagebar's atomic, mode-`0600`, account-fingerprinted
+//! `kiro/oauth.json` sidecar, then call
 //! `AmazonCodeWhispererService.GetUsageLimits` — the exact operation kiro-cli's
 //! own `/usage` slash command invokes. Cache/stale/error-fallback shape
 //! mirrors `cursor::fetch`.
 
 use std::path::Path;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -17,7 +20,7 @@ use crate::error::{AppError, Result};
 use crate::usage::KiroSnapshot;
 use crate::vendor::{MAX_BODY_BYTES, read_body_capped};
 
-use super::db::{self, KiroCredentials};
+use super::db::{self, KiroAuthKind, KiroCredentials};
 use super::oauth;
 use super::types::{self, UsageLimitsResponse};
 
@@ -47,6 +50,18 @@ impl Endpoints {
             token: oauth::token_endpoint(region)?,
         })
     }
+
+    pub fn for_credentials(creds: &KiroCredentials) -> Result<Self> {
+        oauth::validate_region(&creds.region)?;
+        let token = match &creds.auth_kind {
+            KiroAuthKind::Oidc { .. } => oauth::token_endpoint(&creds.region)?,
+            KiroAuthKind::Social => oauth::social_token_endpoint(&creds.region)?,
+        };
+        Ok(Self {
+            usage_limits: format!("https://codewhisperer.{}.amazonaws.com/", creds.region),
+            token,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -55,22 +70,45 @@ struct PersistedOAuth {
     access_token: String,
     refresh_token: String,
     expires_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    profile_arn: Option<String>,
 }
 
 /// This vendor's [`Outcome`](crate::outcome::Outcome) — the shared shape,
 /// specialised to its snapshot.
 pub type FetchOutcome = crate::outcome::Outcome<KiroSnapshot>;
 
+/// The client refuses every redirect, so Kiro's refresh and access tokens are
+/// never forwarded or re-sent through one, including a same-origin redirect.
+fn build_client(timeout: Duration) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
+/// Kiro keeps its own client instead of the process-wide one that the widget
+/// and TUI share: that client follows same-origin redirects, and this provider
+/// must never send refresh or access tokens through one.
+static CLIENT: LazyLock<Option<reqwest::Client>> =
+    LazyLock::new(|| build_client(REFRESH_TIMEOUT).ok());
+
+pub(crate) fn http_client() -> Result<&'static reqwest::Client> {
+    CLIENT
+        .as_ref()
+        .ok_or_else(|| AppError::Other("Kiro HTTP client initialization failed".into()))
+}
+
 /// Cache-aware fetch. `db_path` is kiro-cli's `data.sqlite3` — the caller
 /// resolves `[kiro] db_path` (config override) vs [`db::default_db_path`],
 /// the same override pattern as `cursor.db_path`.
 pub async fn fetch_snapshot(
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
     db_path: &Path,
     cache: &Cache,
     cache_ttl: Duration,
 ) -> Result<FetchOutcome> {
-    fetch_snapshot_at(client, db_path, cache, cache_ttl, None, Utc::now()).await
+    fetch_snapshot_at(http_client()?, db_path, cache, cache_ttl, None, Utc::now()).await
 }
 
 /// Clock seam for cache rollover tests, mirroring `cursor::fetch::fetch_snapshot_at`.
@@ -121,11 +159,20 @@ async fn fetch_snapshot_at(
     let endpoints = match endpoints_override {
         Some(e) => e,
         None => {
-            derived = Endpoints::for_region(&creds.region)?;
+            derived = Endpoints::for_credentials(&creds)?;
             &derived
         }
     };
-    match fetch_live(client, endpoints, cache, &creds, now).await {
+    match fetch_live(
+        client,
+        endpoints,
+        cache,
+        &creds,
+        now,
+        endpoints_override.is_none(),
+    )
+    .await
+    {
         Ok(snap) => {
             let bytes = serde_json::to_vec(&snap_to_json(&snap, &creds.account_key))?;
             cache.write_payload(&bytes)?;
@@ -272,6 +319,14 @@ fn read_persisted_oauth(cache: &Cache, account: &str) -> Result<Option<Persisted
             path.display()
         )));
     }
+    if let Some(ref arn) = persisted.profile_arn {
+        db::region_from_profile_arn(arn).map_err(|e| {
+            AppError::Credentials(format!(
+                "ai-usagebar's cached Kiro credentials at {} contain an invalid profile ARN ({e}); remove that file and try again",
+                path.display()
+            ))
+        })?;
+    }
     Ok(Some(persisted))
 }
 
@@ -280,11 +335,17 @@ fn apply_persisted_oauth(cache: &Cache, creds: &mut KiroCredentials) -> Result<(
         return Ok(());
     };
     // Kiro may refresh its own database independently. Prefer whichever
-    // account-matched credential has the later expiry.
+    // account-matched credential has the later expiry. Keep `creds.account_key`
+    // pinned to the database identity so a canonical `profileArn` from refresh
+    // cannot cross-pollinate or orphan the account's cache.
     if persisted.expires_at > creds.expires_at {
         creds.access_token = persisted.access_token;
         creds.refresh_token = persisted.refresh_token;
         creds.expires_at = persisted.expires_at;
+        if let Some(profile_arn) = persisted.profile_arn {
+            creds.region = db::region_from_profile_arn(&profile_arn)?;
+            creds.profile_arn = profile_arn;
+        }
     }
     Ok(())
 }
@@ -308,18 +369,32 @@ async fn fetch_live(
     cache: &Cache,
     creds: &KiroCredentials,
     now: DateTime<Utc>,
+    derive_usage_endpoint_from_profile: bool,
 ) -> Result<KiroSnapshot> {
-    let access_token = if oauth::needs_refresh(creds.expires_at.timestamp(), now.timestamp()) {
-        let refreshed = tokio::time::timeout(
-            REFRESH_TIMEOUT,
-            oauth::refresh(
-                client,
-                &endpoints.token,
-                &creds.client_id,
-                &creds.client_secret,
-                &creds.refresh_token,
-            ),
-        )
+    let (access_token, profile_arn) = if oauth::needs_refresh(
+        creds.expires_at.timestamp(),
+        now.timestamp(),
+    ) {
+        let refreshed = tokio::time::timeout(REFRESH_TIMEOUT, async {
+            match &creds.auth_kind {
+                KiroAuthKind::Oidc {
+                    client_id,
+                    client_secret,
+                } => {
+                    oauth::refresh(
+                        client,
+                        &endpoints.token,
+                        client_id,
+                        client_secret,
+                        &creds.refresh_token,
+                    )
+                    .await
+                }
+                KiroAuthKind::Social => {
+                    oauth::refresh_social(client, &endpoints.token, &creds.refresh_token).await
+                }
+            }
+        })
         .await
         .map_err(|_| {
             AppError::Transport(format!("kiro token refresh timeout: {}", endpoints.token))
@@ -344,6 +419,10 @@ async fn fetch_live(
             .ok_or_else(|| AppError::Schema("kiro token refresh expiry overflowed".into()))?;
         let expires_at = DateTime::from_timestamp(expires_at_secs, 0)
             .ok_or_else(|| AppError::Schema("kiro token refresh expiry is out of range".into()))?;
+        let profile_arn = refreshed
+            .profile_arn
+            .clone()
+            .unwrap_or_else(|| creds.profile_arn.clone());
         let persisted = PersistedOAuth {
             account: creds.account_key.clone(),
             access_token: refreshed.access_token,
@@ -351,27 +430,30 @@ async fn fetch_live(
                 .refresh_token
                 .unwrap_or_else(|| creds.refresh_token.clone()),
             expires_at,
+            profile_arn: refreshed.profile_arn,
         };
         write_persisted_oauth(cache, &persisted).map_err(|e| {
-            AppError::Credentials(format!(
-                "refreshed Kiro CLI credentials could not be saved ({e}); run `kiro-cli login` again if the refresh token was rotated"
-            ))
-        })?;
-        persisted.access_token
+                AppError::Credentials(format!(
+                    "refreshed Kiro CLI credentials could not be saved ({e}); run `kiro-cli login` again if the refresh token was rotated"
+                ))
+            })?;
+        (persisted.access_token, profile_arn)
     } else {
-        creds.access_token.clone()
+        (creds.access_token.clone(), creds.profile_arn.clone())
     };
 
+    let usage_limits =
+        usage_limits_endpoint(endpoints, &profile_arn, derive_usage_endpoint_from_profile)?;
     let body = serde_json::json!({
         "origin": "AI_EDITOR",
-        "profileArn": creds.profile_arn,
+        "profileArn": profile_arn,
         "resourceType": "AGENTIC_REQUEST",
     });
 
     let resp = tokio::time::timeout(
         HTTP_TIMEOUT,
         client
-            .post(&endpoints.usage_limits)
+            .post(&usage_limits)
             .header("Content-Type", "application/x-amz-json-1.0")
             .header("x-amz-target", REQUEST_TARGET)
             .header("Authorization", format!("Bearer {access_token}"))
@@ -379,7 +461,7 @@ async fn fetch_live(
             .send(),
     )
     .await
-    .map_err(|_| AppError::Transport(format!("kiro timeout: {}", endpoints.usage_limits)))??;
+    .map_err(|_| AppError::Transport(format!("kiro timeout: {usage_limits}")))??;
 
     let status = resp.status();
     if !status.is_success() {
@@ -398,6 +480,20 @@ async fn fetch_live(
     let parsed: UsageLimitsResponse = serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Schema(format!("kiro usage-limits response: {e}")))?;
     types::to_snapshot(parsed)
+}
+
+fn usage_limits_endpoint(
+    endpoints: &Endpoints,
+    profile_arn: &str,
+    derive_from_profile: bool,
+) -> Result<String> {
+    // Production follows the canonical ARN returned by refresh immediately;
+    // hermetic endpoint overrides must remain pointed at their mock server.
+    if !derive_from_profile || profile_arn.trim().is_empty() {
+        return Ok(endpoints.usage_limits.clone());
+    }
+    let region = db::region_from_profile_arn(profile_arn)?;
+    Ok(format!("https://codewhisperer.{region}.amazonaws.com/"))
 }
 
 #[cfg(test)]
@@ -465,6 +561,28 @@ mod tests {
         .to_string()
     }
 
+    #[test]
+    fn canonical_profile_region_rebinds_only_the_production_usage_endpoint() {
+        let endpoints = Endpoints {
+            usage_limits: "https://codewhisperer.us-east-1.amazonaws.com/".into(),
+            token: "unused".into(),
+        };
+        let canonical = "arn:aws:codewhisperer:eu-central-1:123:profile/CANONICAL";
+
+        assert_eq!(
+            usage_limits_endpoint(&endpoints, canonical, true).unwrap(),
+            "https://codewhisperer.eu-central-1.amazonaws.com/"
+        );
+        assert_eq!(
+            usage_limits_endpoint(&endpoints, canonical, false).unwrap(),
+            endpoints.usage_limits
+        );
+        assert_eq!(
+            usage_limits_endpoint(&endpoints, "", true).unwrap(),
+            endpoints.usage_limits
+        );
+    }
+
     #[tokio::test]
     async fn live_fetch_reads_token_from_db_and_calls_get_usage_limits() {
         let mut server = mockito::Server::new_async().await;
@@ -494,6 +612,7 @@ mod tests {
             &cache,
             &creds,
             Utc::now(),
+            false,
         )
         .await
         .unwrap();
@@ -537,6 +656,7 @@ mod tests {
             &cache,
             &creds,
             Utc::now(),
+            false,
         )
         .await
         .unwrap();
@@ -630,6 +750,9 @@ mod tests {
                 expires_at: DateTime::parse_from_rfc3339("2100-01-01T00:00:00Z")
                     .unwrap()
                     .with_timezone(&Utc),
+                profile_arn: Some(
+                    "arn:aws:codewhisperer:us-east-1:999999999999:profile/OTHER".into(),
+                ),
             },
         )
         .unwrap();
@@ -638,6 +761,10 @@ mod tests {
 
         assert_eq!(creds.access_token, "AT");
         assert_eq!(creds.refresh_token, "RT");
+        assert_eq!(
+            creds.profile_arn,
+            "arn:aws:codewhisperer:us-east-1:1:profile/A"
+        );
     }
 
     #[tokio::test]
@@ -665,6 +792,7 @@ mod tests {
             &cache,
             &creds,
             Utc::now(),
+            false,
         )
         .await
         .unwrap_err();
@@ -951,5 +1079,252 @@ mod tests {
             }
             other => panic!("expected the shared backoff 429, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn expired_social_token_is_refreshed_and_persisted_before_usage_call() {
+        let mut server = mockito::Server::new_async().await;
+        let token_mock = server
+            .mock("POST", "/refreshToken")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "refreshToken": "SOCIAL-RT",
+            })))
+            .with_status(200)
+            .with_body(
+                r#"{"accessToken":"SOCIAL-NEW-AT","refreshToken":"SOCIAL-ROTATED-RT","expiresIn":3600}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let usage_mock = server
+            .mock("POST", "/")
+            .match_header("authorization", "Bearer SOCIAL-NEW-AT")
+            .with_status(200)
+            .with_body(usage_json())
+            .expect(1)
+            .create_async()
+            .await;
+
+        let db_dir = TempDir::new().unwrap();
+        let db_path = db_dir.path().join("data.sqlite3");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute("CREATE TABLE auth_kv (key TEXT, value TEXT)", [])
+            .unwrap();
+        conn.execute("CREATE TABLE state (key TEXT, value TEXT)", [])
+            .unwrap();
+        let social = serde_json::json!({
+            "access_token": "SOCIAL-OLD-AT",
+            "refresh_token": "SOCIAL-RT",
+            "expires_at": "2000-01-01T00:00:00Z",
+            "provider": "google",
+            "profile_arn": "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO auth_kv (key, value) VALUES ('kirocli:social:token', ?1)",
+            [&social],
+        )
+        .unwrap();
+
+        let (_cache_dir, cache) = cache_fixture();
+        let endpoints = Endpoints {
+            usage_limits: server.url(),
+            token: format!("{}/refreshToken", server.url()),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-08-03T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let out = fetch_snapshot_at(
+            &reqwest::Client::new(),
+            &db_path,
+            &cache,
+            Duration::ZERO,
+            Some(&endpoints),
+            now,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.snapshot.used, 40.0);
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(oauth_cache_path(&cache)).unwrap()).unwrap();
+        assert_eq!(persisted["access_token"], "SOCIAL-NEW-AT");
+        assert_eq!(persisted["refresh_token"], "SOCIAL-ROTATED-RT");
+
+        token_mock.assert_async().await;
+        usage_mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn usage_limits_does_not_follow_same_origin_or_cross_origin_redirects() {
+        let db_dir = TempDir::new().unwrap();
+        let db_path = seed_db(&db_dir, "2099-01-01T00:00:00Z");
+        let client = http_client().unwrap();
+
+        for cross_origin in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let location = if cross_origin {
+                "https://attacker.invalid/collect".to_string()
+            } else {
+                format!("{}/redirected", server.url())
+            };
+            let initial = server
+                .mock("POST", "/")
+                .with_status(307)
+                .with_header("location", &location)
+                .create_async()
+                .await;
+            let redirected = server
+                .mock("POST", "/redirected")
+                .expect(0)
+                .create_async()
+                .await;
+            let (_cache_dir, cache) = cache_fixture();
+
+            let err = fetch_snapshot_at(
+                client,
+                &db_path,
+                &cache,
+                Duration::ZERO,
+                Some(&Endpoints {
+                    usage_limits: server.url(),
+                    token: format!("{}/token", server.url()),
+                }),
+                Utc::now(),
+            )
+            .await
+            .unwrap_err();
+
+            initial.assert_async().await;
+            redirected.assert_async().await;
+            assert!(matches!(err, AppError::Http { status: 307, .. }));
+            assert!(!err.to_string().contains("AT"));
+        }
+    }
+
+    #[tokio::test]
+    async fn social_refresh_adopts_canonical_profile_arn_without_cross_account_cache_bleed() {
+        let canonical_arn = "arn:aws:codewhisperer:us-east-1:699475941385:profile/CANONICAL";
+        let mut server = mockito::Server::new_async().await;
+        let token_mock = server
+            .mock("POST", "/refreshToken")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "refreshToken": "SOCIAL-RT-1",
+            })))
+            .with_status(200)
+            .with_body(
+                serde_json::json!({
+                    "accessToken": "SOCIAL-NEW-AT-1",
+                    "refreshToken": "SOCIAL-ROTATED-RT-1",
+                    "expiresIn": 3600,
+                    "profileArn": canonical_arn,
+                })
+                .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let usage_mock = server
+            .mock("POST", "/")
+            .match_header("authorization", "Bearer SOCIAL-NEW-AT-1")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "origin": "AI_EDITOR",
+                "profileArn": canonical_arn,
+                "resourceType": "AGENTIC_REQUEST",
+            })))
+            .with_status(200)
+            .with_body(usage_json())
+            .expect(2)
+            .create_async()
+            .await;
+
+        let db_dir = TempDir::new().unwrap();
+        let db_path = db_dir.path().join("data.sqlite3");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute("CREATE TABLE auth_kv (key TEXT, value TEXT)", [])
+            .unwrap();
+        conn.execute("CREATE TABLE state (key TEXT, value TEXT)", [])
+            .unwrap();
+        let social = serde_json::json!({
+            "access_token": "SOCIAL-OLD-AT-1",
+            "refresh_token": "SOCIAL-RT-1",
+            "expires_at": "2000-01-01T00:00:00Z",
+            "provider": "google",
+            "profile_arn": "arn:aws:codewhisperer:us-east-1:699475941385:profile/INITIAL",
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO auth_kv (key, value) VALUES ('kirocli:social:token', ?1)",
+            [&social],
+        )
+        .unwrap();
+
+        let (_cache_dir, cache) = cache_fixture();
+        let endpoints = Endpoints {
+            usage_limits: server.url(),
+            token: format!("{}/refreshToken", server.url()),
+        };
+        let now = DateTime::parse_from_rfc3339("2026-08-03T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        for _ in 0..2 {
+            let out = fetch_snapshot_at(
+                http_client().unwrap(),
+                &db_path,
+                &cache,
+                Duration::ZERO,
+                Some(&endpoints),
+                now,
+            )
+            .await
+            .unwrap();
+            assert_eq!(out.snapshot.used, 40.0);
+        }
+        token_mock.assert_async().await;
+        usage_mock.assert_async().await;
+
+        // Switching to a second social account in data.sqlite3 must not reuse
+        // the first account's cached quota or persisted canonical profileArn.
+        let second_arn = "arn:aws:codewhisperer:us-east-1:699475941385:profile/SECOND";
+        let social_two = serde_json::json!({
+            "access_token": "SOCIAL-AT-2",
+            "refresh_token": "SOCIAL-RT-2",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "provider": "github",
+            "profile_arn": second_arn,
+        })
+        .to_string();
+        conn.execute(
+            "UPDATE auth_kv SET value = ?1 WHERE key = 'kirocli:social:token'",
+            [&social_two],
+        )
+        .unwrap();
+        let second_usage = server
+            .mock("POST", "/")
+            .match_header("authorization", "Bearer SOCIAL-AT-2")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "origin": "AI_EDITOR",
+                "profileArn": second_arn,
+                "resourceType": "AGENTIC_REQUEST",
+            })))
+            .with_status(200)
+            .with_body(usage_json())
+            .expect(1)
+            .create_async()
+            .await;
+
+        fetch_snapshot_at(
+            http_client().unwrap(),
+            &db_path,
+            &cache,
+            Duration::from_secs(3600),
+            Some(&endpoints),
+            now,
+        )
+        .await
+        .unwrap();
+        second_usage.assert_async().await;
     }
 }

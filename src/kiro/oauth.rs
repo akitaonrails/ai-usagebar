@@ -1,12 +1,14 @@
-//! AWS SSO OIDC token refresh — `POST https://oidc.<region>.amazonaws.com/token`.
-//! Public, documented API (`CreateToken`:
-//! <https://docs.aws.amazon.com/singlesignon/latest/OIDCAPIReference/API_CreateToken.html>),
-//! unlike `fetch.rs`'s reverse-engineered `GetUsageLimits` call.
+//! Kiro CLI token refresh — AWS SSO OIDC (`POST https://oidc.<region>.amazonaws.com/token`,
+//! documented `CreateToken`:
+//! <https://docs.aws.amazon.com/singlesignon/latest/OIDCAPIReference/API_CreateToken.html>)
+//! for Builder ID / IAM Identity Center sign-ins, and Kiro's desktop auth
+//! service (`POST https://prod.<region>.auth.desktop.kiro.dev/refreshToken`)
+//! for Google / GitHub social sign-ins.
 //!
 //! kiro-cli's own cached access token lives about an hour (see `db.rs`); this
-//! refreshes it using the `refresh_token` + `client_id`/`client_secret`
-//! kiro-cli already registered for itself at `kiro-cli login` time — nothing
-//! new to authenticate, just the same local credentials `db.rs` already read.
+//! refreshes it using the `refresh_token` (+ `client_id`/`client_secret` on the
+//! OIDC path) kiro-cli already saved at `kiro-cli login` time — nothing new to
+//! authenticate, just the same local credentials `db.rs` already read.
 //! The refreshed token is **not** written back to kiro-cli's own database
 //! (mirroring `db.rs`'s read-only treatment of that live file); `fetch.rs`
 //! persists it in ai-usagebar's own account-scoped credential sidecar.
@@ -45,6 +47,13 @@ pub fn token_endpoint(region: &str) -> Result<String> {
     Ok(format!("https://oidc.{region}.amazonaws.com/token"))
 }
 
+pub fn social_token_endpoint(region: &str) -> Result<String> {
+    validate_region(region)?;
+    Ok(format!(
+        "https://prod.{region}.auth.desktop.kiro.dev/refreshToken"
+    ))
+}
+
 #[derive(Debug, Serialize)]
 struct RefreshRequest<'a> {
     #[serde(rename = "clientId")]
@@ -53,6 +62,12 @@ struct RefreshRequest<'a> {
     client_secret: &'a str,
     #[serde(rename = "grantType")]
     grant_type: &'a str,
+    #[serde(rename = "refreshToken")]
+    refresh_token: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct SocialRefreshRequest<'a> {
     #[serde(rename = "refreshToken")]
     refresh_token: &'a str,
 }
@@ -69,6 +84,12 @@ pub struct RefreshResponse {
     pub refresh_token: Option<String>,
     #[serde(rename = "expiresIn", deserialize_with = "de_positive_u64")]
     pub expires_in: u64,
+    #[serde(
+        rename = "profileArn",
+        default,
+        deserialize_with = "de_opt_profile_arn"
+    )]
+    pub profile_arn: Option<String>,
 }
 
 fn de_nonempty_string<'de, D>(d: D) -> std::result::Result<String, D::Error>
@@ -94,6 +115,18 @@ where
             } else {
                 Ok(value)
             }
+        })
+        .transpose()
+}
+
+fn de_opt_profile_arn<'de, D>(d: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(d)?
+        .map(|value| {
+            super::db::region_from_profile_arn(&value).map_err(serde::de::Error::custom)?;
+            Ok(value)
         })
         .transpose()
 }
@@ -136,11 +169,30 @@ pub async fn refresh(
         grant_type: "refresh_token",
         refresh_token,
     };
+    post_refresh(client, endpoint, &req).await
+}
 
+/// Refresh a Google/GitHub social-login token against Kiro's desktop auth
+/// service (`endpoint` built with [`social_token_endpoint`] in production).
+pub async fn refresh_social(
+    client: &reqwest::Client,
+    endpoint: &str,
+    refresh_token: &str,
+) -> Result<RefreshResponse> {
+    let req = SocialRefreshRequest { refresh_token };
+    post_refresh(client, endpoint, &req).await
+}
+
+async fn post_refresh<B: Serialize + ?Sized>(
+    client: &reqwest::Client,
+    endpoint: &str,
+    req: &B,
+) -> Result<RefreshResponse> {
     let resp = client
         .post(endpoint)
         .header("Content-Type", "application/json")
-        .json(&req)
+        .header("User-Agent", "kiro-cli")
+        .json(req)
         .send()
         .await?;
 
@@ -174,6 +226,22 @@ mod tests {
             token_endpoint("us-gov-west-1").unwrap(),
             "https://oidc.us-gov-west-1.amazonaws.com/token"
         );
+    }
+
+    #[test]
+    fn social_token_endpoint_is_region_scoped_and_rejects_unsafe_regions() {
+        assert_eq!(
+            social_token_endpoint("us-east-1").unwrap(),
+            "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
+        );
+        for region in [
+            "evil.example/#",
+            "us-east-1@evil.example",
+            "US-EAST-1",
+            "us--1",
+        ] {
+            assert!(social_token_endpoint(region).is_err(), "{region}");
+        }
     }
 
     #[test]
@@ -217,6 +285,27 @@ mod tests {
     fn empty_rotated_refresh_token_is_rejected() {
         let body = r#"{"accessToken":"new","refreshToken":" ","expiresIn":3600}"#;
         assert!(serde_json::from_str::<RefreshResponse>(body).is_err());
+    }
+
+    #[test]
+    fn invalid_or_empty_profile_arn_in_refresh_response_is_rejected() {
+        for bad_arn in [
+            "",
+            " ",
+            "not-an-arn",
+            "arn:aws:codewhisperer:evil.example/#:123:profile/ABC",
+        ] {
+            let body = serde_json::json!({
+                "accessToken": "new",
+                "expiresIn": 3600,
+                "profileArn": bad_arn,
+            })
+            .to_string();
+            assert!(
+                serde_json::from_str::<RefreshResponse>(&body).is_err(),
+                "{body}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -298,5 +387,107 @@ mod tests {
             }
             other => panic!("expected Http error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn refresh_social_sends_refresh_token_and_redacts_error_body() {
+        let mut server = mockito::Server::new_async().await;
+        let ok_mock = server
+            .mock("POST", "/refreshToken")
+            .match_header("user-agent", "kiro-cli")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "refreshToken": "social-old-rt",
+            })))
+            .with_status(200)
+            .with_body(
+                r#"{"accessToken":"social-new-at","refreshToken":"social-new-rt","expiresIn":3600,"profileArn":"arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK"}"#,
+            )
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let r = refresh_social(
+            &client,
+            &format!("{}/refreshToken", server.url()),
+            "social-old-rt",
+        )
+        .await
+        .unwrap();
+        assert_eq!(r.access_token, "social-new-at");
+        assert_eq!(r.refresh_token.as_deref(), Some("social-new-rt"));
+        assert_eq!(r.expires_in, 3600);
+        assert_eq!(
+            r.profile_arn.as_deref(),
+            Some("arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK")
+        );
+        ok_mock.assert_async().await;
+
+        let err_mock = server
+            .mock("POST", "/refreshToken")
+            .with_status(401)
+            .with_body(r#"{"message":"sensitive social token detail"}"#)
+            .create_async()
+            .await;
+        let err = refresh_social(
+            &client,
+            &format!("{}/refreshToken", server.url()),
+            "social-old-rt",
+        )
+        .await
+        .unwrap_err();
+        match err {
+            AppError::Http { status, body } => {
+                assert_eq!(status, 401);
+                assert!(!body.contains("sensitive social token detail"));
+            }
+            other => panic!("expected Http error, got {other:?}"),
+        }
+        err_mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn refresh_does_not_follow_same_origin_or_cross_origin_redirects() {
+        const CANARY_RT: &str = "KiroRefreshSecretCanary-918273";
+        let client = super::super::fetch::http_client().unwrap();
+
+        let mut server = mockito::Server::new_async().await;
+        let same_origin_dest = format!("{}/redirected", server.url());
+        let same_origin = server
+            .mock("POST", "/refreshToken")
+            .with_status(307)
+            .with_header("location", &same_origin_dest)
+            .create_async()
+            .await;
+        let redirected = server
+            .mock("POST", "/redirected")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let err = refresh_social(client, &format!("{}/refreshToken", server.url()), CANARY_RT)
+            .await
+            .unwrap_err();
+        same_origin.assert_async().await;
+        redirected.assert_async().await;
+        assert!(matches!(err, AppError::Http { status: 307, .. }));
+        assert!(!err.to_string().contains(CANARY_RT));
+
+        let cross_origin = server
+            .mock("POST", "/token")
+            .with_status(308)
+            .with_header("location", "https://attacker.invalid/collect")
+            .create_async()
+            .await;
+        let err = refresh(
+            client,
+            &format!("{}/token", server.url()),
+            "cid",
+            "csecret",
+            CANARY_RT,
+        )
+        .await
+        .unwrap_err();
+        cross_origin.assert_async().await;
+        assert!(matches!(err, AppError::Http { status: 308, .. }));
+        assert!(!err.to_string().contains(CANARY_RT));
     }
 }

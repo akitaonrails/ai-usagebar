@@ -2115,9 +2115,9 @@ pub struct CursorConfig {
     pub agent_auth_path: Option<PathBuf>,
 }
 
-/// Kiro CLI reads its quota through the AWS SSO OIDC session kiro-cli already
-/// wrote to its own local `data.sqlite3` — no API key, but (like Cursor) a
-/// real on-disk path that can need overriding.
+/// Kiro CLI reads its quota through the AWS SSO OIDC or social-login session
+/// kiro-cli already wrote to its own local `data.sqlite3` — no API key, but
+/// (like Cursor) a real on-disk path that can need overriding.
 ///
 /// Opt-in like Cursor/DeepSeek/Kilo/etc (`enabled` defaults to `false`):
 /// calls a reverse-engineered CodeWhisperer endpoint via a session token

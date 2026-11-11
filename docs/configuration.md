@@ -279,8 +279,8 @@ enabled = true             # disabled by default; enable once you've signed in t
 
 [kiro]
 enabled = true             # disabled by default; enable once you've run `kiro-cli login`
-# No API key: reads the AWS SSO OIDC session kiro-cli already wrote to its own
-# data.sqlite3 after you logged in there.
+# No API key: reads the AWS SSO OIDC or social-login (Google / GitHub) session
+# kiro-cli already wrote to its own data.sqlite3 after you logged in there.
 # db_path = "/home/you/.local/share/kiro-cli/data.sqlite3"
 
 [opencode-go]

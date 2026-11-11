@@ -52,10 +52,11 @@
 //!   derived from `startOfMonth`. `cursor_live` skips when there is no Cursor
 //!   credential source (no state DB, no cursor-agent `auth.json`, and neither
 //!   `CURSOR_DB_PATH` nor `CURSOR_AGENT_AUTH_PATH` set).
-//! - **Kiro CLI**: reads the AWS SSO OIDC session from kiro-cli's local
-//!   `data.sqlite3`, then asserts the credit counters are non-negative and the
-//!   plan label is non-empty. `kiro_live` skips when there is no kiro-cli
-//!   install (no db and no `KIRO_DB_PATH`).
+//! - **Kiro CLI**: reads the active AWS SSO OIDC (`kirocli:odic:token`) or
+//!   social (`kirocli:social:token`, Google / GitHub) session from kiro-cli's
+//!   local `data.sqlite3`, then asserts the credit counters are non-negative
+//!   and the plan label is non-empty. `kiro_live` skips when there is no
+//!   kiro-cli install (no db and no `KIRO_DB_PATH`).
 //! - **Devin CLI**: reads the existing `credentials.toml` key in memory for a
 //!   read-only status request, then asserts reported percentages are bounded.
 //!   It never logs in, refreshes, or writes credentials; an explicit path for
@@ -670,10 +671,10 @@ async fn cursor_live() {
 #[tokio::test]
 #[ignore = "live API; run with --ignored"]
 async fn kiro_live() {
-    // Kiro has no API key — the credential is the AWS SSO OIDC session
-    // kiro-cli wrote to its own local database after `kiro-cli login`. So this
-    // test needs kiro-cli installed and signed in (or `KIRO_DB_PATH` pointing
-    // at a copied `data.sqlite3`) and skips otherwise, like `cursor_live`.
+    // Kiro has no API key — the credential is the AWS SSO OIDC or social-login
+    // session kiro-cli wrote to its own local database after `kiro-cli login`.
+    // So this test needs kiro-cli installed and signed in (or `KIRO_DB_PATH`
+    // pointing at a copied `data.sqlite3`) and skips otherwise, like `cursor_live`.
     let db_path = match std::env::var("KIRO_DB_PATH") {
         Ok(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
         _ => kiro::db::default_db_path().expect("resolve platform data dir"),
