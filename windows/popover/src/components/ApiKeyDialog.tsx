@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import MdiEye from "~icons/mdi/eye";
 import MdiEyeOff from "~icons/mdi/eye-off";
+import MdiInformationOutline from "~icons/mdi/information-outline";
 import MdiLoading from "~icons/mdi/loading";
 import MdiLockOutline from "~icons/mdi/lock-outline";
+import { Hint } from "@/components/Hint";
 import { IconButton } from "@/components/IconButton";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "@/components/ui/dialog";
@@ -35,6 +37,8 @@ interface ApiKeyDialogProps {
   onClose: () => void;
   /** Where focus returns once the dialog closes, asked at that moment. */
   returnFocus?: () => HTMLElement | null;
+  /** Host OS from the payload; the Keychain hint exists on macOS only. */
+  os?: string;
 }
 
 /**
@@ -50,7 +54,7 @@ export function ApiKeyDialog({ provider, ...rest }: ApiKeyDialogProps) {
   return provider ? <OpenApiKeyDialog provider={provider} {...rest} /> : null;
 }
 
-function OpenApiKeyDialog({ provider, keyCheck, nowMs, onClose, returnFocus }: ApiKeyDialogProps & { provider: KeyDialogProvider }) {
+function OpenApiKeyDialog({ provider, keyCheck, nowMs, onClose, returnFocus, os }: ApiKeyDialogProps & { provider: KeyDialogProvider }) {
   const { language } = useI18n();
   const [key, setKey] = useState("");
   const [pending, setPending] = useState<{ seq: number | null; sentAtMs: number }>({ seq: null, sentAtMs: 0 });
@@ -93,6 +97,7 @@ function OpenApiKeyDialog({ provider, keyCheck, nowMs, onClose, returnFocus }: A
           keyDraft={key}
           language={language}
           noAnswer={phase === "no-answer"}
+          os={os}
           provider={provider}
           revealed={revealed}
           onKeyChange={setKey}
@@ -114,6 +119,8 @@ interface ApiKeyDialogViewProps {
   language: Language;
   /** The send has not answered within the limit. */
   noAnswer: boolean;
+  /** Host OS; the Keychain hint exists on macOS only. */
+  os?: string;
   provider: KeyDialogProvider;
   revealed: boolean;
   onKeyChange: (value: string) => void;
@@ -140,6 +147,7 @@ export function ApiKeyDialogView({
   keyDraft,
   language,
   noAnswer,
+  os,
   provider,
   revealed,
   onKeyChange,
@@ -210,6 +218,13 @@ export function ApiKeyDialogView({
       <div className="flex items-center gap-[var(--gap-item)] text-label-2">
         <MdiLockOutline className="size-[var(--icon-note)] shrink-0" />
         <span className="text-[length:var(--sz-badge)]">{m.api_key_stored_note(locale)}</span>
+        {os === "macos" ? (
+          <Hint content={m.api_key_keychain_hint()}>
+            <span tabIndex={0} role="img" aria-label={m.api_key_keychain_hint()}>
+              <MdiInformationOutline className="size-[var(--icon-note)] shrink-0" />
+            </span>
+          </Hint>
+        ) : null}
       </div>
       <DialogFooter>
         <button type="button" className="action-btn" onClick={onCancel}>

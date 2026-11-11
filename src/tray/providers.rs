@@ -328,6 +328,25 @@ fn clean_vendor_diagnostic(slug: &str, key: &str) {
     }
 }
 
+/// What the dialog's field held: a pasted key, or the `kc:<service>` form
+/// naming a login-Keychain generic-password item for the `[keychain]` table.
+/// Parsed here — the host owns the write, so it owns what the value means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum KeyCandidate {
+    Inline(String),
+    Keychain(String),
+}
+
+/// Split the dialog's raw value into a candidate. `kc:` names a Keychain
+/// service; anything else — including a bare `kc:` with no name — is a
+/// pasted key and goes through the existing key rules.
+pub(crate) fn key_candidate(raw: &str) -> KeyCandidate {
+    match raw.strip_prefix("kc:") {
+        Some(service) => KeyCandidate::Keychain(service.to_string()),
+        None => KeyCandidate::Inline(raw.to_string()),
+    }
+}
+
 /// The shared check: parse the request, publish `Checking`, run the
 /// snapshot — write — fetch — restore dance on its own thread. `fetch`,
 /// `bust_cache`, `clean_diagnostic`, `env_set`, `on_catalog` and `notify`
@@ -359,8 +378,46 @@ pub(crate) fn request_key_check_with(
     let Some(vendor) = crate::tui::settings::key_vendor_for_slug(&slug) else {
         return Ok(None);
     };
-    if crate::tui::settings::validate_key_value(vendor, &key).is_err() {
-        return Ok(None);
+    let candidate = key_candidate(&key);
+    match &candidate {
+        KeyCandidate::Inline(pasted) => {
+            if crate::tui::settings::validate_key_value(vendor, pasted).is_err() {
+                return Ok(None);
+            }
+        }
+        KeyCandidate::Keychain(service) => {
+            // `kc:` is unmistakably intentional, so every refusal here is
+            // loud (an invalid pasted key stays silent, like today). The
+            // reference serves only the vendors the `[keychain]` table
+            // resolves, and a Keychain only exists on macOS.
+            if !crate::config::Config::KEYCHAIN_VENDORS.contains(&vendor.id) {
+                return Err(KeyCheckFact {
+                    id: slug,
+                    seq,
+                    state: KeyCheckState::Failed,
+                    error: format!(
+                        "{} does not read keys from the Keychain; paste the key instead.",
+                        vendor.id.display_name()
+                    ),
+                });
+            }
+            if !cfg!(target_os = "macos") {
+                return Err(KeyCheckFact {
+                    id: slug,
+                    seq,
+                    state: KeyCheckState::Failed,
+                    error: "Keychain references (kc:…) work on macOS only.".into(),
+                });
+            }
+            if let Err(error) = crate::tui::settings::validate_keychain_service(vendor, service) {
+                return Err(KeyCheckFact {
+                    id: slug,
+                    seq,
+                    state: KeyCheckState::Failed,
+                    error: error.user_message(),
+                });
+            }
+        }
     }
     // The path is resolved here, before the thread, so the thread's
     // snapshot — write — restore trio all touch the one file, and the
@@ -435,7 +492,7 @@ pub(crate) fn request_key_check_with(
                 &facts,
                 &path,
                 &spawned_slug,
-                key,
+                candidate,
                 seq,
                 fetch,
                 bust_cache,
@@ -463,6 +520,45 @@ fn key_check_request(value: &Value) -> Option<(String, String, u64)> {
     ))
 }
 
+/// What the check wrote, for the later compare-and-restore: the inline
+/// key's snapshot or the `[keychain]` entry's.
+enum WrittenCheck {
+    Inline(crate::tui::settings::KeySnapshot),
+    Keychain(crate::tui::settings::KeychainSnapshot),
+}
+
+/// Restore what the check wrote, dispatching on the candidate's kind. One
+/// place, so the two branches cannot drift.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+fn restore_check_write(
+    path: &std::path::Path,
+    vendor: &crate::tui::settings::KeyVendor,
+    snapshot: &WrittenCheck,
+    candidate: &KeyCandidate,
+) -> bool {
+    match (snapshot, candidate) {
+        (WrittenCheck::Inline(snapshot), KeyCandidate::Inline(pasted)) => {
+            crate::tui::settings::restore_inline_key_snapshot(path, vendor, snapshot, pasted)
+                .is_ok()
+        }
+        (WrittenCheck::Keychain(snapshot), KeyCandidate::Keychain(service)) => {
+            crate::tui::settings::restore_keychain_snapshot(path, vendor, snapshot, service).is_ok()
+        }
+        // The snapshot and the candidate are one value; the pairing cannot
+        // disagree.
+        _ => true,
+    }
+}
+
+/// What a failed restore appends to the verdict, in the candidate's voice.
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+fn stayed_message(candidate: &KeyCandidate) -> &'static str {
+    match candidate {
+        KeyCandidate::Inline(_) => " The new key stayed in config.toml.",
+        KeyCandidate::Keychain(_) => " The new Keychain reference stayed in config.toml.",
+    }
+}
+
 /// One key check at a time: the snapshot — write — fetch — restore window
 /// must be atomic, or a second check's snapshot would capture the first
 /// check's key as "the previous value" and its restore would write it back
@@ -488,7 +584,7 @@ fn run_key_check(
     facts: &SharedFacts,
     path: &std::path::Path,
     slug: &str,
-    key: String,
+    candidate: KeyCandidate,
     seq: u64,
     fetch: impl FnOnce(&str) -> std::result::Result<String, String>,
     bust_cache: impl Fn(&str) -> std::result::Result<(), String>,
@@ -518,34 +614,48 @@ fn run_key_check(
     // with the saved-key message — never overwritten by the candidate, and
     // never fetched on. On a refusal the candidate never touched the file,
     // so there is nothing to restore; the refusal message is the verdict.
-    let snapshot =
-        match crate::tui::settings::snapshot_and_write_inline_key_if_absent(path, vendor, &key) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                finish_key_check(
-                    facts,
-                    slug,
-                    seq,
-                    KeyCheckState::Failed,
-                    error.user_message(),
-                    on_catalog,
-                    notify,
-                );
-                return;
-            }
-        };
-    // The verdict must rest on a reading made under the key just written:
-    // drop whatever the vendor's cache still holds from before the write.
-    // A bust the thread cannot prove is a bust that did not happen: the
-    // fetch is skipped, the config is restored, and the refusal says so.
+    let snapshot = match &candidate {
+        KeyCandidate::Inline(pasted) => {
+            crate::tui::settings::snapshot_and_write_inline_key_if_absent(path, vendor, pasted)
+                .map(WrittenCheck::Inline)
+        }
+        KeyCandidate::Keychain(service) => {
+            crate::tui::settings::snapshot_and_write_keychain_entry_if_absent(path, vendor, service)
+                .map(WrittenCheck::Keychain)
+        }
+    };
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            finish_key_check(
+                facts,
+                slug,
+                seq,
+                KeyCheckState::Failed,
+                error.user_message(),
+                on_catalog,
+                notify,
+            );
+            return;
+        }
+    };
+    // Both candidate kinds carry one string the verdict's error may echo:
+    // the pasted key, or the service name the fetch's errors can name.
+    let reference = match &candidate {
+        KeyCandidate::Inline(value) | KeyCandidate::Keychain(value) => value.as_str(),
+    };
+    // The verdict must rest on a reading made under the credential just
+    // written: drop whatever the vendor's cache still holds from before
+    // the write. A bust the thread cannot prove is a bust that did not
+    // happen: the fetch is skipped, the config is restored, and the
+    // refusal says so.
     if (bust_cache)(slug).is_err() {
         let mut error =
             "Could not clear the provider's cache, so the key was not checked.".to_string();
-        if crate::tui::settings::restore_inline_key_snapshot(path, vendor, &snapshot, &key).is_err()
-        {
-            error.push_str(" The new key stayed in config.toml.");
+        if !restore_check_write(path, vendor, &snapshot, &candidate) {
+            error.push_str(stayed_message(&candidate));
         }
-        drop(key);
+        drop(candidate);
         error = cut_key_check_error(&error);
         drop(_guard);
         finish_key_check(
@@ -560,25 +670,24 @@ fn run_key_check(
         return;
     }
     let (state, mut error) = key_check_result(slug, fetch(slug));
-    // The key's last use: strip it out of the verdict before it is dropped.
-    error = scrub_key(&error, &key);
+    // The candidate's last use: strip it out of the verdict before it is
+    // dropped.
+    error = scrub_key(&error, reference);
     // A refusal gives the config back exactly the state the snapshot took
     // — only the fields that still hold what the check wrote; a restore
-    // that fails itself says so, since the new key stayed.
-    if state == KeyCheckState::Failed
-        && crate::tui::settings::restore_inline_key_snapshot(path, vendor, &snapshot, &key).is_err()
-    {
-        error.push_str(" The new key stayed in config.toml.");
+    // that fails itself says so, since the new credential stayed.
+    if state == KeyCheckState::Failed && !restore_check_write(path, vendor, &snapshot, &candidate) {
+        error.push_str(stayed_message(&candidate));
     }
-    // A refused check must not leave the key in the persisted diagnostic
-    // the fetch wrote (the provider's answer may name it) or in the 429
-    // backoff the candidate key armed: bust the cache again, and when that
+    // A refused check must not leave the candidate in the persisted
+    // diagnostic the fetch wrote (the provider's answer may name it) or in
+    // the 429 backoff it armed: bust the cache again, and when that
     // removal fails, scrub the diagnostic in place. The scrub needs the
-    // key, so this is its last use: it runs before the drop.
+    // candidate, so this is its last use: it runs before the drop.
     if state == KeyCheckState::Failed {
-        (clean_diagnostic)(slug, &key);
+        (clean_diagnostic)(slug, reference);
     }
-    drop(key);
+    drop(candidate);
     error = cut_key_check_error(&error);
     // The snapshot — write — restore window is over; the publish and the
     // catalog request may run while the next check takes the lock.
@@ -1119,7 +1228,7 @@ mod tests {
                     &facts,
                     &path,
                     "zai",
-                    "test-key-value".into(),
+                    KeyCandidate::Inline("test-key-value".into()),
                     1,
                     |_| {
                         fetched.set(true);
@@ -2198,6 +2307,135 @@ mod tests {
             *consulted.lock().unwrap(),
             vec!["CUSTOM_ZAI_KEY".to_string()]
         );
+        drop(guard);
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "macos"))]
+    fn key_check_keychain_reference_is_refused_for_a_vendor_the_table_does_not_serve() {
+        let guard = override_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "[ui]\nprimary = \"kimi\"\n";
+        std::fs::write(&path, original).unwrap();
+        crate::config::set_override_path(&path);
+        let facts = default_facts();
+        let fetch_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called = std::sync::Arc::clone(&fetch_called);
+        let result = request_key_check_with(
+            &facts,
+            &key_check_value("kimi", "kc:MyKey", 21),
+            move |_| {
+                called.store(true, Ordering::Relaxed);
+                Ok(String::new())
+            },
+            |_| Ok(()),
+            |_, _| {},
+            |_| false,
+            || {},
+            || {},
+        );
+        let fact = result.expect_err("kc: for a vendor without the table must refuse");
+        assert_eq!(fact.state, KeyCheckState::Failed);
+        assert_eq!(
+            fact.error,
+            "Kimi does not read keys from the Keychain; paste the key instead."
+        );
+        assert!(!fetch_called.load(Ordering::Relaxed));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        drop(guard);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn key_check_keychain_reference_off_macos_is_refused() {
+        let guard = override_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[ui]\nprimary = \"zai\"\n").unwrap();
+        crate::config::set_override_path(&path);
+        let facts = default_facts();
+        let result = request_key_check_with(
+            &facts,
+            &key_check_value("zai", "kc:MyKey", 22),
+            |_| Ok(String::new()),
+            |_| Ok(()),
+            |_, _| {},
+            |_| false,
+            || {},
+            || {},
+        );
+        let fact = result.expect_err("kc: off macOS must refuse");
+        assert_eq!(fact.state, KeyCheckState::Failed);
+        assert_eq!(fact.error, "Keychain references (kc:…) work on macOS only.");
+        drop(guard);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn key_check_keychain_reference_accepts_and_writes_the_entry() {
+        let guard = override_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[ui]\nprimary = \"zai\"\n").unwrap();
+        crate::config::set_override_path(&path);
+        let facts = default_facts();
+        let handle = request_key_check_with(
+            &facts,
+            &key_check_value("zai", "kc:MyZaiKey", 23),
+            |_| Ok(r#"{"entries":[{"id":"zai","status":"ready","stale":false}]}"#.into()),
+            |_| Ok(()),
+            |_, _| {},
+            |_| false,
+            || {},
+            || {},
+        )
+        .expect("spawn")
+        .unwrap();
+        handle.join().unwrap();
+        // An accepted reference stays as the `[keychain]` entry — the
+        // secret itself never reaches the file — with the vendor opted in.
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[keychain]"), "{written}");
+        assert!(written.contains(r#"zai = "MyZaiKey""#), "{written}");
+        assert!(written.contains("enabled = true"), "{written}");
+        let fact = facts_snapshot(&facts)
+            .key_check
+            .expect("the check must publish its verdict");
+        assert_eq!(fact.state, KeyCheckState::Ok);
+        drop(guard);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn key_check_keychain_reference_failed_restores_the_table() {
+        let guard = override_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "[ui]\nprimary = \"zai\"\n";
+        std::fs::write(&path, original).unwrap();
+        crate::config::set_override_path(&path);
+        let facts = default_facts();
+        let handle = request_key_check_with(
+            &facts,
+            &key_check_value("zai", "kc:MyZaiKey", 24),
+            |_| Err("HTTP 401: invalid key".to_string()),
+            |_| Ok(()),
+            |_, _| {},
+            |_| false,
+            || {},
+            || {},
+        )
+        .expect("spawn")
+        .unwrap();
+        handle.join().unwrap();
+        // A refused reference is gone: neither the `[keychain]` table nor
+        // the vendor section the check created survives the restore.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let fact = facts_snapshot(&facts)
+            .key_check
+            .expect("the check must publish its verdict");
+        assert_eq!(fact.state, KeyCheckState::Failed);
         drop(guard);
     }
 

@@ -739,6 +739,7 @@ export default function App() {
       <ApiKeyDialog
         keyCheck={payload.keyCheck}
         nowMs={nowMs}
+        os={payload.os}
         provider={keyProvider}
         returnFocus={keyFocus}
         onClose={closeKeyDialog}

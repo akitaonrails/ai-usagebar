@@ -35,6 +35,7 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_CheckingInputs */
 /** @typedef {{}} Api_Key_Checking_ShortInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_Dialog_TitleInputs */
+/** @typedef {{}} Api_Key_Keychain_HintInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_No_AnswerInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_RejectedInputs */
 /** @typedef {{}} Api_Key_SaveInputs */
@@ -862,6 +863,22 @@ export const api_key_dialog_title = /** @type {((inputs: Api_Key_Dialog_TitleInp
 	if (locale === "ko") return __ko.api_key_dialog_title(inputs)
 	if (locale === "es") return __es.api_key_dialog_title(inputs)
 	return __en.api_key_dialog_title(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "On macOS you can point at a login-Keychain item instead of pasting the key: type kc:ServiceName. The service name is saved to the [keychain] table in config...." |
+*
+* @param {Api_Key_Keychain_HintInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const api_key_keychain_hint = /** @type {((inputs?: Api_Key_Keychain_HintInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Api_Key_Keychain_HintInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.api_key_keychain_hint(inputs)
+	if (locale === "ko") return __ko.api_key_keychain_hint(inputs)
+	if (locale === "es") return __es.api_key_keychain_hint(inputs)
+	return __en.api_key_keychain_hint(inputs)
 });
 /**
 * | output |
