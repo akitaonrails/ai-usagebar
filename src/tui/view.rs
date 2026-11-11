@@ -457,6 +457,26 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(spans));
         lines.push(Line::from(""));
     }
+    let totals = panels::extra_usage_totals(idxs.iter().filter_map(|&i| match app.tabs.get(i) {
+        Some(TabState::Ready(ready)) => Some(&ready.snapshot),
+        _ => None,
+    }));
+    if !totals.is_empty() {
+        let name = "all accounts";
+        let pad = name_w.saturating_sub(crate::display::text_width(name));
+        let mut spans = vec![
+            Span::styled(name, theme.text),
+            theme.span(" ".repeat(pad + 2)),
+        ];
+        for (j, (text, sev)) in totals.iter().enumerate() {
+            if j > 0 {
+                spans.push(theme.span("  "));
+            }
+            let color = severity_color(&app.theme, &theme, *sev);
+            spans.push(Span::styled(text.clone(), Style::default().fg(color)));
+        }
+        lines.push(Line::from(spans));
+    }
     f.render_widget(Paragraph::new(lines), area);
 }
 

@@ -345,6 +345,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             if let Some(sonnet) = &s.sonnet {
                 cells.push(pct("Son", sonnet.utilization_pct));
             }
+            if let Some(extra) = &s.extra {
+                let text = match extra.fmt_limit() {
+                    Some(limit) => format!("{} of {}", extra.fmt_spent(), limit),
+                    None => extra.fmt_spent(),
+                };
+                cells.push((text, severity_for(extra.percent())));
+            }
             (s.plan.clone(), cells)
         }
         VendorSnapshot::AnthropicApi(s) => {
@@ -613,6 +620,74 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         *text = crate::display::sanitize_untrusted_field(text);
     }
     (crate::display::sanitize_untrusted_field(&plan), cells)
+}
+
+/// Combined extra-usage money for the Overview. One entry per currency and
+/// scale, and only when at least two accounts report that extra usage, so a
+/// lone row is not repeated as a total. A missing limit on any account in the
+/// group drops the combined cap: the spend still adds, the cap does not.
+pub fn extra_usage_totals<'a>(
+    snapshots: impl IntoIterator<Item = &'a VendorSnapshot>,
+) -> Vec<(String, PaceSeverity)> {
+    use crate::usage::{Cents, ExtraUsage, ExtraUsageStatus};
+    use std::collections::BTreeMap;
+
+    struct Bucket {
+        spent: i64,
+        limit: Option<i64>,
+        count: usize,
+        currency: Option<String>,
+        decimal_places: Option<u32>,
+    }
+
+    let mut buckets: BTreeMap<(String, i32), Bucket> = BTreeMap::new();
+    for snapshot in snapshots {
+        let VendorSnapshot::Anthropic(snapshot) = snapshot else {
+            continue;
+        };
+        let Some(extra) = &snapshot.extra else {
+            continue;
+        };
+        let key = (
+            extra.currency.clone().unwrap_or_default(),
+            extra
+                .decimal_places
+                .map(|places| places as i32)
+                .unwrap_or(-1),
+        );
+        let bucket = buckets.entry(key).or_insert_with(|| Bucket {
+            spent: 0,
+            limit: Some(0),
+            count: 0,
+            currency: extra.currency.clone(),
+            decimal_places: extra.decimal_places,
+        });
+        bucket.spent = bucket.spent.saturating_add(extra.spent.0);
+        bucket.count += 1;
+        bucket.limit = match (bucket.limit, extra.limit) {
+            (Some(sum), Some(limit)) => Some(sum.saturating_add(limit.0)),
+            _ => None,
+        };
+    }
+
+    buckets
+        .into_values()
+        .filter(|bucket| bucket.count >= 2)
+        .map(|bucket| {
+            let extra = ExtraUsage {
+                limit: bucket.limit.map(Cents),
+                spent: Cents(bucket.spent),
+                currency: bucket.currency,
+                decimal_places: bucket.decimal_places,
+                status: ExtraUsageStatus::Active,
+            };
+            let text = match extra.fmt_limit() {
+                Some(limit) => format!("{} of {}", extra.fmt_spent(), limit),
+                None => extra.fmt_spent(),
+            };
+            (text, severity_for(extra.percent()))
+        })
+        .collect()
 }
 
 /// The single most-relevant percentage for a vendor in the Overview — what its
@@ -3677,6 +3752,43 @@ mod tests {
         let cells: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(cells, ["W 41%"]);
         assert_eq!(headline_pct(&snapshot), Some(41));
+    }
+
+    #[test]
+    fn overview_shows_extra_usage_money_and_adds_it_across_accounts() {
+        let extra = |spent: i64, limit: i64| ExtraUsage {
+            limit: Some(Cents(limit)),
+            spent: Cents(spent),
+            currency: None,
+            decimal_places: Some(2),
+            status: crate::usage::ExtraUsageStatus::Active,
+        };
+        let snap = |spent: i64, limit: i64| {
+            VendorSnapshot::Anthropic(AnthropicSnapshot {
+                plan: "Pro".into(),
+                session: None,
+                weekly: UsageWindow {
+                    utilization_pct: 1,
+                    resets_at: None,
+                    window_duration: chrono::Duration::days(7),
+                },
+                sonnet: None,
+                scoped: vec![],
+                extra: Some(extra(spent, limit)),
+                reset_credits: Default::default(),
+                cloud_credits: None,
+                usage_credits: None,
+            })
+        };
+        let first = snap(250, 5000);
+        let (_, cells) = compact_cells(&first);
+        let cells: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(cells, ["W 1%", "$2.50 of $50.00"]);
+
+        let totals = extra_usage_totals([&first, &snap(1000, 2000)]);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].0, "$12.50 of $70.00");
+        assert!(extra_usage_totals([&first]).is_empty());
     }
 
     fn claude_snapshot_with_credits(
