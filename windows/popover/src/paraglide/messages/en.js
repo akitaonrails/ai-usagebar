@@ -456,7 +456,7 @@ export const api_key_dialog_title = /** @type {(inputs: Api_Key_Dialog_TitleInpu
 };
 
 export const api_key_keychain_hint = /** @type {(inputs: Api_Key_Keychain_HintInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`On macOS you can point at a login-Keychain item instead of pasting the key: type kc:ServiceName. The service name is saved to the [keychain] table in config.toml; the key itself stays in the Keychain.`)
+	return /** @type {LocalizedString} */ (`On macOS you can point at a login-Keychain item instead of pasting the key: type kc: followed by the item's name, e.g. kc:MyZaiKey. That is the -s name from security add-generic-password. The name is saved to the [keychain] table in config.toml; the key itself stays in the Keychain.`)
 };
 
 export const api_key_no_answer = /** @type {(inputs: Api_Key_No_AnswerInputs) => LocalizedString} */ (i) => {

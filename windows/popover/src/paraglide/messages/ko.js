@@ -456,7 +456,7 @@ export const api_key_dialog_title = /** @type {(inputs: Api_Key_Dialog_TitleInpu
 };
 
 export const api_key_keychain_hint = /** @type {(inputs: Api_Key_Keychain_HintInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`macOS에서는 키를 붙여넣는 대신 로그인 키체인 항목을 가리킬 수 있습니다: kc:서비스이름 을 입력하세요. 서비스 이름은 config.toml의 [keychain] 테이블에 저장되고, 키는 키체인에 남습니다.`)
+	return /** @type {LocalizedString} */ (`macOS에서는 키를 붙여넣는 대신 로그인 키체인 항목을 가리킬 수 있습니다: kc: 뒤에 항목 이름을 붙여 입력하세요, 예: kc:MyZaiKey. security add-generic-password의 -s 이름입니다. 이름은 config.toml의 [keychain] 테이블에 저장되고, 키는 키체인에 남습니다.`)
 };
 
 export const api_key_no_answer = /** @type {(inputs: Api_Key_No_AnswerInputs) => LocalizedString} */ (i) => {

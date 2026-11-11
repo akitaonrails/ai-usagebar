@@ -8,9 +8,9 @@
   Reads go through `security(1)`, never Security.framework, so the item's
   ACL stays its creator's. The Keychain entry is the last source, after the
   env var and any inline `api_key`, so it masks neither. The popover's Add
-  Key dialog accepts the same reference: type `kc:ServiceName` in the field
-  (macOS hint icon beside the storage note) and the accepted check saves
-  the `[keychain]` entry for you. Off macOS the entries are ignored.
+  Key dialog accepts the same reference: type `kc:` followed by the item's
+  name (macOS hint icon beside the storage note) and an accepted check
+  saves the `[keychain]` entry for you. Off macOS the entries are ignored.
 
 ## [1.51.0] — 2026-11-12
 

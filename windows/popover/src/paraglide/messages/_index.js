@@ -867,7 +867,7 @@ export const api_key_dialog_title = /** @type {((inputs: Api_Key_Dialog_TitleInp
 /**
 * | output |
 * | --- |
-* | "On macOS you can point at a login-Keychain item instead of pasting the key: type kc:ServiceName. The service name is saved to the [keychain] table in config...." |
+* | "On macOS you can point at a login-Keychain item instead of pasting the key: type kc: followed by the item's name, e.g. kc:MyZaiKey. That is the -s name from ..." |
 *
 * @param {Api_Key_Keychain_HintInputs} inputs
 * @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
