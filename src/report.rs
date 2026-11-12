@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::json;
 
-use crate::config::Config;
+use crate::config::{Config, CredentialProbes};
 use crate::context::activity::{ProcessProbe, SessionActivity, SystemProbe};
 use crate::context::{ContextScan, ContextSession, ContextUsage};
 use crate::tui::app::{Freshness, TabId, TabSource, TabState, refresh_one, tabs_with_desktop};
@@ -729,7 +729,12 @@ async fn attach_session_activity_with(
     if !config.context.enabled {
         return;
     }
-    let targets = activity_targets(config, entries, active_cli_label().as_deref());
+    let targets = activity_targets(
+        config,
+        entries,
+        active_cli_label().as_deref(),
+        &CredentialProbes::system(),
+    );
     if targets.is_empty() {
         return;
     }
@@ -753,13 +758,14 @@ fn activity_targets(
     config: &Config,
     entries: &[Entry],
     cli_active: Option<&str>,
+    probes: &CredentialProbes<'_>,
 ) -> Vec<(usize, PathBuf)> {
     let mut targets: Vec<(usize, PathBuf)> = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
         if !is_claude_entry(entry) || entry.error.is_some() {
             continue;
         }
-        let Some(dir) = claude_config_dir(config, &entry.id, cli_active) else {
+        let Some(dir) = claude_config_dir(config, &entry.id, cli_active, probes) else {
             continue;
         };
         if !targets.iter().any(|(_, seen)| *seen == dir) {
@@ -772,16 +778,21 @@ fn activity_targets(
 /// The `CLAUDE_CONFIG_DIR` behind a Claude entry: the directory of the
 /// credentials its quota is fetched from, resolved exactly as the fetch
 /// resolves them — so an account that `account switch` moved into the default
-/// slot is read from `~/.claude`, where its sessions now live too.
-fn claude_config_dir(config: &Config, entry_id: &str, cli_active: Option<&str>) -> Option<PathBuf> {
+/// slot is read from `~/.claude`, where its sessions now live too. The probes
+/// are injected so tests resolve no real `$HOME` and never ask the Keychain;
+/// an entry whose target cannot be resolved (an unreadable Keychain) gets no
+/// activity row, and its fetch reports the error.
+fn claude_config_dir(
+    config: &Config,
+    entry_id: &str,
+    cli_active: Option<&str>,
+    probes: &CredentialProbes<'_>,
+) -> Option<PathBuf> {
     let target = match entry_id.strip_prefix("anthropic@") {
-        Some(label) => {
-            config
-                .anthropic
-                .account_target_with(label, cli_active)
-                .ok()?
-                .0
-        }
+        Some(label) => config
+            .anthropic
+            .account_creds_target(label, cli_active, probes)
+            .ok()?,
         None if entry_id == "anthropic" => config.anthropic.default_creds_target(),
         None => return None,
     };
@@ -3472,6 +3483,24 @@ mod tests {
         }
     }
 
+    const FAKE_DEFAULT_CONFIG_DIR: &str = "/nonexistent-home/.claude";
+
+    fn fake_default_creds() -> crate::error::Result<PathBuf> {
+        Ok(PathBuf::from(FAKE_DEFAULT_CONFIG_DIR).join(".credentials.json"))
+    }
+
+    /// The slot probe minus the Keychain: tests never spawn `security(1)`.
+    fn file_only(account: &crate::config::AnthropicAccount) -> crate::error::Result<bool> {
+        Ok(account.credentials_path.exists())
+    }
+
+    fn test_probes() -> CredentialProbes<'static> {
+        CredentialProbes {
+            default_path: &fake_default_creds,
+            holds_own_credential: &file_only,
+        }
+    }
+
     /// A temp home holding a default and a `work` Claude config directory,
     /// with the config that points at them and the monitor switched on.
     fn activity_fixture() -> (tempfile::TempDir, Config) {
@@ -3517,7 +3546,7 @@ mod tests {
             errored,
         ];
 
-        let targets = activity_targets(&config, &entries, None);
+        let targets = activity_targets(&config, &entries, None, &test_probes());
 
         assert_eq!(
             targets,
@@ -3535,15 +3564,11 @@ mod tests {
     fn a_switched_account_reads_activity_where_its_fetch_reads_credentials() {
         let (_home, config) = activity_fixture();
         let entries = [entry("anthropic@work", vec![])];
-        let default_dir = crate::anthropic::creds::default_path()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
+        let default_dir = PathBuf::from(FAKE_DEFAULT_CONFIG_DIR);
 
         // The fixture's `work` slot holds no credential file.
         assert_eq!(
-            activity_targets(&config, &entries, Some("work")),
+            activity_targets(&config, &entries, Some("work"), &test_probes()),
             vec![(0, default_dir)]
         );
     }
@@ -3557,7 +3582,7 @@ mod tests {
         let entries = [entry("anthropic@work", vec![])];
 
         assert_eq!(
-            activity_targets(&config, &entries, Some("work")),
+            activity_targets(&config, &entries, Some("work"), &test_probes()),
             vec![(0, home.path().join("work"))]
         );
     }
@@ -3575,7 +3600,7 @@ mod tests {
         let entries = [entry("anthropic", vec![]), entry("anthropic@alias", vec![])];
 
         assert_eq!(
-            activity_targets(&config, &entries, None),
+            activity_targets(&config, &entries, None, &test_probes()),
             vec![(0, home.path().join("default"))]
         );
     }
@@ -3585,7 +3610,10 @@ mod tests {
         let mut config = enabled_context_config();
         config.anthropic.credentials_path = Some(PathBuf::from("credentials.json"));
 
-        assert!(activity_targets(&config, &[entry("anthropic", vec![])], None).is_empty());
+        assert!(
+            activity_targets(&config, &[entry("anthropic", vec![])], None, &test_probes())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3600,7 +3628,7 @@ mod tests {
             entry("anthropic@work", vec![metric("Session (5h)", 4, "4%", "")]),
         ];
 
-        let targets = activity_targets(&config, &entries, None);
+        let targets = activity_targets(&config, &entries, None, &test_probes());
         apply_session_activity(
             &mut entries,
             scan_activity_targets(targets, &EverythingRuns),
