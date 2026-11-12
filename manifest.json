@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "akitaonrails.ai-usagebar",
   "name": "AI Usage",
-  "version": "1.50.0",
+  "version": "1.51.0",
   "author": "AkitaOnRails",
   "license": "MIT",
   "description": "Multi-provider AI plan usage and balances in a native Omarchy Quattro panel. Needs the ai-usagebar binary as well as this plugin: omarchy pkg aur add ai-usagebar-bin",
@@ -32,6 +32,7 @@
       "tabNames": false,
       "showProvider": false,
       "colorCodeUsage": false,
+      "paceMarker": true,
       "showAll": false,
       "uiLocale": "auto",
       "barWindow": "auto",
@@ -102,6 +103,13 @@
         "label": "Color-code usage by level",
         "description": "Paint bar values, panel meters, and the tooltip green → yellow → orange → red as usage climbs, using your Omarchy theme. Turn off for a single foreground color. Off by default.",
         "defaultValue": false
+      },
+      {
+        "key": "paceMarker",
+        "type": "boolean",
+        "label": "Show pace marker",
+        "description": "Draw a tick on each panel meter where an even burn would sit by now, so being ahead of or behind pace reads at a glance. On by default.",
+        "defaultValue": true
       },
       {
         "key": "showAll",

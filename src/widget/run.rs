@@ -539,9 +539,9 @@ async fn cursor_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     ))
 }
 
-/// Kiro CLI authenticates via the AWS SSO OIDC session kiro-cli already wrote
-/// to its own local `data.sqlite3` — no API key to resolve, but (like Cursor)
-/// a real on-disk path that can be overridden.
+/// Kiro CLI authenticates via the AWS SSO OIDC or social-login session kiro-cli
+/// already wrote to its own local `data.sqlite3` — no API key to resolve, but
+/// (like Cursor) a real on-disk path that can be overridden.
 async fn kiro_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
     let cache = vendor_cache(cli, "kiro")?;

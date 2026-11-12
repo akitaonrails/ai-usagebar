@@ -1212,7 +1212,7 @@ func claudeAccountLabels() -> [String] {
 /// The API-key vendors whose config takes a `[[<vendor>.accounts]]` array —
 /// Rust's `Config::API_KEY_ACCOUNT_VENDORS`, by slug.
 let API_KEY_ACCOUNT_VENDORS = [
-    "zai", "openrouter", "deepseek", "deepinfra", "kilo", "novita", "moonshot", "grok", "minimax", "orcarouter", "lyceum",
+    "anthropic_api", "zai", "openrouter", "deepseek", "deepinfra", "kilo", "novita", "moonshot", "grok", "minimax", "orcarouter", "lyceum",
 ]
 
 /// Explicit `[[<vendor>.accounts]]` labels for one API-key vendor.
@@ -1438,13 +1438,14 @@ func entryDisplayName(_ id: String, catalog: [VendorCatalogEntry] = vendorCatalo
     if let label = accountLabel(of: id) {
         let base = baseVendorId(id)
         let vendor = catalog.first { $0.id == base }?.name
-            ?? (base == "anthropic" ? "Claude" : (base == "openrouter" ? "OpenRouter" : base))
+            ?? (base == "anthropic" ? "Claude" : (base == "openrouter" ? "OpenRouter" : (base == "anthropic_api" ? "Anthropic API" : base)))
         return "\(vendor) · \(label)"
     }
     if let name = catalog.first(where: { $0.id == id })?.name {
         return name
     }
     if id == "anthropic" { return "Claude" }
+    if id == "anthropic_api" { return "Anthropic API" }
     return id
 }
 

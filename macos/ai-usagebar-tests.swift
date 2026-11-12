@@ -1524,8 +1524,23 @@ func testApiKeyAccounts() {
                 "any vendor's array is parsed")
     assertEqual(API_KEY_ACCOUNT_VENDORS.contains("deepinfra"), true,
                 "deepinfra is in API_KEY_ACCOUNT_VENDORS")
-    assertEqual(API_KEY_ACCOUNT_VENDORS.count, 11,
-                "eleven API-key account vendors match Rust Config::API_KEY_ACCOUNT_VENDORS")
+    assertEqual(API_KEY_ACCOUNT_VENDORS.contains("anthropic_api"), true,
+                "anthropic_api is in API_KEY_ACCOUNT_VENDORS")
+    assertEqual(API_KEY_ACCOUNT_VENDORS.count, 12,
+                "twelve API-key account vendors match Rust Config::API_KEY_ACCOUNT_VENDORS")
+    assertEqual(accountLabels(inTOML: "[[anthropic_api.accounts]]\nlabel = \"org-prod\"\n", vendor: "anthropic_api"),
+                ["org-prod"], "anthropic_api accounts array is parsed")
+    let anthropicApi = catalog("anthropic_api", "Anthropic API", configured: true)
+    assertEqual(preferenceVendorIds(catalog: anthropicApi, claude: [],
+                                    apiKeyAccounts: ["anthropic_api": ["org-prod"]],
+                                    codex: []),
+                ["anthropic_api", "anthropic_api@org-prod"],
+                "Preferences includes named Anthropic API accounts")
+    assertEqual(vendorEntries(active: "overview", catalog: anthropicApi,
+                              codexLabels: { [] },
+                              apiKeyLabels: { _ in ["org-prod"] }).map { $0.id },
+                ["anthropic_api", "anthropic_api@org-prod"],
+                "Anthropic API expands into named organization accounts")
 }
 
 func testEnableVendorCommand() {

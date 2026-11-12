@@ -1,9 +1,34 @@
 ## [Unreleased]
 
+## [1.51.0] — 2026-11-12
+
+### Added
+
+- **Kiro CLI: Google and GitHub social logins.** `[kiro]` now recognizes
+  sessions stored under `kirocli:social:token` alongside AWS Builder ID and IAM
+  Identity Center (`kirocli:odic:token`), selecting the valid session with the
+  newer expiry when both rows exist, refreshing social tokens against Kiro's
+  desktop auth service (preserving any canonical `profileArn` and rebinding the
+  quota host to its region), and refusing HTTP redirects on token and quota
+  calls.
+- **Omarchy panel: pace marker on each meter.** A metric with a window length
+  and a future reset draws a tick where an even burn would sit by now, the
+  panel's take on the trays' pace tick, so "14pts under" reads at a glance. The
+  tick lives in the same space as the fill: in the "left" reading it marks the
+  share that should still remain. Grouped sub-rows
+  and value headlines get none. On by default; the **Show pace marker** switch
+  in Settings (`paceMarker`) turns it off.
+
 ### Fixed
 
 - **macOS:** keep the tray click target aligned with the final menu-bar image,
   so App Icon mode opens the popover when clicked (#620).
+- **macOS menu bar parses Anthropic API named accounts.**
+  `[[anthropic_api.accounts]]` was added to `Config::API_KEY_ACCOUNT_VENDORS` in
+  Rust (#599, #606), but `API_KEY_ACCOUNT_VENDORS` in the macOS menu bar was not
+  updated. It now includes `anthropic_api` so named Console organizations appear
+  in Preferences and the Switch Provider menu, and honors `show_default_account`.
+  A structural guard test ensures the Swift mirror cannot drift from Rust (#608).
 - **macOS:** include Kimi's monthly pool in the native menu bar's quota rows
   and Overview headline. Accounts without a monthly pool and older binary
   output keep their existing session and weekly readings.
@@ -5485,7 +5510,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...HEAD
+[1.51.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...v1.49.0
 [1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3

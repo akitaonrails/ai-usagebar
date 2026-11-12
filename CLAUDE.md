@@ -317,12 +317,18 @@ vendor's response shape drifts:
   (`reading_the_real_windows_credential_never_errors`, `antigravity_remote_live`)
   are `#[ignore]`d.
 - `src/kiro/` — Kiro CLI. Reads kiro-cli's own `data.sqlite3` (read-only) for
-  the AWS SSO OIDC session, refreshes the ~1h access token via the documented
-  CreateToken API, and calls the undocumented `GetUsageLimits` — same operation
-  kiro-cli's `/usage` makes. Rotated credentials go to the vendor cache's
-  account-scoped mode-0600 `oauth.json`, never back to kiro-cli's db. Test
-  seams: `db::read_credentials(&path)` with a seeded temp db and
-  `fetch::fetch_snapshot_at` with an `Endpoints` override pointed at mockito.
+  the AWS SSO OIDC (`kirocli:odic:token`) or social (`kirocli:social:token`,
+  Google/GitHub) session, selecting the valid session with the strictly newer
+  `expires_at` when both exist, refreshes the ~1h access token via the
+  documented AWS SSO OIDC `CreateToken` API or Kiro's desktop auth
+  `/refreshToken` endpoint, and calls the undocumented `GetUsageLimits` — same
+  operation kiro-cli's `/usage` makes. Because `data.sqlite3` is read-only,
+  `kiro-cli` has no non-interactive auth-renewal command, and either refresh
+  endpoint may rotate `refreshToken`, refreshed credentials go only to the
+  vendor cache's atomic, account-scoped mode-0600 `oauth.json` sidecar (never
+  back to kiro-cli's db). Test seams: `db::read_credentials(&path)` with a
+  seeded temp db and `fetch::fetch_snapshot_at` with an `Endpoints` override
+  pointed at mockito.
 - `src/cursor/` — Cursor. Reads the IDE's own `state.vscdb` (read-only), with
   a fallback to the headless `cursor-agent` CLI's `auth.json` when the IDE db
   is absent — `db::resolve_access_token` tries both. Tests seed a temp db /

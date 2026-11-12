@@ -53,8 +53,14 @@ with a credential the user already has, obtained the way this project obtains
 credentials?** Every supported vendor uses one of three: an API key the user
 holds, an OAuth file an official CLI wrote (`~/.codex/auth.json`, kiro-cli's
 `data.sqlite3`, Cursor's `state.vscdb`), or an official CLI invoked for a token
-(`gh auth token`). CLI, editor and browser credentials are never parsed, copied,
-or stored, and no vendor asks the user to paste a session cookie.
+(`gh auth token`). Application stores are never rewritten unless the vendor
+owns the file, browser sessions are never scraped, and no vendor asks the user
+to paste a session cookie. Where a read-only CLI or desktop store holds a
+short-lived OAuth token that rotates on refresh and the tool provides no
+non-interactive CLI renewal command (`kiro`, `grok-bot`, `antigravity`),
+rotated tokens are persisted only to an atomic, mode-`0600`,
+account-fingerprinted `oauth.json` sidecar inside ai-usagebar's cache
+directory.
 
 | Provider | Status | Why |
 |---|---|---|
@@ -75,7 +81,7 @@ or stored, and no vendor asks the user to paste a session cookie.
 | Kimi | Community-confirmed `/coding/v1/usages` route used by third-party quota tools. Drift is possible. The refresh grant is the Kimi Code CLI's own documented-by-behaviour device-flow token endpoint, using the CLI's public client id. |
 | Cursor | Undocumented endpoint called by Cursor's dashboard, behind Vercel's WAF: the request sends the full browser header set (client hints, `sec-fetch-*`), and a 403 there can be an edge block on a non-browser TLS fingerprint rather than a credential verdict (#410). Its shape may change with Cursor pricing. |
 | MiniMax | The Token Plan route is official, but no formal response schema is published. |
-| Kiro CLI | `GetUsageLimits` is the same undocumented CodeWhisperer operation used by kiro-cli's `/usage` command. AWS SSO OIDC `CreateToken`, used for refresh, is documented. |
+| Kiro CLI | `GetUsageLimits` is the same undocumented CodeWhisperer operation used by kiro-cli's `/usage` command. AWS SSO OIDC `CreateToken` (Builder ID / IAM Identity Center, `kirocli:odic:token`) is documented; social logins (Google / GitHub, `kirocli:social:token`) refresh against Kiro's desktop auth service (`/refreshToken`). When both rows exist in `data.sqlite3`, the valid session with the strictly newer `expires_at` wins, failing closed on an ambiguous tie. Because `data.sqlite3` is kiro-cli's live WAL database (opened strictly `SQLITE_OPEN_READ_ONLY`), `kiro-cli` offers no non-interactive auth-renewal command, and either refresh endpoint may rotate `refreshToken` when renewing the ~1-hour `accessToken`, refreshed credentials are persisted only to an atomic, mode-`0600` `kiro/oauth.json` sidecar in ai-usagebar's cache directory, keyed by a SHA-1 account fingerprint (superseded whenever `data.sqlite3` has a newer expiry, and never written to `payload.json` or error output). |
 | Grok Bot | Undocumented Connect-RPC dashboard call, captured live from the desktop app (#206). The request omits `x-cursor-checksum` (Cursor's machine checksum cannot be reproduced); if the server starts requiring it, the fetch fails closed onto the cache. Auth is the app's own session: OSCrypt `v10`/`v11` blobs in `sand-secrets.json` — Linux one-round PBKDF2, trying both the `secret-tool` item and Chromium's `"peanuts"` default because the app's Secret Service backend decides which one it encrypts with, macOS 1003-round Keychain item `Grok Bot Safe Storage` / `Grok Bot Key`. Refreshed through Cursor's public installed-app OAuth client; rotations persist only to ai-usagebar's vendor cache, never to the app's file. Windows is fail-closed. |
 | Command Code | Undocumented `/alpha/*` routes called by the official `commandcode` CLI. The `alpha` path segment is the vendor's own signal that these may move. Windows are read by name (`fiveHour`, `weekly`) rather than by position, and `windowLimits` is accepted both at the top level and beside the ledger, so the most likely reshuffles are already tolerated. |
 | Ollama Cloud | Undocumented, but the route the official settings page itself calls. Auth is a static Bearer key minted at ollama.com/settings/keys — unrelated to the CLI's Ed25519 registry key, which ai-usagebar never reads. `usage` is a fraction (0..1), not a percent; the parser clamps it to a bounded percent. Two response shapes are live-verified under the same `"pro"` plan label — `session` + `weekly`, or `monthly` alone — never combined; the parser accepts either. |

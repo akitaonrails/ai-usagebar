@@ -489,11 +489,12 @@ These describe the current credit cycle returned by
 The default format is `{kiro_pct}%`; `{session_pct}` and `{weekly_pct}` alias
 the same pool, and `{plan}` aliases the subscription title.
 
-Kiro access tokens expire after roughly an hour. ai-usagebar refreshes them
-through the documented AWS SSO OIDC `CreateToken` API and stores refreshed or
-rotated credentials in an account-scoped `kiro/oauth.json` file. That file is
-mode `0600` on Unix. kiro-cli's database is opened read-only and is never
-modified.
+Kiro access tokens expire after roughly an hour. ai-usagebar refreshes AWS
+Builder ID and IAM Identity Center sessions through the documented AWS SSO OIDC
+`CreateToken` API, and Google or GitHub social logins through Kiro's desktop
+auth `/refreshToken` endpoint, storing refreshed or rotated credentials in an
+atomic, account-scoped `kiro/oauth.json` sidecar (mode `0600` on Unix).
+kiro-cli's database is opened read-only and is never modified.
 
 ## Nous Research
 
