@@ -166,6 +166,60 @@ fn read_raw_service(service: &str) -> Result<Option<String>> {
     }
 }
 
+/// Whether a named account's `CLAUDE_CONFIG_DIR`-scoped Keychain item exists,
+/// without reading its secret. Selects by account exactly as [`read_raw_for`]
+/// does. A locked Keychain is an `Err`, never "absent": the caller would fall
+/// back to the default item, which can hold a different account.
+pub fn exists_for(config_dir: &Path) -> Result<bool> {
+    exists_service(&service_name_for(config_dir)?)
+}
+
+/// `security find-generic-password -s <service> [-a <account>]` without `-w`:
+/// an attribute lookup. It never reads the secret, so it avoids the item-data
+/// access prompt the `-w` read can raise; a locked Keychain may still ask to be
+/// unlocked. The attributes it prints are not needed, so stdout goes nowhere.
+fn exists_command(service: &str, account: Option<&str>) -> Command {
+    let mut command = security_command();
+    command.args(["find-generic-password", "-s", service]);
+    if let Some(acct) = account {
+        command.args(["-a", acct]);
+    }
+    command.stdout(Stdio::null());
+    command
+}
+
+fn exists_service(service: &str) -> Result<bool> {
+    let out = exists_command(service, account().as_deref())
+        .output()
+        .map_err(|e| AppError::Other(format!("could not run `security`: {e}")))?;
+    existence_from(&out)
+}
+
+/// Map an existence lookup's exit status: 0 is found, 44
+/// (`errSecItemNotFound`) is absent, and anything else is an `Err`.
+fn existence_from(out: &std::process::Output) -> Result<bool> {
+    if out.status.success() {
+        return Ok(true);
+    }
+    if out.status.code() == Some(ERR_SEC_ITEM_NOT_FOUND) {
+        return Ok(false);
+    }
+    // Same rule as the read: `security`'s stderr is not this program's text.
+    let detail = sanitize_untrusted_line(&String::from_utf8_lossy(&out.stderr));
+    let detail = detail.trim();
+    Err(AppError::Credentials(format!(
+        "could not look up the Claude credentials in the macOS Keychain \
+         (security exited {}): {}. If the login Keychain is locked, unlock \
+         it and retry.",
+        out.status.code().unwrap_or(-1),
+        if detail.is_empty() {
+            "no detail"
+        } else {
+            detail
+        }
+    )))
+}
+
 /// Persist updated credentials JSON back to the *same* Keychain item, so the
 /// widget and Claude Code keep sharing a single source of truth (mirroring how
 /// they share one file on Linux).
@@ -846,6 +900,47 @@ mod tests {
     fn keychain_read_scrubs_vendor_secret_env_vars() {
         assert_vendor_secrets_scrubbed(&read_command(SERVICE, Some("alice")));
         assert_vendor_secrets_scrubbed(&read_command(SERVICE, None));
+        assert_vendor_secrets_scrubbed(&exists_command(SERVICE, Some("alice")));
+        assert_vendor_secrets_scrubbed(&exists_command(SERVICE, None));
+    }
+
+    fn security_exit(code: i32, stderr: &str) -> std::process::Output {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: Vec::new(),
+            stderr: stderr.as_bytes().to_vec(),
+        }
+    }
+
+    #[test]
+    fn an_existence_lookup_never_asks_for_the_secret() {
+        let command = exists_command(SERVICE, Some("alice"));
+        let args: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        assert!(!args.contains(&std::ffi::OsStr::new("-w")), "{args:?}");
+        assert!(!args.contains(&std::ffi::OsStr::new("-g")), "{args:?}");
+        assert_eq!(
+            args,
+            ["find-generic-password", "-s", SERVICE, "-a", "alice"].map(std::ffi::OsStr::new)
+        );
+    }
+
+    #[test]
+    fn an_existence_lookup_maps_found_and_absent() {
+        assert!(existence_from(&security_exit(0, "")).unwrap());
+        assert!(!existence_from(&security_exit(ERR_SEC_ITEM_NOT_FOUND, "")).unwrap());
+    }
+
+    #[test]
+    fn a_failed_existence_lookup_is_an_error_not_absent() {
+        // A locked Keychain must not read as "no login": the caller would fall
+        // back to the default item, which can hold another account.
+        let error = existence_from(&security_exit(51, "\u{1b}[2Jlocked\nforged line"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("security exited 51"), "{error}");
+        assert!(!error.contains('\u{1b}'), "{error}");
+        assert!(!error.contains('\n'), "{error}");
     }
 
     #[test]

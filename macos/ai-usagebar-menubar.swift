@@ -100,8 +100,10 @@ let POINT_CRITICAL_MIN = 10
 // `{mst_monthly_pct}` / `{mst_monthly_reset}` (63-64) carry Model Studio's
 // monthly Token Plan pool (empty when not selected or not reported).
 // `{synthetic_pct}` / `{synthetic_reset}` (65-66) carry Synthetic's
-// subscription request quota (empty when not selected). A final literal
-// sentinel absorbs the widget's stale suffix, preserving these fields.
+// subscription request quota (empty when not selected). `{kimi_monthly_pct}` /
+// `{kimi_monthly_reset}` (67-68) carry Kimi's monthly pool (empty on legacy
+// weekly accounts). A final literal sentinel absorbs the widget's stale
+// suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
              "{scoped_model};;{scoped_pct};;{scoped_reset};;" +
@@ -121,7 +123,8 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{cline_5h_pct};;{cline_5h_reset};;{cline_7d_pct};;{cline_7d_reset};;" +
              "{cline_30d_pct};;{cline_30d_reset};;" +
              "{mst_monthly_pct};;{mst_monthly_reset};;" +
-             "{synthetic_pct};;{synthetic_reset}"
+             "{synthetic_pct};;{synthetic_reset};;" +
+             "{kimi_monthly_pct};;{kimi_monthly_reset}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -608,6 +611,11 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     } else if vendor == "modelstudio" {
         if (quotaWindow(1, 2, 13) != nil || quotaWindow(3, 4, 14) != nil),
            let w = quotaWindow(63, 64, -1) {
+            sonnet = w
+            sonnetLabel = "Monthly"
+        }
+    } else if vendor == "kimi" {
+        if let w = quotaWindow(67, 68, -1) {
             sonnet = w
             sonnetLabel = "Monthly"
         }

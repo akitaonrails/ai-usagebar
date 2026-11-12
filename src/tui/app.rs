@@ -704,8 +704,9 @@ async fn build_outcome(
     let ttl = freshness.ttl();
     match vendor {
         VendorId::Anthropic => {
-            // A named account resolves to its own file + `anthropic/<label>`
-            // cache, shared with the widget via `account_target` (#14/#17).
+            // A named account resolves to its own credential slot (file or
+            // macOS Keychain item) + `anthropic/<label>` cache, shared with the
+            // widget via `account_target` (#14/#17).
             // The default tab keeps the pre-existing resolution: config
             // `credentials_path` is an explicit strict read, and only the
             // platform default gets the macOS Keychain fallback.

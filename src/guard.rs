@@ -367,6 +367,7 @@ mod tests {
             VendorId::MuseCode => MacosMirror::Generic(CORE),
             VendorId::Grok => MacosMirror::Slot("grok_balance"),
             VendorId::Kilo => MacosMirror::Slot("kilo_balance"),
+            VendorId::Kimi => MacosMirror::Slot("kimi_monthly_pct"),
             VendorId::Lyceum => MacosMirror::Slot("lyceum_balance"),
             VendorId::Minimax => MacosMirror::Slot("minimax_video_pct"),
             VendorId::Moonshot => MacosMirror::Slot("km_balance"),
@@ -382,7 +383,6 @@ mod tests {
             // each of these emits the core tokens listed here.
             VendorId::Anthropic => MacosMirror::Generic(CORE),
             VendorId::Openai => MacosMirror::Generic(CORE),
-            VendorId::Kimi => MacosMirror::Generic(CORE),
             VendorId::Kiro => MacosMirror::Generic(CORE),
             VendorId::NousResearch => MacosMirror::Generic(CORE),
             VendorId::OrcaRouter => MacosMirror::Generic(CORE),
