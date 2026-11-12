@@ -762,6 +762,64 @@ func testParserBalances() {
     assertNil(synNoQuota?.weekly, "synthetic unquoted weekly is nil")
 }
 
+func testKimiMonthlyMirror() {
+    print("Kimi monthly pool in the macOS mirror")
+    func fields(through max: Int, set: [Int: String]) -> [String] {
+        (0...max).map { set[$0] ?? "" }
+    }
+    let tokens = FORMAT.components(separatedBy: ";;")
+    assertEqual(Array(tokens.suffix(2)), ["{kimi_monthly_pct}", "{kimi_monthly_reset}"],
+                "Kimi fields are appended to FORMAT")
+    assertEqual(tokens[65], "{synthetic_pct}", "existing Synthetic percentage index is unchanged")
+    assertEqual(tokens[66], "{synthetic_reset}", "existing Synthetic reset index is unchanged")
+
+    let monthly = snapshot(FORMAT, vendor: "kimi", fields: fields(through: 68, set: [
+        0: "Test plan", 1: "13", 2: "4h", 16: "kmi", 67: "68", 68: "9d 6h"
+    ]))!
+    assertEqual(monthly.session?.pct, 13, "Kimi keeps its rolling window")
+    assertNil(monthly.weekly, "monthly Kimi accounts have no invented weekly window")
+    assertEqual(monthly.sonnet?.pct, 68, "Kimi monthly pool reaches the third quota row")
+    assertEqual(monthly.sonnet?.reset, "9d 6h", "Kimi monthly reset is preserved")
+    assertEqual(monthly.sonnetLabel, "Monthly", "Kimi third quota row is labelled Monthly")
+    assertNil(monthly.sonnet?.elapsed, "Kimi monthly pool has no guessed pacing marker")
+    let app = AppDelegate()  // overviewHeadline reads only the synthetic snapshot.
+    assertEqual(app.overviewHeadline(monthly).pct, 68, "Overview includes Kimi monthly usage")
+    assertEqual(app.overviewHeadline(monthly).reset, "9d 6h", "Overview uses the monthly reset")
+
+    let monthlyOnly = snapshot(FORMAT, vendor: "kimi", fields: fields(through: 68, set: [
+        0: "Test plan", 16: "kmi", 67: "68", 68: "9d 6h"
+    ]))!
+    assertNil(monthlyOnly.session, "monthly-only Kimi has no invented rolling window")
+    assertNil(monthlyOnly.weekly, "monthly-only Kimi has no invented weekly window")
+    assertEqual(app.overviewHeadline(monthlyOnly).pct, 68, "Overview handles monthly-only Kimi")
+
+    let zero = snapshot(FORMAT, vendor: "kimi", fields: fields(through: 68, set: [
+        0: "Test plan", 16: "kmi", 67: "0", 68: "—"
+    ]))
+    assertEqual(zero?.sonnet?.pct, 0, "a reported zero monthly usage is still present")
+    assertEqual(zero?.sonnet?.reset, "—", "a monthly pool can have an unknown reset")
+
+    // An older binary may leave the new tokens literal, or omit the tail.
+    let legacyFields = fields(through: 66, set: [
+        0: "Test plan", 1: "13", 2: "4h", 3: "36", 4: "5d", 16: "kmi"
+    ])
+    let unknownTail = snapshot(FORMAT, vendor: "kimi", fields: legacyFields)
+    let missingTail = parse(legacyFields.joined(separator: ";;"), vendor: "kimi")
+    for legacy in [unknownTail, missingTail] {
+        assertEqual(legacy?.session?.pct, 13, "legacy Kimi keeps its rolling reading")
+        assertEqual(legacy?.weekly?.pct, 36, "legacy Kimi keeps its weekly reading")
+        assertNil(legacy?.sonnet, "legacy Kimi does not invent a monthly pool")
+    }
+    let resetOnly = snapshot(FORMAT, vendor: "kimi", fields: fields(through: 68, set: [
+        0: "Test plan", 16: "kmi", 68: "9d 6h"
+    ]))
+    assertNil(resetOnly?.sonnet, "a reset without monthly usage does not invent a quota")
+    let otherVendor = snapshot(FORMAT, vendor: "openai", fields: fields(through: 68, set: [
+        0: "Test plan", 1: "13", 2: "4h", 67: "68", 68: "9d 6h"
+    ]))
+    assertNil(otherVendor?.sonnet, "Kimi's monthly fields do not change other vendors")
+}
+
 // ─── Run ─────────────────────────────────────────────────────────────────
 func testOverviewHeadline() {
     print("overview headline (cursor combined, rate-limit worst window)")
@@ -1518,6 +1576,7 @@ struct TestRunner {
         testRingArc()
         testTomlParsing()
         testParserBalances()
+        testKimiMonthlyMirror()
         testOverviewHeadline()
         testVendorCycle()
         testClaudeAccounts()

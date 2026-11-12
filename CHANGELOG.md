@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Fixed
+
+- **macOS:** include Kimi's monthly pool in the native menu bar's quota rows
+  and Overview headline. Accounts without a monthly pool and older binary
+  output keep their existing session and weekly readings.
+
 ## [1.50.0] — 2026-11-09
 
 ### Added
