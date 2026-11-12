@@ -207,16 +207,25 @@ that behavior.
 
 The CLI has one default credential slot. A switch first saves the outgoing
 credential under its account, then moves the target credential into the
-default slot. ai-usagebar reads an active account from that default slot while
-its own file is gone — which is exactly what the switch leaves behind — so a
-rotating refresh token is never live in two places.
+default slot and empties the target's own slot. ai-usagebar reads an active
+account from that default slot while its own slot is empty, which is exactly
+what the switch leaves behind, so a rotating refresh token is never live in
+two places.
 
 A `CLAUDE_CONFIG_DIR` layout is the other case. There every directory keeps its
 own live login, and two of them can hold the *same* account, which is what the
-active-account marker records. An account whose own credential file is still
-there is therefore read from that file, not from the default slot: otherwise a
-perfectly good account reports a re-auth prompt from a slot its owner never
-signs into.
+active-account marker records. An account whose own slot still holds a
+credential (its credentials file, or on macOS its
+`Claude Code-credentials-<hash>` Keychain item) is therefore read from there,
+not from the default slot. Otherwise a perfectly good account reports a re-auth
+prompt, or another account's quota, from a slot its owner never signs into. If
+macOS cannot read that Keychain item because it is locked or access is denied,
+the account reports the Keychain error instead of falling back. A failed switch
+normally rolls itself back. If that rollback is itself incomplete (the error
+ends with `automatic rollback was incomplete: ...`), the account's own Keychain
+item can be left next to its copy in the default slot. While the active-account
+marker still names that account, ai-usagebar reads its own item, not the
+default slot, until a later switch completes.
 
 If the current CLI login is not managed by ai-usagebar, the switch stops before
 discarding it. `--force` overrides that safeguard and removes the unmanaged

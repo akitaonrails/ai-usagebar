@@ -109,6 +109,7 @@ The selector dynamically discovers **all providers** that ship in the binary via
   Claude & GPT OSS — each with its own 5h/weekly pair), MiniMax (chat and video
   pools, each with 5h/weekly tracking), GitHub Copilot (premium finite pool,
   with unlimited chat and completions reported cleanly), SuperGrok, Kiro,
+  Kimi (rolling five-hour quota plus the reported weekly or monthly pool),
   Nous Research, OpenCode Go (session, weekly, and monthly pools), Command Code
   (session, weekly, and monthly pools), Grok Bot (weekly included-usage
   pool from the Grok Bot desktop app), Devin (daily and weekly quotas
@@ -118,7 +119,7 @@ The selector dynamically discovers **all providers** that ship in the binary via
   API and Vibe Code budgets).
 - **Included-usage pools:** Cursor (Cursor Models and Other Models, both reset
   on the billing cycle).
-- **Balance-only:** OpenRouter, DeepSeek, DeepInfra, Kimi, Kilo, Novita,
+- **Balance-only:** OpenRouter, DeepSeek, DeepInfra, Kilo, Novita,
   Moonshot, Grok (xAI), Lyceum, and Anthropic API. These have no 5h/weekly
   quota windows, so the app
   shows their balance/credits in the header (`cr <amount>`) and suppresses the
@@ -301,9 +302,9 @@ Selecting an entry changes whose usage is displayed, not the active Codex login.
 
 ## Multiple API-key accounts
 
-Entries from `[[openrouter.accounts]]` — and the same array under `[zai]`,
-`[deepseek]`, `[deepinfra]`, `[kilo]`, `[novita]`, `[moonshot]`, `[grok]`, `[minimax]`, and
-`[orcarouter]` — appear as separate menu choices and use
+Entries from `[[openrouter.accounts]]` - and the same array under `[anthropic_api]`,
+`[zai]`, `[deepseek]`, `[deepinfra]`, `[kilo]`, `[novita]`, `[moonshot]`, `[grok]`, `[minimax]`,
+`[orcarouter]`, and `[lyceum]` - appear as separate menu choices and use
 `--vendor <vendor> --account <label>` behind the scenes. Each account keeps its
 own cache. Set `show_default_account = false` in the provider's section when
 you do not want the unnamed key listed. See the main

@@ -312,6 +312,9 @@ five-hour window, the window placeholders (`kimi_window_*` and the
 shows only the long window the account has (`7d {kimi_weekly_pct}%` or
 `mo {kimi_monthly_pct}%`).
 
+The macOS menu bar reads the monthly placeholders into its **Monthly** quota
+row and includes that pool when choosing the Overview headline.
+
 ## Grok Bot
 
 `{gbt_plan}`, `{gbt_weekly_pct}`, `{gbt_weekly_reset}`, `{gbt_on_demand}`
