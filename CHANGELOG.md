@@ -2,6 +2,8 @@
 
 ### Fixed
 
+- **macOS:** keep the tray click target aligned with the final menu-bar image,
+  so App Icon mode opens the popover when clicked (#620).
 - **macOS:** include Kimi's monthly pool in the native menu bar's quota rows
   and Overview headline. Accounts without a monthly pool and older binary
   output keep their existing session and weekly readings.
