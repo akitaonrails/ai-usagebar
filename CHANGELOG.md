@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Mistral:** keep the last matching budgets marked stale on HTTP 401/403,
+  following the API-key cache policy, with the fixed authentication diagnostic.
+  Without usable cached budgets, HTTP 403 retains its billing-permission guidance.
+
 ## [1.50.0] — 2026-11-09
 
 ### Added
