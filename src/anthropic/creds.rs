@@ -236,6 +236,23 @@ pub fn resolve(target: &CredsTarget) -> Result<(CredentialsFile, CredsSource)> {
     }
 }
 
+/// Whether the macOS login Keychain holds a Claude Code login for this
+/// `CLAUDE_CONFIG_DIR` — the `Claude Code-credentials-<hash>` item that
+/// `CLAUDE_CONFIG_DIR=<dir> claude` writes instead of `<dir>/.credentials.json`.
+/// An attribute lookup, so the secret is not read here; [`resolve`] reads it
+/// once. `Ok(false)` only when the item genuinely does not exist (and always
+/// off macOS); a locked Keychain is an `Err`, never "absent", the same rule as
+/// [`read_named_with`].
+pub(crate) fn keychain_has_claude_for(config_dir: &Path) -> Result<bool> {
+    #[cfg(target_os = "macos")]
+    return keychain::exists_for(config_dir);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = config_dir;
+        Ok(false)
+    }
+}
+
 /// Default-location read with an injectable Keychain reader, so the fallback
 /// selection is unit-testable on any platform (the hermeticity invariant —
 /// tests must never touch a real Keychain). Decision table:

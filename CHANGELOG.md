@@ -5,6 +5,18 @@
 - **Mistral:** keep the last matching budgets marked stale on HTTP 401/403,
   following the API-key cache policy, with the fixed authentication diagnostic.
   Without usable cached budgets, HTTP 403 retains its billing-permission guidance.
+- **A Claude account that is also the live `claude` login now reads its own
+  Keychain item on macOS.** When `~/.claude.json` named a configured account
+  and that account's `.credentials.json` was missing, ai-usagebar assumed
+  `account switch` had moved it into the CLI's default slot. On macOS a
+  `CLAUDE_CONFIG_DIR` login never writes that file; the credential lives in
+  the `Claude Code-credentials-<hash>` Keychain item. The account was then read
+  from the default `Claude Code-credentials` item, and when that item held a
+  different login, the tab showed the other account's plan and quota. The
+  scoped Keychain item now counts as the account's own slot, which is the check
+  the provider catalog already made (#331). After a switch empties it, the
+  default slot is read as before. If the item is locked or access is denied,
+  the account reports the Keychain error instead of falling back.
 
 ## [1.50.0] — 2026-11-09
 
