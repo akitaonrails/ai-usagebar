@@ -1460,11 +1460,11 @@ fn anthropic_target(cli: &Cli, config: &Config) -> Result<(CredsTarget, Cache)> 
     }
 }
 
-/// A configured extra account (`--account <label>`): its own credentials file
-/// and an isolated `anthropic/<label>` cache. `--account` conflicts with
-/// `--creds-path`, so the account's file is the only credentials source here —
-/// an Explicit target, so a missing/broken file fails loudly instead of
-/// falling back to the (different account's) macOS Keychain item (#15).
+/// A configured extra account (`--account <label>`): its own credential slot
+/// (credentials file, or its macOS Keychain item; the default slot when it is
+/// the live CLI login and its own slot is empty) and an isolated
+/// `anthropic/<label>` cache. `--account` conflicts with `--creds-path`, so no
+/// explicit path overrides the account's slot.
 fn named_account_target(cli: &Cli, config: &Config, label: &str) -> Result<(CredsTarget, Cache)> {
     let (creds, default_cache) = config.anthropic.account_target(label)?;
     // `--cache-dir` still wins for scripted/multi-monitor setups; otherwise use
