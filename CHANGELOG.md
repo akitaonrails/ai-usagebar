@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.51.0] — 2026-11-12
+
 ### Added
 
 - **Kiro CLI: Google and GitHub social logins.** `[kiro]` now recognizes
@@ -5506,7 +5508,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...HEAD
+[1.51.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...v1.49.0
 [1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3
