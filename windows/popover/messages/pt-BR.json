@@ -100,6 +100,7 @@
   "hide_row": "Ocultar linha",
   "highest": "Maior uso",
   "hours_ago": "há {hours} h",
+  "incident_active": "Incidente ativo: {title}",
   "install": "Instalar",
   "install_update": "Instalar atualização",
   "installing": "Instalando…",

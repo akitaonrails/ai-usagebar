@@ -116,6 +116,59 @@ Neither is documented, and both are more fragile than the usage endpoints they
 accompany. Both fail quietly by design: a broken reset call leaves the rest of
 the vendor's snapshot exactly as it was.
 
+### Service status
+
+Four providers publish a status page with a public, unauthenticated JSON
+summary. For those, ai-usagebar reads what the page currently flags as abnormal
+and gives the provider's name the colour the page itself uses. No credential,
+account label or usage figure is sent: the request is a plain `GET` with an
+`Accept` header. `[ui] provider_status = false` turns it off: no status page is
+contacted and no entry carries an `incident`.
+
+| Provider | Endpoint | Components read |
+|---|---|---|
+| Claude | `GET status.claude.com/api/v2/summary.json` | `Claude Code`, `Claude API` |
+| Anthropic API | same request | `Claude API`, `Claude Console` |
+| Codex | `GET status.openai.com/api/v2/summary.json` | `Codex`, `Codex in ChatGPT Desktop`, `Login` |
+| Cursor | `GET status.x.ai/api/compat/summary.json` (where `status.cursor.com` redirects) | `IDE`, `CLI`, `cursor.com`, `Third-party models` |
+| GitHub Copilot | `GET www.githubstatus.com/api/v2/summary.json` | `Copilot`, `Copilot AI Model Providers` |
+
+Components are matched by name, one by one, never by fragment: each of these
+pages lists far more than one product, and a neighbour's trouble (claude.ai,
+Cowork, GitHub Actions) does not colour the provider. A component renamed by
+its page stops matching and the mark silently goes away, which is the safe
+direction. An open incident counts when it affects one of those components; an
+incident that names no component counts only when its title names the product.
+
+The mark follows the status the page shows for the component, in Statuspage's
+own vocabulary and colours:
+
+| `severity` | Colour |
+|---|---|
+| `degraded_performance` | yellow |
+| `partial_outage` | orange |
+| `major_outage` | red |
+| `under_maintenance` | blue |
+
+The worst status among the provider's components wins. An incident whose
+components carry no status contributes its declared impact on the same scale
+(`minor` yellow, `major` orange, `critical` red, `maintenance` blue); the impact
+is not used otherwise, because it is often higher than what the page shows for
+the component. The title is the open incident's name, or the component and its
+status when the page lists no incident for it.
+
+The response is cached on disk for 5 minutes per status page, shared by every
+account of that provider. The request has its own 4-second timeout and overlaps
+the usage request instead of following it: the TUI shows each result as it
+arrives, and a report waits only for the slower of the two. A failed request is
+recorded on disk and not repeated for 5 minutes, by any process, so an
+unreachable status page costs one timeout and not one per `usage --json` run.
+
+An unreachable status page, a non-2xx answer or a body that does not parse all
+mean "no mark", never "all clear": the absence of a mark is not a claim that
+the provider is healthy. Every other provider has no status source here and is
+never marked.
+
 ## Run the live tests
 
 ```bash

@@ -112,6 +112,7 @@
 /** @typedef {{}} Hide_RowInputs */
 /** @typedef {{}} HighestInputs */
 /** @typedef {{ hours: NonNullable<unknown> }} Hours_AgoInputs */
+/** @typedef {{ title: NonNullable<unknown> }} Incident_ActiveInputs */
 /** @typedef {{}} InstallInputs */
 /** @typedef {{}} Install_UpdateInputs */
 /** @typedef {{}} InstallingInputs */
@@ -768,6 +769,10 @@ export const highest = /** @type {(inputs: HighestInputs) => LocalizedString} */
 
 export const hours_ago = /** @type {(inputs: Hours_AgoInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`${i?.hours}h ago`)
+};
+
+export const incident_active = /** @type {(inputs: Incident_ActiveInputs) => LocalizedString} */ (i) => {
+	return /** @type {LocalizedString} */ (`Active incident: ${i?.title}`)
 };
 
 export const install = /** @type {(inputs: InstallInputs) => LocalizedString} */ () => {

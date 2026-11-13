@@ -45,6 +45,10 @@ you make while the check is running.
 # `usage --json` includes `overview_vendors` only when this is set, so a
 # frontend can order cards without reading this file.
 # overview_vendors = ["anthropic", "openai", "supergrok"]
+# Colour a provider's name when its official status page flags one of its
+# components. false contacts no status page. Default true; see
+# vendor-endpoints.md, "Service status".
+# provider_status = true
 
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui

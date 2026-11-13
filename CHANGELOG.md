@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+### Added
+
+- **A provider's name takes the colour of its status page.** When the official
+  status page of Claude, Anthropic API, Codex, Cursor or GitHub Copilot flags
+  one of that provider's own components, the TUI and the tray popover colour
+  the provider's name the way the page does — yellow for degraded performance,
+  orange for a partial outage, red for a major outage, blue for maintenance —
+  and add a `▲` / alert mark with the incident title, so the signal never rests
+  on colour alone. `usage --json` carries it as an optional `incident`
+  (`severity`, `title`, `url`). Components are matched by name, so trouble in
+  a neighbouring product on the same page (claude.ai, GitHub Actions) does not
+  mark the provider. The status request is unauthenticated, cached for 5
+  minutes per page, overlaps the usage request with its own 4-second timeout,
+  and a failure is remembered on disk for 5 minutes and produces no mark
+  rather than a false all-clear. `[ui] provider_status = false` turns it off.
+  See [docs/vendor-endpoints.md](docs/vendor-endpoints.md#service-status).
+
 ## [1.51.0] — 2026-11-12
 
 ### Added

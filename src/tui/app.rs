@@ -332,6 +332,9 @@ pub struct App {
     pub tabs_meta: Vec<TabId>,
     pub active: usize,
     pub tabs: Vec<TabState>,
+    /// Each tab's provider incident, parallel to `tabs`; `None` when the
+    /// status page reports none or could not be reached.
+    pub incidents: Vec<Option<crate::incident::IncidentBanner>>,
     /// Tab identities with a request currently in flight. Kept separate from
     /// `tabs` so a successful snapshot remains visible while it is refreshed.
     refreshing_tabs: HashSet<TabId>,
@@ -380,6 +383,7 @@ impl App {
             tabs_meta,
             active: 0,
             tabs: vec![TabState::Loading; n],
+            incidents: vec![None; n],
             refreshing_tabs: HashSet::new(),
             tab_generation: 0,
             overview: false,
@@ -433,6 +437,7 @@ impl App {
             .and_then(|tab| tabs_meta.iter().position(|candidate| candidate == tab))
             .unwrap_or(fallback);
         self.tabs = vec![TabState::Loading; tabs_meta.len()];
+        self.incidents = vec![None; tabs_meta.len()];
         self.tabs_meta = tabs_meta;
         self.refreshing_tabs.clear();
     }
@@ -488,6 +493,29 @@ impl App {
             self.tabs[index] = state;
         }
         true
+    }
+
+    /// Record `tab`'s provider incident from a finished refresh. A result from
+    /// a previous tab set is dropped, like [`App::apply_refresh`] does.
+    pub fn set_incident(
+        &mut self,
+        generation: u64,
+        tab: &TabId,
+        incident: Option<crate::incident::IncidentBanner>,
+    ) {
+        if generation != self.tab_generation {
+            return;
+        }
+        if let Some(index) = self.tabs_meta.iter().position(|current| current == tab)
+            && let Some(slot) = self.incidents.get_mut(index)
+        {
+            *slot = incident;
+        }
+    }
+
+    /// The incident recorded for the tab at `index`, if any.
+    pub fn tab_incident(&self, index: usize) -> Option<&crate::incident::IncidentBanner> {
+        self.incidents.get(index).and_then(Option::as_ref)
     }
 
     /// Move to the first tab of `primary`'s vendor (the default account tab,

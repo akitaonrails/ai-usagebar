@@ -4,6 +4,7 @@ import {
   accountSwitchFor,
   desktopPreparation,
   formatDuration,
+  incidentTone,
   nextUpdateLabel,
   parseHostPayload,
   providerState,
@@ -2851,4 +2852,54 @@ console.log('ok');
   assert.equal(codex.action, 'device');
   assert.equal(codex.signInAccount, 'ChatGPT');
   assert.equal(codex.signInIssuer, 'OpenAI');
+}
+
+// --- active provider incident normalization & card projection ---------------
+{
+  const payload = parseHostPayload(JSON.stringify({
+    entries: [
+      {
+        id: 'anthropic',
+        display_name: 'Claude',
+        short_name: 'cld',
+        status: 'ready',
+        incident: {
+          severity: 'major_outage',
+          title: 'Claude API outage',
+          url: 'https://status.claude.com/',
+        },
+        sections: [],
+      },
+      {
+        id: 'openai',
+        display_name: 'Codex',
+        short_name: 'oai',
+        status: 'ready',
+        incident: {
+          severity: 'something_new',
+          title: 'Elevated latency',
+          url: 'http://insecure.example/bad',
+        },
+        sections: [],
+      },
+    ],
+  }));
+  assert.deepEqual(payload.entries[0].incident, {
+    severity: 'major_outage',
+    title: 'Claude API outage',
+    url: 'https://status.claude.com/',
+  });
+  assert.deepEqual(payload.entries[1].incident, {
+    severity: 'degraded_performance',
+    title: 'Elevated latency',
+    url: '',
+  });
+  const cards = projectCards(payload, 0, 'en');
+  assert.deepEqual(cards[0].incident, payload.entries[0].incident);
+  assert.deepEqual(cards[1].incident, payload.entries[1].incident);
+  assert.equal(incidentTone(null), '');
+  assert.deepEqual(
+    ['degraded_performance', 'partial_outage', 'major_outage', 'under_maintenance'].map((severity) => incidentTone({ severity })),
+    ['text-meter-yellow', 'text-notice', 'text-meter-red', 'text-meter-blue'],
+  );
 }

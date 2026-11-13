@@ -149,6 +149,50 @@ fn compact_tab_label(tab: &TabId) -> String {
     crate::display::sanitize_untrusted_field(&label)
 }
 
+/// The colour the status page itself gives the flagged status: yellow for
+/// degraded performance, orange for a partial outage, red for a major outage,
+/// blue for maintenance.
+fn incident_fg(
+    app_theme: &crate::theme::Theme,
+    theme: &ratatui_bubbletea_theme::BubbleTheme,
+    incident: &crate::incident::IncidentBanner,
+) -> ratatui::style::Color {
+    match incident.severity.as_str() {
+        "major_outage" => theme.palette.error,
+        "partial_outage" => {
+            crate::tui::style::color(&app_theme.orange).unwrap_or(theme.palette.error)
+        }
+        "under_maintenance" => {
+            crate::tui::style::color(&app_theme.blue).unwrap_or(theme.palette.focused_border)
+        }
+        _ => theme.palette.warning,
+    }
+}
+
+fn tab_label_with_incident(
+    tab: &TabId,
+    incident: Option<&crate::incident::IncidentBanner>,
+) -> String {
+    let base = tab_label(tab);
+    if incident.is_some() {
+        format!("{base} ▲")
+    } else {
+        base
+    }
+}
+
+fn compact_tab_label_with_incident(
+    tab: &TabId,
+    incident: Option<&crate::incident::IncidentBanner>,
+) -> String {
+    let base = compact_tab_label(tab);
+    if incident.is_some() {
+        format!("{base} ▲")
+    } else {
+        base
+    }
+}
+
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let theme = bubble_theme(&app.theme);
     let block = theme.titled_block(" ai-usagebar ");
@@ -238,10 +282,12 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
     // The Overview is the virtual first entry, before the per-vendor tabs.
     let mut items = vec![ListItem::new("Overview").description("all vendors")];
     items.extend(app.tabs_meta.iter().enumerate().map(|(index, tab)| {
-        ListItem::new(tab_label(tab)).description(tab_status(
-            app.tabs.get(index),
-            app.tab_is_refreshing(index),
-        ))
+        // The tab's own status stays: during an incident is exactly when
+        // "error" and "refreshing" matter, and the mark and colour already
+        // carry the incident.
+        ListItem::new(tab_label_with_incident(tab, app.tab_incident(index))).description(
+            tab_status(app.tabs.get(index), app.tab_is_refreshing(index)),
+        )
     }));
     let mut list = SelectList::new(items).theme(theme);
     list.select(Some(if app.overview { 0 } else { app.active + 1 }));
@@ -259,10 +305,20 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
             ratatui::layout::Rect::new(inner.x, inner.y, inner.width, 1),
         ));
     }
-    for (index, _) in app.tabs_meta.iter().enumerate() {
+    for (index, tab) in app.tabs_meta.iter().enumerate() {
         let y = inner.y + 1 + index as u16;
         if y >= bottom {
             break;
+        }
+        if let Some(inc) = app.tab_incident(index) {
+            let fg = incident_fg(&app.theme, &theme, inc);
+            let label = tab_label_with_incident(tab, Some(inc));
+            let label_cols = (crate::display::text_width(&label) as u16).saturating_add(2);
+            let max_x = inner.x.saturating_add(inner.width.min(label_cols));
+            let buf = f.buffer_mut();
+            for x in inner.x..max_x {
+                buf[(x, y)].set_fg(fg);
+            }
         }
         hits.push((
             NavTarget::Tab(index),
@@ -282,18 +338,33 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
 
     // Entry list drives both the rendered spans and the mouse hit rects, so a
     // label/order change can never desync the two.
-    let mut entries: Vec<(NavTarget, String, bool)> =
-        vec![(NavTarget::Overview, "Overview".to_string(), app.overview)];
+    let mut entries: Vec<(
+        NavTarget,
+        String,
+        bool,
+        Option<&crate::incident::IncidentBanner>,
+    )> = vec![(
+        NavTarget::Overview,
+        "Overview".to_string(),
+        app.overview,
+        None,
+    )];
     for (index, tab) in app.tabs_meta.iter().enumerate() {
         let selected = !app.overview && index == app.active;
-        entries.push((NavTarget::Tab(index), compact_tab_label(tab), selected));
+        let inc = app.tab_incident(index);
+        entries.push((
+            NavTarget::Tab(index),
+            compact_tab_label_with_incident(tab, inc),
+            selected,
+            inc,
+        ));
     }
 
     let mut spans = vec![theme.muted(" ")];
     let mut hits: Vec<(NavTarget, ratatui::layout::Rect)> = Vec::new();
     let mut x = inner.x + 1; // after the leading muted space
     let mut first = true;
-    for (target, label, selected) in entries {
+    for (target, label, selected, inc) in entries {
         // Column width, not character count: a CJK glyph is two cells and a
         // combining mark is zero, so a char count misplaces every later rect.
         let label_w = crate::display::text_width(&label) as u16;
@@ -307,7 +378,11 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
             theme.symbols.bullet
         };
         let marker_style = if selected { theme.accent } else { theme.muted };
-        let label_style = if selected { theme.selected } else { theme.text };
+        let base_style = if selected { theme.selected } else { theme.text };
+        let label_style = match inc {
+            Some(incident) => base_style.fg(incident_fg(&app.theme, &theme, incident)),
+            None => base_style,
+        };
         spans.push(Span::styled(marker, marker_style));
         spans.push(theme.span(" "));
         spans.push(Span::styled(label, label_style));
@@ -331,7 +406,8 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         app.active_tab_id()
             .map(|tab| {
                 let refreshing = if app.is_refreshing(tab) { " ↻" } else { "" };
-                format!(" {}{refreshing} ", tab_label(tab))
+                let label = tab_label_with_incident(tab, app.tab_incident(app.active));
+                format!(" {label}{refreshing} ")
             })
             .unwrap_or_else(|| " details ".to_string())
     };
@@ -347,8 +423,28 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let Some(tab) = app.tabs.get(app.active) else {
         return;
     };
+    let body_area = if let Some(inc) = app.tab_incident(app.active)
+        && inner.height >= 3
+    {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Min(1)])
+            .split(inner);
+        let fg = incident_fg(&app.theme, &theme, inc);
+        let banner = Line::from(vec![
+            Span::styled(
+                format!("  ▲ Incident: {}", inc.title),
+                Style::default().fg(fg),
+            ),
+            theme.muted(format!(" ({})", inc.url)),
+        ]);
+        f.render_widget(Paragraph::new(banner), chunks[0]);
+        chunks[1]
+    } else {
+        inner
+    };
     let sections = panels::sections_for(tab, chrono::Utc::now(), 5);
-    panels::render(f, inner, &app.theme, &sections);
+    panels::render(f, body_area, &app.theme, &sections);
 }
 
 /// Render the Overview: one compact row per configured vendor — its name, a
@@ -370,17 +466,27 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     // widest name (bounded so one long account label can't blow out the layout).
     let name_w = idxs
         .iter()
-        .map(|&i| crate::display::text_width(&tab_label(&app.tabs_meta[i])))
+        .map(|&i| {
+            crate::display::text_width(&tab_label_with_incident(
+                &app.tabs_meta[i],
+                app.tab_incident(i),
+            ))
+        })
         .max()
         .unwrap_or(6)
-        .clamp(6, 22);
+        .clamp(6, 24);
 
     let mut lines: Vec<Line> = Vec::new();
     for &i in &idxs {
-        let name = tab_label(&app.tabs_meta[i]);
+        let inc = app.tab_incident(i);
+        let name = tab_label_with_incident(&app.tabs_meta[i], inc);
         let pad = name_w.saturating_sub(crate::display::text_width(&name));
+        let name_style = match inc {
+            Some(incident) => theme.text.fg(incident_fg(&app.theme, &theme, incident)),
+            None => theme.text,
+        };
         let mut spans = vec![
-            Span::styled(name, theme.text),
+            Span::styled(name, name_style),
             theme.span(" ".repeat(pad + 2)),
         ];
         match app.tabs.get(i) {
@@ -1073,5 +1179,56 @@ mod tests {
             })
             .count();
         assert_eq!(toggles, 1, "exactly one frame's toggle link recorded");
+    }
+
+    #[test]
+    fn incident_indicator_colors_provider_name_and_renders_accessible_badge() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = app_with(vec![TabState::Loading, TabState::Loading]);
+        let tab = app.tabs_meta[0].clone();
+        app.set_incident(
+            0,
+            &tab,
+            Some(crate::incident::IncidentBanner {
+                severity: "major_outage".into(),
+                title: "Claude API outage".into(),
+                url: "https://status.claude.com/".into(),
+            }),
+        );
+
+        // Detail view shows ▲ in title and the Incident banner line.
+        app.overview = false;
+        app.active = 0;
+        let detail_text = body_text(&mut app);
+        assert!(detail_text.contains("Claude ▲"), "{detail_text}");
+        assert!(
+            detail_text.contains("▲ Incident: Claude API outage"),
+            "{detail_text}"
+        );
+
+        // Overview shows ▲ next to the provider name and colors it with error palette.
+        app.overview = true;
+        let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let btheme = bubble_theme(&app.theme);
+        let mut found_colored_claude = false;
+        for y in 0..24 {
+            let row_str: String = (0..160).map(|x| buffer[(x, y)].symbol()).collect();
+            if row_str.contains("Claude ▲") {
+                for x in 0..160 {
+                    if buffer[(x, y)].symbol() == "▲" && buffer[(x, y)].fg == btheme.palette.error
+                    {
+                        found_colored_claude = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            found_colored_claude,
+            "incident badge and provider name must be colored with incident fg"
+        );
     }
 }

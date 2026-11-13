@@ -813,6 +813,19 @@ and an `Activity` text row reading `2 working · 1 waiting`. Both are omitted,
 not zeroed, while that account has nothing running; see
 [Local context overlay](#local-context-overlay).
 
+A Claude, Anthropic API, Codex, Cursor or GitHub Copilot entry whose official
+status page flags one of the provider's own components also carries `incident`:
+`{"severity": "degraded_performance", "title": "…", "url": "https://…"}`.
+`severity` is the status the page shows — `degraded_performance`,
+`partial_outage`, `major_outage` or `under_maintenance` — and `url` is always
+`https://`. The TUI and the Windows/macOS popover give the provider's name the
+page's colour for that status (yellow, orange, red, blue) and add a `▲` / alert
+mark, so the signal does not rest on colour alone. The field is omitted when
+the page flags nothing or could not be reached, so its absence is not a health
+claim. `[ui] provider_status = false` turns the check off. Sources, matching
+and caching are in
+[docs/vendor-endpoints.md](docs/vendor-endpoints.md#service-status).
+
 ## Standalone TUI
 
 The TUI does not depend on Waybar. Run it directly in a local terminal, over

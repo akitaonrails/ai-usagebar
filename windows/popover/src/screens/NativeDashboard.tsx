@@ -6,7 +6,7 @@ import { IconButton } from "@/components/IconButton";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ProviderSection } from "@/components/ProviderSection";
 import type { RowAction } from "@/components/RowMenu";
-import { accountSwitchFor, activeAccountTab, hiddenMetricKeys, nextUpdateLabel, providerGroups, rowKey, sendCommand } from "../model.js";
+import { accountSwitchFor, activeAccountTab, hiddenMetricKeys, incidentTone, nextUpdateLabel, providerGroups, rowKey, sendCommand } from "../model.js";
 import { DashboardBanners } from "./Dashboard";
 import type { Card, Layout, MetricRow, Payload } from "@/lib/types";
 import { m } from "@/paraglide/messages.js";
@@ -156,18 +156,21 @@ export function NativeDashboard({
               const card = activeCardOf(group);
               const name = nameOf(group);
               const preview = providerPreview(card, layout);
+              const incident = group.cards.map((item) => item.incident).find(Boolean) || null;
+              const hintText = incident ? `${name} — ${incident.title}` : name;
               // Logo and value only, to fit more tabs: the name is in the hint, the label and the card below.
               return (
-                <Hint key={group.id} content={name}>
+                <Hint key={group.id} content={hintText}>
                   <button
                     type="button"
                     aria-label={preview ? `${name} ${preview}` : name}
                     aria-pressed={active}
                     className="native-tab"
                     data-active={active}
+                    data-incident={incident?.severity}
                     onClick={() => selectProvider(group.id)}
                   >
-                    <ProviderIcon className="text-label-2" slug={group.id} title={name} size={17} />
+                    <ProviderIcon className={incidentTone(incident) || "text-label-2"} slug={group.id} title={name} size={17} />
                     <span className="native-tab-value" data-text={preview}>{preview}</span>
                   </button>
                 </Hint>

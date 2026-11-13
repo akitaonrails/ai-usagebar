@@ -100,6 +100,7 @@
   "hide_row": "Hide row",
   "highest": "Highest",
   "hours_ago": "{hours}h ago",
+  "incident_active": "Active incident: {title}",
   "install": "Install",
   "install_update": "Install Update",
   "installing": "Installing…",

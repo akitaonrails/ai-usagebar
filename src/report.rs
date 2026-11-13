@@ -77,6 +77,11 @@ struct Entry {
     /// on the user (#356). Absent when none are, and whenever the opt-in
     /// context monitor is off; the readable form is an `"Activity"` row.
     activity: Option<SessionActivity>,
+    /// What the provider's official status page flags as abnormal. Absent
+    /// when the page flags nothing, when it could not be reached, when
+    /// `[ui] provider_status = false`, and for every provider without a
+    /// checked status source.
+    incident: Option<crate::incident::IncidentBanner>,
 }
 
 #[derive(Debug, Clone)]
@@ -483,8 +488,26 @@ async fn entry_for(
     tab: &TabId,
     freshness: Freshness,
 ) -> Entry {
-    let state = refresh_one(client, config, tab, freshness).await;
-    entry_from_state_with_config(config, tab, &state, Utc::now())
+    // Overlapped, not in sequence: the status request costs the report only
+    // the time it takes beyond the usage request, bounded by its own timeout.
+    let (state, incident) = tokio::join!(
+        refresh_one(client, config, tab, freshness),
+        provider_status_for(client, config, tab),
+    );
+    let mut entry = entry_from_state_with_config(config, tab, &state, Utc::now());
+    entry.incident = incident;
+    entry
+}
+
+async fn provider_status_for(
+    client: &reqwest::Client,
+    config: &Config,
+    tab: &TabId,
+) -> Option<crate::incident::IncidentBanner> {
+    if !config.ui.provider_status() {
+        return None;
+    }
+    crate::incident::fetch_for_tab(client, tab).await
 }
 
 fn entry_from_state_with_config(
@@ -550,6 +573,7 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
         },
         reset_credits: reset_credits_for(state),
         activity: None,
+        incident: None,
     };
     // The error is already a first-class entry field. Do not duplicate the
     // TUI's interactive retry instructions as report data.
@@ -1168,6 +1192,9 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                     "waiting": activity.waiting,
                 });
             }
+            if let Some(incident) = &entry.incident {
+                row["incident"] = json!(incident);
+            }
             row
         })
         .collect()
@@ -1364,6 +1391,7 @@ mod tests {
             fetched_at: None,
             reset_credits: None,
             activity: None,
+            incident: None,
         }
     }
 
@@ -3857,5 +3885,21 @@ mod tests {
             !dir.path().join("history.json").exists(),
             "nothing is recorded without --priorities"
         );
+    }
+
+    #[test]
+    fn json_rows_serializes_incident_when_present_and_omits_when_none() {
+        let mut with_incident = entry("anthropic", vec![]);
+        with_incident.incident = Some(crate::incident::IncidentBanner {
+            severity: "major_outage".into(),
+            title: "Claude API outage".into(),
+            url: "https://status.claude.com/".into(),
+        });
+        let without_incident = entry("openai", vec![]);
+        let rows = json_rows(&[with_incident, without_incident]);
+        assert_eq!(rows[0]["incident"]["severity"], "major_outage");
+        assert_eq!(rows[0]["incident"]["title"], "Claude API outage");
+        assert_eq!(rows[0]["incident"]["url"], "https://status.claude.com/");
+        assert!(rows[1].get("incident").is_none());
     }
 }

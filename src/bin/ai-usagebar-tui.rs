@@ -212,11 +212,19 @@ fn config_stamp() -> Option<ConfigStamp> {
 /// after an explicit Settings save, but not on a background file-watch reload,
 /// where `set_tabs` already clamps the current tab and yanking the user away
 /// from where they were browsing would be rude.
+/// What a background tab refresh reports, each tagged with the tab generation
+/// it was started for. The usage reading and the provider's status page are
+/// separate requests and report separately, so neither waits for the other.
+enum RefreshEvent {
+    State(u64, TabId, TabState),
+    Incident(u64, TabId, Option<ai_usagebar::incident::IncidentBanner>),
+}
+
 fn reload_config(
     app: &mut App,
     config: &mut Config,
     client: &Client,
-    tx: &mpsc::UnboundedSender<(u64, TabId, TabState)>,
+    tx: &mpsc::UnboundedSender<RefreshEvent>,
     reselect_primary: bool,
 ) -> bool {
     let Ok(reloaded) = Config::load() else {
@@ -244,7 +252,7 @@ where
     io::Error: From<B::Error>,
 {
     // Kick off initial fetches for every vendor in parallel.
-    let (tx, mut rx) = mpsc::unbounded_channel::<(u64, TabId, TabState)>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<RefreshEvent>();
     let (context_tx, mut context_rx) = mpsc::unbounded_channel::<(
         u64,
         std::result::Result<ai_usagebar::context::ContextScan, String>,
@@ -307,9 +315,14 @@ where
         tokio::select! {
             biased;
             // Snapshot results from background tasks.
-            Some((generation, tab, state)) = rx.recv() => {
-                app.apply_refresh(generation, &tab, state);
-            }
+            Some(event) = rx.recv() => match event {
+                RefreshEvent::State(generation, tab, state) => {
+                    app.apply_refresh(generation, &tab, state);
+                }
+                RefreshEvent::Incident(generation, tab, incident) => {
+                    app.set_incident(generation, &tab, incident);
+                }
+            },
             // Local transcript scans carry their own generation so a slow
             // pre-`r` result cannot replace a newer scan.
             Some((generation, result)) = context_rx.recv() => {
@@ -514,7 +527,7 @@ fn spawn_all(
     app: &mut App,
     client: &Client,
     config: &Config,
-    tx: &mpsc::UnboundedSender<(u64, TabId, TabState)>,
+    tx: &mpsc::UnboundedSender<RefreshEvent>,
 ) {
     let tabs = app.tabs_meta.clone();
     // Space out the Anthropic tabs so several accounts don't burst the shared
@@ -530,7 +543,7 @@ fn spawn_one(
     tab: TabId,
     client: &Client,
     config: &Config,
-    tx: &mpsc::UnboundedSender<(u64, TabId, TabState)>,
+    tx: &mpsc::UnboundedSender<RefreshEvent>,
     delay: Duration,
 ) {
     if !app.begin_refresh(&tab) {
@@ -544,8 +557,21 @@ fn spawn_one(
         if !delay.is_zero() {
             tokio::time::sleep(delay).await;
         }
-        let state = refresh_one(&client, &cfg, &tab, Freshness::Cached).await;
-        let _ = tx.send((generation, tab, state));
+        // Each result is sent as it arrives: a slow status page must not hold
+        // back the usage reading it sits beside.
+        let usage = async {
+            let state = refresh_one(&client, &cfg, &tab, Freshness::Cached).await;
+            let _ = tx.send(RefreshEvent::State(generation, tab.clone(), state));
+        };
+        let status = async {
+            let incident = if cfg.ui.provider_status() {
+                ai_usagebar::incident::fetch_for_tab(&client, &tab).await
+            } else {
+                None
+            };
+            let _ = tx.send(RefreshEvent::Incident(generation, tab.clone(), incident));
+        };
+        tokio::join!(usage, status);
     });
 }
 
@@ -553,7 +579,7 @@ fn refresh_active(
     app: &mut App,
     client: &Client,
     config: &Config,
-    tx: &mpsc::UnboundedSender<(u64, TabId, TabState)>,
+    tx: &mpsc::UnboundedSender<RefreshEvent>,
 ) {
     if app.overview {
         // No single active tab on the Overview — refresh all.
@@ -705,7 +731,7 @@ fn apply_settings_action(
     app: &mut App,
     config: &mut Config,
     client: &Client,
-    tx: &mpsc::UnboundedSender<(u64, TabId, TabState)>,
+    tx: &mpsc::UnboundedSender<RefreshEvent>,
     last_config_stamp: &mut Option<ConfigStamp>,
 ) -> bool {
     use ai_usagebar::tui::settings::Action as SAction;
