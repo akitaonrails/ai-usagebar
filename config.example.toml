@@ -24,6 +24,11 @@
 # Presentation of vendor tab navigation: sidebar (vertical box) | navbar (top strip) | none (hidden).
 # Default sidebar (falls back to navbar on narrow terminals).
 # vendor_box = "sidebar"
+# Colour a provider's name when its official status page flags one of its
+# components (Claude, Anthropic API, Codex, Cursor, GitHub Copilot). The check
+# is one unauthenticated GET per status page every 5 minutes; false turns it
+# off, and no status page is contacted. Default true.
+# provider_status = true
 
 # Custom providers: any HTTP endpoint that answers a GET with a JSON document,
 # authenticated with a static token. One [[custom]] table per provider; each

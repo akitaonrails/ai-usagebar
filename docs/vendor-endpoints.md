@@ -116,6 +116,78 @@ Neither is documented, and both are more fragile than the usage endpoints they
 accompany. Both fail quietly by design: a broken reset call leaves the rest of
 the vendor's snapshot exactly as it was.
 
+### Service status
+
+Five providers, on four status pages, have a public, unauthenticated JSON
+summary. For those, ai-usagebar reads what the page currently flags as abnormal
+and gives the provider's name the colour the page itself uses. No credential,
+account label or usage figure is sent: the request is a plain `GET` with an
+`Accept` header. `[ui] provider_status = false` turns it off: no status page is
+contacted and no entry carries an `incident`.
+
+| Provider | Endpoint | Components read |
+|---|---|---|
+| Claude | `GET status.claude.com/api/v2/summary.json` | `Claude Code`, `Claude API` |
+| Anthropic API | same request | `Claude API`, `Claude Console` |
+| Codex | `GET status.openai.com/api/v2/summary.json` | `Codex in ChatGPT Desktop`, `Login` |
+| Cursor | `GET status.x.ai/api/compat/summary.json` (where `status.cursor.com` redirects) | `IDE`, `CLI`, `cursor.com`, `Third-party models` |
+| GitHub Copilot | `GET www.githubstatus.com/api/v2/summary.json` | `Copilot`, `Copilot AI Model Providers` |
+
+Components are matched by name, one by one, never by fragment: each of these
+pages lists far more than one product, and a neighbour's trouble (claude.ai,
+Cowork, GitHub Actions) does not colour the provider. An open incident counts
+when it affects one of those components; an incident that names no component
+counts only when its title names the product, as whole words (`IDE`, not the
+"ide" in "identified"). OpenAI's page lists two components called `Login`, one
+for the API platform and one for ChatGPT, and its summary gives nothing to tell
+them apart, so either one marks Codex.
+
+A component renamed by its page stops matching and the mark silently goes
+away, which is the safe direction. `make test` and CI run
+`status_page_components_live` (`make status-pages-test`), which checks every
+name against the live pages and fails naming the one that is gone. It fails
+only when a page answers 200 without a name; a page that is down or unreachable
+is reported and skipped.
+
+The mark follows the status the page shows for the component, in Statuspage's
+own vocabulary and colours:
+
+| `severity` | Colour |
+|---|---|
+| `degraded_performance` | yellow |
+| `partial_outage` | orange |
+| `major_outage` | red |
+| `under_maintenance` | blue |
+
+The worst status among the provider's components wins. An open incident with
+none of the provider's components flagged (the page lists none for it, or
+already shows them operational again) contributes its declared impact on the
+same scale: `critical` red, `major` orange, `maintenance` blue, anything else
+yellow. The impact is not used otherwise, because it is often higher than what
+the page shows for the component. The title is the open incident's name, or the
+component and its status when the page lists no incident for it.
+
+`url` is the status page's own address, a constant of the build, not a link
+taken from the response: the page shows its open incident first, and what a
+click opens never depends on the page's text.
+
+The response is cached on disk for 5 minutes per status page, shared by every
+account of that provider, and accounts refreshing together share one request.
+The request has its own 4-second timeout and overlaps the usage requests
+instead of following them: the TUI shows each result as it arrives, and a
+report asks every page at once while it takes the usage readings, so it waits
+only for the slower of the two and pages that do not answer cost it one
+timeout between them. A failed request is recorded on disk and not repeated for
+5 minutes, by any process, so an unreachable status page costs one timeout and
+not one per `usage --json` run. While that lasts the provider has no mark: an
+older cached answer is never shown in its place. The key check the tray runs
+after a key is saved asks no status page.
+
+An unreachable status page, a non-2xx answer or a body that does not parse all
+mean "no mark", never "all clear": the absence of a mark is not a claim that
+the provider is healthy. Every other provider has no status source here and is
+never marked.
+
 ## Run the live tests
 
 ```bash

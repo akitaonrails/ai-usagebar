@@ -100,6 +100,7 @@
   "hide_row": "행 숨기기",
   "highest": "최고",
   "hours_ago": "{hours}시간 전",
+  "incident_active": "진행 중인 장애: {title}",
   "install": "설치",
   "install_update": "업데이트 설치",
   "installing": "설치 중…",

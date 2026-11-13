@@ -1167,3 +1167,70 @@ async fn cline_live() {
         out.snapshot.thirty_day.as_ref().map(|w| w.pct()),
     );
 }
+
+/// Every status-page component a provider's mark depends on must still exist
+/// on the live page under that exact name. The match is by name, so a renamed
+/// component fails silently in production: the mark just stops appearing. This
+/// is the only place that drift becomes visible. Needs no credentials.
+///
+/// It fails on one thing only: a page that answers 200 and does not list a
+/// name. A page that is down, rate limiting or unreachable says nothing about
+/// its component names, so it is reported and skipped rather than failing a
+/// gate that has nothing to do with it.
+#[tokio::test]
+#[ignore]
+async fn status_page_components_live() {
+    use ai_usagebar::incident::{status_summary_url, unmatched_components};
+    use ai_usagebar::vendor::{VendorId, same_origin_redirect_policy};
+
+    // The redirect policy the app's own client has: a page that moved to
+    // another host answers this test with the redirect, as it answers the app,
+    // instead of being followed to a 200 the app would never see.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(same_origin_redirect_policy())
+        .build()
+        .unwrap();
+    // Every vendor with a status source, so one added later is checked too.
+    let mut checked = 0;
+    for &vendor in VendorId::all() {
+        let Some(url) = status_summary_url(vendor) else {
+            continue;
+        };
+        checked += 1;
+        let slug = vendor.slug();
+        let response = match client.get(url).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                println!("⚠ status page — {slug}: {url} unreachable ({error}); not checked");
+                continue;
+            }
+        };
+        if response.status() != reqwest::StatusCode::OK {
+            println!(
+                "⚠ status page — {slug}: {url} answered {}; not checked",
+                response.status()
+            );
+            continue;
+        }
+        // A body cut off in transit is a transport failure like the ones above,
+        // not a page that answered without a name.
+        let body = match response.text().await {
+            Ok(body) => body,
+            Err(error) => {
+                println!("⚠ status page — {slug}: {url} body not read ({error}); not checked");
+                continue;
+            }
+        };
+        // A 200 that is not a status summary lists none of the names either.
+        let unmatched = unmatched_components(vendor, &body).unwrap_or_else(|| {
+            panic!("{slug}: {url} answered 200 with a body that is not a status summary")
+        });
+        assert!(
+            unmatched.is_empty(),
+            "{slug}: {url} no longer lists {unmatched:?}"
+        );
+        println!("✅ status page — {slug} components all present");
+    }
+    assert!(checked > 0, "no vendor has a status source to check");
+}

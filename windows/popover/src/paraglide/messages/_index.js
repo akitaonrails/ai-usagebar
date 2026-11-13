@@ -114,6 +114,7 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{}} Hide_RowInputs */
 /** @typedef {{}} HighestInputs */
 /** @typedef {{ hours: NonNullable<unknown> }} Hours_AgoInputs */
+/** @typedef {{ title: NonNullable<unknown> }} Incident_ActiveInputs */
 /** @typedef {{}} InstallInputs */
 /** @typedef {{}} Install_UpdateInputs */
 /** @typedef {{}} InstallingInputs */
@@ -2126,6 +2127,22 @@ export const hours_ago = /** @type {((inputs: Hours_AgoInputs, options?: { local
 	if (locale === "ko") return __ko.hours_ago(inputs)
 	if (locale === "es") return __es.hours_ago(inputs)
 	return __en.hours_ago(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Active incident: {title}" |
+*
+* @param {Incident_ActiveInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const incident_active = /** @type {((inputs: Incident_ActiveInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Incident_ActiveInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.incident_active(inputs)
+	if (locale === "ko") return __ko.incident_active(inputs)
+	if (locale === "es") return __es.incident_active(inputs)
+	return __en.incident_active(inputs)
 });
 /**
 * | output |

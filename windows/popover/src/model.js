@@ -427,8 +427,36 @@ function normalizeEntry(raw) {
     brand: clean(raw.brand, 64),
     // Wall-clock ms of the payload on screen; 0 when the report has none.
     fetchedAt: Date.parse(clean(raw.fetched_at, 64)) || 0,
+    incident: normalizeIncident(raw.incident),
     sections,
   };
+}
+
+// The colour the status page itself gives each status.
+const INCIDENT_TONES = {
+  degraded_performance: "text-meter-yellow",
+  partial_outage: "text-notice",
+  major_outage: "text-meter-red",
+  under_maintenance: "text-meter-blue",
+};
+
+/** Text colour class for a provider whose status page flags `incident`; "" when it flags nothing. */
+export function incidentTone(incident) {
+  if (!incident) return "";
+  return Object.hasOwn(INCIDENT_TONES, incident.severity) ? INCIDENT_TONES[incident.severity] : INCIDENT_TONES.degraded_performance;
+}
+
+function normalizeIncident(raw) {
+  if (!isPlainObject(raw)) return null;
+  const title = clean(raw.title, 200).trim();
+  if (!title) return null;
+  // An unknown status still means the page flagged something: show the mildest.
+  const status = clean(raw.severity, 32).trim().toLowerCase();
+  const severity = Object.hasOwn(INCIDENT_TONES, status) ? status : "degraded_performance";
+  // A link that is too long is dropped whole: cut short it would open somewhere else.
+  const rawUrl = clean(raw.url).trim();
+  const url = rawUrl.length <= 240 && /^https:\/\/[^\s]+$/i.test(rawUrl) ? rawUrl : "";
+  return { severity, title, url };
 }
 
 function normalizeResetCredits(raw) {
@@ -1034,6 +1062,7 @@ export function projectCards(payload, nowMs, locale) {
       errorDetail: entry.error || "",
       rows,
       warning,
+      incident: entry.incident || null,
       resetCredits: entry.resetCredits || null,
     });
   }

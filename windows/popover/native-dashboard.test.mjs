@@ -802,6 +802,26 @@ try {
       }))));
   iconButtonTag(hintCard({ dismissTitle: 'Close this notice' }), 'Close this notice');
   iconButtonTag(hintCard({}), 'Dismiss');
+  // Active incident indicator colors the provider name and renders an accessible alert badge.
+  const incidentCard = {
+    ...card,
+    incident: { severity: 'partial_outage', title: 'Claude API outage', url: 'https://status.claude.com/' },
+  };
+  const incidentSection = sectionMarkup(emptyLayout(), 'en', incidentCard);
+  assert.match(incidentSection, /data-incident="partial_outage"/);
+  assert.match(incidentSection, /text-notice[^>]*>Claude</);
+  assert.match(incidentSection, /aria-label="Active incident: Claude API outage"/);
+  const incidentNative = renderToStaticMarkup(React.createElement(TooltipProvider, {},
+    React.createElement(LanguageProvider, { language: 'en' },
+      React.createElement(NativeDashboard, {
+        cards: [incidentCard], hint: false, layout: { ...emptyLayout(), popoverStyle: 'native' }, nowMs, payload,
+        onCustomizeProvider() {}, onDismissHint() {}, onOpenCustomize() {}, onOpenSettings() {},
+        onRowAction() {}, onRowMenuOpenChange() {}, onSwitchAccount() {},
+        onToggleCollapse() {}, onToggleShowAs() {},
+      }))));
+  assert.match(incidentNative, /class="native-tab" data-active="true" data-incident="partial_outage"/);
+  // The tab strip shows the incident as a colour; its accessible name has to say it too.
+  assert.match(incidentNative, /aria-label="Claude[^"]*, Active incident: Claude API outage"[^>]*class="native-tab"/);
   console.log('native dashboard: ok');
 } finally {
   await server.close();

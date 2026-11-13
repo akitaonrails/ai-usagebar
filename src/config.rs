@@ -102,9 +102,18 @@ pub struct UiConfig {
     pub overview_vendors: Option<Vec<VendorId>>,
     /// Layout style for vendor navigation in the TUI: sidebar | navbar | none.
     pub vendor_box: Option<VendorBoxStyle>,
+    /// Whether to ask each provider's official status page what it flags as
+    /// abnormal and colour the provider's name with it. `None` → on.
+    pub provider_status: Option<bool>,
 }
 
 impl UiConfig {
+    /// `false` only when `[ui] provider_status = false`: no status page is
+    /// contacted and no entry carries an `incident`.
+    pub fn provider_status(&self) -> bool {
+        self.provider_status.unwrap_or(true)
+    }
+
     pub fn vendor_box(&self) -> VendorBoxStyle {
         self.vendor_box.unwrap_or_default()
     }
@@ -4492,6 +4501,15 @@ api_key = "synthetic-account"
             Config::load_from(file.path()).is_err(),
             "an unknown layout must be rejected, not silently defaulted"
         );
+    }
+
+    #[test]
+    fn provider_status_is_on_unless_switched_off() {
+        assert!(Config::default().ui.provider_status());
+        let on = write_toml("[ui]\nprovider_status = true\n");
+        assert!(Config::load_from(on.path()).unwrap().ui.provider_status());
+        let off = write_toml("[ui]\nprovider_status = false\n");
+        assert!(!Config::load_from(off.path()).unwrap().ui.provider_status());
     }
 
     #[test]
