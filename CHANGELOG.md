@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+### Fixed
+
+- **macOS:** keep the tray click target aligned with the final menu-bar image,
+  so App Icon mode opens the popover when clicked (#620).
+
 ## [1.51.0] — 2026-11-12
 
 ### Added
@@ -21,8 +26,6 @@
 
 ### Fixed
 
-- **macOS:** keep the tray click target aligned with the final menu-bar image,
-  so App Icon mode opens the popover when clicked (#620).
 - **macOS menu bar parses Anthropic API named accounts.**
   `[[anthropic_api.accounts]]` was added to `Config::API_KEY_ACCOUNT_VENDORS` in
   Rust (#599, #606), but `API_KEY_ACCOUNT_VENDORS` in the macOS menu bar was not
