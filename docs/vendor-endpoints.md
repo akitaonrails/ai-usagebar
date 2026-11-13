@@ -129,7 +129,7 @@ contacted and no entry carries an `incident`.
 |---|---|---|
 | Claude | `GET status.claude.com/api/v2/summary.json` | `Claude Code`, `Claude API` |
 | Anthropic API | same request | `Claude API`, `Claude Console` |
-| Codex | `GET status.openai.com/api/v2/summary.json` | `Codex`, `Codex in ChatGPT Desktop`, `Login` |
+| Codex | `GET status.openai.com/api/v2/summary.json` | `Codex in ChatGPT Desktop`, `Login` |
 | Cursor | `GET status.x.ai/api/compat/summary.json` (where `status.cursor.com` redirects) | `IDE`, `CLI`, `cursor.com`, `Third-party models` |
 | GitHub Copilot | `GET www.githubstatus.com/api/v2/summary.json` | `Copilot`, `Copilot AI Model Providers` |
 
@@ -137,7 +137,8 @@ Components are matched by name, one by one, never by fragment: each of these
 pages lists far more than one product, and a neighbour's trouble (claude.ai,
 Cowork, GitHub Actions) does not colour the provider. A component renamed by
 its page stops matching and the mark silently goes away, which is the safe
-direction. An open incident counts when it affects one of those components; an
+direction; the `status_page_components_live` smoke test checks every name
+against the live pages. An open incident counts when it affects one of those components; an
 incident that names no component counts only when its title names the product.
 
 The mark follows the status the page shows for the component, in Statuspage's

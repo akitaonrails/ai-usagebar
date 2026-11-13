@@ -1167,3 +1167,43 @@ async fn cline_live() {
         out.snapshot.thirty_day.as_ref().map(|w| w.pct()),
     );
 }
+
+/// Every status-page component a provider's mark depends on must still exist
+/// on the live page under that exact name. The match is by name, so a renamed
+/// component fails silently in production: the mark just stops appearing. This
+/// is the only place that drift becomes visible. Needs no credentials.
+#[tokio::test]
+#[ignore]
+async fn status_page_components_live() {
+    use ai_usagebar::incident::{status_summary_url, unmatched_components};
+    use ai_usagebar::vendor::VendorId;
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap();
+    for vendor in [
+        VendorId::Anthropic,
+        VendorId::AnthropicApi,
+        VendorId::Openai,
+        VendorId::Cursor,
+        VendorId::Copilot,
+    ] {
+        let url = status_summary_url(vendor).expect("vendor has a status page");
+        let response = client.get(url).send().await.expect("status page reachable");
+        assert!(
+            response.status().is_success(),
+            "{url} answered {} — a moved page arrives here as a redirect or 404",
+            response.status()
+        );
+        let body = response.text().await.unwrap();
+        let unmatched = unmatched_components(vendor, &body)
+            .unwrap_or_else(|| panic!("{url} did not parse as a status summary"));
+        assert!(
+            unmatched.is_empty(),
+            "{}: {url} no longer lists {unmatched:?}",
+            vendor.slug()
+        );
+        println!("✅ status page — {} components all present", vendor.slug());
+    }
+}

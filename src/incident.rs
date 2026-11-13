@@ -114,11 +114,44 @@ fn vendor_components(vendor: VendorId) -> Option<&'static [&'static str]> {
         // platforms are other products on the same page.
         VendorId::Anthropic => Some(&["claude code", "claude api"]),
         VendorId::AnthropicApi => Some(&["claude api", "claude console"]),
-        VendorId::Openai => Some(&["codex", "codex in chatgpt desktop", "login"]),
+        VendorId::Openai => Some(&["codex in chatgpt desktop", "login"]),
         VendorId::Cursor => Some(&["ide", "cli", "cursor.com", "third-party models"]),
         VendorId::Copilot => Some(&["copilot", "copilot ai model providers"]),
         _ => None,
     }
+}
+
+/// The names from [`vendor_components`] that no component of this status-page
+/// summary carries. Matching is by exact name, so a page that renames a
+/// component stops marking its vendor without any error: a non-empty result
+/// against the live page is that drift. `None` when the body does not parse
+/// or the vendor has no status source.
+///
+/// ```
+/// use ai_usagebar::incident::unmatched_components;
+/// use ai_usagebar::vendor::VendorId;
+///
+/// let page = r#"{"components": [{"name": "Copilot", "status": "operational"}]}"#;
+/// assert_eq!(
+///     unmatched_components(VendorId::Copilot, page),
+///     Some(vec!["copilot ai model providers"])
+/// );
+/// ```
+pub fn unmatched_components(vendor: VendorId, raw_json: &str) -> Option<Vec<&'static str>> {
+    let parsed: SummaryResponse = serde_json::from_str(raw_json).ok()?;
+    let wanted = vendor_components(vendor)?;
+    Some(
+        wanted
+            .iter()
+            .copied()
+            .filter(|w| !parsed.components.iter().any(|c| component_is(&c.name, w)))
+            .collect(),
+    )
+}
+
+/// The status-page summary URL read for `vendor`, if it has one.
+pub fn status_summary_url(vendor: VendorId) -> Option<&'static str> {
+    endpoint_for_vendor(vendor).map(|endpoint| endpoint.api_url)
 }
 
 /// Whether `name` is `wanted`, allowing the parenthesised address some pages
@@ -588,7 +621,7 @@ mod tests {
     #[test]
     fn the_worst_of_component_and_incident_sets_the_status_and_the_incident_names_it() {
         let json = r#"{
-            "components": [{"name": "Codex", "status": "major_outage"}],
+            "components": [{"name": "Codex in ChatGPT Desktop", "status": "major_outage"}],
             "incidents": [
                 {
                     "name": "Codex: elevated error rates",
@@ -604,6 +637,25 @@ mod tests {
         assert_eq!(banner.severity, "major_outage");
         assert_eq!(banner.title, "Codex: elevated error rates");
         assert_eq!(banner.url, "https://stspg.io/oai1");
+    }
+
+    #[test]
+    fn unmatched_components_names_what_the_page_no_longer_lists() {
+        let page = r#"{"components": [
+            {"name": "Claude Code", "status": "operational"},
+            {"name": "Claude API (api.anthropic.com)", "status": "operational"},
+            {"name": "claude.ai", "status": "operational"}
+        ]}"#;
+        assert_eq!(
+            unmatched_components(VendorId::Anthropic, page),
+            Some(vec![])
+        );
+        assert_eq!(
+            unmatched_components(VendorId::AnthropicApi, page),
+            Some(vec!["claude console"])
+        );
+        assert_eq!(unmatched_components(VendorId::Zai, page), None);
+        assert_eq!(unmatched_components(VendorId::Anthropic, "not-json"), None);
     }
 
     #[test]
