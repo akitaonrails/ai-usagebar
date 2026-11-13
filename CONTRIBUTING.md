@@ -18,7 +18,10 @@ cargo machete                               # no unused dependencies
 
 `make test` rather than `cargo test`: the frontends have Node and Python
 contract tests, and a change to the report shape can break them without
-touching Rust.
+touching Rust. It also asks the providers' live status pages whether the
+components the status mark matches by name still exist (`make
+status-pages-test`), so it needs network access; plain `cargo test` stays
+offline.
 
 ## Checklist
 

@@ -59,10 +59,19 @@ uninstall-plasmoid:
 
 test:
 	cargo test
+	$(MAKE) status-pages-test
 	$(MAKE) desktop-test
 	$(MAKE) plugin-test
 	$(MAKE) mint-test
 	$(MAKE) macos-package-test
+
+# The provider status mark matches status-page components by exact name, so a
+# renamed component stops marking its provider without any error. This asks the
+# live pages (no credentials) and fails naming what is gone. It is `#[ignore]`d
+# for plain `cargo test`, which must stay offline: the AUR package runs it.
+.PHONY: status-pages-test
+status-pages-test:
+	cargo test --test live status_page_components_live -- --ignored
 
 .PHONY: macos-package-test
 macos-package-test:

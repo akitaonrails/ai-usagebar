@@ -56,6 +56,11 @@ jobs:
       - name: Test
         run: cargo test --all-targets --locked
 
+      # Live, no credentials: a status page that renamed a component the
+      # provider mark depends on fails here, naming it.
+      - name: Status-page component names still exist
+        run: make status-pages-test
+
       - name: Test desktop integration models
         run: make desktop-test
 
