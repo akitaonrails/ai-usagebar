@@ -158,12 +158,13 @@ export function NativeDashboard({
               const preview = providerPreview(card, layout);
               const incident = group.cards.map((item) => item.incident).find(Boolean) || null;
               const hintText = incident ? `${name} — ${incident.title}` : name;
+              const tabLabel = preview ? `${name} ${preview}` : name;
               // Logo and value only, to fit more tabs: the name is in the hint, the label and the card below.
               return (
                 <Hint key={group.id} content={hintText}>
                   <button
                     type="button"
-                    aria-label={preview ? `${name} ${preview}` : name}
+                    aria-label={incident ? `${tabLabel}, ${m.incident_active({ title: incident.title })}` : tabLabel}
                     aria-pressed={active}
                     className="native-tab"
                     data-active={active}

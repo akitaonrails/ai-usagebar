@@ -1181,21 +1181,24 @@ async fn cline_live() {
 #[ignore]
 async fn status_page_components_live() {
     use ai_usagebar::incident::{status_summary_url, unmatched_components};
-    use ai_usagebar::vendor::VendorId;
+    use ai_usagebar::vendor::{VendorId, same_origin_redirect_policy};
 
+    // The redirect policy the app's own client has: a page that moved to
+    // another host answers this test with the redirect, as it answers the app,
+    // instead of being followed to a 200 the app would never see.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
+        .redirect(same_origin_redirect_policy())
         .build()
         .unwrap();
-    for vendor in [
-        VendorId::Anthropic,
-        VendorId::AnthropicApi,
-        VendorId::Openai,
-        VendorId::Cursor,
-        VendorId::Copilot,
-    ] {
+    // Every vendor with a status source, so one added later is checked too.
+    let mut checked = 0;
+    for &vendor in VendorId::all() {
+        let Some(url) = status_summary_url(vendor) else {
+            continue;
+        };
+        checked += 1;
         let slug = vendor.slug();
-        let url = status_summary_url(vendor).expect("vendor has a status page");
         let response = match client.get(url).send().await {
             Ok(response) => response,
             Err(error) => {
@@ -1210,7 +1213,15 @@ async fn status_page_components_live() {
             );
             continue;
         }
-        let body = response.text().await.unwrap_or_default();
+        // A body cut off in transit is a transport failure like the ones above,
+        // not a page that answered without a name.
+        let body = match response.text().await {
+            Ok(body) => body,
+            Err(error) => {
+                println!("⚠ status page — {slug}: {url} body not read ({error}); not checked");
+                continue;
+            }
+        };
         // A 200 that is not a status summary lists none of the names either.
         let unmatched = unmatched_components(vendor, &body).unwrap_or_else(|| {
             panic!("{slug}: {url} answered 200 with a body that is not a status summary")
@@ -1221,4 +1232,5 @@ async fn status_page_components_live() {
         );
         println!("✅ status page — {slug} components all present");
     }
+    assert!(checked > 0, "no vendor has a status source to check");
 }

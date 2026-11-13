@@ -421,12 +421,16 @@ async fn collect_report_targets_for(
     targets: &[ReportTarget],
     freshness: Freshness,
 ) -> Vec<Entry> {
-    // Sequential on purpose: several of these share a per-vendor cache lock,
-    // and firing every account at Anthropic at once is a good way to get
-    // rate-limited for no gain on a handful of entries.
-    let mut entries = Vec::with_capacity(targets.len());
-    for target in targets {
-        entries.push(entry_for_report_target(client, config, target, freshness).await);
+    // The status pages are asked while the usage readings are taken, not
+    // after them and not one after another: a report waits for the slower of
+    // the two, and status pages that do not answer cost it one timeout
+    // between them, however many providers have one.
+    let (mut entries, statuses) = tokio::join!(
+        usage_entries_for(client, config, targets, freshness),
+        provider_statuses_for(client, config, targets, freshness),
+    );
+    for (entry, status) in entries.iter_mut().zip(statuses) {
+        entry.incident = status;
     }
     // #356: what each Claude account's live sessions are doing, ahead of the
     // #255 session list. Both are best-effort local reads: nothing to read adds
@@ -437,6 +441,60 @@ async fn collect_report_targets_for(
     // rather than failing the report.
     attach_context_sessions(config, &mut entries).await;
     entries
+}
+
+async fn usage_entries_for(
+    client: &reqwest::Client,
+    config: &Config,
+    targets: &[ReportTarget],
+    freshness: Freshness,
+) -> Vec<Entry> {
+    // Sequential on purpose: several of these share a per-vendor cache lock,
+    // and firing every account at Anthropic at once is a good way to get
+    // rate-limited for no gain on a handful of entries.
+    let mut entries = Vec::with_capacity(targets.len());
+    for target in targets {
+        entries.push(entry_for_report_target(client, config, target, freshness).await);
+    }
+    entries
+}
+
+/// Whether this report contacts status pages at all: not with
+/// `[ui] provider_status = false`, and not for a wire-only read, which checks
+/// a key the user just typed and whose answer no one reads a status off.
+fn asks_provider_status(config: &Config, freshness: Freshness) -> bool {
+    config.ui.provider_status() && freshness != Freshness::Wire
+}
+
+/// What each target's status page flags, in target order: `None` where the
+/// page flags nothing, could not be read, or the target has no status source.
+/// Every page is asked at once; [`crate::incident`] lets targets that share a
+/// page share one request.
+async fn provider_statuses_for(
+    client: &reqwest::Client,
+    config: &Config,
+    targets: &[ReportTarget],
+    freshness: Freshness,
+) -> Vec<Option<crate::incident::IncidentBanner>> {
+    let mut statuses = vec![None; targets.len()];
+    if !asks_provider_status(config, freshness) {
+        return statuses;
+    }
+    let mut pending = tokio::task::JoinSet::new();
+    for (index, target) in targets.iter().enumerate() {
+        let ReportTarget::Tab(tab) = target else {
+            continue;
+        };
+        let (client, tab) = (client.clone(), tab.clone());
+        pending.spawn(async move { (index, crate::incident::fetch_for_tab(&client, &tab).await) });
+    }
+    while let Some(asked) = pending.join_next().await {
+        // A task that panicked leaves its target unmarked, like any failure.
+        if let Ok((index, status)) = asked {
+            statuses[index] = status;
+        }
+    }
+    statuses
 }
 
 async fn entry_for_report_target(
@@ -488,26 +546,8 @@ async fn entry_for(
     tab: &TabId,
     freshness: Freshness,
 ) -> Entry {
-    // Overlapped, not in sequence: the status request costs the report only
-    // the time it takes beyond the usage request, bounded by its own timeout.
-    let (state, incident) = tokio::join!(
-        refresh_one(client, config, tab, freshness),
-        provider_status_for(client, config, tab),
-    );
-    let mut entry = entry_from_state_with_config(config, tab, &state, Utc::now());
-    entry.incident = incident;
-    entry
-}
-
-async fn provider_status_for(
-    client: &reqwest::Client,
-    config: &Config,
-    tab: &TabId,
-) -> Option<crate::incident::IncidentBanner> {
-    if !config.ui.provider_status() {
-        return None;
-    }
-    crate::incident::fetch_for_tab(client, tab).await
+    let state = refresh_one(client, config, tab, freshness).await;
+    entry_from_state_with_config(config, tab, &state, Utc::now())
 }
 
 fn entry_from_state_with_config(
@@ -3885,6 +3925,16 @@ mod tests {
             !dir.path().join("history.json").exists(),
             "nothing is recorded without --priorities"
         );
+    }
+
+    #[test]
+    fn status_pages_are_not_asked_with_the_switch_off_or_for_a_key_check() {
+        let on = Config::default();
+        let mut off = Config::default();
+        off.ui.provider_status = Some(false);
+        assert!(asks_provider_status(&on, Freshness::Cached));
+        assert!(!asks_provider_status(&off, Freshness::Cached));
+        assert!(!asks_provider_status(&on, Freshness::Wire));
     }
 
     #[test]

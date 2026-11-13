@@ -820,6 +820,8 @@ try {
         onToggleCollapse() {}, onToggleShowAs() {},
       }))));
   assert.match(incidentNative, /class="native-tab" data-active="true" data-incident="partial_outage"/);
+  // The tab strip shows the incident as a colour; its accessible name has to say it too.
+  assert.match(incidentNative, /aria-label="Claude[^"]*, Active incident: Claude API outage"[^>]*class="native-tab"/);
   console.log('native dashboard: ok');
 } finally {
   await server.close();

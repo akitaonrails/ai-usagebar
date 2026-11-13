@@ -442,7 +442,8 @@ const INCIDENT_TONES = {
 
 /** Text colour class for a provider whose status page flags `incident`; "" when it flags nothing. */
 export function incidentTone(incident) {
-  return incident ? INCIDENT_TONES[incident.severity] || INCIDENT_TONES.degraded_performance : "";
+  if (!incident) return "";
+  return Object.hasOwn(INCIDENT_TONES, incident.severity) ? INCIDENT_TONES[incident.severity] : INCIDENT_TONES.degraded_performance;
 }
 
 function normalizeIncident(raw) {
@@ -451,9 +452,10 @@ function normalizeIncident(raw) {
   if (!title) return null;
   // An unknown status still means the page flagged something: show the mildest.
   const status = clean(raw.severity, 32).trim().toLowerCase();
-  const severity = INCIDENT_TONES[status] ? status : "degraded_performance";
-  const rawUrl = clean(raw.url, 240).trim();
-  const url = /^https:\/\/[^\s]+$/i.test(rawUrl) ? rawUrl : "";
+  const severity = Object.hasOwn(INCIDENT_TONES, status) ? status : "degraded_performance";
+  // A link that is too long is dropped whole: cut short it would open somewhere else.
+  const rawUrl = clean(raw.url).trim();
+  const url = rawUrl.length <= 240 && /^https:\/\/[^\s]+$/i.test(rawUrl) ? rawUrl : "";
   return { severity, title, url };
 }
 

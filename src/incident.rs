@@ -1,17 +1,17 @@
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::cache::Cache;
-use crate::display::sanitize_untrusted_field;
+use crate::display::sanitize_untrusted_line;
 use crate::tui::app::TabId;
 use crate::vendor::{MAX_BODY_BYTES, VendorId, read_body_capped};
 
 /// What a provider's official status page currently flags as abnormal,
 /// attached to a report entry or TUI tab.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IncidentBanner {
     /// The status the page itself shows, in Statuspage's own vocabulary:
     /// `"degraded_performance"`, `"partial_outage"`, `"major_outage"` or
@@ -22,7 +22,8 @@ pub struct IncidentBanner {
     /// Sanitized headline: the open incident's name, or the affected
     /// component and its status when the page lists no incident for it.
     pub title: String,
-    /// Validated `https://` URL to the incident or status page.
+    /// The status page's address: a constant of this build, never a link
+    /// taken from the page's response.
     pub url: String,
 }
 
@@ -89,8 +90,6 @@ struct RawIncident {
     status: String,
     #[serde(default)]
     impact: String,
-    #[serde(default)]
-    shortlink: String,
     #[serde(default)]
     components: Vec<RawComponent>,
 }
@@ -182,16 +181,27 @@ fn title_needles(vendor: VendorId) -> &'static [&'static str] {
     }
 }
 
+/// Whether `title` (lower case) carries `needle` as whole words: `ide` is in
+/// "IDE unavailable" and not in "fix identified", `api` not in "rapid".
+fn title_names(title: &str, needle: &str) -> bool {
+    let words: Vec<&str> = title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let wanted: Vec<&str> = needle.split(' ').collect();
+    words.windows(wanted.len()).any(|run| run == wanted)
+}
+
 fn incident_applies_to_vendor(vendor: VendorId, inc: &RawIncident) -> bool {
     let status = inc.status.trim().to_ascii_lowercase();
     if matches!(status.as_str(), "resolved" | "postmortem" | "completed") {
         return false;
     }
     if inc.components.is_empty() {
-        let title = inc.name.to_ascii_lowercase();
+        let title = inc.name.to_lowercase();
         return title_needles(vendor)
             .iter()
-            .any(|needle| title.contains(needle));
+            .any(|needle| title_names(&title, needle));
     }
     inc.components
         .iter()
@@ -253,17 +263,6 @@ fn status_label(rank: u8) -> &'static str {
     }
 }
 
-fn sanitize_incident_url(shortlink: &str, fallback_page_url: &str) -> String {
-    let trimmed = shortlink.trim();
-    if trimmed.starts_with("https://")
-        && !trimmed.chars().any(|c| c.is_control() || c.is_whitespace())
-    {
-        trimmed.to_string()
-    } else {
-        fallback_page_url.to_string()
-    }
-}
-
 fn clamp_chars(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         text.to_string()
@@ -274,19 +273,18 @@ fn clamp_chars(text: &str, max_chars: usize) -> String {
     }
 }
 
+/// A page's text as one sanitized line: it is shown beside a tab name.
 fn headline(text: &str) -> String {
-    clamp_chars(&sanitize_untrusted_field(text), MAX_INCIDENT_TITLE_CHARS)
+    clamp_chars(&sanitize_untrusted_line(text), MAX_INCIDENT_TITLE_CHARS)
 }
 
 /// Parse a Statuspage `/api/v2/summary.json` body for `vendor`: `None` when
 /// every component of the vendor is operational and no open incident applies.
-pub fn parse_summary_json(
-    vendor: VendorId,
-    raw_json: &str,
-    fallback_page_url: &str,
-) -> Option<IncidentBanner> {
+/// The mark links to `page_url`, the status page itself: the page shows its
+/// open incident first, and a link taken from the response would be
+/// third-party text handed to whatever opens it.
+fn parse_summary_json(vendor: VendorId, raw_json: &str, page_url: &str) -> Option<IncidentBanner> {
     let parsed: SummaryResponse = serde_json::from_str(raw_json).ok()?;
-    endpoint_for_vendor(vendor)?;
     let component = parsed
         .components
         .iter()
@@ -315,32 +313,12 @@ pub fn parse_summary_json(
             component.map(|(rank, c)| headline(&format!("{}: {}", c.name, status_label(rank))))
         })
         .unwrap_or_else(|| format!("{} service incident", vendor.display_name()));
-    let url = incident.map_or_else(
-        || fallback_page_url.to_string(),
-        |(_, inc)| sanitize_incident_url(&inc.shortlink, fallback_page_url),
-    );
 
     Some(IncidentBanner {
         severity: status_for_rank(rank).to_string(),
         title,
-        url,
+        url: page_url.to_string(),
     })
-}
-
-type IncidentMemo = HashMap<&'static str, (Instant, Option<String>)>;
-
-/// In-process memo so the accounts of one provider in a single report pass
-/// share one status body (or one failure) without repeating disk or HTTP work.
-fn mem_cache() -> &'static Mutex<IncidentMemo> {
-    static MEM: OnceLock<Mutex<IncidentMemo>> = OnceLock::new();
-    MEM.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn memoize(endpoint: StatusEndpoint, body: Option<String>) -> Option<String> {
-    if let Ok(mut guard) = mem_cache().lock() {
-        guard.insert(endpoint.cache_key, (Instant::now(), body.clone()));
-    }
-    body
 }
 
 async fn request_summary(client: &reqwest::Client, endpoint: StatusEndpoint) -> Option<String> {
@@ -360,29 +338,52 @@ async fn request_summary(client: &reqwest::Client, endpoint: StatusEndpoint) -> 
     Some(text)
 }
 
-/// The status page's summary body: from this process's memo, then the disk
-/// cache, then the network. A failed request arms the cache's backoff, which
-/// is on disk, so neither this process nor the next one-shot `usage --json`
-/// pays the timeout again until it lapses. A failure is never read as "no
-/// incident": it yields `None`, and so no mark.
+/// One async lock per status page, by cache key.
+type PageTurns = Mutex<HashMap<&'static str, Arc<tokio::sync::Mutex<()>>>>;
+
+/// The lock that lets one caller at a time read or fetch a status page. The
+/// accounts of a provider refresh together and several providers share a
+/// page: the second caller must find what the first one cached instead of
+/// sending the same request beside it. Pages do not wait for each other.
+fn page_turn(endpoint: StatusEndpoint) -> Arc<tokio::sync::Mutex<()>> {
+    static TURNS: OnceLock<PageTurns> = OnceLock::new();
+    TURNS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .entry(endpoint.cache_key)
+        .or_default()
+        .clone()
+}
+
+/// The cached summary body while it is younger than the TTL. Deliberately not
+/// [`Cache::fresh_payload`]: under an armed backoff that one serves the last
+/// payload whatever its age, which is right for a usage figure and would keep
+/// an incident on screen long after the page stopped answering.
+fn cached_status_body(cache: &Cache) -> Option<String> {
+    if cache.payload_age()? >= INCIDENT_CACHE_TTL {
+        return None;
+    }
+    String::from_utf8(cache.maybe_payload().ok()??).ok()
+}
+
+/// The status page's summary body: from the disk cache while it is fresh, then
+/// from the network. A failed request arms the cache's backoff, which is on
+/// disk, so neither this process nor the next one-shot `usage --json` pays the
+/// timeout again until it lapses. A failure is never read as "no incident" and
+/// never answered with an older body: it yields `None`, and so no mark.
 async fn fetch_raw_status_json(
     client: &reqwest::Client,
     endpoint: StatusEndpoint,
     cache: &Cache,
 ) -> Option<String> {
-    if let Ok(guard) = mem_cache().lock()
-        && let Some((at, cached)) = guard.get(endpoint.cache_key)
-        && at.elapsed() < INCIDENT_CACHE_TTL
-    {
-        return cached.clone();
-    }
-    if let Ok(Some(bytes)) = cache.fresh_payload(INCIDENT_CACHE_TTL)
-        && let Ok(body) = String::from_utf8(bytes)
-    {
-        return memoize(endpoint, Some(body));
+    let turn = page_turn(endpoint);
+    let _held = turn.lock().await;
+    if let Some(body) = cached_status_body(cache) {
+        return Some(body);
     }
     if cache.backoff_remaining().is_some() {
-        return memoize(endpoint, None);
+        return None;
     }
     let body = request_summary(client, endpoint).await;
     match &body {
@@ -390,25 +391,19 @@ async fn fetch_raw_status_json(
         Some(text) => drop(cache.write_payload(text.as_bytes())),
         None => cache.note_rate_limit_at(std::time::SystemTime::now()),
     }
-    memoize(endpoint, body)
+    body
 }
 
-/// What `vendor`'s status page flags as abnormal right now. Never fails the
-/// caller: `None` when nothing is flagged, when the page could not be reached,
-/// and for a vendor without a checked status source.
-pub async fn fetch_for_vendor(
-    client: &reqwest::Client,
-    vendor: VendorId,
-) -> Option<IncidentBanner> {
+/// What the status page of `tab`'s provider flags as abnormal right now.
+/// Never fails the caller: `None` when nothing is flagged, when the page could
+/// not be reached, and for a provider without a checked status source, which
+/// includes every custom one.
+pub async fn fetch_for_tab(client: &reqwest::Client, tab: &TabId) -> Option<IncidentBanner> {
+    let vendor = tab.vendor_id()?;
     let endpoint = endpoint_for_vendor(vendor)?;
     let cache = Cache::for_vendor_account("incidents", endpoint.cache_key).ok()?;
     let raw = fetch_raw_status_json(client, endpoint, &cache).await?;
     parse_summary_json(vendor, &raw, endpoint.page_url)
-}
-
-/// [`fetch_for_vendor`] for a tab; a custom provider has no status source.
-pub async fn fetch_for_tab(client: &reqwest::Client, tab: &TabId) -> Option<IncidentBanner> {
-    fetch_for_vendor(client, tab.vendor_id()?).await
 }
 
 #[cfg(test)]
@@ -448,7 +443,8 @@ mod tests {
             .expect("should detect incident");
         assert_eq!(banner.severity, "major_outage");
         assert_eq!(banner.title, "Claude.ai and Claude Code outage");
-        assert_eq!(banner.url, "https://stspg.io/crit1");
+        // The link is the status page, whatever link the incident carries.
+        assert_eq!(banner.url, "https://status.claude.com/");
     }
 
     #[test]
@@ -636,7 +632,7 @@ mod tests {
             .expect("should detect status");
         assert_eq!(banner.severity, "major_outage");
         assert_eq!(banner.title, "Codex: elevated error rates");
-        assert_eq!(banner.url, "https://stspg.io/oai1");
+        assert_eq!(banner.url, "https://status.openai.com/");
     }
 
     #[test]
@@ -695,8 +691,167 @@ mod tests {
         .expect("should match Copilot component");
         assert_eq!(banner.severity, "degraded_performance");
         assert_eq!(banner.title, "Degraded performance for GitHub services");
-        // Non-https shortlink falls back to official https status page URL.
         assert_eq!(banner.url, "https://www.githubstatus.com/");
+    }
+
+    const FLAGGED_PAGE: &str =
+        r#"{"components": [{"name": "Claude Code", "status": "major_outage"}]}"#;
+
+    /// A status page served by `server`, cached under a temporary directory:
+    /// the policy under test never sees a real page or a real cache.
+    fn mock_page(server: &mockito::ServerGuard, key: &'static str) -> StatusEndpoint {
+        StatusEndpoint {
+            cache_key: key,
+            api_url: Box::leak(format!("{}/summary.json", server.url()).into_boxed_str()),
+            page_url: "https://status.example/",
+        }
+    }
+
+    /// The page's summary endpoint, answering `status` and expecting `requests`.
+    async fn summary_mock(
+        server: &mut mockito::ServerGuard,
+        status: usize,
+        requests: usize,
+    ) -> mockito::Mock {
+        server
+            .mock("GET", "/summary.json")
+            .with_status(status)
+            .with_body(FLAGGED_PAGE)
+            .expect(requests)
+            .create_async()
+            .await
+    }
+
+    fn backdate_payload(cache: &Cache, age: Duration) {
+        std::fs::File::options()
+            .write(true)
+            .open(cache.payload_path())
+            .and_then(|file| file.set_modified(std::time::SystemTime::now() - age))
+            .expect("backdate the cached status body");
+    }
+
+    #[tokio::test]
+    async fn a_cached_body_inside_the_ttl_is_served_without_a_request() {
+        let mut server = mockito::Server::new_async().await;
+        let page = summary_mock(&mut server, 200, 0).await;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::at(dir.path().join("page"));
+        cache.write_payload(FLAGGED_PAGE.as_bytes()).unwrap();
+
+        let endpoint = mock_page(&server, "test-fresh-body");
+        let body = fetch_raw_status_json(&reqwest::Client::new(), endpoint, &cache).await;
+
+        assert_eq!(body.as_deref(), Some(FLAGGED_PAGE));
+        page.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a_stale_body_is_not_served_while_a_failure_backoff_is_armed() {
+        // The page stopped answering after it last flagged something. What it
+        // said two hours ago is not its status now: no body, so no mark.
+        let mut server = mockito::Server::new_async().await;
+        let page = summary_mock(&mut server, 200, 0).await;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::at(dir.path().join("page"));
+        cache.write_payload(FLAGGED_PAGE.as_bytes()).unwrap();
+        backdate_payload(&cache, Duration::from_secs(2 * 60 * 60));
+        cache.note_rate_limit_at(std::time::SystemTime::now());
+
+        let endpoint = mock_page(&server, "test-stale-body");
+        let body = fetch_raw_status_json(&reqwest::Client::new(), endpoint, &cache).await;
+
+        assert_eq!(body, None);
+        page.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_request_is_remembered_on_disk_and_not_repeated() {
+        let mut server = mockito::Server::new_async().await;
+        let page = summary_mock(&mut server, 503, 1).await;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::at(dir.path().join("page"));
+        let endpoint = mock_page(&server, "test-failed-request");
+        let client = reqwest::Client::new();
+
+        assert_eq!(fetch_raw_status_json(&client, endpoint, &cache).await, None);
+        assert!(cache.backoff_remaining().is_some());
+        assert_eq!(fetch_raw_status_json(&client, endpoint, &cache).await, None);
+
+        page.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn an_expired_body_is_fetched_again_and_cached_for_the_next_caller() {
+        let mut server = mockito::Server::new_async().await;
+        let page = summary_mock(&mut server, 200, 1).await;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::at(dir.path().join("page"));
+        cache.write_payload(b"{}").unwrap();
+        backdate_payload(&cache, INCIDENT_CACHE_TTL + Duration::from_secs(1));
+        let endpoint = mock_page(&server, "test-expired-body");
+        let client = reqwest::Client::new();
+
+        let first = fetch_raw_status_json(&client, endpoint, &cache).await;
+        let second = fetch_raw_status_json(&client, endpoint, &cache).await;
+
+        assert_eq!(first.as_deref(), Some(FLAGGED_PAGE));
+        assert_eq!(second.as_deref(), Some(FLAGGED_PAGE));
+        page.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn accounts_refreshing_together_share_one_request() {
+        let mut server = mockito::Server::new_async().await;
+        let page = summary_mock(&mut server, 200, 1).await;
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::at(dir.path().join("page"));
+        let endpoint = mock_page(&server, "test-shared-request");
+        let client = reqwest::Client::new();
+
+        let (first, second, third) = tokio::join!(
+            fetch_raw_status_json(&client, endpoint, &cache),
+            fetch_raw_status_json(&client, endpoint, &cache),
+            fetch_raw_status_json(&client, endpoint, &cache),
+        );
+
+        for body in [first, second, third] {
+            assert_eq!(body.as_deref(), Some(FLAGGED_PAGE));
+        }
+        page.assert_async().await;
+    }
+
+    #[test]
+    fn a_title_names_a_product_only_by_whole_words() {
+        let summary = |name: &str| {
+            format!(
+                r#"{{"incidents": [{{"name": "{name}", "status": "investigating",
+                    "impact": "minor"}}]}}"#
+            )
+        };
+        let marks = |vendor: VendorId, name: &str| {
+            parse_summary_json(vendor, &summary(name), "https://status.example/").is_some()
+        };
+        // `ide` inside "identified", `cli` inside "clients", `api` inside "rapid".
+        assert!(!marks(
+            VendorId::Cursor,
+            "Automations delayed, fix identified"
+        ));
+        assert!(!marks(VendorId::Cursor, "Grok Bot errors for some clients"));
+        assert!(!marks(VendorId::Anthropic, "Rapid growth in sign-ups"));
+        assert!(marks(VendorId::Cursor, "IDE unavailable"));
+        assert!(marks(VendorId::Cursor, "Elevated errors in the CLI"));
+        assert!(marks(VendorId::Anthropic, "Elevated API error rates"));
+        assert!(marks(VendorId::Anthropic, "Claude Code: sign-in failing"));
+    }
+
+    #[test]
+    fn a_title_is_one_sanitized_line() {
+        let json = r#"{"components": [], "incidents": [{
+            "name": "Copilot\ndown\u001b[31m \u202eevil", "status": "investigating",
+            "impact": "minor", "components": [{"name": "Copilot"}]}]}"#;
+        let banner = parse_summary_json(VendorId::Copilot, json, ENDPOINT_GITHUB.page_url)
+            .expect("should match Copilot component");
+        assert_eq!(banner.title, "Copilot down[31m evil");
     }
 
     #[test]

@@ -169,27 +169,12 @@ fn incident_fg(
     }
 }
 
-fn tab_label_with_incident(
-    tab: &TabId,
-    incident: Option<&crate::incident::IncidentBanner>,
-) -> String {
-    let base = tab_label(tab);
-    if incident.is_some() {
-        format!("{base} ▲")
-    } else {
-        base
-    }
-}
-
-fn compact_tab_label_with_incident(
-    tab: &TabId,
-    incident: Option<&crate::incident::IncidentBanner>,
-) -> String {
-    let base = compact_tab_label(tab);
-    if incident.is_some() {
-        format!("{base} ▲")
-    } else {
-        base
+/// `label` with the mark a provider carries while its status page flags
+/// something, so the signal does not rest on the colour alone.
+fn with_incident_mark(label: String, incident: Option<&crate::incident::IncidentBanner>) -> String {
+    match incident {
+        Some(_) => format!("{label} ▲"),
+        None => label,
     }
 }
 
@@ -285,9 +270,11 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
         // The tab's own status stays: during an incident is exactly when
         // "error" and "refreshing" matter, and the mark and colour already
         // carry the incident.
-        ListItem::new(tab_label_with_incident(tab, app.tab_incident(index))).description(
-            tab_status(app.tabs.get(index), app.tab_is_refreshing(index)),
-        )
+        let label = with_incident_mark(tab_label(tab), app.tab_incident(index));
+        ListItem::new(label).description(tab_status(
+            app.tabs.get(index),
+            app.tab_is_refreshing(index),
+        ))
     }));
     let mut list = SelectList::new(items).theme(theme);
     list.select(Some(if app.overview { 0 } else { app.active + 1 }));
@@ -312,7 +299,7 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
         }
         if let Some(inc) = app.tab_incident(index) {
             let fg = incident_fg(&app.theme, &theme, inc);
-            let label = tab_label_with_incident(tab, Some(inc));
+            let label = with_incident_mark(tab_label(tab), Some(inc));
             let label_cols = (crate::display::text_width(&label) as u16).saturating_add(2);
             let max_x = inner.x.saturating_add(inner.width.min(label_cols));
             let buf = f.buffer_mut();
@@ -354,7 +341,7 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
         let inc = app.tab_incident(index);
         entries.push((
             NavTarget::Tab(index),
-            compact_tab_label_with_incident(tab, inc),
+            with_incident_mark(compact_tab_label(tab), inc),
             selected,
             inc,
         ));
@@ -406,7 +393,7 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         app.active_tab_id()
             .map(|tab| {
                 let refreshing = if app.is_refreshing(tab) { " ↻" } else { "" };
-                let label = tab_label_with_incident(tab, app.tab_incident(app.active));
+                let label = with_incident_mark(tab_label(tab), app.tab_incident(app.active));
                 format!(" {label}{refreshing} ")
             })
             .unwrap_or_else(|| " details ".to_string())
@@ -431,12 +418,13 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
             .constraints([Constraint::Length(2), Constraint::Min(1)])
             .split(inner);
         let fg = incident_fg(&app.theme, &theme, inc);
+        // The status page's own words: sanitized here, where they are drawn,
+        // whoever built the banner.
+        let title = crate::display::sanitize_untrusted_line(&inc.title);
+        let url = crate::display::sanitize_untrusted_line(&inc.url);
         let banner = Line::from(vec![
-            Span::styled(
-                format!("  ▲ Incident: {}", inc.title),
-                Style::default().fg(fg),
-            ),
-            theme.muted(format!(" ({})", inc.url)),
+            Span::styled(format!("  ▲ Incident: {title}"), Style::default().fg(fg)),
+            theme.muted(format!(" ({url})")),
         ]);
         f.render_widget(Paragraph::new(banner), chunks[0]);
         chunks[1]
@@ -467,8 +455,8 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     let name_w = idxs
         .iter()
         .map(|&i| {
-            crate::display::text_width(&tab_label_with_incident(
-                &app.tabs_meta[i],
+            crate::display::text_width(&with_incident_mark(
+                tab_label(&app.tabs_meta[i]),
                 app.tab_incident(i),
             ))
         })
@@ -479,7 +467,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     for &i in &idxs {
         let inc = app.tab_incident(i);
-        let name = tab_label_with_incident(&app.tabs_meta[i], inc);
+        let name = with_incident_mark(tab_label(&app.tabs_meta[i]), inc);
         let pad = name_w.saturating_sub(crate::display::text_width(&name));
         let name_style = match inc {
             Some(incident) => theme.text.fg(incident_fg(&app.theme, &theme, incident)),

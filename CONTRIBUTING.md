@@ -20,8 +20,9 @@ cargo machete                               # no unused dependencies
 contract tests, and a change to the report shape can break them without
 touching Rust. It also asks the providers' live status pages whether the
 components the status mark matches by name still exist (`make
-status-pages-test`), so it needs network access; plain `cargo test` stays
-offline.
+status-pages-test`). That step fails only when a page answers 200 without one
+of those names; with no network it prints which pages it could not check and
+passes. Plain `cargo test` stays offline.
 
 ## Checklist
 

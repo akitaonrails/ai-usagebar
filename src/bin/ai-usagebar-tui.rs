@@ -202,6 +202,14 @@ fn config_stamp() -> Option<ConfigStamp> {
     })
 }
 
+/// What a background tab refresh reports, each tagged with the tab generation
+/// it was started for. The usage reading and the provider's status page are
+/// separate requests and report separately, so neither waits for the other.
+enum RefreshEvent {
+    State(u64, TabId, TabState),
+    Incident(u64, TabId, Option<ai_usagebar::incident::IncidentBanner>),
+}
+
 /// Re-read `config.toml` into `config` and rebuild everything the TUI derives
 /// from it — the tab set (vendor + `[[anthropic.accounts]]` changes), the
 /// overview vendor list, the context toggle — then re-fetch every tab. Returns
@@ -212,14 +220,6 @@ fn config_stamp() -> Option<ConfigStamp> {
 /// after an explicit Settings save, but not on a background file-watch reload,
 /// where `set_tabs` already clamps the current tab and yanking the user away
 /// from where they were browsing would be rude.
-/// What a background tab refresh reports, each tagged with the tab generation
-/// it was started for. The usage reading and the provider's status page are
-/// separate requests and report separately, so neither waits for the other.
-enum RefreshEvent {
-    State(u64, TabId, TabState),
-    Incident(u64, TabId, Option<ai_usagebar::incident::IncidentBanner>),
-}
-
 fn reload_config(
     app: &mut App,
     config: &mut Config,

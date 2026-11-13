@@ -2902,4 +2902,14 @@ console.log('ok');
     ['degraded_performance', 'partial_outage', 'major_outage', 'under_maintenance'].map((severity) => incidentTone({ severity })),
     ['text-meter-yellow', 'text-notice', 'text-meter-red', 'text-meter-blue'],
   );
+  // ASSERT: a name every object inherits is not a status: it reads as the mildest, like any unknown one.
+  assert.equal(incidentTone({ severity: 'constructor' }), 'text-meter-yellow');
+  const incidentOf = (incident) => parseHostPayload(JSON.stringify({
+    entries: [{ id: 'anthropic', display_name: 'Claude', status: 'ready', incident, sections: [] }],
+  })).entries[0].incident;
+  assert.equal(incidentOf({ severity: 'constructor', title: 'x', url: '' }).severity, 'degraded_performance');
+  // ASSERT: a link past the limit is dropped whole, never cut to a different address.
+  const longLink = `https://stspg.io/${'a'.repeat(300)}`;
+  assert.equal(incidentOf({ severity: 'major_outage', title: 'x', url: longLink }).url, '');
+  assert.equal(incidentOf({ severity: 'major_outage', title: 'x', url: 'https://stspg.io/abc' }).url, 'https://stspg.io/abc');
 }

@@ -106,7 +106,8 @@ can break them without touching Rust.
 
 | Target | What it runs |
 |---|---|
-| `make test` | `cargo test` + `desktop-test` + `plugin-test` |
+| `make test` | `cargo test` + `status-pages-test` + `desktop-test` + `plugin-test` |
+| `make status-pages-test` | `status_page_components_live`: the component names the status mark matches, against the live status pages |
 | `make desktop-test` | GNOME, KDE, Windows popover `.test.mjs` |
 | `make plugin-test` | Omarchy `model.test.mjs` |
 | `make smoke` | `cargo test --test live -- --ignored --nocapture` |
@@ -114,9 +115,11 @@ can break them without touching Rust.
 | `make fmt` | `cargo fmt` |
 
 Live smoke tests need credentials in the environment (`OLLAMA_API_KEY`,
-`ZAI_API_KEY`, …). Tests marked `#[ignore]` never run in `make test`. A
-`#[test]` must not read a real `$HOME` / `$XDG` path — the AUR package runs
-`cargo test` during install.
+`ZAI_API_KEY`, …). Tests marked `#[ignore]` never run in `make test`, with
+one exception: `status_page_components_live`, which needs no credentials and
+is skipped page by page when a status page does not answer. A `#[test]` must
+not read a real `$HOME` / `$XDG` path — the AUR package runs `cargo test`
+during install.
 
 ```bash
 # One live vendor

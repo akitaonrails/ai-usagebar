@@ -68,11 +68,14 @@ test:
 # The provider status mark matches status-page components by exact name, so a
 # renamed component stops marking its provider without any error. This asks the
 # live pages (no credentials) and fails naming what is gone; a page that does
-# not answer 200 is reported and skipped. It is `#[ignore]`d
-# for plain `cargo test`, which must stay offline: the AUR package runs it.
+# not answer 200 is reported and skipped, so offline it passes having checked
+# nothing. `--nocapture` is what makes that visible: without it a passing run
+# prints neither the pages it checked nor the ones it skipped. It is
+# `#[ignore]`d for plain `cargo test`, which must stay offline: the AUR
+# package runs it.
 .PHONY: status-pages-test
 status-pages-test:
-	cargo test --test live status_page_components_live -- --ignored
+	cargo test --test live status_page_components_live -- --ignored --nocapture
 
 .PHONY: macos-package-test
 macos-package-test:
