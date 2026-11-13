@@ -138,7 +138,9 @@ pages lists far more than one product, and a neighbour's trouble (claude.ai,
 Cowork, GitHub Actions) does not colour the provider. A component renamed by
 its page stops matching and the mark silently goes away, which is the safe
 direction; `make test` and CI run `status_page_components_live`, which checks every name
-against the live pages and fails naming the one that is gone. An open incident counts when it affects one of those components; an
+against the live pages and fails naming the one that is gone. It fails only
+when a page answers 200 without a name; a page that is down or unreachable is
+reported and skipped. An open incident counts when it affects one of those components; an
 incident that names no component counts only when its title names the product.
 
 The mark follows the status the page shows for the component, in Statuspage's

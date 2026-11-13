@@ -67,7 +67,8 @@ test:
 
 # The provider status mark matches status-page components by exact name, so a
 # renamed component stops marking its provider without any error. This asks the
-# live pages (no credentials) and fails naming what is gone. It is `#[ignore]`d
+# live pages (no credentials) and fails naming what is gone; a page that does
+# not answer 200 is reported and skipped. It is `#[ignore]`d
 # for plain `cargo test`, which must stay offline: the AUR package runs it.
 .PHONY: status-pages-test
 status-pages-test:
