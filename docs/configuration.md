@@ -100,6 +100,9 @@ api_key_env = "ZAI_API_KEY"
 # account). It is checked after ZAI_API_KEY and the inline api_key:
 #   [keychain]
 #   zai = "MyZaiKey"
+# Create the item with `security add-generic-password -a "$USER" -s MyZaiKey -w`.
+# It is read by service name and by the account "$USER". The service name
+# is stored in this file in plaintext; only the key stays in the Keychain.
 # The popover's Add Key dialog accepts the same reference: type
 # kc:MyZaiKey in the field and an accepted check writes the entry.
 # plan_tier = "lite"       # lite | pro | max — display-only

@@ -89,8 +89,8 @@ pub struct Config {
     /// `"vendor.label"` for a named `[[vendor.accounts]]` entry) → the
     /// *service name* of a login-Keychain generic-password item the user
     /// created. Consulted only after the env var and the inline `api_key`
-    /// missed, so it never masks either. Off macOS the lookup is always
-    /// `None` and the entries are inert.
+    /// missed, so it never masks either. Off macOS the entries are validated,
+    /// but they are never read and do not count as a configured credential.
     #[serde(default)]
     pub keychain: std::collections::BTreeMap<String, String>,
 }
@@ -3093,7 +3093,14 @@ impl Config {
     /// label for a vendor without the array fails loudly rather than falling
     /// back to the default key, which would show the wrong account's usage.
     pub fn resolve_account_api_key_for(&self, id: VendorId, label: Option<&str>) -> Result<String> {
-        self.resolve_account_api_key_for_with(id, label, &keychain_api_key)
+        // Off macOS there is no Keychain to ask, so a `[keychain]` entry
+        // changes nothing and the usual missing-key error is returned.
+        let lookup: Option<&KeychainLookup> = if crate::keychain::SUPPORTED {
+            Some(&crate::keychain::read_generic_password)
+        } else {
+            None
+        };
+        self.resolve_account_api_key_for_with(id, label, lookup)
     }
 
     /// [`Self::resolve_account_api_key_for`] with the Keychain lookup
@@ -3103,7 +3110,7 @@ impl Config {
         &self,
         id: VendorId,
         label: Option<&str>,
-        keychain: &dyn Fn(&str) -> Option<String>,
+        keychain: Option<&KeychainLookup>,
     ) -> Result<String> {
         // The missing-key error predates `display_name()`; Z.AI's always said
         // "Zai", and its section is derived from this spelling.
@@ -3114,15 +3121,10 @@ impl Config {
             other => other.display_name(),
         };
         let Some(label) = label else {
-            let resolved = resolve_api_key(name, self.api_key_env_for(id), self.inline_api_key(id));
-            return match resolved {
-                Ok(key) => Ok(key),
+            return resolve_api_key(name, self.api_key_env_for(id), self.inline_api_key(id))
                 // Env and inline both missed: the `[keychain]` table's entry
                 // for this vendor's default account is the last source.
-                Err(error) => self
-                    .keychain_api_key(id.config_section(), keychain)
-                    .ok_or(error),
-            };
+                .or_else(|error| self.keychain_api_key(id.config_section(), keychain, error));
         };
         let slug = id.config_section();
         let account = api_key_account(slug, self.api_key_accounts(id).unwrap_or(&[]), label)?;
@@ -3137,16 +3139,15 @@ impl Config {
             // Same last-resort tier for the named account, keyed
             // `"vendor.label"` so it can never resolve another account's —
             // or the default's — key (the issues #14/#15 rule).
-            self.keychain_api_key(&format!("{slug}.{label}"), keychain)
-                .ok_or(error)
+            self.keychain_api_key(&format!("{slug}.{label}"), keychain, error)
         })
     }
 
     /// The `[keychain]` service-name entry for a vendor's default account
     /// (`label = None`, keyed `<section>`) or a named account (keyed
-    /// `<section>.<label>`), if configured. Declaration only — no Keychain
-    /// read, so the catalog can treat a configured entry as a present
-    /// credential without spawning `security` at frontend start.
+    /// `<section>.<label>`), if configured. This only looks at the config
+    /// and reads no Keychain item, so the catalog can count a configured
+    /// entry without spawning `security` at frontend start.
     pub fn keychain_entry(&self, id: VendorId, label: Option<&str>) -> Option<&str> {
         let section = id.config_section();
         match label {
@@ -3156,17 +3157,34 @@ impl Config {
         .map(String::as_str)
     }
 
-    /// The `[keychain]` lookup for `key` (`<slug>` or `<slug>.<label>`):
-    /// the mapped service name, read from the login Keychain when the entry
-    /// exists. The service name is user-chosen config, not a secret, but the
-    /// *value* it fetches never leaves this function's return.
+    /// The `[keychain]` tier for `key` (`<slug>` or `<slug>.<label>`).
+    ///
+    /// When no entry is declared, or this platform has no Keychain (`lookup`
+    /// is `None`), the caller's `missing` error is returned unchanged, so
+    /// users who did not opt in see what they always saw. A declared entry
+    /// gets a Keychain error in every failing case, because `missing` says
+    /// "export ZAI_API_KEY" and never mentions the table the user
+    /// configured. If the item is absent, the error names the service and
+    /// the command that creates it. A locked Keychain or a denied ACL
+    /// returns the lookup's error as is.
     fn keychain_api_key(
         &self,
         key: &str,
-        lookup: &dyn Fn(&str) -> Option<String>,
-    ) -> Option<String> {
-        let service = self.keychain.get(key)?;
-        lookup(service).filter(|key| !key.is_empty())
+        lookup: Option<&KeychainLookup>,
+        missing: AppError,
+    ) -> Result<String> {
+        let (Some(service), Some(lookup)) = (self.keychain.get(key), lookup) else {
+            return Err(missing);
+        };
+        match lookup(service)? {
+            Some(value) if !value.is_empty() => Ok(value),
+            _ => Err(AppError::Credentials(format!(
+                "[keychain] {key} names the Keychain item {service:?}, but the login \
+                 Keychain has no generic-password item with that service for account \
+                 $USER. Create it with `security add-generic-password -a \"$USER\" -s \
+                 <service> -w`, or correct the name in config.toml."
+            ))),
+        }
     }
 
     /// The optional OpenRouter *management* key for the default or a named
@@ -3245,9 +3263,9 @@ impl Config {
     /// would make either destination ambiguous.
     pub fn validate(&self) -> Result<()> {
         for (key, service) in &self.keychain {
-            if service.trim().is_empty() {
+            if let Err(reason) = crate::keychain::validate_service_name(service) {
                 return Err(AppError::Other(format!(
-                    "[keychain] {key:?} must name a Keychain service name, not an empty string"
+                    "[keychain] {key:?}: the Keychain service name {reason}"
                 )));
             }
             let (section, label) = match key.split_once('.') {
@@ -3258,9 +3276,14 @@ impl Config {
                 .into_iter()
                 .find(|id| id.config_section() == section)
             else {
+                let served: Vec<&str> = Self::KEYCHAIN_VENDORS
+                    .iter()
+                    .map(|id| id.config_section())
+                    .collect();
                 return Err(AppError::Other(format!(
                     "[keychain] {key:?}: {section:?} is not a vendor section this table \
-                     serves, so the entry would never be read"
+                     serves, so the entry would never be read (it serves: {})",
+                    served.join(", ")
                 )));
             };
             if let Some(label) = label
@@ -3473,13 +3496,11 @@ impl Config {
     }
 }
 
-/// The production `[keychain]` lookup: the login-Keychain generic-password
-/// item named by the config entry. `None` off macOS and for every failure
-/// (item absent, Keychain locked, access denied), so the caller keeps its
-/// own actionable "no API key" error.
-fn keychain_api_key(service: &str) -> Option<String> {
-    crate::keychain::read_generic_password(service)
-}
+/// The `[keychain]` reader, passed in so tests never touch a real Keychain.
+/// It takes a service name and returns the item's value, `Ok(None)` when no
+/// such item exists, or `Err` when the Keychain could not answer.
+/// Production uses [`crate::keychain::read_generic_password`].
+pub(crate) type KeychainLookup = dyn Fn(&str) -> Result<Option<String>>;
 
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7614,19 +7635,22 @@ enabled = true
         cfg.zai.api_key_env = var.to_string();
         cfg.keychain.insert("zai".into(), "MyZaiKey".into());
 
-        let lookup = |service: &str| (service == "MyZaiKey").then(|| "kc-key".to_string());
+        let lookup = |service: &str| Ok((service == "MyZaiKey").then(|| "kc-key".to_string()));
 
         // Neither env nor inline: the Keychain entry resolves.
         assert_eq!(
-            cfg.resolve_account_api_key_for_with(VendorId::Zai, None, &lookup)
+            cfg.resolve_account_api_key_for_with(VendorId::Zai, None, Some(&lookup))
                 .unwrap(),
             "kc-key"
         );
 
-        // Inline beats the Keychain.
+        // Inline wins, and the Keychain is not read at all in that case.
+        let unreachable = |_: &str| -> Result<Option<String>> {
+            panic!("the Keychain must not be read when env or inline resolved")
+        };
         cfg.zai.api_key = Some("inline-key".into());
         assert_eq!(
-            cfg.resolve_account_api_key_for_with(VendorId::Zai, None, &lookup)
+            cfg.resolve_account_api_key_for_with(VendorId::Zai, None, Some(&unreachable))
                 .unwrap(),
             "inline-key"
         );
@@ -7634,15 +7658,45 @@ enabled = true
         // Env beats both.
         unsafe { std::env::set_var(var, "env-key") };
         assert_eq!(
-            cfg.resolve_account_api_key_for_with(VendorId::Zai, None, &lookup)
+            cfg.resolve_account_api_key_for_with(VendorId::Zai, None, Some(&unreachable))
                 .unwrap(),
             "env-key"
         );
         unsafe { std::env::remove_var(var) };
     }
 
+    /// With no entry, or on a platform without a Keychain, the error text is
+    /// identical to what it was before the `[keychain]` table existed.
     #[test]
-    fn keychain_tier_failure_keeps_the_historic_error() {
+    fn keychain_tier_is_inert_without_an_entry_or_a_keychain() {
+        let _g = env_guard();
+        let var = "AI_USAGEBAR_TEST_KEYCHAIN_INERT";
+        unsafe { std::env::remove_var(var) };
+        let mut cfg = Config::default();
+        cfg.zai.api_key_env = var.to_string();
+        let expected = resolve_api_key("Zai", var, None).unwrap_err().to_string();
+        let unreachable = |_: &str| -> Result<Option<String>> {
+            panic!("no entry is declared, so nothing may be read")
+        };
+
+        let err = cfg
+            .resolve_account_api_key_for_with(VendorId::Zai, None, Some(&unreachable))
+            .unwrap_err();
+        assert_eq!(err.to_string(), expected);
+
+        // Declared, but off macOS (no lookup): still the historical error.
+        cfg.keychain.insert("zai".into(), "MyZaiKey".into());
+        let err = cfg
+            .resolve_account_api_key_for_with(VendorId::Zai, None, None)
+            .unwrap_err();
+        assert_eq!(err.to_string(), expected);
+    }
+
+    /// A declared entry never falls back to "export ZAI_API_KEY". A missing
+    /// item names the service and the command that creates it, and a locked
+    /// or denied Keychain returns the lookup's error.
+    #[test]
+    fn keychain_tier_failures_name_the_keychain_not_the_env_var() {
         let _g = env_guard();
         let var = "AI_USAGEBAR_TEST_KEYCHAIN_MISSING";
         unsafe { std::env::remove_var(var) };
@@ -7651,11 +7705,22 @@ enabled = true
         cfg.keychain.insert("zai".into(), "MyZaiKey".into());
 
         let err = cfg
-            .resolve_account_api_key_for_with(VendorId::Zai, None, &|_| None)
+            .resolve_account_api_key_for_with(VendorId::Zai, None, Some(&|_| Ok(None)))
             .unwrap_err();
-        // Same wording the env/inline path always produced; no Keychain talk.
-        let expected = resolve_api_key("Zai", var, None).unwrap_err();
-        assert_eq!(err.to_string(), expected.to_string());
+        assert!(matches!(err, AppError::Credentials(_)), "{err}");
+        let text = err.to_string();
+        assert!(text.contains("\"MyZaiKey\""), "{text}");
+        assert!(text.contains("security add-generic-password"), "{text}");
+        assert!(!text.contains(var), "{text}");
+
+        let err = cfg
+            .resolve_account_api_key_for_with(
+                VendorId::Zai,
+                None,
+                Some(&|_| Err(AppError::Credentials("Keychain is locked".into()))),
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("Keychain is locked"), "{err}");
     }
 
     #[test]
@@ -7674,9 +7739,11 @@ enabled = true
 
         // Its own entry, never the default account's (issues #14/#15 rule).
         assert_eq!(
-            cfg.resolve_account_api_key_for_with(VendorId::Zai, Some("work"), &|s| {
-                (s == "WorkZaiKey").then(|| "work-key".to_string())
-            })
+            cfg.resolve_account_api_key_for_with(
+                VendorId::Zai,
+                Some("work"),
+                Some(&|s| Ok((s == "WorkZaiKey").then(|| "work-key".to_string())))
+            )
             .unwrap(),
             "work-key"
         );
@@ -7685,9 +7752,11 @@ enabled = true
         // through to the default account's Keychain key.
         cfg.keychain.remove("zai.work");
         let err = cfg
-            .resolve_account_api_key_for_with(VendorId::Zai, Some("work"), &|_| {
-                Some("default-key".to_string())
-            })
+            .resolve_account_api_key_for_with(
+                VendorId::Zai,
+                Some("work"),
+                Some(&|_| Ok(Some("default-key".to_string()))),
+            )
             .unwrap_err();
         assert!(err.to_string().contains("account \"work\""), "{}", err);
     }
@@ -7704,10 +7773,13 @@ enabled = true
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("labeled \"ghost\""), "{}", err);
 
-        let mut cfg = Config::default();
-        cfg.keychain.insert("zai".into(), "  ".into());
-        let err = cfg.validate().unwrap_err();
-        assert!(err.to_string().contains("service name"), "{}", err);
+        // These are the names the Add Key dialog refuses too.
+        for bad in ["  ", " Svc", "Svc\n", "S\u{1b}vc"] {
+            let mut cfg = Config::default();
+            cfg.keychain.insert("zai".into(), bad.into());
+            let err = cfg.validate().unwrap_err();
+            assert!(err.to_string().contains("service name"), "{}", err);
+        }
 
         // A valid default entry and a valid named one both pass.
         let mut cfg = Config::default();

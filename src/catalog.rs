@@ -159,16 +159,18 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
     }) {
         return true;
     }
-    // A declared `[keychain]` entry is an explicit credential source: treat
-    // it as present *without* reading the item — a read spawns `security`,
-    // and this runs at every frontend start. A missing item surfaces later
-    // as the fetch's own actionable "no API key" error.
-    if cfg.keychain_entry(id, None).is_some()
-        || cfg.api_key_accounts(id).is_some_and(|accounts| {
-            accounts
-                .iter()
-                .any(|account| cfg.keychain_entry(id, Some(&account.label)).is_some())
-        })
+    // On macOS a declared `[keychain]` entry counts as a credential. The item
+    // is deliberately left unread here, because a read spawns `security` and
+    // this runs at every frontend start. If the item is missing, the Keychain
+    // is locked or access is denied, the fetch reports an error that names
+    // the service. Off macOS the entry is never read, so it does not count.
+    if crate::keychain::SUPPORTED
+        && (cfg.keychain_entry(id, None).is_some()
+            || cfg.api_key_accounts(id).is_some_and(|accounts| {
+                accounts
+                    .iter()
+                    .any(|account| cfg.keychain_entry(id, Some(&account.label)).is_some())
+            }))
     {
         return true;
     }

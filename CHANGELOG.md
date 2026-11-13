@@ -3,14 +3,23 @@
 ### Added
 
 - API keys can now come from the macOS login Keychain. A top-level
-  `[keychain]` table maps any API-key vendor (or a named `"vendor.label"`
-  account) to the service name of a login-Keychain generic-password item.
-  Reads go through `security(1)`, never Security.framework, so the item's
-  ACL stays its creator's. The Keychain entry is the last source, after the
-  env var and any inline `api_key`, so it masks neither. The popover's Add
-  Key dialog accepts the same reference: type `kc:` followed by the item's
-  name (macOS hint icon beside the storage note) and an accepted check
-  saves the `[keychain]` entry for you. Off macOS the entries are ignored.
+  `[keychain]` table maps a vendor (or a named `"vendor.label"` account) to
+  the service name of a login-Keychain generic-password item. It serves the
+  vendors that share the account-aware key resolution: `anthropic_api`,
+  `zai`, `openrouter`, `deepseek`, `deepinfra`, `kilo`, `novita`, `moonshot`,
+  `grok`, `minimax`, `orcarouter`, `lyceum`, `synthetic`, `deeprelay` and
+  `mistral`. An entry for any other section is a config error. The item is
+  selected by service and by the account `$USER`, and the service name is
+  stored in config.toml in plaintext. Reads go through `security(1)`, never
+  Security.framework, so the item's ACL stays its creator's. The Keychain
+  entry is the last source, after the env var and any inline `api_key`, so
+  it masks neither. When an entry is declared and the item is missing, the
+  Keychain is locked or access is denied, the error names the Keychain item
+  instead of asking for an env var. The popover's Add Key dialog accepts the
+  same reference: type `kc:` followed by the item's name (macOS hint icon
+  beside the storage note) and an accepted check saves the `[keychain]`
+  entry for you. Off macOS an entry is validated but never read, and it
+  does not mark the vendor as configured.
 
 ## [1.51.0] — 2026-11-12
 

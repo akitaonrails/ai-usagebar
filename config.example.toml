@@ -9,8 +9,16 @@
 # the file: map a vendor (or a named account "vendor.label") to the service
 # name of a generic-password item you created, e.g.
 #   security add-generic-password -a "$USER" -s MyZaiKey -w
-# Checked only after the env var and any inline api_key miss. macOS only;
-# on other platforms the entries are ignored.
+# The item is looked up by that service name and by the account "$USER", so
+# create it with -a "$USER" as above. The service name is stored here in
+# plaintext; only the key stays in the Keychain. Checked only after the env
+# var and any inline api_key miss. If the entry is set and the item is
+# missing, locked or denied, the error names the Keychain item.
+# Served sections: anthropic_api, zai, openrouter, deepseek, deepinfra, kilo,
+# novita, moonshot, grok, minimax, orcarouter, lyceum, synthetic, deeprelay,
+# mistral. An entry for any other section is a config error.
+# macOS only. On other platforms an entry is validated but never read, and
+# it does not mark the vendor as configured.
 [keychain]
 # zai = "MyZaiKey"
 # "openrouter.work" = "MyWorkKey"

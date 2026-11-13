@@ -331,10 +331,22 @@ fn clean_vendor_diagnostic(slug: &str, key: &str) {
 /// What the dialog's field held: a pasted key, or the `kc:<service>` form
 /// naming a login-Keychain generic-password item for the `[keychain]` table.
 /// Parsed here — the host owns the write, so it owns what the value means.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum KeyCandidate {
     Inline(String),
     Keychain(String),
+}
+
+/// Written by hand so a pasted key cannot end up in a log line or in the
+/// output of a failed assertion. The Keychain service name is already
+/// plaintext in config.toml, so it is printed.
+impl std::fmt::Debug for KeyCandidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeyCandidate::Inline(_) => f.write_str("Inline(<redacted>)"),
+            KeyCandidate::Keychain(service) => f.debug_tuple("Keychain").field(service).finish(),
+        }
+    }
 }
 
 /// Split the dialog's raw value into a candidate. `kc:` names a Keychain

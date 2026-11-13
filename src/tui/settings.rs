@@ -1066,29 +1066,17 @@ pub(crate) fn restore_inline_key_snapshot(
 pub(crate) const KEYCHAIN_ALREADY_SAVED_MESSAGE: &str =
     "A Keychain item is already referenced in config.toml; edit the [keychain] table to change it.";
 
-/// Validate a Keychain service name the dialog's `kc:` form carries. Same
-/// rules as [`reject_invalid_key`] minus the secret framing: a name, not a
-/// key, so the messages say so.
+/// Validate a Keychain service name the dialog's `kc:` form carries. It
+/// applies [`crate::keychain::validate_service_name`], the same rules
+/// `Config::validate` applies to the saved entry, so the dialog cannot write
+/// a name that the next config load refuses.
 pub(crate) fn validate_keychain_service(vendor: &KeyVendor, service: &str) -> Result<()> {
-    if service.trim().is_empty() {
-        return Err(AppError::Other(format!(
-            "Keychain item name for {:?} is empty; name one after kc:, e.g. kc:MyKey",
+    crate::keychain::validate_service_name(service).map_err(|reason| {
+        AppError::Other(format!(
+            "Keychain item name for {:?} {reason}; name the item after kc:, e.g. kc:MyKey",
             vendor.id.slug()
-        )));
-    }
-    if service.len() > MAX_API_KEY_BYTES {
-        return Err(AppError::Other(format!(
-            "Keychain item name for {:?} exceeds {MAX_API_KEY_BYTES} bytes",
-            vendor.id.slug()
-        )));
-    }
-    if service.chars().any(char::is_control) {
-        return Err(AppError::Other(format!(
-            "Keychain item name for {:?} contains control characters",
-            vendor.id.slug()
-        )));
-    }
-    Ok(())
+        ))
+    })
 }
 
 /// The `[keychain]` state the `kc:` check must be able to give back: whether
