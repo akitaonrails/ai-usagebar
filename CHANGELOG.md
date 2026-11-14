@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Custom providers (`[[custom]]`):** redact API keys in `.last_error`,
+  `usage.json`, and surfaced error messages, and strip URLs carrying query
+  tokens from `reqwest` request errors (#631).
+
 ## [1.52.0] — 2026-11-13
 
 ### Fixed
