@@ -676,6 +676,23 @@ fn api_key_and_cache(
 // The key-based vendors' fetch wrap is `crate::outcome::fetch_api_keyed`,
 // shared with the widget/CLI; the cache side is attached by `api_key_and_cache`.
 
+/// Fetch a `[[custom]]` provider with its API key attached to both the cache
+/// and the bubbling error path, matching built-in key-based vendors.
+async fn fetch_custom_outcome(
+    client: &Client,
+    spec: &CustomProviderConfig,
+    api_key: &str,
+    cache: crate::cache::Cache,
+) -> Result<VendorOutcome> {
+    let cache = cache.redacting(api_key);
+    let outcome = fetch_api_keyed(
+        crate::custom::fetch_snapshot(client, spec, api_key, &cache, spec.cache_ttl()),
+        api_key,
+    )
+    .await?;
+    Ok(outcome.into())
+}
+
 async fn build_outcome(
     client: &Client,
     config: &Config,
@@ -692,10 +709,7 @@ async fn build_outcome(
             })?;
             let api_key = spec.resolve_api_key()?;
             let cache = crate::cache::Cache::for_vendor_account("custom", id)?;
-            let outcome =
-                crate::custom::fetch_snapshot(client, spec, &api_key, &cache, spec.cache_ttl())
-                    .await?;
-            return Ok(outcome.into());
+            return fetch_custom_outcome(client, spec, &api_key, cache).await;
         }
     };
     // The built-in vendors share one TTL; a wire-only read (the key check)
@@ -2208,5 +2222,121 @@ mod tests {
             refresh_stagger(&tabs, step),
             vec![Duration::ZERO, Duration::ZERO, step]
         );
+    }
+
+    fn custom_fetch_spec(url: String) -> CustomProviderConfig {
+        CustomProviderConfig {
+            id: "mytool".into(),
+            name: "My Tool".into(),
+            short_name: "myt".into(),
+            enabled: true,
+            url,
+            allow_http: true,
+            plan_path: Some("/plan".into()),
+            metrics: vec![crate::config::CustomMetricSpec {
+                label: "Requests".into(),
+                used: Some("/requests/used".into()),
+                limit: Some("/requests/limit".into()),
+                ..crate::config::CustomMetricSpec::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_error_quoting_api_key_is_redacted_in_cache_and_error() {
+        use crate::cache::Cache;
+
+        let key = "sk-custom-secret-987654";
+        let prefix = &key[..10];
+        let client = Client::new();
+
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/v1/usage")
+            .with_status(500)
+            .with_body(format!("rejected key {key}"))
+            .create_async()
+            .await;
+
+        let td = tempfile::TempDir::new().unwrap();
+        let c = Cache::at(td.path().join("custom").join("mytool"));
+        let error_path = c.last_error_path();
+        let spec = custom_fetch_spec(format!("{}/v1/usage", server.url()));
+        let err = fetch_custom_outcome(&client, &spec, key, c).await.unwrap_err();
+        let rendered = err.user_message();
+        assert!(!rendered.contains(key), "{rendered}");
+        assert!(rendered.contains("[key]"), "{rendered}");
+        let persisted = std::fs::read_to_string(&error_path).unwrap();
+        assert!(!persisted.contains(key), "{persisted}");
+        assert!(persisted.contains("[key]"), "{persisted}");
+
+        let mut ok_server = mockito::Server::new_async().await;
+        ok_server
+            .mock("GET", "/v1/usage")
+            .with_status(200)
+            .with_body(r#"{"plan":"Pro","requests":{"used":1,"limit":10}}"#)
+            .create_async()
+            .await;
+        let td2 = tempfile::TempDir::new().unwrap();
+        let dir = td2.path().join("custom").join("mytool");
+        let ok_spec = CustomProviderConfig {
+            cache_ttl_secs: 0,
+            ..custom_fetch_spec(format!("{}/v1/usage", ok_server.url()))
+        };
+        let c = Cache::at(dir.clone());
+        let warm = fetch_custom_outcome(&client, &ok_spec, key, c).await.unwrap();
+        assert!(!warm.stale);
+
+        let mut fail_server = mockito::Server::new_async().await;
+        fail_server
+            .mock("GET", "/v1/usage")
+            .with_status(500)
+            .with_body(format!("bad prefix {prefix}"))
+            .create_async()
+            .await;
+        let fail_spec = CustomProviderConfig {
+            cache_ttl_secs: 0,
+            ..custom_fetch_spec(format!("{}/v1/usage", fail_server.url()))
+        };
+        let c = Cache::at(dir.clone());
+        let stale = fetch_custom_outcome(&client, &fail_spec, key, c).await.unwrap();
+        let (_, warm_msg) = stale.last_error.expect("500 must record last_error");
+        assert!(!warm_msg.contains(&key[..8]), "{warm_msg}");
+        let warm_persisted = std::fs::read_to_string(dir.join(".last_error")).unwrap();
+        assert!(!warm_persisted.contains(&key[..8]), "{warm_persisted}");
+
+        let td3 = tempfile::TempDir::new().unwrap();
+        let c = Cache::at(td3.path().join("custom").join("mytool"));
+        let cold_error_path = c.last_error_path();
+        let cold_err = fetch_custom_outcome(&client, &fail_spec, key, c).await.unwrap_err();
+        let cold_rendered = cold_err.user_message();
+        assert!(!cold_rendered.contains(&key[..8]), "{cold_rendered}");
+        let cold_persisted = std::fs::read_to_string(&cold_error_path).unwrap();
+        assert!(!cold_persisted.contains(&key[..8]), "{cold_persisted}");
+    }
+
+    #[tokio::test]
+    async fn custom_success_quoting_api_key_is_redacted_in_cached_payload() {
+        use crate::cache::Cache;
+
+        let key = "sk-custom-secret-987654";
+        let body = format!(r#"{{"plan":"token {key}","requests":{{"used":1,"limit":10}}}}"#);
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/v1/usage")
+            .with_status(200)
+            .with_body(body)
+            .create_async()
+            .await;
+
+        let td = tempfile::TempDir::new().unwrap();
+        let c = Cache::at(td.path().join("custom").join("mytool"));
+        let payload_path = c.payload_path();
+        let spec = custom_fetch_spec(format!("{}/v1/usage", server.url()));
+        fetch_custom_outcome(&Client::new(), &spec, key, c).await.unwrap();
+        let persisted = std::fs::read_to_string(&payload_path).unwrap();
+        assert!(!persisted.contains(key), "{persisted}");
+        assert!(persisted.contains("[key]"), "{persisted}");
     }
 }
