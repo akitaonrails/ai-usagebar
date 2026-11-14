@@ -168,6 +168,22 @@ fn key_present(config: &Config, vendor: VendorId) -> bool {
                 )
                 .is_some()
             })
+        || keychain_entry_present(config, vendor)
+}
+
+/// On macOS, a declared `[keychain]` entry (for the vendor or one of its named
+/// accounts) counts as present without spawning `security(1)`, matching the
+/// provider catalog.
+fn keychain_entry_present(config: &Config, vendor: VendorId) -> bool {
+    if !crate::keychain::SUPPORTED || !Config::KEYCHAIN_VENDORS.contains(&vendor) {
+        return false;
+    }
+    config.keychain_entry(vendor, None).is_some()
+        || config.api_key_accounts(vendor).is_some_and(|accounts| {
+            accounts
+                .iter()
+                .any(|a| config.keychain_entry(vendor, Some(&a.label)).is_some())
+        })
 }
 
 /// The default Claude account exactly as the fetch resolves it: an explicit
