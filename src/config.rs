@@ -3458,9 +3458,10 @@ impl Config {
                     .api_key
                     .as_deref()
                     .is_some_and(|key| !key.is_empty());
-                if !has_env && !has_inline {
+                let has_keychain = self.keychain_entry(id, Some(&account.label)).is_some();
+                if !has_env && !has_inline && !has_keychain {
                     return Err(AppError::Credentials(format!(
-                        "{slug} account {:?} must set api_key_env or api_key",
+                        "{slug} account {:?} must set api_key_env or api_key (or [keychain])",
                         account.label
                     )));
                 }
