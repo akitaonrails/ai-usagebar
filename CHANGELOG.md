@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`detect` recognizes macOS `[keychain]` API-key entries.** Auto-detection
+  previously checked only environment variables and inline `api_key` settings,
+  leaving vendors configured solely through `[keychain]` unenabled until
+  `enabled = true` was set by hand (#629).
+
 ## [1.52.0] — 2026-11-13
 
 ### Fixed
