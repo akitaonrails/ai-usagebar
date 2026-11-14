@@ -651,10 +651,12 @@ fn run_key_check(
             return;
         }
     };
-    // Both candidate kinds carry one string the verdict's error may echo:
-    // the pasted key, or the service name the fetch's errors can name.
-    let reference = match &candidate {
-        KeyCandidate::Inline(value) | KeyCandidate::Keychain(value) => value.as_str(),
+    // Only a pasted inline secret needs scrubbing: a Keychain service name is
+    // already plaintext in config.toml and must stay intact in missing/locked
+    // Keychain errors (any secret read from Keychain is redacted downstream).
+    let secret = match &candidate {
+        KeyCandidate::Inline(value) => value.as_str(),
+        KeyCandidate::Keychain(_) => "",
     };
     // The verdict must rest on a reading made under the credential just
     // written: drop whatever the vendor's cache still holds from before
@@ -682,9 +684,9 @@ fn run_key_check(
         return;
     }
     let (state, mut error) = key_check_result(slug, fetch(slug));
-    // The candidate's last use: strip it out of the verdict before it is
-    // dropped.
-    error = scrub_key(&error, reference);
+    // The pasted secret's last use: strip it out of the verdict before it is
+    // dropped. An empty secret leaves Keychain service names untouched.
+    error = scrub_key(&error, secret);
     // A refusal gives the config back exactly the state the snapshot took
     // — only the fields that still hold what the check wrote; a restore
     // that fails itself says so, since the new credential stayed.
@@ -697,7 +699,7 @@ fn run_key_check(
     // removal fails, scrub the diagnostic in place. The scrub needs the
     // candidate, so this is its last use: it runs before the drop.
     if state == KeyCheckState::Failed {
-        (clean_diagnostic)(slug, reference);
+        (clean_diagnostic)(slug, secret);
     }
     drop(candidate);
     error = cut_key_check_error(&error);
@@ -2536,5 +2538,47 @@ mod tests {
         );
         // A short key has no eight-char window: exact replacement only.
         assert_eq!(scrub_key("short", "short"), "[key]");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn key_check_keychain_error_preserves_service_name() {
+        let guard = override_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "[zai]\nenabled = false\n";
+        std::fs::write(&path, original).unwrap();
+        crate::config::set_override_path(&path);
+
+        let facts = default_facts();
+        let cleaned = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cleaned_hook = std::sync::Arc::clone(&cleaned);
+        let expected = "Keychain item \"MyZaiKeyName\" not found; truncated MyZaiKey";
+        let handle = request_key_check_with(
+            &facts,
+            &key_check_value("zai", "kc:MyZaiKeyName", 1),
+            move |_| Err(expected.to_string()),
+            |_| Ok(()),
+            move |slug, secret| {
+                let entry = (slug.to_string(), secret.to_string());
+                cleaned_hook.lock().unwrap().push(entry);
+            },
+            |_| false,
+            || {},
+            || {},
+        )
+        .expect("spawn")
+        .unwrap();
+        handle.join().unwrap();
+
+        let fact = facts_snapshot(&facts)
+            .key_check
+            .expect("the verdict must be published");
+        assert_eq!(fact.state, KeyCheckState::Failed);
+        assert_eq!(fact.error, expected);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let expected_clean = vec![("zai".to_string(), String::new())];
+        assert_eq!(*cleaned.lock().unwrap(), expected_clean);
+        drop(guard);
     }
 }
