@@ -6,6 +6,22 @@
   `usage.json`, and surfaced error messages, and strip URLs carrying query
   tokens from `reqwest` request errors (#631).
 
+- **`detect` recognizes macOS `[keychain]` API-key entries.** Auto-detection
+  previously checked only environment variables and inline `api_key` settings,
+  leaving vendors configured solely through `[keychain]` unenabled until
+  `enabled = true` was set by hand (#629).
+
+- **Tray `kc:` key checks keep the Keychain service name in failed verdicts.**
+  `run_key_check` previously passed the Keychain service name to `scrub_key`,
+  turning missing or locked Keychain diagnostics (and their
+  `security add-generic-password` guidance) into `[key]` or a partial-echo
+  notice (#627).
+
+- **Keychain-backed named API-key accounts pass config validation.** Adding a
+  Keychain reference for a `[[<vendor>.accounts]]` entry without `api_key_env`
+  or an inline `api_key` previously failed `Config::validate()` because only
+  env and inline sources were checked (#625).
+
 ## [1.52.0] — 2026-11-13
 
 ### Fixed
