@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Tray `kc:` key checks keep the Keychain service name in failed verdicts.**
+  `run_key_check` previously passed the Keychain service name to `scrub_key`,
+  turning missing or locked Keychain diagnostics (and their
+  `security add-generic-password` guidance) into `[key]` or a partial-echo
+  notice (#627).
+
 ## [1.52.0] — 2026-11-13
 
 ### Fixed
