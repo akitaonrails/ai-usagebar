@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Keychain-backed named API-key accounts pass config validation.** Adding a
+  Keychain reference for a `[[<vendor>.accounts]]` entry without `api_key_env`
+  or an inline `api_key` previously failed `Config::validate()` because only
+  env and inline sources were checked (#625).
+
 ## [1.52.0] — 2026-11-13
 
 ### Fixed
