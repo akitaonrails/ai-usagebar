@@ -2539,4 +2539,46 @@ mod tests {
         // A short key has no eight-char window: exact replacement only.
         assert_eq!(scrub_key("short", "short"), "[key]");
     }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn key_check_keychain_error_preserves_service_name() {
+        let guard = override_guard();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "[zai]\nenabled = false\n";
+        std::fs::write(&path, original).unwrap();
+        crate::config::set_override_path(&path);
+
+        let facts = default_facts();
+        let cleaned = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cleaned_hook = std::sync::Arc::clone(&cleaned);
+        let expected = "Keychain item \"MyZaiKeyName\" not found; truncated MyZaiKey";
+        let handle = request_key_check_with(
+            &facts,
+            &key_check_value("zai", "kc:MyZaiKeyName", 1),
+            move |_| Err(expected.to_string()),
+            |_| Ok(()),
+            move |slug, secret| {
+                let entry = (slug.to_string(), secret.to_string());
+                cleaned_hook.lock().unwrap().push(entry);
+            },
+            |_| false,
+            || {},
+            || {},
+        )
+        .expect("spawn")
+        .unwrap();
+        handle.join().unwrap();
+
+        let fact = facts_snapshot(&facts)
+            .key_check
+            .expect("the verdict must be published");
+        assert_eq!(fact.state, KeyCheckState::Failed);
+        assert_eq!(fact.error, expected);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        let expected_clean = vec![("zai".to_string(), String::new())];
+        assert_eq!(*cleaned.lock().unwrap(), expected_clean);
+        drop(guard);
+    }
 }
