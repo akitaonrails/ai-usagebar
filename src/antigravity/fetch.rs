@@ -1359,17 +1359,21 @@ fn normalize_base(addr: &str) -> Option<String> {
 /// the `agy` CLI embeds the same CSRF/RPC surface in its own process — so
 /// matching on the server binary alone would miss a CLI-only install. `comm` is
 /// truncated to 15 bytes by the kernel, which `language_server` exactly fills.
+/// When `exe` is available, only its basename is checked: a directory name
+/// such as `antigravity-acp` can host non-product helpers (`agy_acp_server.par`,
+/// `localharness_external`) whose loopback listeners answer with a plain `401`
+/// that would otherwise mask the `agy` CLI and the saved-session fallback.
 fn is_antigravity_process(comm: &str, exe: Option<&str>) -> bool {
-    let comm = comm.trim().to_lowercase();
-    let comm = comm.strip_suffix(".exe").unwrap_or(&comm);
-    if comm.contains("language_server") || comm == "agy" || comm == "antigravity" {
+    let matches_name = |raw: &str| {
+        let name = raw.trim().to_lowercase();
+        let name = name.strip_suffix(".exe").unwrap_or(&name);
+        name.contains("language_server") || name == "agy" || name == "antigravity"
+    };
+    if matches_name(comm) {
         return true;
     }
-    exe.is_some_and(|p| {
-        let p = p.to_lowercase().replace('\\', "/");
-        let p = p.strip_suffix(".exe").unwrap_or(&p);
-        p.contains("antigravity") || p.ends_with("/agy")
-    })
+    exe.and_then(|p| p.rsplit(['/', '\\']).next())
+        .is_some_and(matches_name)
 }
 
 /// Flatten per-process listener ports into the order they should be probed,
@@ -2972,10 +2976,15 @@ mod tests {
             "agy\n",
             Some("/home/u/.local/bin/agy")
         ));
-        // Recognised by path even when the process name says nothing.
+        // Recognised by executable basename even when `comm` was renamed or
+        // truncated by a wrapper.
         assert!(is_antigravity_process(
             "node",
-            Some("/opt/antigravity/bin/helper")
+            Some("/opt/antigravity/bin/antigravity")
+        ));
+        assert!(is_antigravity_process(
+            "main",
+            Some("/opt/antigravity/resources/bin/language_server_linux_x64")
         ));
         assert!(is_antigravity_process("antigravity", None));
         assert!(is_antigravity_process("agy.exe", None));
@@ -3000,6 +3009,21 @@ mod tests {
         assert!(!is_antigravity_process("legacy.exe", None));
         assert!(!is_antigravity_process("not-agy.exe", None));
         assert!(!is_antigravity_process("", None));
+        // Helpers living inside an `antigravity-*` directory (such as the ACP
+        // harness binaries `agy_acp_server.par` and `localharness_external`)
+        // are not language servers and must not be probed via directory match.
+        assert!(!is_antigravity_process(
+            "agy_acp_server.",
+            Some("/home/u/.t3/tools/antigravity-acp/linux-x64/versions/abc/agy_acp_server.par")
+        ));
+        assert!(!is_antigravity_process(
+            "localharness_ex",
+            Some("/home/u/.t3/tools/antigravity-acp/linux-x64/versions/abc/localharness_external")
+        ));
+        assert!(!is_antigravity_process(
+            "node",
+            Some("/opt/antigravity/bin/helper")
+        ));
     }
 
     #[test]

@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Antigravity:** match local server discovery against the executable basename
+  rather than directory substrings in `/proc/<pid>/exe`, so helper processes
+  installed under `antigravity-*` paths (such as `agy_acp_server.par` and
+  `localharness_external` from `antigravity-acp`) are not probed as language
+  servers or treated as signed-out `401` rejections that block the `agy` CLI and
+  saved-session fallback.
+
 ## [1.52.1] — 2026-11-14
 
 ### Fixed
