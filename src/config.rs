@@ -5374,6 +5374,49 @@ api_key = "sk-ant-admin01-side"
     }
 
     #[test]
+    fn every_api_key_account_vendor_accepts_keychain_only_accounts() {
+        for vendor in Config::API_KEY_ACCOUNT_VENDORS {
+            let section = vendor.config_section();
+            let valid = write_toml(&format!(
+                "[{section}]\nenabled = true\n\
+                 [[{section}.accounts]]\nlabel = \"work\"\n\
+                 [keychain]\n\"{section}.work\" = \"WorkKey\"\n"
+            ));
+            let config = Config::load_from(valid.path()).unwrap();
+            let lookup = |service: &str| -> Result<Option<String>> {
+                assert_eq!(service, "WorkKey");
+                Ok(Some("kc-secret".into()))
+            };
+            let resolved = config
+                .resolve_account_api_key_for_with(vendor, Some("work"), Some(&lookup))
+                .unwrap();
+            assert_eq!(resolved, "kc-secret", "{vendor:?}");
+
+            // A default-slot Keychain entry must never satisfy a keyless named account.
+            let file = write_toml(&format!(
+                "[{section}]\nenabled = true\n\
+                 [[{section}.accounts]]\nlabel = \"work\"\n\
+                 [keychain]\n{section} = \"DefaultKey\"\n"
+            ));
+            let err = Config::load_from(file.path()).unwrap_err().to_string();
+            let has_msg = err.contains("must set api_key_env or api_key");
+            assert!(has_msg, "{err}");
+
+            // Having one Keychain-backed account must not mask another keyless account.
+            let file = write_toml(&format!(
+                "[{section}]\nenabled = true\n\
+                 [[{section}.accounts]]\nlabel = \"work\"\n\
+                 [[{section}.accounts]]\nlabel = \"personal\"\n\
+                 [keychain]\n\"{section}.work\" = \"WorkKey\"\n"
+            ));
+            let err = Config::load_from(file.path()).unwrap_err().to_string();
+            assert!(err.contains("\"personal\""), "{err}");
+            let has_msg = err.contains("must set api_key_env or api_key");
+            assert!(has_msg, "{err}");
+        }
+    }
+
+    #[test]
     fn named_api_key_accounts_resolve_their_own_key_and_never_the_default() {
         let mut config = Config::default();
         config.deepseek.api_key_env.clear();
