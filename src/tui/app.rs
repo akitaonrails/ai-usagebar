@@ -2263,7 +2263,9 @@ mod tests {
         let c = Cache::at(td.path().join("custom").join("mytool"));
         let error_path = c.last_error_path();
         let spec = custom_fetch_spec(format!("{}/v1/usage", server.url()));
-        let err = fetch_custom_outcome(&client, &spec, key, c).await.unwrap_err();
+        let err = fetch_custom_outcome(&client, &spec, key, c)
+            .await
+            .unwrap_err();
         let rendered = err.user_message();
         assert!(!rendered.contains(key), "{rendered}");
         assert!(rendered.contains("[key]"), "{rendered}");
@@ -2285,7 +2287,9 @@ mod tests {
             ..custom_fetch_spec(format!("{}/v1/usage", ok_server.url()))
         };
         let c = Cache::at(dir.clone());
-        let warm = fetch_custom_outcome(&client, &ok_spec, key, c).await.unwrap();
+        let warm = fetch_custom_outcome(&client, &ok_spec, key, c)
+            .await
+            .unwrap();
         assert!(!warm.stale);
 
         let mut fail_server = mockito::Server::new_async().await;
@@ -2300,7 +2304,9 @@ mod tests {
             ..custom_fetch_spec(format!("{}/v1/usage", fail_server.url()))
         };
         let c = Cache::at(dir.clone());
-        let stale = fetch_custom_outcome(&client, &fail_spec, key, c).await.unwrap();
+        let stale = fetch_custom_outcome(&client, &fail_spec, key, c)
+            .await
+            .unwrap();
         let (_, warm_msg) = stale.last_error.expect("500 must record last_error");
         assert!(!warm_msg.contains(&key[..8]), "{warm_msg}");
         let warm_persisted = std::fs::read_to_string(dir.join(".last_error")).unwrap();
@@ -2309,7 +2315,9 @@ mod tests {
         let td3 = tempfile::TempDir::new().unwrap();
         let c = Cache::at(td3.path().join("custom").join("mytool"));
         let cold_error_path = c.last_error_path();
-        let cold_err = fetch_custom_outcome(&client, &fail_spec, key, c).await.unwrap_err();
+        let cold_err = fetch_custom_outcome(&client, &fail_spec, key, c)
+            .await
+            .unwrap_err();
         let cold_rendered = cold_err.user_message();
         assert!(!cold_rendered.contains(&key[..8]), "{cold_rendered}");
         let cold_persisted = std::fs::read_to_string(&cold_error_path).unwrap();
@@ -2334,7 +2342,9 @@ mod tests {
         let c = Cache::at(td.path().join("custom").join("mytool"));
         let payload_path = c.payload_path();
         let spec = custom_fetch_spec(format!("{}/v1/usage", server.url()));
-        fetch_custom_outcome(&Client::new(), &spec, key, c).await.unwrap();
+        fetch_custom_outcome(&Client::new(), &spec, key, c)
+            .await
+            .unwrap();
         let persisted = std::fs::read_to_string(&payload_path).unwrap();
         assert!(!persisted.contains(key), "{persisted}");
         assert!(persisted.contains("[key]"), "{persisted}");
