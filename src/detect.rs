@@ -731,6 +731,41 @@ mod tests {
     }
 
     #[test]
+    fn keychain_entry_counts_as_a_credential_only_where_supported() {
+        // Empty `api_key_env`s keep the probe off the real environment.
+        let mut config = Config::default();
+        config.zai.api_key_env.clear();
+        config.openrouter.api_key_env.clear();
+        config.kilo.api_key_env.clear();
+        config.ollama.api_key_env.clear();
+
+        let expected = crate::keychain::SUPPORTED;
+        config.keychain.insert("zai".into(), "ZaiKey".into());
+        let has_zai = has_local_credentials(VendorId::Zai, &config);
+        assert_eq!(has_zai, expected);
+        assert!(!has_local_credentials(VendorId::Kilo, &config));
+
+        // Named-account entries require a matching [[<vendor>.accounts]] entry.
+        let or_key = "ORWorkKey";
+        config.keychain.insert("openrouter.work".into(), or_key.into());
+        let has_or = has_local_credentials(VendorId::Openrouter, &config);
+        assert!(!has_or);
+        config.openrouter.accounts.push(crate::config::ApiKeyAccount {
+            label: "work".into(),
+            api_key_env: None,
+            api_key: None,
+            management_api_key_env: None,
+            monthly_limit: None,
+        });
+        let has_or = has_local_credentials(VendorId::Openrouter, &config);
+        assert_eq!(has_or, expected);
+
+        // Non-KEYCHAIN_VENDORS never qualify through [keychain].
+        config.keychain.insert("ollama".into(), "OllamaKey".into());
+        assert!(!has_local_credentials(VendorId::Ollama, &config));
+    }
+
+    #[test]
     fn a_named_anthropic_account_alone_counts_as_a_credential() {
         let dir = TempDir::new().unwrap();
         let creds_file = dir.path().join("work.json");
