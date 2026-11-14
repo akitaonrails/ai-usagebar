@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.52.1] — 2026-11-14
+
 ### Fixed
 
 - **Custom providers (`[[custom]]`):** redact API keys in `.last_error`,
@@ -5537,7 +5539,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...HEAD
+[1.52.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...v1.52.1
 [1.52.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...v1.50.0
