@@ -747,16 +747,21 @@ mod tests {
 
         // Named-account entries require a matching [[<vendor>.accounts]] entry.
         let or_key = "ORWorkKey";
-        config.keychain.insert("openrouter.work".into(), or_key.into());
+        config
+            .keychain
+            .insert("openrouter.work".into(), or_key.into());
         let has_or = has_local_credentials(VendorId::Openrouter, &config);
         assert!(!has_or);
-        config.openrouter.accounts.push(crate::config::ApiKeyAccount {
-            label: "work".into(),
-            api_key_env: None,
-            api_key: None,
-            management_api_key_env: None,
-            monthly_limit: None,
-        });
+        config
+            .openrouter
+            .accounts
+            .push(crate::config::ApiKeyAccount {
+                label: "work".into(),
+                api_key_env: None,
+                api_key: None,
+                management_api_key_env: None,
+                monthly_limit: None,
+            });
         let has_or = has_local_credentials(VendorId::Openrouter, &config);
         assert_eq!(has_or, expected);
 
