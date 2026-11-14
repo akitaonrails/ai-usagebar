@@ -651,10 +651,12 @@ fn run_key_check(
             return;
         }
     };
-    // Both candidate kinds carry one string the verdict's error may echo:
-    // the pasted key, or the service name the fetch's errors can name.
-    let reference = match &candidate {
-        KeyCandidate::Inline(value) | KeyCandidate::Keychain(value) => value.as_str(),
+    // Only a pasted inline secret needs scrubbing: a Keychain service name is
+    // already plaintext in config.toml and must stay intact in missing/locked
+    // Keychain errors (any secret read from Keychain is redacted downstream).
+    let secret = match &candidate {
+        KeyCandidate::Inline(value) => value.as_str(),
+        KeyCandidate::Keychain(_) => "",
     };
     // The verdict must rest on a reading made under the credential just
     // written: drop whatever the vendor's cache still holds from before
@@ -682,9 +684,9 @@ fn run_key_check(
         return;
     }
     let (state, mut error) = key_check_result(slug, fetch(slug));
-    // The candidate's last use: strip it out of the verdict before it is
-    // dropped.
-    error = scrub_key(&error, reference);
+    // The pasted secret's last use: strip it out of the verdict before it is
+    // dropped. An empty secret leaves Keychain service names untouched.
+    error = scrub_key(&error, secret);
     // A refusal gives the config back exactly the state the snapshot took
     // — only the fields that still hold what the check wrote; a restore
     // that fails itself says so, since the new credential stayed.
@@ -697,7 +699,7 @@ fn run_key_check(
     // removal fails, scrub the diagnostic in place. The scrub needs the
     // candidate, so this is its last use: it runs before the drop.
     if state == KeyCheckState::Failed {
-        (clean_diagnostic)(slug, reference);
+        (clean_diagnostic)(slug, secret);
     }
     drop(candidate);
     error = cut_key_check_error(&error);
