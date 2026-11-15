@@ -691,9 +691,7 @@ mod tests {
         let refresh = server
             .mock("POST", "/v1/oauth/token")
             .with_status(400)
-            .with_body(
-                r#"{"error":"invalid_grant","error_description":"Refresh token expired"}"#,
-            )
+            .with_body(r#"{"error":"invalid_grant","error_description":"Refresh token expired"}"#)
             .create_async()
             .await;
         let usage = server
@@ -757,9 +755,7 @@ mod tests {
         let refresh = server
             .mock("POST", "/v1/oauth/token")
             .with_status(429)
-            .with_body(
-                r#"{"error":"rate_limited","error_description":"slow down"}"#,
-            )
+            .with_body(r#"{"error":"rate_limited","error_description":"slow down"}"#)
             .create_async()
             .await;
         let usage = server
@@ -819,9 +815,7 @@ mod tests {
         let refresh = server
             .mock("POST", "/v1/oauth/token")
             .with_status(400)
-            .with_body(
-                r#"{"error":"invalid_grant","error_description":"Refresh token expired"}"#,
-            )
+            .with_body(r#"{"error":"invalid_grant","error_description":"Refresh token expired"}"#)
             .create_async()
             .await;
 
