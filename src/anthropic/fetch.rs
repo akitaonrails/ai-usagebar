@@ -146,6 +146,20 @@ pub async fn fetch_snapshot(
                     );
                 }
             }
+            Ok(Err(AppError::Http { status, .. }))
+                if (400..500).contains(&status) && status != 429 =>
+            {
+                // A present refresh token the token endpoint has already
+                // retired (400 "Refresh token expired") used to abort here
+                // and serve the last cached weekly figure. An empty refresh
+                // token already continues with the current access token; this
+                // 4xx is the same situation. 429 and 5xx still abort, so a
+                // rate limit or an outage does not add a usage request.
+                // Clear the token-endpoint error the way the empty-refresh
+                // path does: only the usage request decides whether a
+                // diagnostic is shown.
+                cache.clear_last_error();
+            }
             Ok(Err(AppError::Http { status, body })) => {
                 cache.write_last_error(status, &body);
                 return with_oauth_plan(
