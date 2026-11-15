@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A retired Anthropic refresh token still fetches the live weekly reading.**
+  When the token endpoint answered 4xx other than 429 (the parser already
+  accepts 400 "Refresh token expired"), the fetch returned before GET usage
+  and served the last cached weekly percent. An empty `refreshToken` already
+  continues with the current access token; a present token the endpoint has
+  retired now does the same. A 429 or a 5xx still stops before that GET (#637).
+
 ## [1.52.1] — 2026-11-14
 
 ### Fixed
