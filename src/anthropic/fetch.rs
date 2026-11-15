@@ -410,6 +410,23 @@ mod tests {
         f
     }
 
+    /// Expired access token with a refresh token still stored. The token
+    /// endpoint can reject that token while the access token is still usable.
+    fn expired_creds_with_refresh() -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        let expires_ms = (Utc::now().timestamp_millis()) - 3_600_000; // 1h ago
+        let s = format!(
+            r#"{{"claudeAiOauth":{{
+                "accessToken":"AT","refreshToken":"RT",
+                "expiresAt": {expires_ms},
+                "subscriptionType":"max","rateLimitTier":"default_claude_max_5x"
+            }}}}"#
+        );
+        f.write_all(s.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
     fn cache_fixture() -> (TempDir, Cache) {
         let td = TempDir::new().unwrap();
         let cache = Cache::at(td.path().join("anthropic"));
@@ -663,6 +680,185 @@ mod tests {
         );
         refresh.assert_async().await; // refresh endpoint was never called
         usage.assert_async().await; // usage endpoint was still called
+    }
+
+    /// Token endpoint 400 "Refresh token expired", cache still holding weekly
+    /// 77. Empty refresh already continues to GET usage; a present token the
+    /// endpoint has retired must do the same and keep the live weekly percent.
+    #[tokio::test]
+    async fn retired_refresh_token_still_fetches_live_usage() {
+        let mut server = mockito::Server::new_async().await;
+        let refresh = server
+            .mock("POST", "/v1/oauth/token")
+            .with_status(400)
+            .with_body(
+                r#"{"error":"invalid_grant","error_description":"Refresh token expired"}"#,
+            )
+            .create_async()
+            .await;
+        let usage = server
+            .mock("GET", "/api/oauth/usage")
+            .match_header("authorization", "Bearer AT")
+            .match_header("user-agent", USAGE_USER_AGENT)
+            .match_header("anthropic-beta", USAGE_BETA_HEADER)
+            .with_status(200)
+            .with_body(
+                r#"{"five_hour":{"utilization":61,"resets_at":"2026-06-25T17:30:00Z"},
+                    "seven_day":{"utilization":99,"resets_at":"2026-06-26T12:00:00Z"}}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache
+            .write_payload(
+                br#"{"five_hour":{"utilization":17,"resets_at":"2026-06-25T17:30:00Z"},
+                     "seven_day":{"utilization":77,"resets_at":"2026-06-26T12:00:00Z"}}"#,
+            )
+            .unwrap();
+
+        let creds = expired_creds_with_refresh();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/api/oauth/usage", server.url()),
+            token: format!("{}/v1/oauth/token", server.url()),
+        };
+        let outcome = fetch_snapshot(
+            &client,
+            &creds::CredsTarget::Explicit(creds.path().to_path_buf()),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.stale);
+        assert_eq!(
+            outcome.snapshot.session.as_ref().unwrap().utilization_pct,
+            61
+        );
+        assert_eq!(outcome.snapshot.weekly.utilization_pct, 99);
+        assert!(
+            outcome.last_error.is_none(),
+            "a successful usage fetch must clear the token-endpoint error, got {:?}",
+            outcome.last_error
+        );
+        assert!(cache.read_last_error().is_none());
+        refresh.assert_async().await;
+        usage.assert_async().await;
+    }
+
+    /// A 429 from the token endpoint still stops before GET usage and keeps
+    /// the backoff. Continuing would spend a usage request during a rate limit.
+    #[tokio::test]
+    async fn token_endpoint_429_does_not_fetch_usage() {
+        let mut server = mockito::Server::new_async().await;
+        let refresh = server
+            .mock("POST", "/v1/oauth/token")
+            .with_status(429)
+            .with_body(r#"{"error":"rate_limited","error_description":"slow down"}"#)
+            .create_async()
+            .await;
+        let usage = server
+            .mock("GET", "/api/oauth/usage")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache
+            .write_payload(
+                br#"{"five_hour":{"utilization":17,"resets_at":"2026-06-25T17:30:00Z"},
+                     "seven_day":{"utilization":77,"resets_at":"2026-06-26T12:00:00Z"}}"#,
+            )
+            .unwrap();
+
+        let creds = expired_creds_with_refresh();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/api/oauth/usage", server.url()),
+            token: format!("{}/v1/oauth/token", server.url()),
+        };
+        let outcome = fetch_snapshot(
+            &client,
+            &creds::CredsTarget::Explicit(creds.path().to_path_buf()),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.stale);
+        assert_eq!(
+            outcome.snapshot.session.as_ref().unwrap().utilization_pct,
+            17
+        );
+        assert_eq!(outcome.snapshot.weekly.utilization_pct, 77);
+        assert_eq!(outcome.last_error.as_ref().map(|(c, _)| *c), Some(429));
+        assert_eq!(
+            outcome.last_error.as_ref().map(|(_, m)| m.as_str()),
+            Some("slow down")
+        );
+        assert!(
+            cache.backoff_remaining().is_some(),
+            "a 429 from the token endpoint must still arm the backoff"
+        );
+        refresh.assert_async().await;
+        usage.assert_async().await;
+    }
+
+    /// The 400 is not itself the diagnostic once usage cannot be reached.
+    /// Only the usage request decides, matching the empty-refresh path.
+    #[tokio::test]
+    async fn retired_refresh_clears_token_error_when_usage_is_transient() {
+        let mut server = mockito::Server::new_async().await;
+        let refresh = server
+            .mock("POST", "/v1/oauth/token")
+            .with_status(400)
+            .with_body(
+                r#"{"error":"invalid_grant","error_description":"Refresh token expired"}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache
+            .write_payload(
+                br#"{"five_hour":{"utilization":17,"resets_at":"2026-06-25T17:30:00Z"},
+                     "seven_day":{"utilization":77,"resets_at":"2026-06-26T12:00:00Z"}}"#,
+            )
+            .unwrap();
+
+        let creds = expired_creds_with_refresh();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let endpoints = Endpoints {
+            usage: "http://127.0.0.1:1/api/oauth/usage".into(),
+            token: format!("{}/v1/oauth/token", server.url()),
+        };
+        let outcome = fetch_snapshot(
+            &client,
+            &creds::CredsTarget::Explicit(creds.path().to_path_buf()),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.stale);
+        assert_eq!(outcome.snapshot.weekly.utilization_pct, 77);
+        assert!(outcome.last_error.is_none());
+        assert!(cache.read_last_error().is_none());
+        assert!(
+            cache.backoff_remaining().is_none(),
+            "a retired refresh token must not arm the rate-limit backoff"
+        );
+        refresh.assert_async().await;
     }
 
     #[tokio::test]
