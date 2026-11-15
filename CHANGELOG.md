@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Antigravity:** restrict local server discovery to `language_server*` and
+  `agy` executables (matched by `comm` or executable basename) so the Electron
+  shell (`Antigravity` / `Antigravity.exe` `HostBridgeServer`), `agy-node`
+  `ELECTRON_RUN_AS_NODE=1` sidecars (including orphaned `swarm_board` listeners
+  on Windows), and non-RPC helpers installed beneath `antigravity*` directories
+  do not return `HTTP 401 {"error":"unauthorized"}` and block the `agy` CLI and
+  saved-session fallback (#635).
+
 ## [1.52.1] — 2026-11-14
 
 ### Fixed
