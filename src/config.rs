@@ -419,6 +419,15 @@ impl CredentialProbes<'static> {
 }
 
 impl AnthropicConfig {
+    /// `default_label` as a single trimmed line, or `None` when unset or blank.
+    /// Display only. Validation rejects control characters on load, so the
+    /// line collapse here is a second guard for values built in code.
+    pub fn resolved_default_label(&self) -> Option<String> {
+        let label = crate::display::sanitize_untrusted_line(self.default_label.as_deref()?);
+        let label = label.trim();
+        (!label.is_empty()).then(|| label.to_string())
+    }
+
     /// Every extra account: the explicit `[[anthropic.accounts]]` entries plus
     /// any auto-discovered under [`accounts_dir`](AnthropicConfig::accounts_dir).
     /// Explicit entries take precedence on a label clash. This is what tabs and
@@ -3413,6 +3422,21 @@ impl Config {
                 )));
             }
         }
+        if let Some(raw) = &self.anthropic.default_label {
+            if raw.chars().any(char::is_control) {
+                return Err(AppError::Other(
+                    "[anthropic] default_label must be a single line without control characters"
+                        .into(),
+                ));
+            }
+            if let Some(label) = self.anthropic.resolved_default_label()
+                && labels.contains(&label)
+            {
+                return Err(AppError::Other(format!(
+                    "[anthropic] default_label {label:?} collides with an [[anthropic.accounts]] label"
+                )));
+            }
+        }
         let mut openai_labels = HashSet::new();
         for account in &self.openai.accounts {
             validate_account_label_for("openai", &account.label)?;
@@ -5712,6 +5736,52 @@ api_key = "sk-ant-admin01-side"
         // A typo names the offending label and lists the known ones.
         let err = format!("{:?}", c.anthropic.account("missing").unwrap_err());
         assert!(err.contains("missing") && err.contains("work"), "{err}");
+    }
+
+    #[test]
+    fn default_label_rejects_control_characters_and_blank_is_unset() {
+        for bad in ["\\nhome", "ho\\tme", "a\\u001b[31mb"] {
+            let f = write_toml(&format!("[anthropic]\ndefault_label = \"{bad}\"\n"));
+            let err = Config::load_from(f.path()).unwrap_err().to_string();
+            assert!(err.contains("default_label"), "{bad:?}: {err}");
+        }
+        let f = write_toml("[anthropic]\ndefault_label = \"  home  \"\n");
+        let cfg = Config::load_from(f.path()).unwrap();
+        assert_eq!(
+            cfg.anthropic.resolved_default_label().as_deref(),
+            Some("home")
+        );
+        let f = write_toml("[anthropic]\ndefault_label = \"   \"\n");
+        let cfg = Config::load_from(f.path()).unwrap();
+        assert_eq!(cfg.anthropic.resolved_default_label(), None);
+    }
+
+    #[test]
+    fn default_label_colliding_with_a_named_account_is_rejected() {
+        let f = write_toml(
+            r#"
+            [anthropic]
+            default_label = "work"
+
+            [[anthropic.accounts]]
+            label = "work"
+            credentials_path = "/creds/work.json"
+            "#,
+        );
+        let err = Config::load_from(f.path()).unwrap_err().to_string();
+        assert!(err.contains("default_label \"work\" collides"), "{err}");
+        // Labels compare case-sensitively, as duplicate account labels do.
+        let f = write_toml(
+            r#"
+            [anthropic]
+            default_label = "Work"
+
+            [[anthropic.accounts]]
+            label = "work"
+            credentials_path = "/creds/work.json"
+            "#,
+        );
+        assert!(Config::load_from(f.path()).is_ok());
     }
 
     #[test]

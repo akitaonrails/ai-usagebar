@@ -166,6 +166,12 @@ enabled = true
 # above — otherwise you get an extra tab for the ambient ~/.claude / Keychain
 # login. Default true; ignored when there are no named accounts.
 # show_default_account = false
+# Name the default (unnamed) Claude account so its tab and report row read
+# `Claude · home` the way a named account's does (TUI, `usage`, `usage --json`
+# `display_name`; the macOS menu bar does not apply it). Display only: credentials, cache, ids and
+# `--account` selection are unchanged. One line, no control characters, and not
+# equal to an [[anthropic.accounts]] label. Unset or blank keeps `Claude`.
+# default_label = "home"
 # Where the Claude *Desktop app*'s saved accounts live, for `account switch`.
 # Defaults to the store claude-acc creates (https://github.com/ohmaseclaro/claude-acc);
 # unrelated to accounts_dir above, which is the `claude` CLI's own accounts.

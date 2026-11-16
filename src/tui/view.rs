@@ -1124,4 +1124,31 @@ mod default_label_tests {
         let unset: crate::config::Config = toml::from_str("[anthropic]\n").unwrap();
         assert_eq!(unset.anthropic.default_label, None);
     }
+
+    #[test]
+    fn default_label_leaves_other_vendors_unnamed_tabs_alone() {
+        for vendor in [VendorId::Cursor, VendorId::Openai, VendorId::Openrouter] {
+            let tab = TabId::vendor(vendor);
+            assert_eq!(
+                tab_label(&tab, Some("home")),
+                tab_label(&tab, None),
+                "{vendor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_label_is_one_line_in_the_tab() {
+        let default = TabId::vendor(VendorId::Anthropic);
+        let config: crate::config::Config =
+            toml::from_str("[anthropic]\ndefault_label = \" home \"\n").unwrap();
+        let label = config.anthropic.resolved_default_label();
+        assert_eq!(tab_label(&default, label.as_deref()), "Claude · home");
+        let built = crate::config::AnthropicConfig {
+            default_label: Some("ho\nme".into()),
+            ..Default::default()
+        };
+        let label = built.resolved_default_label().unwrap();
+        assert!(!label.contains('\n'), "{label:?}");
+    }
 }

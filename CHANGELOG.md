@@ -3,10 +3,14 @@
 ### Added
 
 - **`[anthropic] default_label` names the unnamed Claude account.** Set it to
-  a label such as `home` and the default account's tab reads `Claude ·
-  home`, the same way a named account's label is appended. Display only:
-  its credentials, cache and `--account` selection are unchanged, and the key
-  is optional, so an unset config renders exactly as before.
+  a label such as `home` and the default account reads `Claude · home` in the
+  TUI tabs, `ai-usagebar usage` and the `display_name` of `usage --json` (which
+  the Windows popover reads; the macOS menu bar builds its own labels and does
+  not apply it yet), the same way a named account's label is
+  appended. Display only: ids, `name`, credentials, cache and `--account`
+  selection are unchanged. The label must be a single line without control
+  characters and must not equal an `[[anthropic.accounts]]` label (config
+  error). Optional: an unset config renders exactly as before.
 
 ## [1.52.2] — 2026-11-16
 

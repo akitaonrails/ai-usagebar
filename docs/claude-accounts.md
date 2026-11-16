@@ -245,7 +245,11 @@ This writes only the identity marker in the new account's directory. The
 credential stays in the default slot, and the first switch away from `main`
 saves it into `main`'s own slot like any other outgoing login. With every
 account named, `[anthropic] show_default_account = false` drops the extra
-unnamed tab.
+unnamed tab. To keep it and name it instead, set `[anthropic] default_label =
+"home"`: the unnamed account then reads `Claude · home` in the TUI, `usage` and
+`usage --json` (`display_name`). It is display only, a single line, and must
+not equal an `[[anthropic.accounts]]` label; the macOS menu bar does not apply
+it.
 
 ### Switch Codex
 
