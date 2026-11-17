@@ -458,7 +458,15 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
     let mut seen: BTreeMap<String, u32> = BTreeMap::new();
     for section in sections {
         let kind = section.get("type").and_then(Value::as_str).unwrap_or("");
-        if kind == "text" {
+        // A text row that meters a cap (Cursor's On-Demand spend) carries
+        // `percent` and `severity`. The popover draws it as a bar headed by its
+        // amount and stars it under a metric key, so it is a metric here too:
+        // read as text, its star would have nothing to paint.
+        let severity = section.get("severity").and_then(Value::as_str);
+        let metered = kind == "text"
+            && section.get("percent").is_some_and(Value::is_number)
+            && severity.is_some_and(|severity| !severity.is_empty());
+        if kind == "text" && !metered {
             let label = section.get("label").and_then(Value::as_str).unwrap_or("");
             let value = section.get("value").and_then(Value::as_str).unwrap_or("");
             if !label.is_empty() && value.is_empty() {
@@ -466,7 +474,7 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             }
             continue;
         }
-        if kind != "metric" {
+        if kind != "metric" && !metered {
             continue;
         }
         let raw_label = section.get("label").and_then(Value::as_str).unwrap_or("");
@@ -494,7 +502,8 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             .map(str::to_string)
             .or_else(|| percent.map(|percent| format!("{}%", percent.round() as i64)))
             .unwrap_or_default();
-        let value_headline = section.get("headline").and_then(Value::as_str) == Some("value");
+        let headline = section.get("headline").and_then(Value::as_str);
+        let value_headline = metered || headline == Some("value");
         let fraction = (percent.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
         let left_value = percent
             .filter(|_| !value_headline)
