@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A tray star whose metric the provider stopped reporting no longer blocks a
+  new one.** Customize lists only the rows a card has now, so a starred row that
+  left the card (Claude without a five-hour window, an Antigravity cadence the
+  running product does not report) could not be unstarred, yet it still counted
+  toward the two-star cap: starring another metric answered "Up to 2 stars per
+  provider" with one star or none in view. Starring at the cap now drops the
+  stars the card cannot show; with room to spare they stay for when their rows
+  return (#639).
+
 ## [1.52.2] — 2026-11-16
 
 ### Fixed
