@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Fixed
+
+- **A starred Cursor On-Demand row reaches the macOS and Windows menu bar.**
+  The popover draws On-Demand spend as a bar and lets it be starred, but the
+  menu-bar strip skipped every text row, so that star painted nothing: Chart
+  dropped the bar, and Logos left Cursor out when On-Demand was its only star.
+  The strip now reads a text row that carries `percent` and `severity` as a
+  metric headed by its amount, and the highest-window race still passes it
+  over (#641).
+
 ## [1.52.2] — 2026-11-16
 
 ### Fixed
