@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.52.2] — 2026-11-16
+
 ### Fixed
 
 - **A retired Anthropic refresh token still fetches the live weekly reading.**
@@ -5554,7 +5556,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...HEAD
+[1.52.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...v1.52.2
 [1.52.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...v1.52.1
 [1.52.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...v1.51.0
