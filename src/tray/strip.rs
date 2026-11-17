@@ -858,6 +858,36 @@ mod tests {
         assert_eq!(content.bars[0].key, "metric:Weekly");
     }
 
+    /// Cursor's On-Demand spend arrives as a text row with `percent` and
+    /// `severity`. The popover draws it as a bar under `metric:On-Demand`, so a
+    /// star on it is painted here too, with the amount as its value.
+    #[test]
+    fn a_starred_on_demand_cap_is_painted() {
+        let payload = json!({ "entries": [
+            { "id": "cursor", "status": "ready", "sections": [
+                { "type": "metric", "label": "Cursor Models", "percent": 35, "value": "35%" },
+                { "type": "metric", "label": "Other Models", "percent": 7, "value": "7%" },
+                { "type": "text", "label": "On-Demand", "value": "$1.25 / $5.00",
+                  "percent": 25, "severity": "low" }
+            ]}
+        ]});
+        let mut stars = Stars::new();
+        stars.insert("cursor".into(), vec!["metric:On-Demand".into()]);
+        let content = content_from_payload(&payload, &stars, &[]);
+        assert_eq!(content.bars.len(), 1);
+        let bar = &content.bars[0];
+        assert_eq!(bar.key, "metric:On-Demand");
+        assert_eq!(bar.value, "$1.25 / $5.00");
+        assert_eq!(bar.fraction, 0.25);
+        assert!(bar.value_headline);
+        assert_eq!(bar.left_value, None);
+
+        // Nothing starred yet: the fallback is still the first two pools.
+        let content = content_from_payload(&payload, &Stars::new(), &[]);
+        let keys: Vec<&str> = content.bars.iter().map(|m| m.key.as_str()).collect();
+        assert_eq!(keys, ["metric:Cursor Models", "metric:Other Models"]);
+    }
+
     #[test]
     fn empty_stars_fall_back_to_first_two_bounded_metrics() {
         let content = content_from_payload(&sample_payload(), &Stars::new(), &[]);
