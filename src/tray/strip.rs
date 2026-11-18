@@ -458,7 +458,15 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
     let mut seen: BTreeMap<String, u32> = BTreeMap::new();
     for section in sections {
         let kind = section.get("type").and_then(Value::as_str).unwrap_or("");
-        if kind == "text" {
+        // A text row that meters a cap (Cursor's On-Demand spend) carries
+        // `percent` and `severity`. The popover draws it as a bar headed by its
+        // amount and stars it under a metric key, so it is a metric here too:
+        // read as text, its star would have nothing to paint.
+        let severity = section.get("severity").and_then(Value::as_str);
+        let metered = kind == "text"
+            && section.get("percent").is_some_and(Value::is_number)
+            && severity.is_some_and(|severity| !severity.is_empty());
+        if kind == "text" && !metered {
             let label = section.get("label").and_then(Value::as_str).unwrap_or("");
             let value = section.get("value").and_then(Value::as_str).unwrap_or("");
             if !label.is_empty() && value.is_empty() {
@@ -466,7 +474,7 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             }
             continue;
         }
-        if kind != "metric" {
+        if kind != "metric" && !metered {
             continue;
         }
         let raw_label = section.get("label").and_then(Value::as_str).unwrap_or("");
@@ -494,7 +502,8 @@ fn metrics_for_entry(entry: &Value, id: &str, name: &str) -> Vec<StripMetric> {
             .map(str::to_string)
             .or_else(|| percent.map(|percent| format!("{}%", percent.round() as i64)))
             .unwrap_or_default();
-        let value_headline = section.get("headline").and_then(Value::as_str) == Some("value");
+        let headline = section.get("headline").and_then(Value::as_str);
+        let value_headline = metered || headline == Some("value");
         let fraction = (percent.unwrap_or(0.0) / 100.0).clamp(0.0, 1.0);
         let left_value = percent
             .filter(|_| !value_headline)
@@ -847,6 +856,36 @@ mod tests {
         let content = content_from_payload(&payload, &stars, &["supergrok".into()]);
         assert_eq!(content.bars.len(), 1);
         assert_eq!(content.bars[0].key, "metric:Weekly");
+    }
+
+    /// Cursor's On-Demand spend arrives as a text row with `percent` and
+    /// `severity`. The popover draws it as a bar under `metric:On-Demand`, so a
+    /// star on it is painted here too, with the amount as its value.
+    #[test]
+    fn a_starred_on_demand_cap_is_painted() {
+        let payload = json!({ "entries": [
+            { "id": "cursor", "status": "ready", "sections": [
+                { "type": "metric", "label": "Cursor Models", "percent": 35, "value": "35%" },
+                { "type": "metric", "label": "Other Models", "percent": 7, "value": "7%" },
+                { "type": "text", "label": "On-Demand", "value": "$1.25 / $5.00",
+                  "percent": 25, "severity": "low" }
+            ]}
+        ]});
+        let mut stars = Stars::new();
+        stars.insert("cursor".into(), vec!["metric:On-Demand".into()]);
+        let content = content_from_payload(&payload, &stars, &[]);
+        assert_eq!(content.bars.len(), 1);
+        let bar = &content.bars[0];
+        assert_eq!(bar.key, "metric:On-Demand");
+        assert_eq!(bar.value, "$1.25 / $5.00");
+        assert_eq!(bar.fraction, 0.25);
+        assert!(bar.value_headline);
+        assert_eq!(bar.left_value, None);
+
+        // Nothing starred yet: the fallback is still the first two pools.
+        let content = content_from_payload(&payload, &Stars::new(), &[]);
+        let keys: Vec<&str> = content.bars.iter().map(|m| m.key.as_str()).collect();
+        assert_eq!(keys, ["metric:Cursor Models", "metric:Other Models"]);
     }
 
     #[test]
