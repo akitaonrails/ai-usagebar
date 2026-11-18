@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.52.3] — 2026-11-18
+
 ### Fixed
 
 - **A starred Cursor On-Demand row reaches the macOS and Windows menu bar.**
@@ -5574,7 +5576,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...HEAD
+[1.52.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...v1.52.3
 [1.52.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...v1.52.2
 [1.52.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...v1.52.1
 [1.52.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...v1.52.0
