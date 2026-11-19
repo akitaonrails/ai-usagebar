@@ -1048,4 +1048,163 @@ mod tests {
         assert!(cache.read_last_error().is_none());
         refresh.assert_async().await;
     }
+
+    /// The reading the retired-refresh tests have cached: 17% and 77%.
+    const CACHED_USAGE: &[u8] = br#"{"plan_type":"plus","rate_limit":{
+        "primary_window":{"used_percent":17,"limit_window_seconds":18000,"reset_at":1779597324},
+        "secondary_window":{"used_percent":77,"limit_window_seconds":604800,"reset_at":1780184124}
+    }}"#;
+
+    /// Credentials due for a refresh with a refresh token still stored:
+    /// neither token is a JWT and there is no `expires_at`, so the expiry
+    /// reads as 0.
+    fn stale_creds_with_refresh() -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(
+            br#"{"tokens":{
+                "access_token":"AT","refresh_token":"RT",
+                "id_token":"","account_id":"acc"
+            }}"#,
+        )
+        .unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    /// The token endpoint rejects the stored refresh token while the cache
+    /// holds 17% / 77%. An empty refresh token already continues to GET
+    /// usage; a rejected one must do the same and show the live reading.
+    #[tokio::test]
+    async fn retired_refresh_token_still_fetches_live_usage() {
+        let mut server = mockito::Server::new_async().await;
+        let refresh = server
+            .mock("POST", "/oauth/token")
+            .with_status(401)
+            .with_body(r#"{"error":{"message":"Token reused","code":"refresh_token_reused"}}"#)
+            .create_async()
+            .await;
+        let usage = server
+            .mock("GET", "/backend-api/wham/usage")
+            .match_header("authorization", "Bearer AT")
+            .with_status(200)
+            .with_body(
+                r#"{"plan_type":"plus","rate_limit":{
+                "primary_window":{"used_percent":61,"limit_window_seconds":18000,"reset_at":1779597324},
+                "secondary_window":{"used_percent":99,"limit_window_seconds":604800,"reset_at":1780184124}
+            }}"#,
+            )
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache.write_payload(CACHED_USAGE).unwrap();
+        let creds = stale_creds_with_refresh();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &client,
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+
+        assert!(!out.stale);
+        assert_eq!(out.snapshot.session.as_ref().unwrap().utilization_pct, 61);
+        assert_eq!(out.snapshot.weekly.as_ref().unwrap().utilization_pct, 99);
+        assert!(out.last_error.is_none());
+        assert!(cache.read_last_error().is_none());
+        refresh.assert_async().await;
+        usage.assert_async().await;
+    }
+
+    /// A 429 from the token endpoint still stops before GET usage and arms
+    /// the backoff: continuing would spend a usage request during a rate
+    /// limit.
+    #[tokio::test]
+    async fn token_endpoint_429_does_not_fetch_usage() {
+        let mut server = mockito::Server::new_async().await;
+        let refresh = server
+            .mock("POST", "/oauth/token")
+            .with_status(429)
+            .with_body(r#"{"error":{"message":"slow down"}}"#)
+            .create_async()
+            .await;
+        let usage = server
+            .mock("GET", "/backend-api/wham/usage")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache.write_payload(CACHED_USAGE).unwrap();
+        let creds = stale_creds_with_refresh();
+        let client = reqwest::Client::new();
+        let endpoints = Endpoints {
+            usage: format!("{}/backend-api/wham/usage", server.url()),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &client,
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+
+        assert!(out.stale);
+        assert_eq!(out.snapshot.weekly.as_ref().unwrap().utilization_pct, 77);
+        assert_eq!(out.last_error.as_ref().map(|(c, _)| *c), Some(429));
+        assert!(cache.backoff_remaining().is_some());
+        refresh.assert_async().await;
+        usage.assert_async().await;
+    }
+
+    /// The refresh error is not the diagnostic once usage cannot be reached:
+    /// only the usage request decides, as on the empty-refresh path.
+    #[tokio::test]
+    async fn retired_refresh_clears_token_error_when_usage_is_transient() {
+        let mut server = mockito::Server::new_async().await;
+        let refresh = server
+            .mock("POST", "/oauth/token")
+            .with_status(400)
+            .with_body(r#"{"error":"invalid_grant","error_description":"Refresh token expired"}"#)
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        cache.write_payload(CACHED_USAGE).unwrap();
+        let creds = stale_creds_with_refresh();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(200))
+            .build()
+            .unwrap();
+        let endpoints = Endpoints {
+            usage: "http://127.0.0.1:1/backend-api/wham/usage".into(),
+            token: format!("{}/oauth/token", server.url()),
+        };
+        let out = fetch_snapshot(
+            &client,
+            creds.path(),
+            &cache,
+            &endpoints,
+            Duration::from_secs(0),
+        )
+        .await
+        .unwrap();
+
+        assert!(out.stale);
+        assert_eq!(out.snapshot.weekly.as_ref().unwrap().utilization_pct, 77);
+        assert!(out.last_error.is_none());
+        assert!(cache.read_last_error().is_none());
+        assert!(cache.backoff_remaining().is_none());
+        refresh.assert_async().await;
+    }
 }
