@@ -101,7 +101,7 @@ rustix = { version = "1", features = ["process"] }
 tao = "0.37"
 wry = "0.57"
 tray-icon = "0.26.1"
-global-hotkey = "0.9"
+global-hotkey = "0.10"
 objc2 = "0.6"
 objc2-foundation = "0.3"
 block2 = "0.6"
@@ -166,7 +166,7 @@ wry = "0.57"
 tray-icon = "0.26.1"
 # Global toggle shortcut for the popover: owns a message-only window and
 # delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.
-global-hotkey = "0.9"
+global-hotkey = "0.10"
 
 [dev-dependencies]
 mockito = "1"
