@@ -3863,6 +3863,40 @@ mod tests {
         assert_eq!(totals.len(), 1);
         assert_eq!(totals[0].0, "$12.50 of $70.00");
         assert!(extra_usage_totals([&first]).is_empty());
+
+        // Missing limit on one account drops the combined cap while still summing spend.
+        let mut uncapped = snap(500, 0);
+        if let VendorSnapshot::Anthropic(ref mut a) = uncapped {
+            a.extra.as_mut().unwrap().limit = None;
+        }
+        let totals = extra_usage_totals([&first, &uncapped]);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].0, "$7.50");
+
+        // Multi-currency: buckets with only 1 account are omitted; buckets with 2+ sum separately.
+        let brl = |spent: i64| {
+            let mut s = snap(spent, 10_000);
+            if let VendorSnapshot::Anthropic(ref mut a) = s {
+                a.extra.as_mut().unwrap().currency = Some("BRL".into());
+            }
+            s
+        };
+        let brl_one = brl(150);
+        let brl_two = brl(350);
+        assert!(extra_usage_totals([&first, &brl_one]).is_empty());
+        let totals = extra_usage_totals([&first, &snap(1000, 2000), &brl_one, &brl_two]);
+        let texts: Vec<&str> = totals.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(texts, ["$12.50 of $70.00", "R$5.00 of R$200.00"]);
+
+        // Non-Anthropic snapshots are ignored; zero and negative spend keep sign outside symbol.
+        let non_anthropic = VendorSnapshot::Custom(crate::custom::types::CustomSnapshot {
+            plan: None,
+            metrics: vec![],
+            texts: vec![],
+        });
+        let totals = extra_usage_totals([&snap(0, 1000), &snap(-50, 1000), &non_anthropic]);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].0, "-$0.50 of $20.00");
     }
 
     fn claude_snapshot_with_credits(

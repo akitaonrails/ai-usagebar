@@ -246,10 +246,11 @@ credential stays in the default slot, and the first switch away from `main`
 saves it into `main`'s own slot like any other outgoing login. With every
 account named, `[anthropic] show_default_account = false` drops the extra
 unnamed tab. To keep it and name it instead, set `[anthropic] default_label =
-"home"`: the unnamed account then reads `Claude · home` in the TUI, `usage` and
-`usage --json` (`display_name`). It is display only, a single line, and must
-not equal an `[[anthropic.accounts]]` label; the macOS menu bar does not apply
-it.
+"home"`: the unnamed account then reads `Claude · home` in the TUI and in
+`usage --json` (`display_name`, read by GNOME, KDE, Omarchy and the tray
+popovers). Plain `ai-usagebar usage` keeps the machine `name` (`anthropic`),
+and the macOS menu bar does not apply it yet. It is display only, a single
+line, and must not equal an `[[anthropic.accounts]]` label.
 
 ### Switch Codex
 

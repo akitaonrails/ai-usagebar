@@ -507,9 +507,9 @@ fn entry_from_state_with_config(
     now: chrono::DateTime<Utc>,
 ) -> Entry {
     let mut entry = entry_from_state(tab, state, now);
-    // `[anthropic] default_label` names the unnamed Claude account, so `usage`,
-    // `usage --json` and the popover agree with the TUI. Display only: `id` and
-    // `name` stay the stable selectors.
+    // `[anthropic] default_label` names the unnamed Claude account in
+    // `usage --json` (`display_name`) so frontends agree with the TUI.
+    // Display only: `id` and `name` stay the stable selectors.
     if tab.account.is_none()
         && !tab.desktop
         && matches!(

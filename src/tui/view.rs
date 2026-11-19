@@ -385,6 +385,11 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
         );
         return;
     }
+    const EXTRA_TOTALS_LABEL: &str = "Claude extra";
+    let totals = panels::extra_usage_totals(idxs.iter().filter_map(|&i| match app.tabs.get(i) {
+        Some(TabState::Ready(ready)) => Some(&ready.snapshot),
+        _ => None,
+    }));
     // Left-align the metric columns by padding the vendor-name column to the
     // widest name (bounded so one long account label can't blow out the layout).
     let name_w = idxs
@@ -395,6 +400,7 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
                 app.anthropic_default_label.as_deref(),
             ))
         })
+        .chain((!totals.is_empty()).then(|| crate::display::text_width(EXTRA_TOTALS_LABEL)))
         .max()
         .unwrap_or(6)
         .clamp(6, 22);
@@ -457,15 +463,10 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(spans));
         lines.push(Line::from(""));
     }
-    let totals = panels::extra_usage_totals(idxs.iter().filter_map(|&i| match app.tabs.get(i) {
-        Some(TabState::Ready(ready)) => Some(&ready.snapshot),
-        _ => None,
-    }));
     if !totals.is_empty() {
-        let name = "all accounts";
-        let pad = name_w.saturating_sub(crate::display::text_width(name));
+        let pad = name_w.saturating_sub(crate::display::text_width(EXTRA_TOTALS_LABEL));
         let mut spans = vec![
-            Span::styled(name, theme.text),
+            Span::styled(EXTRA_TOTALS_LABEL, theme.text),
             theme.span(" ".repeat(pad + 2)),
         ];
         for (j, (text, sev)) in totals.iter().enumerate() {
