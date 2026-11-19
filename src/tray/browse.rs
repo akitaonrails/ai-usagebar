@@ -17,7 +17,14 @@ pub fn http_url(raw: &str) -> Option<&str> {
     }
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+// On Linux the host lands behind an opt-in feature; until it calls `open`
+// the only user is the future host, so silence its dead-code warning.
+#[cfg_attr(all(target_os = "linux", feature = "linux-tray"), allow(dead_code))]
+#[cfg(any(
+    windows,
+    target_os = "macos",
+    all(target_os = "linux", feature = "linux-tray")
+))]
 pub fn open(raw: &str) {
     let Some(url) = http_url(raw) else {
         return;
@@ -31,6 +38,12 @@ pub fn open(raw: &str) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
+    }
+    #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+    {
+        // PATH lookup is deliberate: NixOS has no /usr/bin. `arg` passes the
+        // URL as one argument; no shell ever interprets it.
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     }
 }
 
