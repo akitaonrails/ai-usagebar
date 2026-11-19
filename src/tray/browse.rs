@@ -68,4 +68,20 @@ mod tests {
         assert_eq!(http_url("https://ok.example\nhttps://evil"), None);
         assert_eq!(http_url(""), None);
     }
+
+    /// A query string's `&`, `%` and `^` stay inside the opener's one
+    /// argument: nothing parses the URL as shell syntax.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn the_url_is_the_openers_only_argument() {
+        let url = "https://example.com/usage?a=1&b=%PATH%^";
+        let command = super::command(url);
+        let program = if cfg!(windows) {
+            "explorer.exe"
+        } else {
+            "/usr/bin/open"
+        };
+        assert_eq!(command.get_program(), program);
+        assert_eq!(command.get_args().collect::<Vec<_>>(), [url]);
+    }
 }
