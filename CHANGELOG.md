@@ -10,6 +10,43 @@
   do not return `HTTP 401 {"error":"unauthorized"}` and block the `agy` CLI and
   saved-session fallback (#635).
 
+## [1.52.3] — 2026-11-18
+
+### Fixed
+
+- **A starred Cursor On-Demand row reaches the macOS and Windows menu bar.**
+  The popover draws On-Demand spend as a bar and lets it be starred, but the
+  menu-bar strip skipped every text row, so that star painted nothing: Chart
+  dropped the bar, and Logos left Cursor out when On-Demand was its only star.
+  The strip now reads a text row that carries `percent` and `severity` as a
+  metric headed by its amount, and the highest-window race still passes it
+  over (#641).
+
+- **A tray star whose metric the provider stopped reporting no longer blocks a
+  new one.** Customize lists only the rows a card has now, so a starred row that
+  left the card (Claude without a five-hour window, an Antigravity cadence the
+  running product does not report) could not be unstarred, yet it still counted
+  toward the two-star cap: starring another metric answered "Up to 2 stars per
+  provider" with one star or none in view. Starring at the cap now drops the
+  stars the card cannot show; with room to spare they stay for when their rows
+  return (#639).
+## [1.52.2] — 2026-11-16
+
+### Fixed
+
+- **A retired Anthropic refresh token still fetches the live weekly reading.**
+  When the token endpoint answered 4xx other than 429 (the parser already
+  accepts 400 "Refresh token expired"), the fetch returned before GET usage
+  and served the last cached weekly percent. An empty `refreshToken` already
+  continues with the current access token; a present token the endpoint has
+  retired now does the same. A 429 or a 5xx still stops before that GET (#637).
+
+- **Antigravity:** match local server discovery against the executable basename
+  rather than directory substrings in `/proc/<pid>/exe`, so helper processes
+  installed under `antigravity-*` paths (such as `agy_acp_server.par` and
+  `localharness_external` from `antigravity-acp`) are not probed as language
+  servers or treated as signed-out `401` rejections that block the `agy` CLI and
+  saved-session fallback.
 ## [1.52.1] — 2026-11-14
 
 ### Fixed
@@ -5549,7 +5586,9 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...HEAD
+[1.52.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...v1.52.3
+[1.52.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...v1.52.2
 [1.52.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...v1.52.1
 [1.52.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...v1.51.0

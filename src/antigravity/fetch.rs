@@ -2982,8 +2982,8 @@ mod tests {
             "agy\n",
             Some("/home/u/.local/bin/agy")
         ));
-        // Recognised by executable basename even when `comm` was renamed by a
-        // wrapper.
+        // Recognised by executable basename even when `comm` was renamed or
+        // truncated by a wrapper.
         assert!(is_antigravity_process(
             "main",
             Some(
