@@ -306,7 +306,7 @@ Keychain entry is checked only after the env var and any inline key miss.
 | SuperGrok | Existing `grok login` (its `auth.json` key, or its ACP extension) | Opt in, install the official Grok CLI, and run `grok login`. This reports the consumer subscription pool — included usage, reset, per-product slices, and additional usage when billed. The Management API balance is a separate row. [Setup and limits](docs/grok.md). |
 | Grok Bot | Existing Grok Bot desktop sign-in (Linux and macOS) | Opt in, install the Grok Bot desktop app, and sign in to it once. This reports the app's weekly included-usage pool — not the Management API balance, and not the Grok Build subscription. Refreshed tokens stay in ai-usagebar's cache; the app's own file is never written. |
 | MiniMax | Token Plan subscription key | Opt in with `MINIMAX_API_KEY` or config. Choose the matching global or China region; pay-as-you-go keys do not work. |
-| Google Antigravity | Local Antigravity server, `agy` itself, saved Google session, or `agy` status line | Opt in. The desktop products provide quota through their local server. With the `agy` CLI installed, quota is read from `agy -p "/quota"` — the figures its own Models & Quota page shows — at most every two minutes. The `agy` CLI can also provide its live session quotas through the macOS status-line integration (see [Multiple Antigravity CLI accounts](#multiple-antigravity-cli-accounts-macos)); the saved-session Cloud Code API fallback answers when neither can, and is labelled `Google API` in the TUI. |
+| Google Antigravity | Local Antigravity server, `agy` itself, saved Google session, or `agy` status line | Opt in. The desktop products provide quota through their local server. With the `agy` CLI installed, quota is read from `agy -p "/quota"` — the figures its own Models & Quota page shows — at most every two minutes. The `agy` CLI can also provide its live session quotas through the macOS and Linux status-line integration (see [Multiple Antigravity CLI accounts](#multiple-antigravity-cli-accounts-macos-and-linux)); the saved-session Cloud Code API fallback answers when neither can, and is labelled `Google API` in the TUI. |
 | Cursor | Existing Cursor IDE or `cursor-agent` login | Opt in and sign in once. `cursor-agent` is the headless fallback. |
 | Kiro CLI | Existing kiro-cli login | Opt in and run `kiro-cli login` once. ai-usagebar refreshes the session when needed. |
 | Nous Research | OAuth device flow | Enable `[nous]`, click **Log in with Nous Research** in the Omarchy settings panel, or run `ai-usagebar auth nous login`. Credentials are kept in ai-usagebar's separate platform config directory (`~/.config/ai-usagebar/credentials.json` on Linux). |
@@ -1183,7 +1183,7 @@ Claude Desktop or CLI login. The dedicated
 - Waybar modules for personal and work subscriptions;
 - macOS Desktop and CLI switching, backups, and history conflicts.
 
-### Multiple Antigravity CLI accounts (macOS)
+### Multiple Antigravity CLI accounts (macOS and Linux)
 
 If you keep separate `agy` terminal sessions signed into different Google
 accounts, install the official status-line integration once:
@@ -1197,7 +1197,7 @@ configuration. The popover and `ai-usagebar usage --json` then show one entry
 per distinct account with a live `agy` process; multiple terminals for the same
 account are deduplicated, and the number of entries follows the active
 accounts. Names use a masked address such as `j***@gmail.com`.
-Public account IDs are opaque and stable on this Mac; sessions remain listed
+Public account IDs are opaque and stable on this machine; sessions remain listed
 while `agy` is running, with snapshots marked stale after 15 minutes without a
 new status-line payload.
 
@@ -1211,7 +1211,10 @@ status line while preserving other Antigravity settings, run:
 ai-usagebar antigravity remove-statusline
 ```
 
-This multi-account integration is currently macOS-only.
+This multi-account integration supports macOS and Linux (including WSL). On
+Linux, sessions launched with isolated `HOME` directories need a shared
+`XDG_CACHE_HOME` so snapshots land in the same cache directory, and a Windows
+monitor does not automatically read snapshots written inside WSL.
 
 ### Multiple OpenRouter accounts
 

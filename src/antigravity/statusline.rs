@@ -1,33 +1,33 @@
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use std::collections::HashSet;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use chrono::{DateTime, Duration, Utc};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use hmac::{Hmac, KeyInit, Mac};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use serde::{Deserialize, Serialize};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use sha2::Sha256;
 
 use crate::error::{AppError, Result};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 use crate::usage::UsageWindow;
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 const MAX_PROCESS_ANCESTRY: usize = 32;
 pub const STALE_AFTER: chrono::Duration = chrono::Duration::minutes(15);
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 type HmacSha256 = Hmac<Sha256>;
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub pid: u32,
@@ -45,7 +45,7 @@ pub struct SessionSnapshot {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotWindow {
     pub utilization_pct: i32,
@@ -53,7 +53,7 @@ pub struct SnapshotWindow {
     pub window_duration: Duration,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 impl From<SnapshotWindow> for UsageWindow {
     fn from(window: SnapshotWindow) -> Self {
         Self {
@@ -64,7 +64,7 @@ impl From<SnapshotWindow> for UsageWindow {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IngestOutcome {
     Ignored,
@@ -97,7 +97,7 @@ fn remove_message(outcome: RemoveOutcome) -> &'static str {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 trait ProcessInspector {
     fn parent_pid(&self, pid: u32) -> Option<u32>;
     fn executable_name(&self, pid: u32) -> Option<std::ffi::OsString>;
@@ -141,41 +141,95 @@ impl ProcessInspector for MacProcessInspector {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+struct LinuxProcessInspector {
+    proc_root: PathBuf,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl LinuxProcessInspector {
+    #[cfg(target_os = "linux")]
+    fn system() -> Self {
+        Self {
+            proc_root: PathBuf::from("/proc"),
+        }
+    }
+
+    #[cfg(test)]
+    fn at(proc_root: impl Into<PathBuf>) -> Self {
+        Self {
+            proc_root: proc_root.into(),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_proc_stat_ppid(stat: &str) -> Option<u32> {
+    // Field 2 is `(<comm>)`, which may contain spaces and parentheses; the
+    // final `')'` unambiguously terminates it. Fields 3 and 4 are state and ppid.
+    let after_comm = stat.rsplit_once(')')?.1;
+    let mut fields = after_comm.split_whitespace();
+    let _state = fields.next()?;
+    let ppid: u32 = fields.next()?.parse().ok()?;
+    (ppid > 0).then_some(ppid)
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl ProcessInspector for LinuxProcessInspector {
+    fn parent_pid(&self, pid: u32) -> Option<u32> {
+        let stat =
+            std::fs::read_to_string(self.proc_root.join(pid.to_string()).join("stat")).ok()?;
+        parse_proc_stat_ppid(&stat)
+    }
+
+    fn executable_name(&self, pid: u32) -> Option<std::ffi::OsString> {
+        let dir = self.proc_root.join(pid.to_string());
+        if let Ok(target) = std::fs::read_link(dir.join("exe"))
+            && let Some(file_name) = target.file_name()
+        {
+            let name = file_name.to_string_lossy();
+            let stripped = name.strip_suffix(" (deleted)").unwrap_or(&name);
+            if !stripped.is_empty() {
+                return Some(std::ffi::OsString::from(stripped));
+            }
+        }
+        let comm = std::fs::read_to_string(dir.join("comm")).ok()?;
+        let trimmed = comm.trim();
+        (!trimmed.is_empty()).then(|| std::ffi::OsString::from(trimmed))
+    }
+}
+
 pub fn ingest<R: Read>(reader: R) -> Result<()> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        let root = directories::BaseDirs::new()
-            .ok_or_else(|| AppError::Other("could not resolve macOS cache directory".into()))?
-            .cache_dir()
-            .join("ai-usagebar/antigravity/sessions");
-        let _ = ingest_with(
-            reader,
-            &root,
-            &MacProcessInspector,
-            std::process::id(),
-            Utc::now(),
-        )?;
+        let root = crate::cache::xdg_cache_dir()?.join("ai-usagebar/antigravity/sessions");
+        #[cfg(target_os = "macos")]
+        let inspector = MacProcessInspector;
+        #[cfg(target_os = "linux")]
+        let inspector = LinuxProcessInspector::system();
+        let _ = ingest_with(reader, &root, &inspector, std::process::id(), Utc::now())?;
         Ok(())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = reader;
         Err(AppError::Other(
-            "Antigravity status line integration is supported only on macOS".into(),
+            "Antigravity status line integration is supported only on macOS and Linux".into(),
         ))
     }
 }
 
 pub fn active_accounts() -> Result<Vec<AccountSession>> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        let root = directories::BaseDirs::new()
-            .ok_or_else(|| AppError::Other("could not resolve macOS cache directory".into()))?
-            .cache_dir()
-            .join("ai-usagebar/antigravity/sessions");
-        Ok(read_active_accounts(&root, &MacProcessInspector))
+        let root = crate::cache::xdg_cache_dir()?.join("ai-usagebar/antigravity/sessions");
+        #[cfg(target_os = "macos")]
+        let inspector = MacProcessInspector;
+        #[cfg(target_os = "linux")]
+        let inspector = LinuxProcessInspector::system();
+        Ok(read_active_accounts(&root, &inspector))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Ok(Vec::new())
     }
@@ -184,9 +238,11 @@ pub fn active_accounts() -> Result<Vec<AccountSession>> {
 pub fn run(action: &crate::widget::cli::AntigravityAction) -> i32 {
     use crate::widget::cli::AntigravityAction;
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     if !matches!(action, AntigravityAction::IngestStatusline) {
-        eprintln!("ai-usagebar: Antigravity status line integration is supported only on macOS");
+        eprintln!(
+            "ai-usagebar: Antigravity status line integration is supported only on macOS and Linux"
+        );
         return 1;
     }
 
@@ -349,7 +405,7 @@ fn is_our_status_line(value: &serde_json::Value, expected_command: &str) -> bool
         .is_some_and(|command| command.trim() == expected_command)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn ingest_with<R: Read>(
     mut reader: R,
     root: &Path,
@@ -372,7 +428,7 @@ fn ingest_with<R: Read>(
     Ok(IngestOutcome::Written)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn snapshot_from_payload(
     value: &serde_json::Value,
     pid: u32,
@@ -465,7 +521,7 @@ fn snapshot_from_payload(
     .then_some(snapshot)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn quota_window(
     data: &serde_json::Value,
     weekly: bool,
@@ -497,7 +553,7 @@ fn quota_window(
     })
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn mask_email(email: &str) -> Option<String> {
     let (local, domain) = email.trim().split_once('@')?;
     if local.is_empty()
@@ -523,7 +579,7 @@ fn mask_email(email: &str) -> Option<String> {
     Some(format!("{first}***@{}", domain.to_ascii_lowercase()))
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn find_agy_ancestor(inspector: &impl ProcessInspector, current_pid: u32) -> Option<u32> {
     let mut pid = current_pid;
     let mut visited = HashSet::new();
@@ -543,24 +599,24 @@ fn find_agy_ancestor(inspector: &impl ProcessInspector, current_pid: u32) -> Opt
     None
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn is_agy_executable(name: &OsStr) -> bool {
     Path::new(name).file_name() == Some(OsStr::new("agy"))
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn snapshot_path(root: &Path, pid: u32) -> PathBuf {
     root.join(format!("{pid}.json"))
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn write_snapshot_atomic(root: &Path, snapshot: &SessionSnapshot) -> Result<()> {
     let path = snapshot_path(root, snapshot.pid);
     let bytes = serde_json::to_vec(snapshot)?;
     crate::cache::atomic_write(&path, &bytes)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn read_active_accounts(root: &Path, inspector: &impl ProcessInspector) -> Vec<AccountSession> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -631,7 +687,7 @@ fn read_active_accounts(root: &Path, inspector: &impl ProcessInspector) -> Vec<A
 /// — never on arrival order, since nothing will arrive from it again — and only
 /// while another session of that account is still running. Every other exited
 /// snapshot is deleted, as before.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn keep_later_exited_readings(
     latest: &mut std::collections::BTreeMap<String, SessionSnapshot>,
     exited: Vec<(PathBuf, SessionSnapshot)>,
@@ -652,7 +708,7 @@ fn keep_later_exited_readings(
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn load_or_create_identity_key(root: &Path) -> Result<[u8; 32]> {
     let key_path = root.join(".account-id-key");
     let lock_path = root.join(".account-id-key.lock");
@@ -676,7 +732,7 @@ fn load_or_create_identity_key(root: &Path) -> Result<[u8; 32]> {
     }
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn opaque_account_id(identity_key: &[u8; 32], account_hash: &str) -> String {
     let mut mac =
         HmacSha256::new_from_slice(identity_key).expect("HMAC accepts a key of any length");
@@ -702,7 +758,7 @@ fn opaque_account_id(identity_key: &[u8; 32], account_hash: &str) -> String {
 ///
 /// Judged over the shared windows both carry with a reset. `None` when those
 /// windows disagree; `Equal` when none of them tells the two apart.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn reading_order(a: &SessionSnapshot, b: &SessionSnapshot) -> Option<std::cmp::Ordering> {
     use std::cmp::Ordering;
 
@@ -742,7 +798,7 @@ fn reading_order(a: &SessionSnapshot, b: &SessionSnapshot) -> Option<std::cmp::O
 /// Whether `candidate` should stand for its account in place of `current`: when
 /// its figures are the later reading, or — only when the figures cannot tell
 /// the two apart — when it arrived more recently.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn supersedes(candidate: &SessionSnapshot, current: &SessionSnapshot) -> bool {
     match reading_order(candidate, current) {
         Some(std::cmp::Ordering::Greater) => true,
@@ -752,7 +808,7 @@ fn supersedes(candidate: &SessionSnapshot, current: &SessionSnapshot) -> bool {
 }
 
 /// Per account, the live snapshot that holds the latest reading of its quota.
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn latest_by_account(
     snapshots: Vec<SessionSnapshot>,
     inspector: &impl ProcessInspector,
@@ -776,7 +832,7 @@ fn latest_by_account(
     newest_by_account
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn accounts_with_key(
     mut newest_by_account: std::collections::BTreeMap<String, SessionSnapshot>,
     identity_key: &[u8; 32],
@@ -1707,5 +1763,76 @@ mod tests {
         let before = fs::read(&settings).unwrap();
         assert!(setup(&settings, Path::new("/bin/ai-usagebar")).is_err());
         assert_eq!(fs::read(&settings).unwrap(), before);
+    }
+
+    #[test]
+    fn linux_proc_stat_ppid_handles_spaces_and_parentheses_in_comm() {
+        assert_eq!(
+            parse_proc_stat_ppid("42 (weird (proc) name) S 10 10 10 0 -1 4194304"),
+            Some(10)
+        );
+        assert_eq!(parse_proc_stat_ppid("1 (systemd) S 0 1 1 0 -1"), None);
+        assert_eq!(parse_proc_stat_ppid("malformed"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linux_process_inspector_reads_proc_ancestry_exe_and_comm_fallback() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let proc_root = temp.path().join("proc");
+        let sessions = temp.path().join("sessions");
+
+        // Parent PID 200: `agy` (with deleted binary suffix on upgrade)
+        let p200 = proc_root.join("200");
+        fs::create_dir_all(&p200).unwrap();
+        fs::write(p200.join("stat"), "200 (agy) S 1 1 1 0 -1").unwrap();
+        symlink("/usr/local/bin/agy (deleted)", p200.join("exe")).unwrap();
+
+        // Child PID 201: shell wrapper with parens in comm, no exe symlink (comm fallback)
+        let p201 = proc_root.join("201");
+        fs::create_dir_all(&p201).unwrap();
+        fs::write(p201.join("stat"), "201 (sh (sub)) S 200 200 200 0 -1").unwrap();
+        fs::write(p201.join("comm"), "sh\n").unwrap();
+
+        // Grandchild PID 202: ai-usagebar ingest-statusline
+        let p202 = proc_root.join("202");
+        fs::create_dir_all(&p202).unwrap();
+        fs::write(p202.join("stat"), "202 (ai-usagebar) S 201 200 200 0 -1").unwrap();
+        symlink("/usr/bin/ai-usagebar", p202.join("exe")).unwrap();
+
+        let inspector = LinuxProcessInspector::at(&proc_root);
+        assert_eq!(inspector.parent_pid(202), Some(201));
+        assert_eq!(inspector.parent_pid(201), Some(200));
+        assert_eq!(
+            inspector.executable_name(200).as_deref(),
+            Some(OsStr::new("agy"))
+        );
+        assert_eq!(
+            inspector.executable_name(201).as_deref(),
+            Some(OsStr::new("sh"))
+        );
+        assert_eq!(inspector.executable_name(999), None);
+
+        let body = payload(
+            "linux@example.com",
+            json!({
+                "gemini-weekly": {
+                    "remaining_fraction": 0.75,
+                    "reset_time": "2026-11-20T00:00:00Z",
+                    "reset_in_seconds": 604800
+                }
+            }),
+        );
+        let now = "2026-11-19T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let outcome =
+            ingest_with(body.to_string().as_bytes(), &sessions, &inspector, 202, now).unwrap();
+        assert_eq!(outcome, IngestOutcome::Written);
+
+        let accounts = read_active_accounts(&sessions, &inspector);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].masked_email, "l***@example.com");
+        assert_eq!(accounts[0].snapshot.plan, "Google AI Pro");
     }
 }

@@ -2,6 +2,12 @@
 
 ### Added
 
+- **Antigravity status-line integration on Linux and WSL.** The multi-account
+  live-session status-line collector (`ai-usagebar antigravity setup-statusline`
+  / `ingest-statusline`) now inspects process ancestry and executable basenames
+  via `/proc` on Linux in addition to macOS, keeping the same masked labels,
+  opaque account IDs, deduplication, and 15-minute staleness policy (#593).
+
 - **A provider's name takes the colour of its status page.** When the official
   status page of Claude, Anthropic API, Codex, Cursor or GitHub Copilot flags
   one of that provider's own components, the TUI and the tray popover colour
