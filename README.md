@@ -1007,8 +1007,8 @@ is off by default:
 
 ```sh
 # needs GTK 3, WebKitGTK 4.1 (webkit2gtk-4.1), libsoup 3, and Node.js/npm
-# (build.rs builds the popover UI in windows/popover; without npm the tray
-# shows a placeholder page)
+# (build.rs builds the popover UI in windows/popover, or reuses a complete
+# windows/popover/dist; with neither, the tray shows a placeholder page)
 cargo build --release --features linux-tray --bin ai-usagebar-tray
 ./target/release/ai-usagebar-tray
 ```
