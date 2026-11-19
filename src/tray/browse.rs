@@ -25,13 +25,16 @@ pub fn open(raw: &str) {
     let _ = command(url).spawn();
 }
 
-/// The process that opens `url` in the default browser.
+/// The process that opens `url` in the default browser, with the URL as its
+/// only argument. On Windows that is Explorer, as for the device-code sign-in
+/// page (`nous::oauth::SystemBrowserOpener`): `cmd /C start` read the URL's
+/// `&`, `|`, `^` and `%NAME%` as cmd syntax rather than as part of the link.
 #[cfg(any(windows, target_os = "macos"))]
 fn command(url: &str) -> std::process::Command {
     #[cfg(windows)]
     {
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/C", "start", "", url]);
+        let mut command = std::process::Command::new("explorer.exe");
+        command.arg(url);
         command
     }
     #[cfg(target_os = "macos")]
