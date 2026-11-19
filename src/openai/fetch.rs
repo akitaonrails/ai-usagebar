@@ -136,6 +136,19 @@ pub async fn fetch_snapshot_routed(
                     return handle_auth_failure(cache, plan_hint.as_deref(), false);
                 }
             }
+            Ok(Err(AppError::Http { status, .. }))
+                if (400..500).contains(&status) && status != 429 =>
+            {
+                // A present refresh token the token endpoint no longer accepts
+                // used to abort here and serve the cached usage, though the
+                // access token can still have minutes left. An empty refresh
+                // token already continues with it; this 4xx is the same
+                // situation, as in `anthropic::fetch`. 429 and 5xx still abort,
+                // so a rate limit or an outage does not add a usage request.
+                // Clear the token-endpoint error the way the empty-refresh
+                // path does: only the usage request decides what is shown.
+                cache.clear_last_error();
+            }
             Ok(Err(AppError::Http { status, body })) => {
                 cache.write_last_error(status, &body);
                 return handle_auth_failure(cache, plan_hint.as_deref(), false);
