@@ -340,7 +340,7 @@ async fn collect_filtered_json_with(
     let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
     let tabs: Vec<TabId> = tabs_with_desktop(&config)
         .into_iter()
-        .filter(|tab| tab_provider_id(tab) == provider)
+        .filter(|tab| tab_provider_id(&config, tab) == provider)
         .collect();
     if tabs.is_empty() {
         return Err(format!("no enabled provider matches {provider}"));
@@ -374,11 +374,16 @@ async fn collect_filtered_json_with(
     ))
 }
 
-fn tab_provider_id(tab: &TabId) -> String {
-    match &tab.source {
-        TabSource::Builtin(vendor) => vendor.slug().to_string(),
-        TabSource::Custom { id, .. } => format!("custom:{id}"),
+/// The provider a filter names `tab` by: its report id up to any
+/// `@<account>`. A grouped `[[custom]]` source is `custom:<group>`, not its
+/// own `custom:<id>`, so the tabs kept here are the ones
+/// [`report_targets_for_filter_with_config`] can then match.
+fn tab_provider_id(config: &Config, tab: &TabId) -> String {
+    let mut id = tab_report_id(config, tab);
+    if let Some(at) = id.find('@') {
+        id.truncate(at);
     }
+    id
 }
 
 /// Snapshot one configured vendor or account — the entry whose `id` is
@@ -4428,5 +4433,51 @@ mod default_label_report_tests {
             Some("personal"),
         );
         assert_eq!(one.len(), 1);
+    }
+
+    #[test]
+    fn a_provider_filter_keeps_every_account_of_a_custom_group() {
+        use crate::config::CustomProviderConfig;
+
+        // `get_usage` keeps the tabs whose provider id is `provider` before it
+        // compares report ids, so a grouped source has to answer to its group
+        // there: under `custom:<id>` no provider could reach it.
+        let source = |id: &str, grouped: Option<(&str, &str)>| CustomProviderConfig {
+            id: id.into(),
+            group: grouped.map(|(group, _)| group.into()),
+            account: grouped.map(|(_, account)| account.into()),
+            ..Default::default()
+        };
+        let config = Config {
+            custom: vec![
+                source("gem_home", Some(("gemini", "home"))),
+                source("gem_work", Some(("gemini", "work"))),
+                source("solo", None),
+            ],
+            ..Default::default()
+        };
+        let mut tabs: Vec<TabId> = config.custom.iter().map(TabId::custom).collect();
+        tabs.push(TabId::account_for(VendorId::Anthropic, "work"));
+
+        let provider = |tab: &TabId| tab_provider_id(&config, tab);
+        assert_eq!(provider(&tabs[0]), "custom:gemini");
+        assert_eq!(provider(&tabs[1]), "custom:gemini");
+        assert_eq!(provider(&tabs[2]), "custom:solo");
+        assert_eq!(provider(&tabs[3]), "anthropic");
+
+        // Both steps of the filter, the way `collect_filtered_json_with` runs them.
+        let kept: Vec<TabId> = tabs
+            .into_iter()
+            .filter(|tab| provider(tab) == "custom:gemini")
+            .collect();
+        let targets = expand_antigravity_tabs(&kept, &[]);
+        let ids = |account: Option<&str>| {
+            report_targets_for_filter_with_config(&config, &targets, "custom:gemini", account)
+                .iter()
+                .map(|target| report_target_id_with_config(&config, target))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(None), ["custom:gemini@home", "custom:gemini@work"]);
+        assert_eq!(ids(Some("work")), ["custom:gemini@work"]);
     }
 }
