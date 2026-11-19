@@ -24,8 +24,10 @@
 //! device-login callbacks only `send_event` through the `EventLoopProxy`.
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
@@ -129,8 +131,11 @@ impl Theme {
 }
 
 enum UserEvent {
-    /// A tray event, with the cursor read at the moment of a left click (Hyprland).
-    Tray(TrayIconEvent, Option<hypr::Anchor>),
+    /// A tray event, with the cursor read at the moment of a left click (Hyprland)
+    /// and, for that click, its sequence number: the cursor is read off the ksni
+    /// thread, so clicks can arrive here out of order and [`ClickOrder`] puts them
+    /// back. `None` for an event that is not captured and needs no order.
+    Tray(TrayIconEvent, Option<hypr::Anchor>, Option<u64>),
     Menu(MenuEvent),
     Ipc(String),
     Report(Value),
@@ -206,6 +211,8 @@ struct TrayState {
     shown: bool,
     /// Until when an opening waits for its placement before showing unplaced.
     show_deadline: Option<Instant>,
+    /// Releases the captured clicks in the order they were made.
+    click_order: ClickOrder<(TrayIconEvent, Option<hypr::Anchor>)>,
     theme: Theme,
     style: PopoverStyle,
     /// Last valid CSS/logical height reported by the page.
@@ -250,20 +257,18 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
     // These run on the ksni thread: they only forward.
     {
         let proxy = proxy.clone();
-        TrayIconEvent::set_event_handler(Some(move |event| {
-            // The click is the only moment the cursor is on the icon, so it is read
-            // here, on the ksni thread, not later on the worker.
-            let cursor = matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-            )
-            .then(hypr::capture)
-            .flatten();
-            let _ = proxy.send_event(UserEvent::Tray(event, cursor));
+        let clicks = AtomicU64::new(0);
+        TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+            // Runs inside the SNI service's lock: it only forwards, and never waits
+            // on `hyprctl`. The click is the one moment the cursor is on the icon, so
+            // a short thread reads it and sends the event once it has.
+            if !is_left_click_up(&event) || !hypr::hyprland() {
+                let _ = proxy.send_event(UserEvent::Tray(event, None, None));
+                return;
+            }
+            // Numbered here, on the one thread that sees the clicks in order.
+            let seq = clicks.fetch_add(1, Ordering::SeqCst);
+            forward_click(&proxy, event, seq);
         }));
     }
     {
@@ -367,6 +372,7 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         hypr_anchor: None,
         shown: false,
         show_deadline: None,
+        click_order: ClickOrder::default(),
         theme: Theme::Light,
         style: PopoverStyle::Classic,
         popover_height: panel::WINDOW_HEIGHT,
@@ -378,8 +384,14 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         let _lock = &lock;
         *control_flow = wait_for(state.show_deadline);
         match event {
-            Event::UserEvent(UserEvent::Tray(tray_event, cursor)) => {
-                handle_tray(&mut state, tray_event, cursor);
+            Event::UserEvent(UserEvent::Tray(tray_event, cursor, seq)) => {
+                let ready = match seq {
+                    Some(seq) => state.click_order.accept(seq, (tray_event, cursor)),
+                    None => vec![(tray_event, cursor)],
+                };
+                for (tray_event, cursor) in ready {
+                    handle_tray(&mut state, tray_event, cursor);
+                }
             }
             Event::UserEvent(UserEvent::Placed {
                 generation,
@@ -468,9 +480,92 @@ fn click_reopens(since_blur_hide: Option<Duration>) -> bool {
     since_blur_hide.is_none_or(|elapsed| elapsed >= REOPEN_DEBOUNCE)
 }
 
+/// A left click released on the icon: the one tray event that opens or closes the
+/// popover, and the only one whose cursor position is read.
+fn is_left_click_up(event: &TrayIconEvent) -> bool {
+    matches!(
+        event,
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }
+    )
+}
+
+/// Reads the cursor on a short thread and then sends the click, so the SNI
+/// handler never waits on `hyprctl`. A capture that fails or runs past its
+/// deadline sends `None`: the host then uses the position the protocol reported.
+/// Where no thread can be had the click goes without a cursor, in its place in
+/// the order, because a click that never arrives would hold every later one.
+fn forward_click(proxy: &EventLoopProxy<UserEvent>, event: TrayIconEvent, seq: u64) {
+    let (thread_proxy, thread_event) = (proxy.clone(), event.clone());
+    let spawned = std::thread::Builder::new()
+        .name("ai-usagebar-tray-cursor".into())
+        .spawn(move || {
+            // A panic must not lose the click either: it would block the ones behind.
+            let cursor = std::panic::catch_unwind(hypr::capture).unwrap_or(None);
+            let _ = thread_proxy.send_event(UserEvent::Tray(thread_event, cursor, Some(seq)));
+        });
+    if spawned.is_err() {
+        let _ = proxy.send_event(UserEvent::Tray(event, None, Some(seq)));
+    }
+}
+
+/// Puts numbered items back in numbering order.
+///
+/// Each click is read on its own thread, so a later click can finish first. Handled
+/// in that order, a close would run before the open it follows and become an open
+/// itself, leaving the popover up after open-then-close. The numbers are handed
+/// out on the one thread that sees the clicks in order; an item is released only
+/// when every lower number has been (a later one waits in `held`), and a number
+/// already released is dropped. Every number is sent exactly once, even on
+/// failure (see [`forward_click`]), so nothing waits for ever.
+struct ClickOrder<T> {
+    next: u64,
+    held: BTreeMap<u64, T>,
+}
+
+impl<T> Default for ClickOrder<T> {
+    fn default() -> Self {
+        Self {
+            next: 0,
+            held: BTreeMap::new(),
+        }
+    }
+}
+
+impl<T> ClickOrder<T> {
+    /// What can be handled now, in order, after `item` numbered `seq` arrived.
+    fn accept(&mut self, seq: u64, item: T) -> Vec<T> {
+        if seq < self.next {
+            return Vec::new();
+        }
+        self.held.entry(seq).or_insert(item);
+        let mut ready = Vec::new();
+        while let Some(item) = self.held.remove(&self.next) {
+            ready.push(item);
+            self.next += 1;
+        }
+        ready
+    }
+}
+
 /// Whether an opening that is still waiting for `hyprctl` has waited long enough.
 fn placement_wait_over(state: &TrayState, now: Instant) -> bool {
     placement_overdue(state.popover_open, state.shown, state.show_deadline, now)
+}
+
+/// The deadline after a resize asked the worker again. A popover still waiting for
+/// its placement waits for the new request from now, like a fresh opening, so a
+/// reply that is a little late is not shown unplaced first and then moved; one
+/// already shown has no wait to arm.
+fn rearmed_deadline(shown: bool, deadline: Option<Instant>, now: Instant) -> Option<Instant> {
+    if shown {
+        deadline
+    } else {
+        Some(now + PLACEMENT_WAIT)
+    }
 }
 
 fn placement_overdue(open: bool, shown: bool, deadline: Option<Instant>, now: Instant) -> bool {
@@ -1248,8 +1343,44 @@ fn release_bounds(window: &Window) {
 fn fix_size(window: &Window, width: u32, height: u32) {
     let fixed = LogicalSize::new(f64::from(width), f64::from(height));
     window.set_inner_size(fixed);
-    window.set_min_inner_size(Some(fixed));
-    window.set_max_inner_size(Some(fixed));
+    hold_hints(window, &size_hold(f64::from(width), f64::from(height)));
+}
+
+/// What holding the window at one size sets: GTK's default size and the hints
+/// that pin the window there. They are one size on purpose.
+///
+/// The window is built with a default size ([`panel::WINDOW_WIDTH`] x
+/// [`panel::WINDOW_HEIGHT`]) and GTK keeps it for ever. Changing the hints makes
+/// GTK work out the window's size again, and with no resize of its own pending it
+/// falls back to that default, clamped to the hints: for a popover held at a size
+/// above the default the clamp lands on the held size, but a popover shrunk to
+/// `panel::MIN_POPOVER_HEIGHT` came back as 420 px right after Hyprland had put
+/// it at 360, and Hyprland resizes around the center, so it rose behind the bar.
+#[derive(Debug, PartialEq)]
+struct SizeHold {
+    default_size: (i32, i32),
+    hint: (f64, f64),
+}
+
+fn size_hold(width: f64, height: f64) -> SizeHold {
+    let whole = |value: f64| value.round().max(1.0).min(f64::from(i32::MAX)) as i32;
+    SizeHold {
+        default_size: (whole(width), whole(height)),
+        hint: (width, height),
+    }
+}
+
+/// Pins the window at `hold`: the default size first, so that the hint changes
+/// that follow find GTK already wanting that size.
+fn hold_hints(window: &Window, hold: &SizeHold) {
+    gtk::prelude::GtkWindowExt::set_default_size(
+        window.gtk_window(),
+        hold.default_size.0,
+        hold.default_size.1,
+    );
+    let hint = LogicalSize::new(hold.hint.0, hold.hint.1);
+    window.set_min_inner_size(Some(hint));
+    window.set_max_inner_size(Some(hint));
     window.set_resizable(false);
 }
 
@@ -1369,18 +1500,13 @@ fn handle_placed(
 /// Fixes the window's size hints at `width` x `height` without asking GTK for that size:
 /// the compositor already gave the window it.
 fn hold_size(window: &Window, width: u32, height: u32) {
-    let fixed = LogicalSize::new(f64::from(width), f64::from(height));
-    window.set_min_inner_size(Some(fixed));
-    window.set_max_inner_size(Some(fixed));
-    window.set_resizable(false);
+    hold_hints(window, &size_hold(f64::from(width), f64::from(height)));
 }
 
 /// Fixes the size hints at whatever size the window has now.
 fn hold_current_size(window: &Window) {
     let size = window.inner_size().to_logical::<f64>(window.scale_factor());
-    window.set_min_inner_size(Some(size));
-    window.set_max_inner_size(Some(size));
-    window.set_resizable(false);
+    hold_hints(window, &size_hold(size.width, size.height));
 }
 
 /// Asks the worker to move and resize the mapped window under `generation`.
@@ -1417,6 +1543,7 @@ fn resize_through_hyprland(state: &mut TrayState) {
         return;
     }
     state.opening = generation;
+    state.show_deadline = rearmed_deadline(state.shown, state.show_deadline, Instant::now());
     release_bounds(&state.window);
     state.window.set_inner_size(LogicalSize::new(width, height));
     let sent = state.positioner.as_ref().is_some_and(|p| {
@@ -1927,6 +2054,66 @@ mod tests {
             now + PLACEMENT_WAIT
         ));
         assert!(!placement_overdue(true, false, None, now + PLACEMENT_WAIT));
+    }
+
+    #[test]
+    fn the_size_gtk_falls_back_to_is_the_one_the_window_is_held_at() {
+        // Heights below the window's initial 420 are the ones that came back to it.
+        for height in [360.0, 380.0, 419.0, 420.0, 449.0, 668.0, 1286.0] {
+            let hold = size_hold(320.0, height);
+            assert_eq!(hold.default_size, (320, height as i32), "{height}");
+            assert_eq!(hold.hint, (320.0, height), "{height}");
+        }
+        let below = size_hold(320.0, panel::MIN_POPOVER_HEIGHT);
+        assert_ne!(below.default_size.1, panel::WINDOW_HEIGHT as i32);
+        // A fractional size (a window measured in logical pixels) rounds, never 0.
+        assert_eq!(size_hold(320.4, 359.6).default_size, (320, 360));
+        assert_eq!(size_hold(f64::NAN, 0.0).default_size, (1, 1));
+    }
+
+    #[test]
+    fn a_resize_while_waiting_re_arms_the_placement_wait() {
+        let start = Instant::now();
+        let old = Some(start + PLACEMENT_WAIT);
+        let later = start + Duration::from_millis(300);
+        // Still waiting: the wait restarts from the resize, not from the opening.
+        let rearmed = rearmed_deadline(false, old, later);
+        assert_eq!(rearmed, Some(later + PLACEMENT_WAIT));
+        assert!(!placement_overdue(
+            true,
+            false,
+            rearmed,
+            start + PLACEMENT_WAIT
+        ));
+        // The same resize with the old deadline would reveal the popover unplaced.
+        assert!(placement_overdue(true, false, old, start + PLACEMENT_WAIT));
+        // Already shown: nothing is armed.
+        assert_eq!(rearmed_deadline(true, None, later), None);
+    }
+
+    #[test]
+    fn clicks_are_handled_in_the_order_they_were_made() {
+        let mut order = ClickOrder::default();
+        // Click 1 (the close) finished its capture before click 0 (the open).
+        assert!(order.accept(1, "close").is_empty());
+        assert_eq!(order.accept(0, "open"), ["open", "close"]);
+        assert_eq!(order.accept(2, "open again"), ["open again"]);
+    }
+
+    #[test]
+    fn a_late_or_repeated_click_is_dropped_and_a_gap_holds_the_rest() {
+        let mut order = ClickOrder::default();
+        assert_eq!(order.accept(0, "a"), ["a"]);
+        // A number already released never runs twice.
+        assert!(order.accept(0, "again").is_empty());
+        // 1 is missing: 2 and 3 wait for it, in order, then go together.
+        assert!(order.accept(3, "d").is_empty());
+        assert!(order.accept(2, "c").is_empty());
+        assert!(order.accept(3, "d twice").is_empty());
+        assert_eq!(order.accept(1, "b"), ["b", "c", "d"]);
+        assert!(order.accept(3, "d late").is_empty());
+        // Nothing released or dropped stays behind.
+        assert!(order.held.is_empty());
     }
 
     #[test]

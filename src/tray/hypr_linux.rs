@@ -182,6 +182,23 @@ fn warn(context: &str, detail: &str) {
     );
 }
 
+/// Reads a pipe to its end, or to `MAX_OUTPUT + 1` bytes: the one byte past the
+/// cap is how an output that is too long is told from one that is exactly at it.
+/// A reader that stopped at the cap would announce EOF while the child had more
+/// to say, and the caller would parse a prefix as if it were the whole answer.
+fn read_capped(reader: impl Read) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    reader
+        .take(MAX_OUTPUT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > MAX_OUTPUT {
+        Err(format!("hyprctl output exceeded {MAX_OUTPUT} bytes"))
+    } else {
+        Ok(bytes)
+    }
+}
+
 /// Runs `path` with `args`: no shell, both pipes drained while it runs (a full
 /// pipe cannot defeat the deadline), killed and reaped at the deadline.
 pub(super) fn command_at(path: &Path, args: &[&str]) -> Result<String, String> {
@@ -198,14 +215,10 @@ pub(super) fn command_at(path: &Path, args: &[&str]) -> Result<String, String> {
     let (tx, rx) = mpsc::channel();
     let out_tx = tx.clone();
     std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stdout.take(MAX_OUTPUT).read_to_end(&mut bytes);
-        let _ = out_tx.send((true, result.map(|_| bytes)));
+        let _ = out_tx.send((true, read_capped(stdout)));
     });
     std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stderr.take(MAX_OUTPUT).read_to_end(&mut bytes);
-        let _ = tx.send((false, result.map(|_| bytes)));
+        let _ = tx.send((false, read_capped(stderr)));
     });
     let status = loop {
         match child.try_wait() {
@@ -230,7 +243,7 @@ pub(super) fn command_at(path: &Path, args: &[&str]) -> Result<String, String> {
         let (is_stdout, bytes) = rx
             .recv_timeout(remaining)
             .map_err(|_| "hyprctl timed out after 2s")?;
-        let bytes = bytes.map_err(|error| error.to_string())?;
+        let bytes = bytes?;
         if is_stdout {
             out = Some(bytes);
         } else {
@@ -272,9 +285,16 @@ impl Compositor for Hyprctl {
     }
 }
 
+/// The gap Omarchy's popovers keep from the bar when the option cannot be read
+/// (or is not a sane size).
+const DEFAULT_GAP: u32 = 5;
+/// The largest gap or border, in pixels, taken as a real setting; a value past it
+/// is a misread, not a layout.
+const MAX_GAP_PX: f64 = 200.0;
+
 /// Half of Hyprland's `general:gaps_out` (the first value of its CSS form, or the
 /// plain int), which is the gap Omarchy's popovers keep from the bar; 5 when the
-/// option cannot be read.
+/// option cannot be read or is outside `0..=200` px.
 pub(super) fn parse_gap(json: &str) -> u32 {
     let value = serde_json::from_str::<serde_json::Value>(json).ok();
     let gap = value
@@ -286,25 +306,34 @@ pub(super) fn parse_gap(json: &str) -> u32 {
                 .and_then(|v| v.parse::<f64>().ok())
                 .or_else(|| v.get("int").and_then(|v| v.as_f64()))
         })
-        .filter(|n| n.is_finite() && *n >= 0.0);
-    gap.map(|n| (n / 2.0).round() as u32).unwrap_or(5)
+        .filter(|n| n.is_finite() && (0.0..=MAX_GAP_PX).contains(n));
+    gap.map(|n| (n / 2.0).round() as u32).unwrap_or(DEFAULT_GAP)
 }
 
 /// Width of the border Hyprland draws around a window, from
-/// `getoption general:border_size -j`; 0 when unreadable.
+/// `getoption general:border_size -j`; 0 when unreadable or outside `0..=200` px.
 pub(super) fn parse_border(json: &str) -> u32 {
     serde_json::from_str::<serde_json::Value>(json)
         .ok()
         .and_then(|v| v.get("int")?.as_u64())
+        .filter(|n| *n <= MAX_GAP_PX as u64)
         .and_then(|n| u32::try_from(n).ok())
         .unwrap_or(0)
+}
+
+/// Gap plus border; the default gap when the sum does not fit.
+pub(super) fn combined_gap(gap: u32, border: u32) -> u32 {
+    gap.checked_add(border).unwrap_or(DEFAULT_GAP)
 }
 
 /// Distance from the bar and screen edges to the window geometry. Hyprland draws
 /// a window's border outside its geometry, so the border is added to keep the
 /// same visible gap Omarchy's own popovers have.
 pub(super) fn outer_gap(gaps_out: Option<&str>, border_size: Option<&str>) -> u32 {
-    gaps_out.map_or(5, parse_gap) + border_size.map_or(0, parse_border)
+    combined_gap(
+        gaps_out.map_or(DEFAULT_GAP, parse_gap),
+        border_size.map_or(0, parse_border),
+    )
 }
 
 fn gap() -> u32 {
@@ -322,18 +351,40 @@ pub(super) fn parse_anchor(json: &str) -> Result<Anchor, String> {
     }
 }
 
+/// Scale Hyprland accepts for a monitor, and the largest size and origin a layout
+/// has; past these a response is garbage, not a monitor.
+const SCALE_RANGE: std::ops::RangeInclusive<f64> = 0.25..=8.0;
+const SIZE_RANGE: std::ops::RangeInclusive<f64> = 1.0..=32768.0;
+const ORIGIN_RANGE: std::ops::RangeInclusive<f64> = -65536.0..=65536.0;
+
 /// The whole response or nothing: one monitor that cannot hold a window (no
-/// scale, no size) rejects the list instead of being filtered out of it.
+/// scale, no size, a size or an origin no layout has, a reserved area that is
+/// negative or larger than the monitor) rejects the list instead of being
+/// filtered out of it.
 pub(super) fn parse_monitors(json: &str) -> Result<Vec<Monitor>, String> {
     let monitors: Vec<Monitor> = serde_json::from_str(json).map_err(|error| error.to_string())?;
     let usable = |m: &Monitor| {
-        [m.x, m.y, m.width, m.height, m.scale]
+        let finite = [m.x, m.y, m.width, m.height, m.scale]
             .iter()
             .all(|n| n.is_finite())
-            && m.reserved.iter().all(|n| n.is_finite())
-            && m.scale > 0.0
-            && m.width > 0.0
-            && m.height > 0.0
+            && m.reserved.iter().all(|n| n.is_finite());
+        if !finite
+            || !SCALE_RANGE.contains(&m.scale)
+            || !SIZE_RANGE.contains(&m.width)
+            || !SIZE_RANGE.contains(&m.height)
+            || !ORIGIN_RANGE.contains(&m.x)
+            || !ORIGIN_RANGE.contains(&m.y)
+        {
+            return false;
+        }
+        // `reserved` is in logical pixels: left and right against the logical
+        // width, top and bottom against the logical height.
+        let [left, top, right, bottom] = m.reserved;
+        let (logical_w, logical_h) = (m.width / m.scale, m.height / m.scale);
+        (0.0..=logical_w).contains(&left)
+            && (0.0..=logical_w).contains(&right)
+            && (0.0..=logical_h).contains(&top)
+            && (0.0..=logical_h).contains(&bottom)
     };
     if monitors.iter().all(usable) {
         Ok(monitors)
@@ -360,6 +411,21 @@ pub(super) fn capture() -> Option<Anchor> {
             None
         }
     }
+}
+
+/// `value` rounded to an `i32`, or `None` when it is not finite or does not fit:
+/// an unplaceable frame, never a saturated or wrapped coordinate.
+fn checked_i32(value: f64) -> Option<i32> {
+    let rounded = value.round();
+    (rounded.is_finite() && rounded >= f64::from(i32::MIN) && rounded <= f64::from(i32::MAX))
+        .then_some(rounded as i32)
+}
+
+/// As [`checked_i32`], for a size.
+fn checked_u32(value: f64) -> Option<u32> {
+    let rounded = value.round();
+    (rounded.is_finite() && rounded >= 0.0 && rounded <= f64::from(u32::MAX))
+        .then_some(rounded as u32)
 }
 
 /// The monitor holding the anchor, else the first.
@@ -402,7 +468,7 @@ pub(super) fn frame_with_gap(
     let gap_px = gap.map_or(0.0, f64::from);
     let margin = gap.map_or(DEFAULT_MARGIN, f64::from);
     let available = (screen_h - top - bottom - panel::POPOVER_BOTTOM_GAP - gap_px * 2.0).max(0.0);
-    let height = f64::from(requested).min(available).round() as u32;
+    let height = checked_u32(f64::from(requested).min(available))?;
     if height == 0 {
         return None;
     }
@@ -415,8 +481,8 @@ pub(super) fn frame_with_gap(
         monitor.y + screen_h - bottom - f64::from(height) - gap_px
     };
     Some(Frame {
-        x: x.round() as i32,
-        y: y.round() as i32,
+        x: checked_i32(x)?,
+        y: checked_i32(y)?,
         width,
         height,
     })
@@ -502,17 +568,14 @@ fn safe_monitor_name(name: &str) -> bool {
 /// monitor. Only numbers and fixed strings reach the Lua; a monitor name that is
 /// not a plain identifier is left out, and the size alone is asked for.
 pub(super) fn lua_opening_rule(monitor: &Monitor, frame: &Frame) -> String {
-    let location = if safe_monitor_name(&monitor.name) {
-        format!(
+    let local = checked_i32(f64::from(frame.x) - monitor.x)
+        .zip(checked_i32(f64::from(frame.y) - monitor.y));
+    let location = match local {
+        Some((x, y)) if safe_monitor_name(&monitor.name) => format!(
             ", monitor = \"{}\", size = {{ {}, {} }}, move = {{ {}, {} }}",
-            monitor.name,
-            frame.width,
-            frame.height,
-            (f64::from(frame.x) - monitor.x).round() as i64,
-            (f64::from(frame.y) - monitor.y).round() as i64,
-        )
-    } else {
-        format!(", size = {{ {}, {} }}", frame.width, frame.height)
+            monitor.name, frame.width, frame.height, x, y,
+        ),
+        _ => format!(", size = {{ {}, {} }}", frame.width, frame.height),
     };
     let matcher = rule_match();
     format!(
@@ -1014,6 +1077,140 @@ mod tests {
         assert_eq!(outer_gap(Some(gaps_out), None), 5);
         assert_eq!(outer_gap(None, Some(border)), 7);
         assert_eq!(outer_gap(None, None), 5);
+    }
+
+    #[test]
+    fn a_gap_or_border_outside_a_useful_range_falls_back_to_the_default() {
+        // 200 px is the last real value; one past it is a misread.
+        assert_eq!(parse_gap(r#"{"int":200}"#), 100);
+        assert_eq!(parse_gap(r#"{"int":201}"#), 5);
+        assert_eq!(parse_gap(r#"{"css":"201 0 0 0"}"#), 5);
+        assert_eq!(parse_gap(r#"{"int":0}"#), 0);
+        assert_eq!(parse_gap(r#"{"int":1e300}"#), 5);
+        assert_eq!(parse_gap(r#"{"int":18446744073709551615}"#), 5);
+        assert_eq!(parse_border(r#"{"int":200}"#), 200);
+        assert_eq!(parse_border(r#"{"int":201}"#), 0);
+        assert_eq!(parse_border(r#"{"int":4294967295}"#), 0);
+        assert_eq!(parse_border(r#"{"int":18446744073709551615}"#), 0);
+    }
+
+    #[test]
+    fn the_gap_and_border_sum_does_not_wrap() {
+        assert_eq!(combined_gap(100, 200), 300);
+        assert_eq!(combined_gap(u32::MAX, 1), DEFAULT_GAP);
+        assert_eq!(combined_gap(1, u32::MAX), DEFAULT_GAP);
+        assert_eq!(combined_gap(u32::MAX, 0), u32::MAX);
+    }
+
+    fn monitor_json(fields: &str) -> String {
+        format!(r#"[{{"name":"DP-1",{fields}}}]"#)
+    }
+
+    const GOOD: &str = r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,0]"#;
+
+    #[test]
+    fn a_monitor_with_a_scale_size_origin_or_reserved_area_no_layout_has_is_refused() {
+        assert!(parse_monitors(&monitor_json(GOOD)).is_ok());
+        let bad = [
+            // scale outside 0.25..=8
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":0.24,"reserved":[0,26,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":8.01,"reserved":[0,26,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1e-300,"reserved":[0,26,0,0]"#,
+            // size outside 1..=32768
+            r#""x":0,"y":0,"width":0.5,"height":1080,"scale":1,"reserved":[0,26,0,0]"#,
+            r#""x":0,"y":0,"width":32769,"height":1080,"scale":1,"reserved":[0,26,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":0.5,"scale":1,"reserved":[0,26,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":32769,"scale":1,"reserved":[0,26,0,0]"#,
+            // origin outside -65536..=65536
+            r#""x":65537,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,0]"#,
+            r#""x":-65537,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,0]"#,
+            r#""x":0,"y":65537,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,0]"#,
+            r#""x":0,"y":-65537,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,0]"#,
+            r#""x":1e300,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,0]"#,
+            // reserved negative, or larger than the logical dimension
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[-1,26,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,-1,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,-1,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,-1]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[1921,26,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,1081,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,1921,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":1,"reserved":[0,26,0,1081]"#,
+            // reserved is logical: 1000 fits 1920 px at scale 1 but not at scale 2
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":2,"reserved":[0,26,0,541]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":2,"reserved":[961,26,0,0]"#,
+        ];
+        for fields in bad {
+            assert!(parse_monitors(&monitor_json(fields)).is_err(), "{fields}");
+            // One bad entry rejects the list; the good one is not kept alone.
+            let both = format!(r#"[{{"name":"A",{GOOD}}},{{"name":"B",{fields}}}]"#);
+            assert!(parse_monitors(&both).is_err(), "{fields}");
+        }
+    }
+
+    #[test]
+    fn the_edges_of_every_monitor_limit_are_accepted() {
+        for fields in [
+            r#""x":-65536,"y":65536,"width":32768,"height":32768,"scale":0.25,"reserved":[0,0,0,0]"#,
+            r#""x":65536,"y":-65536,"width":1,"height":1,"scale":8,"reserved":[0,0,0,0]"#,
+            r#""x":0,"y":0,"width":1920,"height":1080,"scale":2,"reserved":[960,540,960,540]"#,
+        ] {
+            assert!(parse_monitors(&monitor_json(fields)).is_ok(), "{fields}");
+        }
+    }
+
+    #[test]
+    fn a_frame_that_does_not_fit_an_i32_is_no_position_not_a_saturated_one() {
+        assert_eq!(checked_i32(1.4), Some(1));
+        assert_eq!(checked_i32(-1.6), Some(-2));
+        assert_eq!(checked_i32(f64::from(i32::MAX)), Some(i32::MAX));
+        assert_eq!(checked_i32(f64::from(i32::MAX) + 1.0), None);
+        assert_eq!(checked_i32(f64::from(i32::MIN) - 1.0), None);
+        assert_eq!(checked_i32(f64::NAN), None);
+        assert_eq!(checked_i32(f64::INFINITY), None);
+        assert_eq!(checked_u32(0.4), Some(0));
+        assert_eq!(checked_u32(-0.6), None);
+        assert_eq!(checked_u32(f64::from(u32::MAX) + 1.0), None);
+        assert_eq!(checked_u32(f64::NAN), None);
+    }
+
+    #[test]
+    fn an_anchor_far_outside_the_layout_still_yields_a_clamped_frame() {
+        let list = monitors(ONE);
+        for far in [1e300, -1e300, f64::from(i32::MAX) * 4.0] {
+            let placed = frame(at(far, far), &list, W, 360);
+            let placed = placed.expect("a far anchor falls back to the first monitor");
+            assert!((0..=2560).contains(&placed.x), "{placed:?}");
+        }
+    }
+
+    #[test]
+    fn a_frame_that_cannot_be_put_in_the_lua_leaves_the_position_out() {
+        let list = monitors(ONE);
+        let monitor = &list[0];
+        let beyond = Frame {
+            x: i32::MAX,
+            y: 26,
+            width: W,
+            height: 360,
+        };
+        // Monitor-local x would be i32::MAX - 0 (fits); a monitor origin far below
+        // makes the local offset overflow i32, so only the size is asked for.
+        let far = monitors(
+            r#"[{"name":"DP-1","x":-65536,"y":0,"width":2560,"height":1440,"scale":1,"reserved":[0,26,0,0]}]"#,
+        );
+        let rule = lua_opening_rule(&far[0], &beyond);
+        assert!(rule.contains("size = { 320, 360 }"), "{rule}");
+        assert!(!rule.contains("move ="), "{rule}");
+        assert!(!rule.contains("monitor ="), "{rule}");
+        // The ordinary case keeps the position.
+        let ordinary = Frame {
+            x: 100,
+            y: 26,
+            width: W,
+            height: 360,
+        };
+        assert!(lua_opening_rule(monitor, &ordinary).contains("move = { 100, 26 }"));
     }
 
     // --- Lua -----------------------------------------------------------------
@@ -1546,6 +1743,12 @@ mod tests {
             (true, 900, 600),
             (false, 600, 900),
             (false, 900, 600),
+            // Down to the smallest popover (panel::MIN_POPOVER_HEIGHT), below the
+            // window's initial height: the detail screens of a provider.
+            (true, 420, 360),
+            (true, 900, 360),
+            (false, 420, 360),
+            (false, 900, 360),
         ] {
             // The hints are already released: the resize is honored at once.
             let (fake, result) = resized(top, from, to, 0);
@@ -1711,6 +1914,55 @@ mod tests {
         let failing = script(&dir, "#!/bin/sh\nprintf 'boom' >&2\nexit 3\n");
         assert_eq!(command_at(&failing, &[]).unwrap_err(), "boom");
         assert!(command_at(&dir.path().join("missing"), &[]).is_err());
+    }
+
+    // Both streams are read to MAX_OUTPUT + 1: an output past the cap is an error,
+    // never a prefix parsed as the whole answer. The scripts print a few bytes more
+    // than the cap, which fits the pipe once the reader has stopped, so they still
+    // exit 0 and the old reader (stopping at the cap) would have returned Ok.
+    fn over_the_cap_script(
+        dir: &tempfile::TempDir,
+        stream: &str,
+        bytes: u64,
+    ) -> std::path::PathBuf {
+        let redirect = if stream == "stderr" { " >&2" } else { "" };
+        script(
+            dir,
+            &format!("#!/bin/sh\nhead -c {bytes} /dev/zero{redirect}\nexit 0\n"),
+        )
+    }
+
+    #[test]
+    fn stdout_past_the_cap_is_an_error_not_a_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = over_the_cap_script(&dir, "stdout", MAX_OUTPUT + 16);
+        let error = command_at(&fake, &[]).unwrap_err();
+        assert!(error.starts_with("hyprctl output exceeded"), "{error}");
+    }
+
+    #[test]
+    fn stderr_past_the_cap_is_an_error_even_when_the_command_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = over_the_cap_script(&dir, "stderr", MAX_OUTPUT + 16);
+        let error = command_at(&fake, &[]).unwrap_err();
+        assert!(error.starts_with("hyprctl output exceeded"), "{error}");
+    }
+
+    #[test]
+    fn an_output_exactly_at_the_cap_is_still_read_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = over_the_cap_script(&dir, "stdout", MAX_OUTPUT);
+        let output = command_at(&fake, &[]).unwrap();
+        assert_eq!(output.len() as u64, MAX_OUTPUT);
+    }
+
+    #[test]
+    fn an_output_past_the_cap_is_refused_before_the_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = over_the_cap_script(&dir, "stdout", MAX_OUTPUT + 16);
+        let start = Instant::now();
+        let _ = command_at(&fake, &[]);
+        assert!(start.elapsed() < Duration::from_millis(1500));
     }
 
     // --- Omarchy detection ----------------------------------------------------
