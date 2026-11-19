@@ -22,15 +22,26 @@ pub fn open(raw: &str) {
     let Some(url) = http_url(raw) else {
         return;
     };
+    let _ = command(url).spawn();
+}
+
+/// The process that opens `url` in the default browser, with the URL as its
+/// only argument. On Windows that is Explorer, as for the device-code sign-in
+/// page (`nous::oauth::SystemBrowserOpener`): `cmd /C start` read the URL's
+/// `&`, `|`, `^` and `%NAME%` as cmd syntax rather than as part of the link.
+#[cfg(any(windows, target_os = "macos"))]
+fn command(url: &str) -> std::process::Command {
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .spawn();
+        let mut command = std::process::Command::new("explorer.exe");
+        command.arg(url);
+        command
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
+        let mut command = std::process::Command::new("/usr/bin/open");
+        command.arg(url);
+        command
     }
 }
 
@@ -56,5 +67,21 @@ mod tests {
         assert_eq!(http_url("file:///etc/passwd"), None);
         assert_eq!(http_url("https://ok.example\nhttps://evil"), None);
         assert_eq!(http_url(""), None);
+    }
+
+    /// A query string's `&`, `%` and `^` stay inside the opener's one
+    /// argument: nothing parses the URL as shell syntax.
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn the_url_is_the_openers_only_argument() {
+        let url = "https://example.com/usage?a=1&b=%PATH%^";
+        let command = super::command(url);
+        let program = if cfg!(windows) {
+            "explorer.exe"
+        } else {
+            "/usr/bin/open"
+        };
+        assert_eq!(command.get_program(), program);
+        assert_eq!(command.get_args().collect::<Vec<_>>(), [url]);
     }
 }
