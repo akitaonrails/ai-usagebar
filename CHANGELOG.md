@@ -1,5 +1,23 @@
 ## [Unreleased]
 
+### Added
+
+- **`[anthropic] default_label` names the unnamed Claude account.** Set it to
+  a label such as `home` and the default account reads `Claude · home` in the
+  TUI tabs and in the `display_name` of `usage --json` (read by GNOME, KDE,
+  Omarchy and the tray popovers; plain `ai-usagebar usage` keeps the machine
+  `name`, and the macOS menu bar builds its own labels and does not apply it
+  yet), the same way a named account's label is appended. Display only: ids,
+  `name`, credentials, cache and `--account` selection are unchanged. The label
+  must be a single line without control characters and must not equal an
+  `[[anthropic.accounts]]` label (config error). Optional: an unset config
+  renders exactly as before (#605).
+
+- **TUI Overview shows extra-usage money across Claude accounts.** Each Claude
+  row in Overview now shows its extra-usage spend alongside percentages, and
+  when two or more Claude accounts share a currency a `Claude extra` summary
+  row totals their spend (and cap when every account has one) (#605).
+
 ### Fixed
 
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The

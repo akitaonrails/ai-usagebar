@@ -507,6 +507,22 @@ fn entry_from_state_with_config(
     now: chrono::DateTime<Utc>,
 ) -> Entry {
     let mut entry = entry_from_state(tab, state, now);
+    // `[anthropic] default_label` names the unnamed Claude account in
+    // `usage --json` (`display_name`) so frontends agree with the TUI.
+    // Display only: `id` and `name` stay the stable selectors.
+    if tab.account.is_none()
+        && !tab.desktop
+        && matches!(
+            tab.source,
+            TabSource::Builtin(crate::vendor::VendorId::Anthropic)
+        )
+        && let Some(label) = config.anthropic.resolved_default_label()
+    {
+        entry.display_name = format_tab_name(
+            &TabId::account(&label),
+            crate::vendor::VendorId::Anthropic.display_name(),
+        );
+    }
     if let TabSource::Custom { id, .. } = &tab.source {
         entry.brand = config
             .custom_by_id(id)
@@ -4121,5 +4137,49 @@ mod tests {
             !dir.path().join("history.json").exists(),
             "nothing is recorded without --priorities"
         );
+    }
+}
+
+#[cfg(test)]
+mod default_label_report_tests {
+    use super::*;
+    use crate::vendor::VendorId;
+
+    fn failed() -> TabState {
+        TabState::Error {
+            message: "boom".into(),
+            plan: None,
+        }
+    }
+
+    #[test]
+    fn default_label_names_the_unnamed_claude_entry_on_the_report_path() {
+        let mut config = Config::default();
+        config.anthropic.default_label = Some("  home ".into());
+        let now = Utc::now();
+        let default = entry_from_state_with_config(
+            &config,
+            &TabId::vendor(VendorId::Anthropic),
+            &failed(),
+            now,
+        );
+        assert_eq!(default.display_name, "Claude · home");
+        // Selectors stay stable.
+        assert_eq!(default.id, "anthropic");
+        assert_eq!(default.name, "anthropic");
+        // A named account and another vendor are unaffected.
+        let named = entry_from_state_with_config(&config, &TabId::account("work"), &failed(), now);
+        assert_eq!(named.display_name, "Claude · work");
+        let cursor =
+            entry_from_state_with_config(&config, &TabId::vendor(VendorId::Cursor), &failed(), now);
+        assert_eq!(cursor.display_name, "Cursor");
+        // Unset keeps the plain vendor name.
+        let plain = entry_from_state_with_config(
+            &Config::default(),
+            &TabId::vendor(VendorId::Anthropic),
+            &failed(),
+            now,
+        );
+        assert_eq!(plain.display_name, "Claude");
     }
 }
