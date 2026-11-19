@@ -209,7 +209,11 @@ pub struct UpdateFact {
 pub type SharedFacts = std::sync::Arc<std::sync::Mutex<HostFacts>>;
 
 /// Only the hosts read the whole record; the update worker edits in place.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(
+    windows,
+    target_os = "macos",
+    all(target_os = "linux", feature = "linux-tray")
+))]
 pub fn facts_snapshot(facts: &SharedFacts) -> HostFacts {
     facts.lock().map(|f| f.clone()).unwrap_or_default()
 }
