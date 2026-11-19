@@ -367,4 +367,72 @@ mod tests {
         assert_eq!(parsed.credits_remaining, None);
         assert_eq!(parsed.rollover_credits, None);
     }
+
+    #[test]
+    fn top_tier_and_non_all_scopes_never_become_the_headline_or_window_layout() {
+        let payload = serde_json::json!({
+            "plan": "Hermes Plus",
+            "usage_window": {
+                "gauges": [
+                    { "id": "day", "scope": "all", "used_bp": 1000 },
+                    { "id": "month", "scope": "top_tier", "used_bp": 8000 },
+                    { "id": "top_tier", "scope": "top_tier", "used_bp": 9500 }
+                ]
+            }
+        });
+        let parsed = parse_account(&payload).unwrap();
+        assert!(parsed.has_usage_windows());
+        assert_eq!(parsed.primary_gauge().map(|g| g.id.as_str()), Some("day"));
+        assert_eq!(parsed.usage_percent(), Some(10.0));
+
+        // A payload with only a subset-scoped gauge keeps the credit layout.
+        let subset_only = serde_json::json!({
+            "plan": "Pro",
+            "monthly_credits": 1000.0,
+            "credits_remaining": 760.0,
+            "usage_window": {
+                "gauges": [
+                    { "id": "top_tier", "scope": "top_tier", "used_bp": 9500 }
+                ]
+            }
+        });
+        let parsed = parse_account(&subset_only).unwrap();
+        assert!(!parsed.has_usage_windows());
+        assert_eq!(parsed.primary_gauge(), None);
+        assert_eq!(parsed.usage_percent(), Some(24.0));
+    }
+
+    #[test]
+    fn gauge_parser_deduplicates_ids_bounds_resets_and_handles_bp_edges() {
+        let payload = serde_json::json!({
+            "plan": "Hermes Plus",
+            "usage_window": {
+                "gauges": [
+                    { "id": "day", "scope": "all", "used_bp": 12500, "resets_at_ms": 0 },
+                    { "id": "day", "scope": "all", "used_bp": 100 },
+                    { "id": "week", "scope": "all", "used_bp": "-0", "resets_at_ms": -1000 },
+                    { "id": "month", "scope": "all", "used_bp": 250, "resets_at_ms": 1793750400 },
+                    { "id": "bad\nid", "scope": "all", "used_bp": 500 }
+                ]
+            }
+        });
+        let parsed = parse_account(&payload).unwrap();
+        assert_eq!(parsed.gauges.len(), 3);
+        let day = parsed.gauge("day").unwrap();
+        assert_eq!(day.percent(), 100.0);
+        assert_eq!(day.reset_at, None);
+        let week = parsed.gauge("week").unwrap();
+        assert_eq!(crate::format::precise_pct(week.percent()), "0%");
+        assert_eq!(week.reset_at, None);
+        assert_eq!(parsed.gauge("month").unwrap().reset_at, None);
+
+        for bad in ["Infinity", "-Infinity"] {
+            let invalid = serde_json::json!({
+                "usage_window": {
+                    "gauges": [{ "id": "day", "scope": "all", "used_bp": bad }]
+                }
+            });
+            assert!(parse_account(&invalid).is_err());
+        }
+    }
 }

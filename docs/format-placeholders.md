@@ -509,12 +509,14 @@ which figure that is depends on the plan the Portal reports:
 
 - **Plans with rolling limits** (the Portal's `usage_window`: today, this week,
   this month, and large models for the month) report consumption per window and
-  leave the credit balances at zero. `{nous_pct}` is then the window closest to
-  its limit — the one that is actually blocking — and not the broadest window;
-  the TUI panel, the Omarchy panel and the tooltip list every window separately
-  with its own figure and countdown. `{nous_renewal}` counts down to that same
-  window's reset, so the two halves of `{nous_pct}% · {nous_renewal}` describe
-  one window.
+  leave the credit balances at zero. `{nous_pct}` is then the all-model window
+  (`day`, `week`, or `month`) closest to its limit — the one that is actually
+  blocking — and not the broadest window; model-subset caps such as `Large
+  models (monthly)` (`top_tier`) render as their own row without driving the
+  account-wide headline. The TUI panel, the Omarchy panel and the tooltip list
+  every window separately with its own figure and countdown. `{nous_renewal}`
+  counts down to that same headline window's reset, so the two halves of
+  `{nous_pct}% · {nous_renewal}` describe one window.
 - **Plans with a credit allocation** report no usage windows, and `{nous_pct}`
   is the consumed share of the monthly subscription-credit pool, computed from
   the subscription credits alone, never from top-up credits; it is `—` when the

@@ -190,9 +190,16 @@ pub fn clamp_pct(v: f64) -> u16 {
 /// assert_eq!(precise_pct(31.31), "31.3%");
 /// assert_eq!(precise_pct(10.0), "10%");
 /// assert_eq!(precise_pct(0.04), "0%");
+/// assert_eq!(precise_pct(-0.04), "0%");
+/// assert_eq!(precise_pct(f64::NAN), "0%");
+/// assert_eq!(precise_pct(f64::INFINITY), "0%");
 /// ```
 pub fn precise_pct(value: f64) -> String {
+    if !value.is_finite() {
+        return "0%".into();
+    }
     let rounded = (value * 10.0).round() / 10.0;
+    let rounded = if rounded == 0.0 { 0.0 } else { rounded };
     if rounded == rounded.trunc() {
         format!("{rounded:.0}%")
     } else {

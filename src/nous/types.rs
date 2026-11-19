@@ -99,6 +99,22 @@ impl UsageGauge {
     pub fn percent(&self) -> f64 {
         (self.used_bp / 100.0).clamp(0.0, 100.0)
     }
+
+    /// Whether this gauge constrains the account as a whole (`scope == "all"`)
+    /// rather than a model subset such as `top_tier`.
+    ///
+    /// Explicit non-`"all"` scopes and `id == "top_tier"` are always excluded.
+    /// When `scope` is omitted on the wire, only the known account-wide ids
+    /// (`day`, `week`, `month`) default to all-scope.
+    pub fn is_all_scope(&self) -> bool {
+        if self.id == "top_tier" {
+            return false;
+        }
+        match self.scope.as_deref() {
+            Some(scope) => scope == "all",
+            None => ALL_SCOPE_WINDOWS.contains(&self.id.as_str()),
+        }
+    }
 }
 
 /// Display-safe subset of the Nous account response.
@@ -124,29 +140,36 @@ pub struct AccountSnapshot {
 // reflexive.
 impl Eq for AccountSnapshot {}
 
-/// The window ids this build understands, broadest first. The order breaks a
-/// tie between two equally consumed windows, so the headline figure does not
-/// flip between them while both sit at the same percentage; it is not itself a
-/// priority, because the window that matters is the one closest to its limit.
-const KNOWN_WINDOWS: [&str; 4] = ["month", "top_tier", "week", "day"];
+/// Account-wide window ids this build understands, broadest first. The order
+/// breaks a tie between two equally consumed windows, so the headline figure
+/// does not flip between them while both sit at the same percentage; it is not
+/// itself a priority, because the window that matters is the one closest to its
+/// limit. `top_tier` is intentionally excluded: it caps a model subset, not the
+/// whole account (matching Hermes Agent's `binding_gauge`).
+const ALL_SCOPE_WINDOWS: [&str; 3] = ["month", "week", "day"];
 
 impl AccountSnapshot {
     /// The window whose percentage stands for the account as a whole: the
-    /// most-exhausted one the portal reported.
+    /// most-exhausted all-model (`scope == "all"`) window the portal reported.
     ///
     /// Not the broadest. `tui::panels::headline_pct` is the contract every
     /// multi-window vendor here meets — the Overview bar, the macOS headline
     /// and the Waybar severity all read this figure — and a plan at 99 % of
-    /// today's limit and 10 % of the month is blocked today. Windows whose id
-    /// this build does not know still render as their own rows, but they never
-    /// become the headline: we cannot say what an unknown window measures.
+    /// today's limit and 10 % of the month is blocked today. Model-subset
+    /// windows (`top_tier`, or any non-`"all"` scope) and windows whose id this
+    /// build does not know still render as their own rows, but they never
+    /// become the account-wide headline.
     pub fn primary_gauge(&self) -> Option<&UsageGauge> {
         // Walked narrowest-first because `max_by` keeps the last of equal
         // elements, so a tie settles on the broadest window.
-        KNOWN_WINDOWS
+        ALL_SCOPE_WINDOWS
             .iter()
             .rev()
-            .filter_map(|id| self.gauges.iter().find(|gauge| gauge.id == *id))
+            .filter_map(|id| {
+                self.gauges
+                    .iter()
+                    .find(|gauge| gauge.id == *id && gauge.is_all_scope())
+            })
             .max_by(|a, b| a.percent().total_cmp(&b.percent()))
     }
 
@@ -156,7 +179,7 @@ impl AccountSnapshot {
     }
 
     pub fn has_usage_windows(&self) -> bool {
-        !self.gauges.is_empty()
+        self.gauges.iter().any(UsageGauge::is_all_scope)
     }
 
     /// Percentage consumed for the account: the primary usage window when the
@@ -372,10 +395,13 @@ fn parse_usage_gauges(sources: &[&Map<String, Value>]) -> Result<Vec<UsageGauge>
                 .get("id")
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|id| !id.is_empty())
+                .filter(|id| !id.is_empty() && !id.chars().any(char::is_control))
             else {
                 continue;
             };
+            if gauges.iter().any(|existing: &UsageGauge| existing.id == id) {
+                continue;
+            }
             let Some(used_bp) = optional_basis_points(entry.get("used_bp"))? else {
                 continue;
             };
@@ -410,7 +436,7 @@ fn parse_usage_gauges(sources: &[&Map<String, Value>]) -> Result<Vec<UsageGauge>
         };
         gauges.push(UsageGauge {
             id: id.to_owned(),
-            scope: None,
+            scope: Some(if id == "top_tier" { "top_tier" } else { "all" }.to_owned()),
             label: None,
             used_bp,
             reset_at: flat_reset(sources, id),
@@ -457,18 +483,22 @@ fn optional_basis_points(value: Option<&Value>) -> Result<Option<f64>, String> {
     if !number.is_finite() || number < 0.0 {
         return Err("usage basis points must be finite and non-negative".into());
     }
-    Ok(Some(number))
+    Ok(Some(if number == 0.0 { 0.0 } else { number }))
 }
 
 /// Epoch milliseconds → UTC. A malformed reset is dropped rather than failing
 /// the whole account payload: the figure is still usable without a countdown.
 fn optional_epoch_ms(value: Option<&Value>) -> Option<DateTime<Utc>> {
+    const MIN_EPOCH_MS: i64 = 1_000_000_000_000; // 2001-09-09T01:46:40Z
     let value = value?;
     let millis = match value {
         Value::Number(number) => number.as_i64()?,
         Value::String(text) => text.trim().parse::<i64>().ok()?,
         _ => return None,
     };
+    if millis < MIN_EPOCH_MS {
+        return None;
+    }
     DateTime::from_timestamp_millis(millis)
 }
 
