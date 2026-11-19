@@ -2,6 +2,19 @@
 
 ### Fixed
 
+- **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
+  Portal moved its plans from a credit allocation to daily, weekly and monthly
+  limits, reporting consumption in `usage_window.gauges` and leaving
+  `credits_remaining` at zero. With no reader for those windows the bar, the
+  panels and `usage --json` showed a spent balance for an account nowhere near
+  its limit. Each window now gets its own meter, figure and countdown, the
+  credit rows stay as a secondary balance, and `{nous_pct}` reports the
+  all-model window (`day`, `week`, or `month`) closest to its limit with
+  `{nous_renewal}` counting down to that window's reset, while subset caps such
+  as `Large models (monthly)` render as their own row without driving the
+  account-wide headline. Accounts that still report a credit allocation are
+  unchanged (#602).
+
 - **Antigravity's live-session cards refresh their complete quota.** A status
   line can report an unused weekly bucket while `/quota` already records
   usage. The report prefers fresh local RPC or `agy` quota for the verified
