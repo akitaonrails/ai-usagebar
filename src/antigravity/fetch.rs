@@ -374,19 +374,9 @@ async fn fetch_snapshot_inner(
             let renewal = Renewal {
                 agy: &remote.agy,
                 credential: remote.credential,
-            };
-            match fetch_remote(
-                client,
-                cache,
-                oauth,
-                endpoints,
-                token,
-                renewal,
-                now,
                 allow_cloud_code,
-            )
-            .await
-            {
+            };
+            match fetch_remote(client, cache, oauth, endpoints, token, renewal, now).await {
                 Ok(RemoteReading::Live(snap)) => Ok(snap),
                 Ok(RemoteReading::Kept(outcome)) => return Ok(outcome),
                 Ok(RemoteReading::Backoff(remaining)) => {
@@ -806,6 +796,7 @@ async fn refresh_and_persist(
 struct Renewal<'a> {
     agy: &'a super::agy::AgyCommand,
     credential: SavedCredential<'a>,
+    allow_cloud_code: bool,
 }
 
 impl Renewal<'_> {
@@ -870,7 +861,6 @@ async fn fetch_remote(
     token: Result<StoredToken>,
     renewal: Renewal<'_>,
     now: DateTime<Utc>,
-    allow_cloud_code: bool,
 ) -> Result<RemoteReading> {
     let mut token = token?;
     let oauth_path = cloud::oauth_cache_path(cache);
@@ -904,7 +894,7 @@ async fn fetch_remote(
         }
         None => {}
     }
-    if !allow_cloud_code {
+    if !renewal.allow_cloud_code {
         return Err(AppError::Other(
             "Antigravity: `agy` did not return a quota reading".into(),
         ));

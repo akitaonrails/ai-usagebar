@@ -90,6 +90,7 @@ enum ReportTarget {
     AntigravityAccount(TabId, Box<crate::antigravity::statusline::AccountSession>),
 }
 
+#[cfg(test)]
 fn report_target_id(target: &ReportTarget) -> String {
     match target {
         ReportTarget::Tab(tab) => tab_id(tab),
@@ -4337,55 +4338,57 @@ mod default_label_report_tests {
 
     #[test]
     fn grouped_custom_sources_emit_account_qualified_report_ids_and_resolve_back() {
-        let mut config = Config::default();
-        config.custom = vec![
-            crate::config::CustomProviderConfig {
-                id: "gem_personal".into(),
-                name: "Gemini".into(),
-                short_name: "gmp".into(),
-                group: Some("gemini".into()),
-                account: Some("personal".into()),
-                enabled: true,
-                url: "https://api.example.com/p".into(),
-                api_key: Some("k1".into()),
-                metrics: vec![crate::config::CustomMetricSpec {
-                    label: "Quota".into(),
-                    percent: Some("/pct".into()),
+        let config = Config {
+            custom: vec![
+                crate::config::CustomProviderConfig {
+                    id: "gem_personal".into(),
+                    name: "Gemini".into(),
+                    short_name: "gmp".into(),
+                    group: Some("gemini".into()),
+                    account: Some("personal".into()),
+                    enabled: true,
+                    url: "https://api.example.com/p".into(),
+                    api_key: Some("k1".into()),
+                    metrics: vec![crate::config::CustomMetricSpec {
+                        label: "Quota".into(),
+                        percent: Some("/pct".into()),
+                        ..Default::default()
+                    }],
                     ..Default::default()
-                }],
-                ..Default::default()
-            },
-            crate::config::CustomProviderConfig {
-                id: "gem_work".into(),
-                name: "Gemini".into(),
-                short_name: "gmw".into(),
-                group: Some("gemini".into()),
-                account: Some("work".into()),
-                enabled: true,
-                url: "https://api.example.com/w".into(),
-                api_key: Some("k2".into()),
-                metrics: vec![crate::config::CustomMetricSpec {
-                    label: "Quota".into(),
-                    percent: Some("/pct".into()),
+                },
+                crate::config::CustomProviderConfig {
+                    id: "gem_work".into(),
+                    name: "Gemini".into(),
+                    short_name: "gmw".into(),
+                    group: Some("gemini".into()),
+                    account: Some("work".into()),
+                    enabled: true,
+                    url: "https://api.example.com/w".into(),
+                    api_key: Some("k2".into()),
+                    metrics: vec![crate::config::CustomMetricSpec {
+                        label: "Quota".into(),
+                        percent: Some("/pct".into()),
+                        ..Default::default()
+                    }],
                     ..Default::default()
-                }],
-                ..Default::default()
-            },
-            crate::config::CustomProviderConfig {
-                id: "solo".into(),
-                name: "Solo".into(),
-                short_name: "slo".into(),
-                enabled: true,
-                url: "https://api.example.com/s".into(),
-                api_key: Some("k3".into()),
-                metrics: vec![crate::config::CustomMetricSpec {
-                    label: "Quota".into(),
-                    percent: Some("/pct".into()),
+                },
+                crate::config::CustomProviderConfig {
+                    id: "solo".into(),
+                    name: "Solo".into(),
+                    short_name: "slo".into(),
+                    enabled: true,
+                    url: "https://api.example.com/s".into(),
+                    api_key: Some("k3".into()),
+                    metrics: vec![crate::config::CustomMetricSpec {
+                        label: "Quota".into(),
+                        percent: Some("/pct".into()),
+                        ..Default::default()
+                    }],
                     ..Default::default()
-                }],
-                ..Default::default()
-            },
-        ];
+                },
+            ],
+            ..Default::default()
+        };
         config.validate().unwrap();
 
         let tabs: Vec<TabId> = config.custom.iter().map(TabId::custom).collect();

@@ -8029,9 +8029,13 @@ enabled = true
             }
         };
 
+        let cfg_with = |custom: Vec<CustomProviderConfig>| Config {
+            custom,
+            ..Default::default()
+        };
+
         // Valid grouped pair sharing a display name.
-        let mut cfg = Config::default();
-        cfg.custom = vec![
+        let cfg = cfg_with(vec![
             make(
                 "gem_personal",
                 "gmp",
@@ -8040,51 +8044,75 @@ enabled = true
                 Some("personal"),
             ),
             make("gem_work", "gmw", "Gemini", Some("gemini"), Some("work")),
-        ];
+        ]);
         cfg.validate().unwrap();
         assert_eq!(cfg.custom[0].report_id(), "custom:gemini@personal");
         assert_eq!(cfg.custom[1].report_id(), "custom:gemini@work");
 
         // Incomplete pair: group without account, and account without group.
-        let mut missing_account = Config::default();
-        missing_account.custom = vec![make("g1", "gaa", "Gemini", Some("gemini"), None)];
-        assert!(missing_account.validate().is_err());
-
-        let mut missing_group = Config::default();
-        missing_group.custom = vec![make("g1", "gab", "Gemini", None, Some("personal"))];
-        assert!(missing_group.validate().is_err());
+        assert!(
+            cfg_with(vec![make("g1", "gaa", "Gemini", Some("gemini"), None)])
+                .validate()
+                .is_err()
+        );
+        assert!(
+            cfg_with(vec![make("g1", "gab", "Gemini", None, Some("personal"))])
+                .validate()
+                .is_err()
+        );
 
         // Duplicate (group, account).
-        let mut dup = Config::default();
-        dup.custom = vec![
-            make("g1", "gac", "Gemini", Some("gemini"), Some("work")),
-            make("g2", "gad", "Gemini", Some("gemini"), Some("work")),
-        ];
-        assert!(dup.validate().is_err());
+        assert!(
+            cfg_with(vec![
+                make("g1", "gac", "Gemini", Some("gemini"), Some("work")),
+                make("g2", "gad", "Gemini", Some("gemini"), Some("work")),
+            ])
+            .validate()
+            .is_err()
+        );
 
         // Conflicting display names within the same group.
-        let mut conflict = Config::default();
-        conflict.custom = vec![
-            make("g1", "gae", "Gemini", Some("gemini"), Some("personal")),
-            make("g2", "gaf", "Google Gemini", Some("gemini"), Some("work")),
-        ];
-        assert!(conflict.validate().is_err());
+        assert!(
+            cfg_with(vec![
+                make("g1", "gae", "Gemini", Some("gemini"), Some("personal")),
+                make("g2", "gaf", "Google Gemini", Some("gemini"), Some("work")),
+            ])
+            .validate()
+            .is_err()
+        );
 
         // Invalid group slug or '@' in account.
-        let mut bad_group = Config::default();
-        bad_group.custom = vec![make("g1", "gag", "Gemini", Some("Bad Group"), Some("work"))];
-        assert!(bad_group.validate().is_err());
-
-        let mut bad_acct = Config::default();
-        bad_acct.custom = vec![make("g1", "gah", "Gemini", Some("gemini"), Some("a@b"))];
-        assert!(bad_acct.validate().is_err());
+        assert!(
+            cfg_with(vec![make(
+                "g1",
+                "gag",
+                "Gemini",
+                Some("Bad Group"),
+                Some("work")
+            )])
+            .validate()
+            .is_err()
+        );
+        assert!(
+            cfg_with(vec![make(
+                "g1",
+                "gah",
+                "Gemini",
+                Some("gemini"),
+                Some("a@b")
+            )])
+            .validate()
+            .is_err()
+        );
 
         // Ungrouped id colliding with a group slug.
-        let mut id_collision = Config::default();
-        id_collision.custom = vec![
-            make("gemini", "gai", "Gemini Solo", None, None),
-            make("gem_work", "gaj", "Gemini", Some("gemini"), Some("work")),
-        ];
-        assert!(id_collision.validate().is_err());
+        assert!(
+            cfg_with(vec![
+                make("gemini", "gai", "Gemini Solo", None, None),
+                make("gem_work", "gaj", "Gemini", Some("gemini"), Some("work")),
+            ])
+            .validate()
+            .is_err()
+        );
     }
 }
