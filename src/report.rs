@@ -118,6 +118,48 @@ fn expand_antigravity_tabs(
     targets
 }
 
+fn report_target_id_with_config(config: &Config, target: &ReportTarget) -> String {
+    match target {
+        ReportTarget::Tab(tab) => tab_report_id(config, tab),
+        ReportTarget::AntigravityAccount(_, account) => {
+            format!("antigravity@{}", account.id_suffix)
+        }
+    }
+}
+
+fn report_targets_matching_with_config(
+    config: &Config,
+    targets: &[ReportTarget],
+    entry_id: &str,
+) -> Vec<ReportTarget> {
+    targets
+        .iter()
+        .filter(|target| report_target_id_with_config(config, target) == entry_id)
+        .cloned()
+        .collect()
+}
+
+fn report_targets_for_filter_with_config(
+    config: &Config,
+    targets: &[ReportTarget],
+    provider: &str,
+    account: Option<&str>,
+) -> Vec<ReportTarget> {
+    let exact = account.map(|label| format!("{provider}@{label}"));
+    targets
+        .iter()
+        .filter(|target| {
+            let id = report_target_id_with_config(config, target);
+            exact.as_ref().map_or_else(
+                || id == provider || id.starts_with(&format!("{provider}@")),
+                |wanted| id == *wanted,
+            )
+        })
+        .cloned()
+        .collect()
+}
+
+#[cfg(test)]
 fn report_targets_matching(targets: &[ReportTarget], entry_id: &str) -> Vec<ReportTarget> {
     targets
         .iter()
@@ -126,6 +168,7 @@ fn report_targets_matching(targets: &[ReportTarget], entry_id: &str) -> Vec<Repo
         .collect()
 }
 
+#[cfg(test)]
 fn report_targets_for_filter(
     targets: &[ReportTarget],
     provider: &str,
@@ -306,7 +349,8 @@ async fn collect_filtered_json_with(
     } else {
         Vec::new()
     };
-    let targets = report_targets_for_filter(
+    let targets = report_targets_for_filter_with_config(
+        &config,
         &expand_antigravity_tabs(&tabs, &accounts),
         provider,
         account,
@@ -354,7 +398,11 @@ pub async fn collect_entry_json(entry_id: &str) -> std::result::Result<String, S
     } else {
         Vec::new()
     };
-    let targets = report_targets_matching(&expand_antigravity_tabs(&tabs, &accounts), entry_id);
+    let targets = report_targets_matching_with_config(
+        &config,
+        &expand_antigravity_tabs(&tabs, &accounts),
+        entry_id,
+    );
     if targets.is_empty() {
         return Err(format!("no enabled provider matches {entry_id}"));
     }
@@ -586,10 +634,11 @@ fn entry_from_state_with_config(
             crate::vendor::VendorId::Anthropic.display_name(),
         );
     }
-    if let TabSource::Custom { id, .. } = &tab.source {
-        entry.brand = config
-            .custom_by_id(id)
-            .and_then(|provider| provider.brand.clone());
+    if let TabSource::Custom { id, .. } = &tab.source
+        && let Some(provider) = config.custom_by_id(id)
+    {
+        entry.id = provider.report_id();
+        entry.brand = provider.brand.clone();
     }
     entry
 }
@@ -1063,6 +1112,15 @@ pub(crate) fn tab_id(tab: &TabId) -> String {
             None => vendor.slug().to_string(),
         },
     }
+}
+
+fn tab_report_id(config: &Config, tab: &TabId) -> String {
+    if let TabSource::Custom { id, .. } = &tab.source
+        && let Some(provider) = config.custom_by_id(id)
+    {
+        return provider.report_id();
+    }
+    tab_id(tab)
 }
 
 fn tab_name(tab: &TabId) -> String {
@@ -4275,5 +4333,97 @@ mod default_label_report_tests {
             now,
         );
         assert_eq!(plain.display_name, "Claude");
+    }
+
+    #[test]
+    fn grouped_custom_sources_emit_account_qualified_report_ids_and_resolve_back() {
+        let mut config = Config::default();
+        config.custom = vec![
+            crate::config::CustomProviderConfig {
+                id: "gem_personal".into(),
+                name: "Gemini".into(),
+                short_name: "gmp".into(),
+                group: Some("gemini".into()),
+                account: Some("personal".into()),
+                enabled: true,
+                url: "https://api.example.com/p".into(),
+                api_key: Some("k1".into()),
+                metrics: vec![crate::config::CustomMetricSpec {
+                    label: "Quota".into(),
+                    percent: Some("/pct".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            crate::config::CustomProviderConfig {
+                id: "gem_work".into(),
+                name: "Gemini".into(),
+                short_name: "gmw".into(),
+                group: Some("gemini".into()),
+                account: Some("work".into()),
+                enabled: true,
+                url: "https://api.example.com/w".into(),
+                api_key: Some("k2".into()),
+                metrics: vec![crate::config::CustomMetricSpec {
+                    label: "Quota".into(),
+                    percent: Some("/pct".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            crate::config::CustomProviderConfig {
+                id: "solo".into(),
+                name: "Solo".into(),
+                short_name: "slo".into(),
+                enabled: true,
+                url: "https://api.example.com/s".into(),
+                api_key: Some("k3".into()),
+                metrics: vec![crate::config::CustomMetricSpec {
+                    label: "Quota".into(),
+                    percent: Some("/pct".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ];
+        config.validate().unwrap();
+
+        let tabs: Vec<TabId> = config.custom.iter().map(TabId::custom).collect();
+        let now = Utc::now();
+        let entries: Vec<Entry> = tabs
+            .iter()
+            .map(|tab| entry_from_state_with_config(&config, tab, &failed(), now))
+            .collect();
+        assert_eq!(entries[0].id, "custom:gemini@personal");
+        assert_eq!(entries[0].display_name, "Gemini · personal");
+        assert_eq!(entries[1].id, "custom:gemini@work");
+        assert_eq!(entries[1].display_name, "Gemini · work");
+        assert_eq!(entries[2].id, "custom:solo");
+        assert_eq!(entries[2].display_name, "Solo");
+
+        // Targeted refresh resolves `custom:gemini@work` back to the underlying `gem_work` source.
+        let targets = expand_antigravity_tabs(&tabs, &[]);
+        let matched = report_targets_matching_with_config(&config, &targets, "custom:gemini@work");
+        assert_eq!(matched.len(), 1);
+        assert!(matches!(
+            &matched[0],
+            ReportTarget::Tab(TabId {
+                source: TabSource::Custom { id, .. },
+                account: Some(acct),
+                ..
+            }) if id == "gem_work" && acct == "work"
+        ));
+
+        // Provider filter `custom:gemini` selects both grouped accounts.
+        let filtered =
+            report_targets_for_filter_with_config(&config, &targets, "custom:gemini", None);
+        assert_eq!(filtered.len(), 2);
+        let one = report_targets_for_filter_with_config(
+            &config,
+            &targets,
+            "custom:gemini",
+            Some("personal"),
+        );
+        assert_eq!(one.len(), 1);
     }
 }

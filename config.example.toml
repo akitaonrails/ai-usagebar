@@ -62,6 +62,8 @@
 # short_name = "myt"             # exactly 3 lowercase letters; unique across all vendors
 # brand = "deepseek"             # optional built-in slug for supported UIs;
 #                                # unset keeps the short_name tag
+# group = "gemini"               # optional service group slug (set together with `account`)
+# account = "personal"           # groups entries sharing `group` into account tabs (`custom:<group>@<account>`)
 # enabled = true
 # url = "https://api.example.com/v1/usage"  # https:// unless allow_http; no user:pass@
 # allow_http = false             # permit http:// (localhost / LAN only)

@@ -4,6 +4,7 @@ import {
   accountSwitchFor,
   desktopPreparation,
   formatDuration,
+  groupDisplayName,
   incidentTone,
   nextUpdateLabel,
   parseHostPayload,
@@ -2946,4 +2947,28 @@ console.log('ok');
   const longLink = `https://stspg.io/${'a'.repeat(300)}`;
   assert.equal(incidentOf({ severity: 'major_outage', title: 'x', url: longLink }).url, '');
   assert.equal(incidentOf({ severity: 'major_outage', title: 'x', url: 'https://stspg.io/abc' }).url, 'https://stspg.io/abc');
+}
+
+// Grouped [[custom]] sources (`custom:<group>@<account>`) collapse into one
+// provider category with account tabs and a clean header title (#592).
+{
+  const payload = parseHostPayload(JSON.stringify({
+    entries: [
+      { id: 'custom:gemini@personal', display_name: 'Gemini · personal', status: 'ready', sections: [] },
+      { id: 'custom:gemini@work', display_name: 'Gemini · work', status: 'ready', sections: [] },
+      { id: 'custom:solo', display_name: 'Solo', status: 'ready', sections: [] },
+    ],
+  }));
+  const cards = projectCards(payload, 0, 'en');
+  const groups = providerGroups(cards);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].id, 'custom:gemini');
+  assert.equal(groups[0].cards.length, 2);
+  const header = groupDisplayName(groups[0], payload.providers);
+  assert.equal(header, 'Gemini');
+  assert.deepEqual(
+    groups[0].cards.map((card) => accountLabel(card, header, 'en')),
+    ['personal', 'work'],
+  );
+  assert.equal(groupDisplayName(groups[1], payload.providers), 'Solo');
 }

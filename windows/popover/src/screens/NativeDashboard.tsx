@@ -6,7 +6,7 @@ import { IconButton } from "@/components/IconButton";
 import { ProviderIcon } from "@/components/ProviderIcon";
 import { ProviderSection } from "@/components/ProviderSection";
 import type { RowAction } from "@/components/RowMenu";
-import { accountSwitchFor, activeAccountTab, hiddenMetricKeys, incidentTone, nextUpdateLabel, providerGroups, rowKey, sendCommand } from "../model.js";
+import { accountSwitchFor, activeAccountTab, groupDisplayName, hiddenMetricKeys, incidentTone, nextUpdateLabel, providerGroups, rowKey, sendCommand } from "../model.js";
 import { DashboardBanners } from "./Dashboard";
 import type { Card, Layout, MetricRow, Payload } from "@/lib/types";
 import { m } from "@/paraglide/messages.js";
@@ -98,7 +98,7 @@ export function NativeDashboard({
   // The group names itself with the catalog's name; a card without a catalog row
   // (a custom provider) keeps the card's title.
   const nameOf = (group: { id: string; cards: Card[] }) =>
-    payload.providers?.find((provider) => provider.id === group.id)?.name ?? group.cards[0].title;
+    groupDisplayName(group, payload.providers);
   const activeCardOf = (group: { id: string; cards: Card[] }) => {
     const id = activeAccountTab(group.cards, layout, group.id, payload.primary);
     return group.cards.find((card) => card.id === id) ?? group.cards[0];

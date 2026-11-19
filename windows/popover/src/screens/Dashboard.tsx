@@ -7,7 +7,7 @@ import { SortableItem, VerticalDnd } from "@/components/dnd";
 import type { Card, Layout, Payload } from "@/lib/types";
 import { m } from "@/paraglide/messages.js";
 import { useI18n } from "@/lib/i18n";
-import { activeAccountTab, accountSwitchFor, expandGroupOrder, explainError, providerGroups, updateBannerPending } from "../model.js";
+import { activeAccountTab, accountSwitchFor, expandGroupOrder, explainError, groupDisplayName, providerGroups, updateBannerPending } from "../model.js";
 import { Hint } from "@/components/Hint";
 
 interface DashboardProps {
@@ -113,7 +113,7 @@ export function Dashboard({
   // Decision 2: the group names itself with the catalog's name; a card without
   // a catalog row (a custom provider) keeps the card's title.
   const nameOf = (group: { id: string; cards: Card[] }) =>
-    payload.providers?.find((provider) => provider.id === group.id)?.name ?? group.cards[0].title;
+    groupDisplayName(group, payload.providers);
   const activeCardOf = (group: { id: string; cards: Card[] }) => {
     const id = activeAccountTab(group.cards, layout, group.id, payload.primary);
     return group.cards.find((card) => card.id === id) ?? group.cards[0];

@@ -140,7 +140,7 @@ impl TabId {
                 name: spec.name.clone(),
                 short_name: spec.short_name.clone(),
             },
-            account: None,
+            account: spec.account.clone(),
             desktop: false,
         }
     }

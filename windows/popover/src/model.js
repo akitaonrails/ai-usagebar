@@ -1500,6 +1500,35 @@ export function activeAccountTab(cards, layout, providerId, primary) {
 }
 
 /**
+ * Display name for a provider group header: the catalog's name when present,
+ * otherwise the first card's title with any `" · <account>"` suffix stripped
+ * (so grouped `[[custom]]` sources like `custom:gemini@personal` titled
+ * `"Gemini · personal"` show `"Gemini"` as the category header).
+ * @param {{ id: string, cards: import("./lib/types").Card[] }} group
+ * @param {import("./lib/types").ProviderCatalogRow[]} [providers]
+ * @returns {string}
+ */
+export function groupDisplayName(group, providers) {
+  const fromCatalog = Array.isArray(providers)
+    ? providers.find((provider) => provider && provider.id === group.id)?.name
+    : undefined;
+  if (fromCatalog) return fromCatalog;
+  const first = Array.isArray(group?.cards) ? group.cards[0] : null;
+  const title = String((first && first.title) || "");
+  const id = String((first && first.id) || "");
+  const at = id.indexOf("@");
+  if (at >= 0) {
+    const suffix = id.slice(at + 1).trim();
+    const tail = ` · ${suffix}`;
+    if (suffix && title.endsWith(tail)) {
+      const base = title.slice(0, -tail.length).trim();
+      if (base) return base;
+    }
+  }
+  return title;
+}
+
+/**
  * The account's tab label. A title of `"<providerName> · <label>"` loses its
  * prefix ("Claude · work" → "work"); an id with an account suffix uses it
  * ("openai@work" → "work"); the default account has no suffix, so it reads

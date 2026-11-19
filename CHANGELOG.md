@@ -2,6 +2,13 @@
 
 ### Added
 
+- **Grouped `[[custom]]` sources as account tabs.** Setting `group` and
+  `account` together on `[[custom]]` entries with the same display `name`
+  groups them under one category (`custom:<group>@<account>`) with account tabs
+  in the popover and `usage --json`, while keeping each entry's own `id`,
+  endpoint, credentials, and cache directory intact. Ungrouped entries retain
+  their existing `custom:<id>` IDs (#592).
+
 - **Antigravity status-line integration on Linux and WSL.** The multi-account
   live-session status-line collector (`ai-usagebar antigravity setup-statusline`
   / `ingest-statusline`) now inspects process ancestry and executable basenames

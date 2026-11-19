@@ -2315,6 +2315,13 @@ pub struct CustomProviderConfig {
     /// A built-in vendor slug whose mark supporting frontends may use.
     /// `None` preserves the custom provider's `short_name` tag.
     pub brand: Option<String>,
+    /// Optional service group slug (`[a-z0-9][a-z0-9_-]{0,31}`). Must be set
+    /// together with `account` so participating entries share one category with
+    /// account tabs (`custom:<group>@<account>`) while keeping their own `id`,
+    /// endpoint, credentials, and cache directory.
+    pub group: Option<String>,
+    /// Optional account label paired with `group`.
+    pub account: Option<String>,
     pub enabled: bool,
     /// `https://` unless `allow_http`; never carries `user:pass@`.
     pub url: String,
@@ -2345,6 +2352,8 @@ impl Default for CustomProviderConfig {
             name: String::new(),
             short_name: String::new(),
             brand: None,
+            group: None,
+            account: None,
             enabled: false,
             url: String::new(),
             allow_http: false,
@@ -2421,6 +2430,15 @@ impl CustomProviderConfig {
         format!("[[custom]] id = {:?}", self.id)
     }
 
+    /// Stable report id: `custom:<group>@<account>` when grouped, otherwise
+    /// `custom:<id>`. Cache directories and `--vendor` lookup still key on `id`.
+    pub fn report_id(&self) -> String {
+        match (self.group.as_deref(), self.account.as_deref()) {
+            (Some(group), Some(account)) => format!("custom:{group}@{account}"),
+            _ => format!("custom:{}", self.id),
+        }
+    }
+
     /// Env var (when `api_key_env` is set) → inline `api_key` → a
     /// `Credentials` error that names the section and never the key.
     pub fn resolve_api_key(&self) -> Result<String> {
@@ -2480,6 +2498,25 @@ impl CustomProviderConfig {
                 "brand {brand:?} must name a built-in vendor (it borrows that \
                  vendor's mark); leave it unset to keep the short_name tag"
             )));
+        }
+        match (self.group.as_deref(), self.account.as_deref()) {
+            (None, None) => {}
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(bad(
+                    "`group` and `account` must be set together on a [[custom]] entry".into(),
+                ));
+            }
+            (Some(group), Some(account)) => {
+                if !is_valid_custom_id(group) {
+                    return Err(bad(format!(
+                        "group {group:?} must match [a-z0-9][a-z0-9_-]{{0,31}}"
+                    )));
+                }
+                if account.contains('@') {
+                    return Err(bad(format!("account {account:?} must not contain '@'")));
+                }
+                validate_account_label_for(&section, account)?;
+            }
         }
         let url = reqwest::Url::parse(&self.url)
             .map_err(|_| bad(format!("url {:?} is not a valid URL", self.url)))?;
@@ -3516,6 +3553,9 @@ impl Config {
         let mut ids = HashSet::new();
         let mut short_names: HashSet<&str> =
             VendorId::all().iter().map(|v| v.short_name()).collect();
+        let mut group_accounts = HashSet::new();
+        let mut group_names: std::collections::HashMap<&str, &str> =
+            std::collections::HashMap::new();
         for (index, custom) in self.custom.iter().enumerate() {
             custom.validate(index)?;
             if !ids.insert(custom.id.as_str()) {
@@ -3529,6 +3569,41 @@ impl Config {
                     "{}: short_name {:?} is already used by a built-in vendor or another [[custom]] entry",
                     custom.section_label(),
                     custom.short_name
+                )));
+            }
+            if let (Some(group), Some(account)) =
+                (custom.group.as_deref(), custom.account.as_deref())
+            {
+                if !group_accounts.insert((group, account)) {
+                    return Err(AppError::Other(format!(
+                        "{}: duplicate account {:?} in custom group {:?}",
+                        custom.section_label(),
+                        account,
+                        group
+                    )));
+                }
+                if let Some(&existing_name) = group_names.get(group) {
+                    if existing_name != custom.name {
+                        return Err(AppError::Other(format!(
+                            "{}: group {:?} already uses display name {:?} (got {:?})",
+                            custom.section_label(),
+                            group,
+                            existing_name,
+                            custom.name
+                        )));
+                    }
+                } else {
+                    group_names.insert(group, custom.name.as_str());
+                }
+            }
+        }
+        for custom in &self.custom {
+            if custom.group.is_none() && group_names.contains_key(custom.id.as_str()) {
+                return Err(AppError::Other(format!(
+                    "{}: ungrouped id {:?} collides with custom group {:?}",
+                    custom.section_label(),
+                    custom.id,
+                    custom.id
                 )));
             }
         }
@@ -7931,5 +8006,85 @@ enabled = true
         cfg.keychain.insert("zai".into(), "Svc".into());
         cfg.keychain.insert("zai.work".into(), "SvcWork".into());
         cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn custom_provider_group_and_account_validation() {
+        let make = |id: &str, short: &str, name: &str, group: Option<&str>, acct: Option<&str>| {
+            CustomProviderConfig {
+                id: id.into(),
+                name: name.into(),
+                short_name: short.into(),
+                group: group.map(str::to_owned),
+                account: acct.map(str::to_owned),
+                enabled: true,
+                url: "https://api.example.com/usage".into(),
+                api_key: Some("secret".into()),
+                metrics: vec![CustomMetricSpec {
+                    label: "Quota".into(),
+                    percent: Some("/pct".into()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }
+        };
+
+        // Valid grouped pair sharing a display name.
+        let mut cfg = Config::default();
+        cfg.custom = vec![
+            make(
+                "gem_personal",
+                "gmp",
+                "Gemini",
+                Some("gemini"),
+                Some("personal"),
+            ),
+            make("gem_work", "gmw", "Gemini", Some("gemini"), Some("work")),
+        ];
+        cfg.validate().unwrap();
+        assert_eq!(cfg.custom[0].report_id(), "custom:gemini@personal");
+        assert_eq!(cfg.custom[1].report_id(), "custom:gemini@work");
+
+        // Incomplete pair: group without account, and account without group.
+        let mut missing_account = Config::default();
+        missing_account.custom = vec![make("g1", "gaa", "Gemini", Some("gemini"), None)];
+        assert!(missing_account.validate().is_err());
+
+        let mut missing_group = Config::default();
+        missing_group.custom = vec![make("g1", "gab", "Gemini", None, Some("personal"))];
+        assert!(missing_group.validate().is_err());
+
+        // Duplicate (group, account).
+        let mut dup = Config::default();
+        dup.custom = vec![
+            make("g1", "gac", "Gemini", Some("gemini"), Some("work")),
+            make("g2", "gad", "Gemini", Some("gemini"), Some("work")),
+        ];
+        assert!(dup.validate().is_err());
+
+        // Conflicting display names within the same group.
+        let mut conflict = Config::default();
+        conflict.custom = vec![
+            make("g1", "gae", "Gemini", Some("gemini"), Some("personal")),
+            make("g2", "gaf", "Google Gemini", Some("gemini"), Some("work")),
+        ];
+        assert!(conflict.validate().is_err());
+
+        // Invalid group slug or '@' in account.
+        let mut bad_group = Config::default();
+        bad_group.custom = vec![make("g1", "gag", "Gemini", Some("Bad Group"), Some("work"))];
+        assert!(bad_group.validate().is_err());
+
+        let mut bad_acct = Config::default();
+        bad_acct.custom = vec![make("g1", "gah", "Gemini", Some("gemini"), Some("a@b"))];
+        assert!(bad_acct.validate().is_err());
+
+        // Ungrouped id colliding with a group slug.
+        let mut id_collision = Config::default();
+        id_collision.custom = vec![
+            make("gemini", "gai", "Gemini Solo", None, None),
+            make("gem_work", "gaj", "Gemini", Some("gemini"), Some("work")),
+        ];
+        assert!(id_collision.validate().is_err());
     }
 }
