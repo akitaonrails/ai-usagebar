@@ -1006,7 +1006,9 @@ The same popover runs on Linux behind the `linux-tray` cargo feature, which
 is off by default:
 
 ```sh
-# needs GTK 3, WebKitGTK 4.1 (webkit2gtk-4.1) and libsoup 3
+# needs GTK 3, WebKitGTK 4.1 (webkit2gtk-4.1), libsoup 3, and Node.js/npm
+# (build.rs builds the popover UI in windows/popover; without npm the tray
+# shows a placeholder page)
 cargo build --release --features linux-tray --bin ai-usagebar-tray
 ./target/release/ai-usagebar-tray
 ```
@@ -1014,7 +1016,9 @@ cargo build --release --features linux-tray --bin ai-usagebar-tray
 The icon registers with any StatusNotifierItem tray (Waybar's `tray` module,
 KDE Plasma, GNOME with the AppIndicator extension); a left click toggles the
 popover and a right click opens the options menu. Start at Login writes
-`~/.config/autostart/ai-usagebar-tray.desktop` (or under `$XDG_CONFIG_HOME`).
+`ai-usagebar-tray.desktop` in `$XDG_CONFIG_HOME/autostart` (default
+`~/.config/autostart`); an executable path containing `%` is refused, because
+autostart cannot launch it.
 Wayland compositors decide where the popover opens, so it may not sit next to
 the icon. Not available yet on Linux: a global shortcut, Open TUI, and
 self-update (install new releases the way you installed this one).

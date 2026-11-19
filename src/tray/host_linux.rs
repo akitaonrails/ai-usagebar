@@ -1050,10 +1050,15 @@ fn toggle_startup(state: &mut TrayState) {
             }
             refresh_menu(state);
         }
-        Err(error) => eprintln!(
-            "ai-usagebar-tray: start at login was not changed: {}",
-            crate::display::sanitize_untrusted_line(&error)
-        ),
+        Err(error) => {
+            eprintln!(
+                "ai-usagebar-tray: start at login was not changed: {}",
+                crate::display::sanitize_untrusted_line(&error)
+            );
+            // The SNI check item flips itself before the event arrives: put it
+            // back to what is on disk.
+            refresh_menu(state);
+        }
     }
 }
 

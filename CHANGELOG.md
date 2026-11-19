@@ -6,8 +6,10 @@
   with `cargo build --release --features linux-tray --bin ai-usagebar-tray`.
   The icon goes to any StatusNotifierItem tray (Waybar, KDE, GNOME with
   AppIndicator) and a left click toggles the same popover as on macOS and
-  Windows, rendered by WebKitGTK. Start at Login writes
-  `~/.config/autostart/ai-usagebar-tray.desktop`; links open with `xdg-open`.
+  Windows, rendered by WebKitGTK (the build also needs npm for the popover
+  UI). Start at Login writes `ai-usagebar-tray.desktop` to
+  `$XDG_CONFIG_HOME/autostart` (default `~/.config/autostart`) and refuses an
+  executable path containing `%`; links open with `xdg-open`.
   Not in this first version: a global shortcut, Open TUI, and self-update.
   The feature is off by default, so the default build, the AUR packages, Nix
   and CI need no GTK or WebKit.
