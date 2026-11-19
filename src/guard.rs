@@ -283,6 +283,44 @@ mod tests {
         std::fs::read_to_string(&path).ok()
     }
 
+    /// Every bullet in a version section must sit under a `### Category`
+    /// heading. A merge that appends a bullet where the conflict was
+    /// bullet-only can drop the heading, and the repeated-category check above
+    /// only looks for *duplicates* — an unheaded bullet used to pass every
+    /// gate while staying invisible to the release's version decision.
+    /// Every bullet in the pending section must sit under a `### Category`
+    /// heading. A merge that appends a bullet where the conflict was
+    /// bullet-only can drop the heading, and the repeated-category check above
+    /// only looks for *duplicates* — an unheaded bullet used to pass every
+    /// gate while staying invisible to the release's version decision.
+    ///
+    /// Only `[Unreleased]` is checked: released sections are frozen, already
+    /// covered byte-for-byte by `scripts/check-changelog-immutable.sh`, and
+    /// the oldest one predates the category rule.
+    #[test]
+    fn no_unreleased_changelog_bullet_sits_outside_a_category() {
+        let Some(changelog) = changelog() else { return };
+        let mut in_unreleased = false;
+        let mut in_category = false;
+        let mut offenders: Vec<String> = Vec::new();
+        for line in changelog.lines() {
+            if let Some(rest) = line.strip_prefix("## ") {
+                in_unreleased = rest.trim() == "[Unreleased]";
+                in_category = false;
+            } else if line.starts_with("### ") {
+                in_category = true;
+            } else if in_unreleased && line.starts_with("- ") && !in_category {
+                offenders.push(line.trim().to_string());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "the pending section carries bullets before any ### category \
+             heading, so they are hidden from the release's version decision: \
+             {offenders:?}"
+        );
+    }
+
     /// How the macOS menu bar mirrors one vendor's figures.
     ///
     /// Two cases, because the mirror is a deliberate *subset*: Rust emits 289
@@ -329,6 +367,7 @@ mod tests {
             VendorId::MuseCode => MacosMirror::Generic(CORE),
             VendorId::Grok => MacosMirror::Slot("grok_balance"),
             VendorId::Kilo => MacosMirror::Slot("kilo_balance"),
+            VendorId::Kimi => MacosMirror::Slot("kimi_monthly_pct"),
             VendorId::Lyceum => MacosMirror::Slot("lyceum_balance"),
             VendorId::Minimax => MacosMirror::Slot("minimax_video_pct"),
             VendorId::Moonshot => MacosMirror::Slot("km_balance"),
@@ -344,7 +383,6 @@ mod tests {
             // each of these emits the core tokens listed here.
             VendorId::Anthropic => MacosMirror::Generic(CORE),
             VendorId::Openai => MacosMirror::Generic(CORE),
-            VendorId::Kimi => MacosMirror::Generic(CORE),
             VendorId::Kiro => MacosMirror::Generic(CORE),
             VendorId::NousResearch => MacosMirror::Generic(CORE),
             VendorId::OrcaRouter => MacosMirror::Generic(CORE),
@@ -490,6 +528,44 @@ mod tests {
                 "macOS FORMAT field is not exactly one placeholder: {field:?}"
             );
         }
+    }
+
+    /// `macos/ai-usagebar-menubar.swift` mirrors `Config::API_KEY_ACCOUNT_VENDORS`
+    /// as `let API_KEY_ACCOUNT_VENDORS = [...]`. Ensure every vendor slug in Rust's
+    /// list is present in the Swift mirror so the menu bar does not drop named accounts (#608).
+    #[test]
+    fn macos_api_key_account_vendors_mirror_matches_rust() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("macos/ai-usagebar-menubar.swift");
+        let Ok(swift) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let slice = swift
+            .split_once("let API_KEY_ACCOUNT_VENDORS = [")
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map(|(list, _)| list)
+            .expect("macOS menubar API_KEY_ACCOUNT_VENDORS array not found");
+        let swift_vendors: std::collections::HashSet<String> = slice
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        for vendor in crate::config::Config::API_KEY_ACCOUNT_VENDORS {
+            assert!(
+                swift_vendors.contains(vendor.slug()),
+                "macOS API_KEY_ACCOUNT_VENDORS is missing {:?} ({})",
+                vendor,
+                vendor.slug()
+            );
+        }
+        assert_eq!(
+            swift_vendors.len(),
+            crate::config::Config::API_KEY_ACCOUNT_VENDORS.len(),
+            "macOS API_KEY_ACCOUNT_VENDORS has {} entries but Rust has {}",
+            swift_vendors.len(),
+            crate::config::Config::API_KEY_ACCOUNT_VENDORS.len()
+        );
     }
 
     /// Every AUR source array must have a matching sha256sums array of the same

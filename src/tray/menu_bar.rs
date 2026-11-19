@@ -24,6 +24,8 @@ pub(super) enum StatusItemContent {
 /// The menu-bar look chosen in Settings → Menu Bar → Menu Bar Shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuBarLook {
+    /// The application gauge, regardless of starred metrics.
+    AppIcon,
     /// The usage bars (default).
     Chart,
     /// Each starred provider's logo followed by its highest quota usage.
@@ -39,6 +41,7 @@ impl MenuBarLook {
     /// is what 1.32.0 called the Quattro look and is still read as it.
     pub(super) fn from_style(style: Option<&str>) -> Self {
         match style {
+            Some("icon") => Self::AppIcon,
             Some("provider") => Self::Logos,
             Some("quattro" | "name") => Self::Quattro,
             _ => Self::Chart,
@@ -48,6 +51,7 @@ impl MenuBarLook {
     /// The `[tray] menu_bar_style` value persisted for this look.
     pub(super) fn style(self) -> &'static str {
         match self {
+            Self::AppIcon => "icon",
             Self::Chart => "bars",
             Self::Logos => "provider",
             Self::Quattro => "quattro",
@@ -57,6 +61,7 @@ impl MenuBarLook {
     /// The value the popover's picker uses for this look.
     pub(super) fn picker_value(self) -> &'static str {
         match self {
+            Self::AppIcon => "icon",
             Self::Chart => "chart",
             Self::Logos => "logos",
             Self::Quattro => "quattro",
@@ -66,6 +71,7 @@ impl MenuBarLook {
     /// Parse the popover's picker value; `name` is the 1.32.0 spelling.
     pub(super) fn from_picker_value(value: &str) -> Option<Self> {
         match value {
+            "icon" => Some(Self::AppIcon),
             "chart" => Some(Self::Chart),
             "logos" => Some(Self::Logos),
             "quattro" | "name" => Some(Self::Quattro),
@@ -76,7 +82,7 @@ impl MenuBarLook {
 
 /// Select status-item artwork, falling back to the app icon when content is empty.
 pub(super) fn status_item_content(look: MenuBarLook, has_content: bool) -> StatusItemContent {
-    if !has_content {
+    if look == MenuBarLook::AppIcon || !has_content {
         StatusItemContent::AppIcon
     } else if look == MenuBarLook::Chart {
         StatusItemContent::Chart
@@ -162,6 +168,9 @@ pub(super) fn logo_segments(
     reading: UsageReading,
     hidden: &HiddenRows,
 ) -> Vec<LogoSegment> {
+    if look == MenuBarLook::AppIcon {
+        return Vec::new();
+    }
     if look == MenuBarLook::Quattro {
         return name_segment(content, report, selected, show_short_name, reading, hidden)
             .into_iter()
@@ -371,7 +380,12 @@ mod tests {
 
     #[test]
     fn empty_modes_fall_back_to_static_app_icon() {
-        for look in [MenuBarLook::Chart, MenuBarLook::Logos, MenuBarLook::Quattro] {
+        for look in [
+            MenuBarLook::AppIcon,
+            MenuBarLook::Chart,
+            MenuBarLook::Logos,
+            MenuBarLook::Quattro,
+        ] {
             assert_eq!(
                 status_item_content(look, false),
                 StatusItemContent::AppIcon,
@@ -395,13 +409,57 @@ mod tests {
 
     #[test]
     fn menu_bar_look_round_trips_through_config_and_picker() {
-        for look in [MenuBarLook::Chart, MenuBarLook::Logos, MenuBarLook::Quattro] {
+        for look in [
+            MenuBarLook::AppIcon,
+            MenuBarLook::Chart,
+            MenuBarLook::Logos,
+            MenuBarLook::Quattro,
+        ] {
             assert_eq!(MenuBarLook::from_style(Some(look.style())), look);
             assert_eq!(
                 MenuBarLook::from_picker_value(look.picker_value()),
                 Some(look)
             );
         }
+    }
+
+    // Mutation captured: falling back to Logos when starred metrics exist
+    // hides the explicitly selected application icon.
+    #[test]
+    fn app_icon_stays_selected_with_starred_metrics() {
+        let report = json!({"entries": [{
+            "id": "anthropic", "status": "ready", "short_name": "cld",
+            "sections": [{"type": "metric", "label": "Weekly", "percent": 42}]
+        }]});
+        let stars =
+            super::super::strip::Stars::from([("anthropic".into(), vec!["metric:Weekly".into()])]);
+        let content = super::super::strip::content_from_payload(&report, &stars, &[]);
+        assert_eq!(
+            status_item_content(MenuBarLook::AppIcon, !content.bars.is_empty()),
+            StatusItemContent::AppIcon
+        );
+        assert!(
+            logo_segments(
+                &content,
+                &report,
+                MenuBarLook::AppIcon,
+                None,
+                false,
+                UsageReading::Used,
+                &HiddenRows::new(),
+            )
+            .is_empty()
+        );
+        let restored = logo_segments(
+            &content,
+            &report,
+            MenuBarLook::Logos,
+            None,
+            false,
+            UsageReading::Used,
+            &HiddenRows::new(),
+        );
+        assert_eq!(restored[0].values, ["42%"]);
     }
 
     /// An unset, unknown or future `menu_bar_style` keeps the chart default.

@@ -100,8 +100,10 @@ let POINT_CRITICAL_MIN = 10
 // `{mst_monthly_pct}` / `{mst_monthly_reset}` (63-64) carry Model Studio's
 // monthly Token Plan pool (empty when not selected or not reported).
 // `{synthetic_pct}` / `{synthetic_reset}` (65-66) carry Synthetic's
-// subscription request quota (empty when not selected). A final literal
-// sentinel absorbs the widget's stale suffix, preserving these fields.
+// subscription request quota (empty when not selected). `{kimi_monthly_pct}` /
+// `{kimi_monthly_reset}` (67-68) carry Kimi's monthly pool (empty on legacy
+// weekly accounts). A final literal sentinel absorbs the widget's stale
+// suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
              "{scoped_model};;{scoped_pct};;{scoped_reset};;" +
@@ -121,7 +123,8 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{cline_5h_pct};;{cline_5h_reset};;{cline_7d_pct};;{cline_7d_reset};;" +
              "{cline_30d_pct};;{cline_30d_reset};;" +
              "{mst_monthly_pct};;{mst_monthly_reset};;" +
-             "{synthetic_pct};;{synthetic_reset}"
+             "{synthetic_pct};;{synthetic_reset};;" +
+             "{kimi_monthly_pct};;{kimi_monthly_reset}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -611,6 +614,11 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
             sonnet = w
             sonnetLabel = "Monthly"
         }
+    } else if vendor == "kimi" {
+        if let w = quotaWindow(67, 68, -1) {
+            sonnet = w
+            sonnetLabel = "Monthly"
+        }
     }
     let spent = t(8)
     let limit = t(9)
@@ -793,6 +801,7 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
         // Both figures are monthly budgets; the generic slots carry the API
         // budget first and the Vibe Code budget second. Neither has a fixed
         // cycle length, so no elapsed marker.
+        sessionWindow = quotaWindow(1, 2, -1)
         weeklyWindow = quotaWindow(3, 4, -1)
         sessionTag = "api"
         weeklyTag = "vibe"
@@ -1203,7 +1212,7 @@ func claudeAccountLabels() -> [String] {
 /// The API-key vendors whose config takes a `[[<vendor>.accounts]]` array —
 /// Rust's `Config::API_KEY_ACCOUNT_VENDORS`, by slug.
 let API_KEY_ACCOUNT_VENDORS = [
-    "zai", "openrouter", "deepseek", "deepinfra", "kilo", "novita", "moonshot", "grok", "minimax", "orcarouter", "lyceum",
+    "anthropic_api", "zai", "openrouter", "deepseek", "deepinfra", "kilo", "novita", "moonshot", "grok", "minimax", "orcarouter", "lyceum",
 ]
 
 /// Explicit `[[<vendor>.accounts]]` labels for one API-key vendor.
@@ -1429,13 +1438,14 @@ func entryDisplayName(_ id: String, catalog: [VendorCatalogEntry] = vendorCatalo
     if let label = accountLabel(of: id) {
         let base = baseVendorId(id)
         let vendor = catalog.first { $0.id == base }?.name
-            ?? (base == "anthropic" ? "Claude" : (base == "openrouter" ? "OpenRouter" : base))
+            ?? (base == "anthropic" ? "Claude" : (base == "openrouter" ? "OpenRouter" : (base == "anthropic_api" ? "Anthropic API" : base)))
         return "\(vendor) · \(label)"
     }
     if let name = catalog.first(where: { $0.id == id })?.name {
         return name
     }
     if id == "anthropic" { return "Claude" }
+    if id == "anthropic_api" { return "Anthropic API" }
     return id
 }
 

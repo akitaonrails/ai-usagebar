@@ -20,7 +20,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::json;
 
-use crate::config::Config;
+use crate::config::{Config, CredentialProbes};
 use crate::context::activity::{ProcessProbe, SessionActivity, SystemProbe};
 use crate::context::{ContextScan, ContextSession, ContextUsage};
 use crate::tui::app::{Freshness, TabId, TabSource, TabState, refresh_one, tabs_with_desktop};
@@ -771,7 +771,12 @@ async fn attach_session_activity_with(
     if !config.context.enabled {
         return;
     }
-    let targets = activity_targets(config, entries, active_cli_label().as_deref());
+    let targets = activity_targets(
+        config,
+        entries,
+        active_cli_label().as_deref(),
+        &CredentialProbes::system(),
+    );
     if targets.is_empty() {
         return;
     }
@@ -795,13 +800,14 @@ fn activity_targets(
     config: &Config,
     entries: &[Entry],
     cli_active: Option<&str>,
+    probes: &CredentialProbes<'_>,
 ) -> Vec<(usize, PathBuf)> {
     let mut targets: Vec<(usize, PathBuf)> = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
         if !is_claude_entry(entry) || entry.error.is_some() {
             continue;
         }
-        let Some(dir) = claude_config_dir(config, &entry.id, cli_active) else {
+        let Some(dir) = claude_config_dir(config, &entry.id, cli_active, probes) else {
             continue;
         };
         if !targets.iter().any(|(_, seen)| *seen == dir) {
@@ -814,16 +820,21 @@ fn activity_targets(
 /// The `CLAUDE_CONFIG_DIR` behind a Claude entry: the directory of the
 /// credentials its quota is fetched from, resolved exactly as the fetch
 /// resolves them — so an account that `account switch` moved into the default
-/// slot is read from `~/.claude`, where its sessions now live too.
-fn claude_config_dir(config: &Config, entry_id: &str, cli_active: Option<&str>) -> Option<PathBuf> {
+/// slot is read from `~/.claude`, where its sessions now live too. The probes
+/// are injected so tests resolve no real `$HOME` and never ask the Keychain;
+/// an entry whose target cannot be resolved (an unreadable Keychain) gets no
+/// activity row, and its fetch reports the error.
+fn claude_config_dir(
+    config: &Config,
+    entry_id: &str,
+    cli_active: Option<&str>,
+    probes: &CredentialProbes<'_>,
+) -> Option<PathBuf> {
     let target = match entry_id.strip_prefix("anthropic@") {
-        Some(label) => {
-            config
-                .anthropic
-                .account_target_with(label, cli_active)
-                .ok()?
-                .0
-        }
+        Some(label) => config
+            .anthropic
+            .account_creds_target(label, cli_active, probes)
+            .ok()?,
         None if entry_id == "anthropic" => config.anthropic.default_creds_target(),
         None => return None,
     };
@@ -1204,6 +1215,72 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Width of the right-aligned value column in the text report.
+const VALUE_WIDTH: usize = 9;
+
+/// Separator between the parts of a metric's detail
+/// (`Resets in 3h 15m · 34% elapsed · 19pts under`).
+const DETAIL_SEPARATOR: &str = " · ";
+
+/// Column widths for the `·`-separated parts of metric details, so the parts
+/// line up down the whole report: `Resets in 3d 3h` and `Resets in 1h 25m`
+/// differ in width, and without padding every part after them drifts.
+///
+/// Widths are kept per part count, so rows of the same shape (every Claude
+/// window: reset · elapsed · pace) align with each other without a
+/// differently shaped row (Cursor's four-part detail) pushing them apart.
+struct DetailColumns {
+    widths: std::collections::HashMap<usize, Vec<usize>>,
+}
+
+impl DetailColumns {
+    fn new(entries: &[Entry]) -> Self {
+        let mut widths: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        let details = entries
+            .iter()
+            .filter(|entry| entry.error.is_none())
+            .flat_map(|entry| entry.sections.iter())
+            .filter_map(|section| match section {
+                ReportSection::Metric { detail, .. } if !detail.is_empty() => Some(detail),
+                _ => None,
+            });
+        for detail in details {
+            let parts: Vec<&str> = detail.split(DETAIL_SEPARATOR).collect();
+            let row = widths
+                .entry(parts.len())
+                .or_insert_with(|| vec![0; parts.len()]);
+            for (width, part) in row.iter_mut().zip(&parts) {
+                *width = (*width).max(crate::display::text_width(part));
+            }
+        }
+        Self { widths }
+    }
+
+    /// `detail` with every part but the last padded to its column width. The
+    /// last part is left as is so no line ends in trailing spaces.
+    fn align(&self, detail: &str) -> String {
+        let parts: Vec<&str> = detail.split(DETAIL_SEPARATOR).collect();
+        let Some(widths) = self.widths.get(&parts.len()) else {
+            return detail.to_string();
+        };
+        let last = parts.len() - 1;
+        parts
+            .iter()
+            .zip(widths)
+            .enumerate()
+            .map(|(i, (part, &width))| {
+                if i == last {
+                    (*part).to_string()
+                } else {
+                    crate::display::pad_end(part, width)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(DETAIL_SEPARATOR)
+    }
+}
+
 fn render_text(entries: &[Entry]) -> String {
     // Widest label across every entry, so the value column lines up down the
     // whole report rather than per-section.
@@ -1214,6 +1291,7 @@ fn render_text(entries: &[Entry]) -> String {
         .map(crate::display::text_width)
         .max()
         .unwrap_or(0);
+    let details = DetailColumns::new(entries);
 
     let mut out = String::new();
     for entry in entries {
@@ -1253,10 +1331,18 @@ fn render_text(entries: &[Entry]) -> String {
                     ..
                 } => {
                     let label = crate::display::pad_end(label, width);
-                    let value = format!("{value:>9}");
+                    // A value too wide for the value column (`R$0.00 of
+                    // R$450.00`) starts in the detail column instead of
+                    // pushing its detail out of line.
+                    let value = if crate::display::text_width(value) <= VALUE_WIDTH {
+                        crate::display::pad_start(value, VALUE_WIDTH)
+                    } else {
+                        format!("{}   {value}", " ".repeat(VALUE_WIDTH))
+                    };
                     if detail.is_empty() {
                         body.push_str(&format!("  {label}  {value}\n"));
                     } else {
+                        let detail = details.align(detail);
                         body.push_str(&format!("  {label}  {value}   {detail}\n"));
                     }
                 }
@@ -1266,8 +1352,17 @@ fn render_text(entries: &[Entry]) -> String {
                     } else if value.is_empty() {
                         body.push_str(&format!("  {label}\n"));
                     } else {
+                        // A short value (an amount, a reset countdown)
+                        // sits right-aligned in the value column like a
+                        // percentage; free text starts in the detail column.
                         let label = crate::display::pad_end(label, width);
-                        body.push_str(&format!("  {label}  {value}\n"));
+                        if crate::display::text_width(value) <= VALUE_WIDTH {
+                            let value = crate::display::pad_start(value, VALUE_WIDTH);
+                            body.push_str(&format!("  {label}  {value}\n"));
+                        } else {
+                            let gap = " ".repeat(VALUE_WIDTH);
+                            body.push_str(&format!("  {label}  {gap}   {value}\n"));
+                        }
                     }
                 }
                 ReportSection::Block { label, body: lines } => {
@@ -1867,6 +1962,89 @@ mod tests {
             .collect();
         assert_eq!(columns.len(), 2);
         assert_eq!(columns[0], columns[1], "{text}");
+    }
+
+    /// The parts of a metric detail line up across rows and entries: a reset
+    /// countdown of `3d 3h` is narrower than `1h 25m`, and the `·` after it
+    /// used to drift with it.
+    #[test]
+    fn detail_parts_align_across_entries() {
+        let text = render_text(&[
+            entry(
+                "anthropic · a",
+                vec![
+                    metric(
+                        "Session (5h)",
+                        21,
+                        "21%",
+                        "Resets in 1h 25m · 71% elapsed · 50pts under",
+                    ),
+                    metric(
+                        "Weekly (7d)",
+                        67,
+                        "67%",
+                        "Resets in 3d 3h · 5% elapsed · 12pts ahead",
+                    ),
+                ],
+            ),
+            entry(
+                "anthropic · b",
+                vec![metric(
+                    "Weekly (7d)",
+                    1,
+                    "1%",
+                    "Resets in 6d 13h · 6% elapsed · 5pts under",
+                )],
+            ),
+        ]);
+        let separators: Vec<Vec<usize>> = text
+            .lines()
+            .filter(|line| line.contains("Resets in"))
+            .map(|line| {
+                line.match_indices('·')
+                    .map(|(byte, _)| crate::display::text_width(&line[..byte]))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(separators.len(), 3, "{text}");
+        assert!(separators.iter().all(|s| s == &separators[0]), "{text}");
+        assert!(text.lines().all(|line| !line.ends_with(' ')), "{text}");
+    }
+
+    /// A short text value sits right-aligned in the value column with the
+    /// percentages; a long one starts in the detail column.
+    #[test]
+    fn text_rows_share_the_metric_columns() {
+        let text_row = |label: &str, value: &str| ReportSection::Text {
+            label: label.into(),
+            value: value.into(),
+            used_cents: None,
+            limit_cents: None,
+            percent: None,
+            severity: None,
+        };
+        let text = render_text(&[entry(
+            "cursor",
+            vec![
+                metric("Cursor Models", 7, "7%", "Auto + Composer · 41% elapsed"),
+                text_row("Resets", "18d 1h"),
+                text_row("HTTP 429", "Rate limited. Please try again later."),
+                metric(
+                    "Extra usage",
+                    0,
+                    "R$0.00 of R$450.00",
+                    "0% of monthly limit consumed",
+                ),
+            ],
+        )]);
+        let column = |needle: &str| {
+            let line = text.lines().find(|line| line.contains(needle)).unwrap();
+            let byte = line.find(needle).unwrap();
+            crate::display::text_width(&line[..byte])
+        };
+        assert_eq!(column("7%") + 2, column("18d 1h") + 6, "{text}");
+        assert_eq!(column("Auto + Composer"), column("Rate limited"), "{text}");
+        assert_eq!(column("Auto + Composer"), column("R$0.00 of"), "{text}");
     }
 
     /// One dead vendor must not hide the others — it reports inline and the
@@ -2894,6 +3072,47 @@ mod tests {
         assert!(tabs_matching(&tabs, "").is_empty());
     }
 
+    /// Each `[[anthropic_api.accounts]]` entry is its own tab with its own
+    /// report id and cache directory, so one organization's spend is never
+    /// shown (or served from cache) for another.
+    #[test]
+    fn anthropic_api_accounts_get_distinct_tabs_report_ids_and_cache_dirs() {
+        use crate::config::ApiKeyAccount;
+        use crate::tui::app::tabs_from_config;
+
+        let mut config = Config::default();
+        config.anthropic_api.enabled = true;
+        config.anthropic_api.accounts = ["work", "side"]
+            .map(|label| ApiKeyAccount {
+                label: label.into(),
+                api_key_env: None,
+                api_key: Some("k".into()),
+                management_api_key_env: None,
+                monthly_limit: None,
+            })
+            .to_vec();
+        let tabs = tabs_from_config(&config);
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic_api@work"),
+            vec![TabId::account_for(VendorId::AnthropicApi, "work")]
+        );
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic_api@side"),
+            vec![TabId::account_for(VendorId::AnthropicApi, "side")]
+        );
+        assert_eq!(
+            tabs_matching(&tabs, "anthropic_api"),
+            vec![TabId::vendor(VendorId::AnthropicApi)]
+        );
+        let dir = |label| {
+            crate::cache::Cache::for_vendor_account("anthropic_api", label)
+                .unwrap()
+                .dir()
+                .to_path_buf()
+        };
+        assert_ne!(dir("work"), dir("side"));
+    }
+
     /// Named accounts are addressed by the same `<vendor>@<label>` id the
     /// report prints, so a frontend can refresh one Claude account by itself.
     #[test]
@@ -3528,6 +3747,24 @@ mod tests {
         }
     }
 
+    const FAKE_DEFAULT_CONFIG_DIR: &str = "/nonexistent-home/.claude";
+
+    fn fake_default_creds() -> crate::error::Result<PathBuf> {
+        Ok(PathBuf::from(FAKE_DEFAULT_CONFIG_DIR).join(".credentials.json"))
+    }
+
+    /// The slot probe minus the Keychain: tests never spawn `security(1)`.
+    fn file_only(account: &crate::config::AnthropicAccount) -> crate::error::Result<bool> {
+        Ok(account.credentials_path.exists())
+    }
+
+    fn test_probes() -> CredentialProbes<'static> {
+        CredentialProbes {
+            default_path: &fake_default_creds,
+            holds_own_credential: &file_only,
+        }
+    }
+
     /// A temp home holding a default and a `work` Claude config directory,
     /// with the config that points at them and the monitor switched on.
     fn activity_fixture() -> (tempfile::TempDir, Config) {
@@ -3573,7 +3810,7 @@ mod tests {
             errored,
         ];
 
-        let targets = activity_targets(&config, &entries, None);
+        let targets = activity_targets(&config, &entries, None, &test_probes());
 
         assert_eq!(
             targets,
@@ -3591,15 +3828,11 @@ mod tests {
     fn a_switched_account_reads_activity_where_its_fetch_reads_credentials() {
         let (_home, config) = activity_fixture();
         let entries = [entry("anthropic@work", vec![])];
-        let default_dir = crate::anthropic::creds::default_path()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
+        let default_dir = PathBuf::from(FAKE_DEFAULT_CONFIG_DIR);
 
         // The fixture's `work` slot holds no credential file.
         assert_eq!(
-            activity_targets(&config, &entries, Some("work")),
+            activity_targets(&config, &entries, Some("work"), &test_probes()),
             vec![(0, default_dir)]
         );
     }
@@ -3613,7 +3846,7 @@ mod tests {
         let entries = [entry("anthropic@work", vec![])];
 
         assert_eq!(
-            activity_targets(&config, &entries, Some("work")),
+            activity_targets(&config, &entries, Some("work"), &test_probes()),
             vec![(0, home.path().join("work"))]
         );
     }
@@ -3631,7 +3864,7 @@ mod tests {
         let entries = [entry("anthropic", vec![]), entry("anthropic@alias", vec![])];
 
         assert_eq!(
-            activity_targets(&config, &entries, None),
+            activity_targets(&config, &entries, None, &test_probes()),
             vec![(0, home.path().join("default"))]
         );
     }
@@ -3641,7 +3874,10 @@ mod tests {
         let mut config = enabled_context_config();
         config.anthropic.credentials_path = Some(PathBuf::from("credentials.json"));
 
-        assert!(activity_targets(&config, &[entry("anthropic", vec![])], None).is_empty());
+        assert!(
+            activity_targets(&config, &[entry("anthropic", vec![])], None, &test_probes())
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3656,7 +3892,7 @@ mod tests {
             entry("anthropic@work", vec![metric("Session (5h)", 4, "4%", "")]),
         ];
 
-        let targets = activity_targets(&config, &entries, None);
+        let targets = activity_targets(&config, &entries, None, &test_probes());
         apply_session_activity(
             &mut entries,
             scan_activity_targets(targets, &EverythingRuns),

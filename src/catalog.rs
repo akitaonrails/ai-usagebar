@@ -86,7 +86,11 @@ pub fn statuses(cfg: &Config) -> Vec<VendorStatus> {
         env_set: &|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()),
         exists: &|path| path.exists(),
         keychain_has_claude: &keychain_has_claude,
-        keychain_has_claude_for: &keychain_has_claude_for,
+        // Status only: an unreadable Keychain reads as "not configured" here;
+        // the fetch itself reports the Keychain error.
+        keychain_has_claude_for: &|dir| {
+            crate::anthropic::creds::keychain_has_claude_for(dir).unwrap_or(false)
+        },
         commandcode_signed_in: &|paths| {
             paths
                 .iter()
@@ -153,6 +157,21 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
                 || account.api_key.as_deref().is_some_and(|k| !k.is_empty())
         })
     }) {
+        return true;
+    }
+    // On macOS a declared `[keychain]` entry counts as a credential. The item
+    // is deliberately left unread here, because a read spawns `security` and
+    // this runs at every frontend start. If the item is missing, the Keychain
+    // is locked or access is denied, the fetch reports an error that names
+    // the service. Off macOS the entry is never read, so it does not count.
+    if crate::keychain::SUPPORTED
+        && (cfg.keychain_entry(id, None).is_some()
+            || cfg.api_key_accounts(id).is_some_and(|accounts| {
+                accounts
+                    .iter()
+                    .any(|account| cfg.keychain_entry(id, Some(&account.label)).is_some())
+            }))
+    {
         return true;
     }
     match id {
@@ -306,19 +325,6 @@ fn keychain_has_claude() -> bool {
 
 #[cfg(not(target_os = "macos"))]
 fn keychain_has_claude() -> bool {
-    false
-}
-
-#[cfg(target_os = "macos")]
-fn keychain_has_claude_for(config_dir: &Path) -> bool {
-    matches!(
-        crate::anthropic::keychain::read_raw_for(config_dir),
-        Ok(Some(_))
-    )
-}
-
-#[cfg(not(target_os = "macos"))]
-fn keychain_has_claude_for(_config_dir: &Path) -> bool {
     false
 }
 
@@ -492,6 +498,7 @@ mod tests {
             api_key_env: None,
             api_key: Some("sk-named".into()),
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let rows = statuses_with(&cfg, &bare());
         assert!(row(&rows, "openrouter").configured);
@@ -506,6 +513,7 @@ mod tests {
             api_key_env: Some("DEEPSEEK_WORK_API_KEY".into()),
             api_key: None,
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let set = |name: &str| name == "DEEPSEEK_WORK_API_KEY";
         let rows = statuses_with(&cfg, &probes(&set, &|_| false, &|_| false));

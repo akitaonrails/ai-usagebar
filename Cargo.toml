@@ -1,6 +1,6 @@
 [package]
 name = "ai-usagebar"
-version = "1.49.0"
+version = "1.52.3"
 edition = "2024"
 rust-version = "1.90"
 license = "MIT"
@@ -85,7 +85,7 @@ ratatui-bubbletea-theme = "0.2"
 # the OAuth token the Cursor IDE already wrote there. "bundled" statically
 # links SQLite via cc, so no system libsqlite3-dev is required — keeping the
 # AUR source build's hermeticity (see CLAUDE.md's release checklist).
-rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }
 unicode-width = "0.2"
 getrandom = "0.4.3"
 # Official Model Context Protocol SDK. Only the local stdio server surface is
@@ -101,7 +101,7 @@ rustix = { version = "1", features = ["process"] }
 tao = "0.37"
 wry = "0.57"
 tray-icon = "0.26.1"
-global-hotkey = "0.9"
+global-hotkey = "0.10"
 objc2 = "0.6"
 objc2-foundation = "0.3"
 block2 = "0.6"
@@ -166,7 +166,7 @@ wry = "0.57"
 tray-icon = "0.26.1"
 # Global toggle shortcut for the popover: owns a message-only window and
 # delivers WM_HOTKEY on the event-loop thread, the same pattern tray-icon uses.
-global-hotkey = "0.9"
+global-hotkey = "0.10"
 
 [dev-dependencies]
 mockito = "1"

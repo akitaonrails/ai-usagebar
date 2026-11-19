@@ -41,6 +41,7 @@ pub mod grokbot;
 #[cfg(test)]
 pub(crate) mod guard;
 pub mod jwt;
+pub mod keychain;
 pub mod kilo;
 pub mod kimi;
 pub mod kiro;

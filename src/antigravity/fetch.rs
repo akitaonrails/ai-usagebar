@@ -1458,23 +1458,33 @@ fn normalize_base(addr: &str) -> Option<String> {
     (!authority.is_empty()).then(|| format!("{scheme}://{authority}"))
 }
 
-/// Does this process look like one of the three Antigravity products?
+/// Does this process own an Antigravity `LanguageServerService` listener?
 ///
-/// Antigravity 2.0 and the IDE spawn a separate `language_server` child, while
-/// the `agy` CLI embeds the same CSRF/RPC surface in its own process — so
-/// matching on the server binary alone would miss a CLI-only install. `comm` is
-/// truncated to 15 bytes by the kernel, which `language_server` exactly fills.
+/// Antigravity 2.0 and the IDE spawn a separate `language_server` child
+/// (`language_server`, `language_server.exe`, `language_server_<os>_<arch>`),
+/// while the `agy` CLI embeds the same CSRF/RPC surface in its own `agy`
+/// binary — so matching on `language_server` alone would miss a CLI-only
+/// install. `comm` is truncated to 15 bytes on Linux and macOS (`lsof -F c`),
+/// which `language_server` (15 bytes) exactly fills.
+///
+/// The Electron shell itself (`Antigravity` / `Antigravity.exe`) and helpers
+/// installed beneath an `antigravity*` directory must *not* match: the
+/// Electron binary serves `HostBridgeService` and `ELECTRON_RUN_AS_NODE=1`
+/// `agy-node` sidecars (`sidecar_sdk`), both of which answer unauthenticated
+/// loopback probes with `HTTP 401 {"error":"unauthorized"}` (and on Windows,
+/// `agy-node.cmd` sidecars can outlive `language_server.exe` after the app
+/// closes), masking `agy` and blocking the saved-session fallback.
 fn is_antigravity_process(comm: &str, exe: Option<&str>) -> bool {
-    let comm = comm.trim().to_lowercase();
-    let comm = comm.strip_suffix(".exe").unwrap_or(&comm);
-    if comm.contains("language_server") || comm == "agy" || comm == "antigravity" {
+    let matches_server_name = |raw: &str| {
+        let name = raw.trim().to_lowercase();
+        let name = name.strip_suffix(".exe").unwrap_or(&name);
+        name.contains("language_server") || name == "agy"
+    };
+    if matches_server_name(comm) {
         return true;
     }
-    exe.is_some_and(|p| {
-        let p = p.to_lowercase().replace('\\', "/");
-        let p = p.strip_suffix(".exe").unwrap_or(&p);
-        p.contains("antigravity") || p.ends_with("/agy")
-    })
+    exe.and_then(|p| p.rsplit(['/', '\\']).next())
+        .is_some_and(matches_server_name)
 }
 
 /// Flatten per-process listener ports into the order they should be probed,
@@ -3082,14 +3092,16 @@ mod tests {
             "agy\n",
             Some("/home/u/.local/bin/agy")
         ));
-        // Recognised by path even when the process name says nothing.
+        // Recognised by executable basename even when `comm` was renamed or
+        // truncated by a wrapper.
         assert!(is_antigravity_process(
-            "node",
-            Some("/opt/antigravity/bin/helper")
+            "main",
+            Some(
+                "/opt/antigravity-ide/resources/app/extensions/antigravity/bin/language_server_linux_x64"
+            )
         ));
-        assert!(is_antigravity_process("antigravity", None));
+        assert!(is_antigravity_process("language_server", None));
         assert!(is_antigravity_process("agy.exe", None));
-        assert!(is_antigravity_process("Antigravity.exe", None));
         assert!(is_antigravity_process("language_server.exe", None));
         assert!(is_antigravity_process(
             "language_server_windows_x64.exe",
@@ -3110,6 +3122,34 @@ mod tests {
         assert!(!is_antigravity_process("legacy.exe", None));
         assert!(!is_antigravity_process("not-agy.exe", None));
         assert!(!is_antigravity_process("", None));
+        // The Electron shell (`Antigravity` / `Antigravity.exe`) hosts
+        // `HostBridgeService` and `ELECTRON_RUN_AS_NODE=1` `agy-node` sidecars
+        // (`sidecar_sdk`), never `LanguageServerService`; their 401
+        // `{"error":"unauthorized"}` responses must not mask `agy` or block the
+        // saved-session fallback.
+        assert!(!is_antigravity_process("Antigravity", None));
+        assert!(!is_antigravity_process("Antigravity.exe", None));
+        assert!(!is_antigravity_process(
+            "antigravity",
+            Some("/opt/antigravity/antigravity")
+        ));
+        assert!(!is_antigravity_process(
+            "Antigravity.exe",
+            Some(r"C:\Users\u\AppData\Local\Programs\antigravity\Antigravity.exe")
+        ));
+        // Non-RPC helpers installed beneath an `antigravity*` directory.
+        assert!(!is_antigravity_process(
+            "node",
+            Some("/opt/antigravity/bin/helper")
+        ));
+        assert!(!is_antigravity_process(
+            "agy_acp_server.",
+            Some("/home/u/.t3/tools/antigravity-acp/linux-x64/versions/abc/agy_acp_server.par")
+        ));
+        assert!(!is_antigravity_process(
+            "localharness_ex",
+            Some("/home/u/.t3/tools/antigravity-acp/linux-x64/versions/abc/localharness_external")
+        ));
     }
 
     #[test]
@@ -3117,7 +3157,7 @@ mod tests {
         let mut raw: Vec<u16> = "agy.exe".encode_utf16().collect();
         raw.extend([0, b'x' as u16]);
         assert_eq!(decode_windows_process_name(&raw), "agy.exe");
-        assert_eq!(decode_windows_process_name(&[0xd800]), "�");
+        assert_eq!(decode_windows_process_name(&[0xd800]), "\u{fffd}");
         assert_eq!(decode_windows_process_name(&[]), "");
     }
 
@@ -3125,11 +3165,13 @@ mod tests {
     fn windows_process_filter_keeps_only_antigravity_pids() {
         let processes = vec![
             (10, "agy.exe".to_string()),
+            (15, "language_server.exe".to_string()),
             (20, "language_server_windows_x64.exe".to_string()),
+            (25, "Antigravity.exe".to_string()),
             (30, "sshd.exe".to_string()),
         ];
         let pids = matching_windows_process_ids(&processes);
-        assert_eq!(pids, std::collections::HashSet::from([10, 20]));
+        assert_eq!(pids, std::collections::HashSet::from([10, 15, 20]));
     }
 
     #[test]
@@ -3379,9 +3421,15 @@ mod tests {
     }
 
     #[test]
-    fn lsof_parser_matches_the_capitalised_macos_app_name() {
-        let output = "p900\ncAntigravity\nf7\nn127.0.0.1:54321\n";
-        assert_eq!(parse_lsof_pcn(output), vec![(900, 54321)]);
+    fn lsof_parser_ignores_electron_shell_and_matches_case_insensitively() {
+        // On macOS, `Antigravity` is the Electron host (`HostBridgeServer` /
+        // `agy-node` sidecar); only its `language_server` child and `agy` serve
+        // `LanguageServerService`.
+        let output = concat!(
+            "p900\ncAntigravity\nf7\nn127.0.0.1:54321\n",
+            "p901\ncLanguage_Server\nf8\nn127.0.0.1:54322\n",
+        );
+        assert_eq!(parse_lsof_pcn(output), vec![(901, 54322)]);
     }
 
     #[test]

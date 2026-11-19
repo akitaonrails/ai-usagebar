@@ -539,9 +539,9 @@ async fn cursor_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     ))
 }
 
-/// Kiro CLI authenticates via the AWS SSO OIDC session kiro-cli already wrote
-/// to its own local `data.sqlite3` — no API key to resolve, but (like Cursor)
-/// a real on-disk path that can be overridden.
+/// Kiro CLI authenticates via the AWS SSO OIDC or social-login session kiro-cli
+/// already wrote to its own local `data.sqlite3` — no API key to resolve, but
+/// (like Cursor) a real on-disk path that can be overridden.
 async fn kiro_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     let client = http_client()?;
     let cache = vendor_cache(cli, "kiro")?;
@@ -886,13 +886,8 @@ async fn kilo_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
 }
 
 async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
-    let key = crate::config::resolve_api_key(
-        "Anthropic_API",
-        &config.anthropic_api.api_key_env,
-        config.anthropic_api.api_key.as_deref(),
-    )?;
+    let (key, cache) = api_key_target(cli, config, VendorId::AnthropicApi)?;
     let client = http_client()?;
-    let cache = vendor_cache(cli, "anthropic_api")?.redacting(&key);
     let endpoints = anthropic_api::fetch::Endpoints::default();
     let outcome = match fetch_api_keyed(
         async {
@@ -902,7 +897,7 @@ async fn anthropic_api_output(cli: &Cli, config: &Config) -> Result<WaybarOutput
                 &cache,
                 &endpoints,
                 DEFAULT_TTL,
-                config.anthropic_api.monthly_limit,
+                config.anthropic_api_monthly_limit(cli.account.as_deref()),
             )
             .await
         },
@@ -1465,11 +1460,11 @@ fn anthropic_target(cli: &Cli, config: &Config) -> Result<(CredsTarget, Cache)> 
     }
 }
 
-/// A configured extra account (`--account <label>`): its own credentials file
-/// and an isolated `anthropic/<label>` cache. `--account` conflicts with
-/// `--creds-path`, so the account's file is the only credentials source here —
-/// an Explicit target, so a missing/broken file fails loudly instead of
-/// falling back to the (different account's) macOS Keychain item (#15).
+/// A configured extra account (`--account <label>`): its own credential slot
+/// (credentials file, or its macOS Keychain item; the default slot when it is
+/// the live CLI login and its own slot is empty) and an isolated
+/// `anthropic/<label>` cache. `--account` conflicts with `--creds-path`, so no
+/// explicit path overrides the account's slot.
 fn named_account_target(cli: &Cli, config: &Config, label: &str) -> Result<(CredsTarget, Cache)> {
     let (creds, default_cache) = config.anthropic.account_target(label)?;
     // `--cache-dir` still wins for scripted/multi-monitor setups; otherwise use
@@ -1834,6 +1829,7 @@ mod tests {
                 api_key_env: None,
                 api_key: Some("work-key".into()),
                 management_api_key_env: None,
+                monthly_limit: None,
             });
         config
             .openrouter
@@ -1843,6 +1839,7 @@ mod tests {
                 api_key_env: None,
                 api_key: Some("personal-key".into()),
                 management_api_key_env: None,
+                monthly_limit: None,
             });
         let root = tempfile::tempdir().unwrap();
         let root_str = root.path().to_str().unwrap();
@@ -1929,6 +1926,7 @@ mod tests {
             api_key_env: None,
             api_key: Some("work-key".into()),
             management_api_key_env: None,
+            monthly_limit: None,
         });
         let root = tempfile::tempdir().unwrap();
         let root_str = root.path().to_str().unwrap();

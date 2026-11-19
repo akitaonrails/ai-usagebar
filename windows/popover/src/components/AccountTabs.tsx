@@ -67,7 +67,7 @@ export function AccountTabs({ cards, providerName, selected, onSelect }: Account
             aria-selected={isSelected}
             tabIndex={isSelected ? 0 : -1}
             className={cn(
-              "min-w-0 flex-1 rounded-[var(--radius-full)] px-[var(--space-xl)] py-[var(--space-sm)] text-[length:var(--sz-body)] outline-none focus-visible:ring-[length:var(--focus-ring)] focus-visible:ring-ring/50",
+              "account-tab min-w-0 flex-1 rounded-[var(--radius-full)] px-[var(--space-xl)] py-[var(--space-sm)] text-[length:var(--sz-body)] outline-none",
               isSelected
                 ? "bg-[var(--menu)] font-semibold text-foreground shadow-[var(--knob-shadow)]"
                 : "text-label-2 hover:text-foreground",

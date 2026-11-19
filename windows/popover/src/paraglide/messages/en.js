@@ -33,11 +33,13 @@
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_CheckingInputs */
 /** @typedef {{}} Api_Key_Checking_ShortInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_Dialog_TitleInputs */
+/** @typedef {{}} Api_Key_Keychain_HintInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_No_AnswerInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_RejectedInputs */
 /** @typedef {{}} Api_Key_SaveInputs */
 /** @typedef {{}} Api_Key_Stored_NoteInputs */
 /** @typedef {{}} Api_KeysInputs */
+/** @typedef {{}} App_IconInputs */
 /** @typedef {{}} AppearanceInputs */
 /** @typedef {{}} AutoInputs */
 /** @typedef {{}} AutomaticInputs */
@@ -453,6 +455,10 @@ export const api_key_dialog_title = /** @type {(inputs: Api_Key_Dialog_TitleInpu
 	return /** @type {LocalizedString} */ (`${i?.provider} key`)
 };
 
+export const api_key_keychain_hint = /** @type {(inputs: Api_Key_Keychain_HintInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`On macOS you can point at a login-Keychain item instead of pasting the key: type kc: followed by the item's name, e.g. kc:MyZaiKey. That is the -s name from security add-generic-password. The name is saved to the [keychain] table in config.toml; the key itself stays in the Keychain.`)
+};
+
 export const api_key_no_answer = /** @type {(inputs: Api_Key_No_AnswerInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`No answer from ${i?.provider} yet. Try again in a moment.`)
 };
@@ -471,6 +477,10 @@ export const api_key_stored_note = /** @type {(inputs: Api_Key_Stored_NoteInputs
 
 export const api_keys = /** @type {(inputs: Api_KeysInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`API Keys`)
+};
+
+export const app_icon = /** @type {(inputs: App_IconInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`App Icon`)
 };
 
 export const appearance = /** @type {(inputs: AppearanceInputs) => LocalizedString} */ () => {
@@ -862,7 +872,7 @@ export const menu_bar_shows = /** @type {(inputs: Menu_Bar_ShowsInputs) => Local
 };
 
 export const menu_bar_shows_hint = /** @type {(inputs: Menu_Bar_Shows_HintInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.`)
+	return /** @type {LocalizedString} */ (`App Icon shows the app's gauge. Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.`)
 };
 
 export const metric_plural = /** @type {(inputs: Metric_PluralInputs) => LocalizedString} */ () => {

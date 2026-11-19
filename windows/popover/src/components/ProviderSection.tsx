@@ -77,8 +77,8 @@ interface ProviderSectionProps {
   account?: CardAccount | null;
   card: Card;
   handle?: SectionHandle;
-  /** The provider's accounts, when it has two or more: the header reads the provider's name
-   * and the account tabs sit between the header and the card. */
+  /** The provider's catalog name and accounts. Two or more accounts get tabs
+   * between the header and the card. */
   group?: {
     name: string;
     cards: Array<{ id: string; title: string }>;
@@ -123,8 +123,7 @@ export function ProviderSection({
 }: ProviderSectionProps) {
   const { language } = useI18n();
   const actions = usePopoverActions();
-  // A provider with several accounts titles its card after itself; the single-account
-  // screen — including the per-account desktop title — reads the card's own title.
+  // Account labels belong to the tabs; the header always names the provider.
   const grouped = group && group.cards.length > 1;
   const prefs = prefsForCard(card, layout);
   const expanded = layout.collapsed?.[card.id] !== true;
@@ -187,7 +186,7 @@ export function ProviderSection({
         onCustomize={onCustomize}
         onCopyImage={onCopyImage}
         onSwitchAccount={onSwitchAccount}
-        title={grouped ? group.name : undefined}
+        title={group?.name}
       />
       {grouped ? (
         <div className="px-[var(--card-pad)]">

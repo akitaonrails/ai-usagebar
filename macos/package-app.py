@@ -31,6 +31,8 @@ def package_app(bin_dir: Path, output: Path, version: str) -> None:
     resources = contents / "Resources"
     resources.mkdir()
     shutil.copy2(Path(__file__).with_name("AIUsage.icns"), resources / "AIUsage.icns")
+    for name in ("menu-bar-icon.LICENSE", "LICENSE-APACHE-2.0"):
+        shutil.copy2(Path(__file__).with_name(name), resources / name)
     for name in BINARIES:
         destination = executables / name
         shutil.copy2(bin_dir / name, destination)

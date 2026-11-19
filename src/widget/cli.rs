@@ -122,8 +122,8 @@ pub struct Cli {
     pub creds_path: Option<std::path::PathBuf>,
 
     /// Select a named Claude, Codex (OpenAI), GitHub Copilot, Devin, or API-key
-    /// vendor (Z.AI, OpenRouter, DeepSeek, Kilo, Novita, Moonshot, Grok, MiniMax,
-    /// OrcaRouter, Lyceum) account from the matching `[[...accounts]]` config array.
+    /// vendor (Anthropic API, Z.AI, OpenRouter, DeepSeek, DeepInfra, Kilo, Novita, Moonshot,
+    /// Grok, MiniMax, OrcaRouter, Lyceum) account from the matching `[[...accounts]]` config array.
     /// Without it, the vendor's default account and original cache path are
     /// unchanged. For Claude it conflicts with the lower-level `--creds-path`
     /// because both select a credential source.

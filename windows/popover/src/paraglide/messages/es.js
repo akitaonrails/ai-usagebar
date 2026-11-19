@@ -33,11 +33,13 @@
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_CheckingInputs */
 /** @typedef {{}} Api_Key_Checking_ShortInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_Dialog_TitleInputs */
+/** @typedef {{}} Api_Key_Keychain_HintInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_No_AnswerInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_RejectedInputs */
 /** @typedef {{}} Api_Key_SaveInputs */
 /** @typedef {{}} Api_Key_Stored_NoteInputs */
 /** @typedef {{}} Api_KeysInputs */
+/** @typedef {{}} App_IconInputs */
 /** @typedef {{}} AppearanceInputs */
 /** @typedef {{}} AutoInputs */
 /** @typedef {{}} AutomaticInputs */
@@ -453,6 +455,10 @@ export const api_key_dialog_title = /** @type {(inputs: Api_Key_Dialog_TitleInpu
 	return /** @type {LocalizedString} */ (`Clave de ${i?.provider}`)
 };
 
+export const api_key_keychain_hint = /** @type {(inputs: Api_Key_Keychain_HintInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`En macOS puedes apuntar a un elemento del Llavero en lugar de pegar la clave: escribe kc: seguido del nombre del elemento, p. ej. kc:MiClaveZai. Es el nombre de -s en security add-generic-password. El nombre se guarda en la tabla [keychain] de config.toml; la clave se queda en el Llavero.`)
+};
+
 export const api_key_no_answer = /** @type {(inputs: Api_Key_No_AnswerInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`${i?.provider} todavía no responde. Inténtalo de nuevo en un momento.`)
 };
@@ -471,6 +477,10 @@ export const api_key_stored_note = /** @type {(inputs: Api_Key_Stored_NoteInputs
 
 export const api_keys = /** @type {(inputs: Api_KeysInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`Claves de API`)
+};
+
+export const app_icon = /** @type {(inputs: App_IconInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`Icono de la app`)
 };
 
 export const appearance = /** @type {(inputs: AppearanceInputs) => LocalizedString} */ () => {
@@ -862,7 +872,7 @@ export const menu_bar_shows = /** @type {(inputs: Menu_Bar_ShowsInputs) => Local
 };
 
 export const menu_bar_shows_hint = /** @type {(inputs: Menu_Bar_Shows_HintInputs) => LocalizedString} */ () => {
-	return /** @type {LocalizedString} */ (`Gráfico y Logos muestran las métricas destacadas de todos los proveedores. Quattro muestra el mayor uso del proveedor seleccionado.`)
+	return /** @type {LocalizedString} */ (`Icono de la app muestra el medidor de la aplicación. Gráfico y Logos muestran las métricas destacadas de todos los proveedores. Quattro muestra el mayor uso del proveedor seleccionado.`)
 };
 
 export const metric_plural = /** @type {(inputs: Metric_PluralInputs) => LocalizedString} */ () => {

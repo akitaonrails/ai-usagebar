@@ -89,19 +89,18 @@ pub async fn fetch_snapshot(
         Err(error) if error.is_transient() => {
             crate::outcome::fallback(cache, None, error, parse_cache)
         }
-        // A revoked key must never keep showing the last good budgets. 403 is
-        // not a bad key: `/billing/budget` needs `see_org_inference_usage`, so
-        // it gets an actionable permission message instead of the generic
-        // authentication text `Cache::write_last_error` applies to 401/403.
-        Err(error @ AppError::Http { status: 401, .. }) => {
-            cache.mark_stale();
-            let _ = cache.write_last_error(401, &error.to_string());
-            Err(error)
-        }
+        // Auth failures keep matching budgets stale, like the other API-key
+        // vendors (#589). With no usable cache, 403 still explains the billing
+        // permission rather than treating a valid key as rejected.
         Err(AppError::Http { status: 403, .. }) => {
             cache.mark_stale();
-            let _ = cache.write_last_error(0, PERMISSION_MESSAGE);
-            Err(AppError::Permission(PERMISSION_MESSAGE.to_string()))
+            let diagnostic = cache.write_last_error(403, PERMISSION_MESSAGE);
+            crate::outcome::fallback(
+                cache,
+                Some(diagnostic),
+                AppError::Permission(PERMISSION_MESSAGE.to_string()),
+                parse_cache,
+            )
         }
         Err(error) => {
             let code = match &error {
@@ -428,75 +427,179 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unauthorized_does_not_serve_the_cached_budgets() {
-        let mut server = mockito::Server::new_async().await;
-        server
-            .mock("GET", "/billing/budget")
-            .with_status(401)
-            .with_body(r#"{"message":"Unauthorized"}"#)
-            .create_async()
-            .await;
-        server
-            .mock("GET", "/billing/subscription")
-            .with_status(401)
-            .create_async()
-            .await;
-        let (_dir, cache) = cache();
-        let endpoints = endpoints(&server);
-        prime(&cache, &endpoints, "mst-test");
+    async fn auth_failures_keep_matching_budgets_stale_and_redacted() {
+        for status in [401_u16, 403] {
+            let mut server = mockito::Server::new_async().await;
+            let denied = server
+                .mock("GET", "/billing/budget")
+                .with_status(status.into())
+                .with_body(r#"{"message":"private-account@example.test"}"#)
+                .expect(1)
+                .create_async()
+                .await;
+            let subscription = server
+                .mock("GET", "/billing/subscription")
+                .with_status(500)
+                .expect(2)
+                .create_async()
+                .await;
+            let (_dir, cache) = cache();
+            let endpoints = endpoints(&server);
+            let client = reqwest::Client::new();
+            prime(&cache, &endpoints, "mst-test");
+            let payload = std::fs::read(cache.payload_path()).unwrap();
 
-        let error = fetch_snapshot(
-            &reqwest::Client::new(),
-            "mst-test",
-            &cache,
-            &endpoints,
-            Duration::ZERO,
-        )
-        .await
-        .unwrap_err();
+            let outcome = fetch_snapshot(&client, "mst-test", &cache, &endpoints, Duration::ZERO)
+                .await
+                .unwrap();
 
-        assert!(
-            matches!(error, AppError::Http { status: 401, .. }),
-            "{error:?}"
-        );
-        assert!(cache.is_stale());
+            assert!(outcome.stale);
+            assert!(!outcome.off_the_wire());
+            assert_eq!(outcome.snapshot.api.as_ref().unwrap().utilization_pct, 16);
+            assert_eq!(outcome.snapshot.vibe.utilization_pct, 0);
+            let diagnostic = Some((status, crate::error::AUTH_FAILURE_MESSAGE.to_string()));
+            assert_eq!(outcome.last_error, diagnostic);
+            assert_eq!(cache.read_last_error(), diagnostic);
+            assert_eq!(std::fs::read(cache.payload_path()).unwrap(), payload);
+            assert!(cache.is_stale());
+            assert!(cache.backoff_remaining().is_none());
+
+            let cached = fetch_snapshot(
+                &client,
+                "mst-test",
+                &cache,
+                &endpoints,
+                Duration::from_secs(3600),
+            )
+            .await
+            .unwrap();
+            assert!(cached.stale);
+            assert_eq!(cached.snapshot, outcome.snapshot);
+            assert_eq!(cached.last_error, diagnostic);
+            denied.assert_async().await;
+            denied.remove_async().await;
+
+            let recovered = server
+                .mock("GET", "/billing/budget")
+                .with_status(200)
+                .with_body(OTHER_BUDGET)
+                .expect(1)
+                .create_async()
+                .await;
+            let fresh = fetch_snapshot(&client, "mst-test", &cache, &endpoints, Duration::ZERO)
+                .await
+                .unwrap();
+            assert!(fresh.off_the_wire());
+            assert_eq!(fresh.snapshot.api.unwrap().utilization_pct, 42);
+            assert!(fresh.last_error.is_none());
+            assert!(cache.read_last_error().is_none());
+            assert!(!cache.is_stale());
+            recovered.assert_async().await;
+            subscription.assert_async().await;
+        }
     }
 
     #[tokio::test]
-    async fn forbidden_is_a_permission_error_and_does_not_serve_the_cache() {
-        let mut server = mockito::Server::new_async().await;
-        server
-            .mock("GET", "/billing/budget")
-            .with_status(403)
-            .with_body(r#"{"message":"forbidden"}"#)
-            .create_async()
-            .await;
-        server
-            .mock("GET", "/billing/subscription")
-            .with_status(403)
-            .create_async()
-            .await;
-        let (_dir, cache) = cache();
-        let endpoints = endpoints(&server);
-        prime(&cache, &endpoints, "mst-test");
+    async fn auth_failure_without_matching_cache_keeps_the_actionable_error() {
+        for status in [401_u16, 403] {
+            for cached_key in [None, Some("other-key")] {
+                let mut server = mockito::Server::new_async().await;
+                let budget = server
+                    .mock("GET", "/billing/budget")
+                    .with_status(status.into())
+                    .with_body(r#"{"message":"private-account@example.test"}"#)
+                    .expect(1)
+                    .create_async()
+                    .await;
+                let subscription = server
+                    .mock("GET", "/billing/subscription")
+                    .with_status(500)
+                    .expect(1)
+                    .create_async()
+                    .await;
+                let (_dir, cache) = cache();
+                let endpoints = endpoints(&server);
+                if let Some(key) = cached_key {
+                    prime(&cache, &endpoints, key);
+                }
 
-        let error = fetch_snapshot(
-            &reqwest::Client::new(),
-            "mst-test",
-            &cache,
-            &endpoints,
-            Duration::ZERO,
-        )
-        .await
-        .unwrap_err();
+                let error = fetch_snapshot(
+                    &reqwest::Client::new(),
+                    "mst-test",
+                    &cache,
+                    &endpoints,
+                    Duration::ZERO,
+                )
+                .await
+                .unwrap_err();
 
-        assert!(matches!(error, AppError::Permission(_)), "{error:?}");
-        assert!(error.to_string().contains("see_org_inference_usage"));
-        assert!(!error.to_string().contains("forbidden"));
-        assert!(cache.is_stale());
-        let (code, message) = cache.read_last_error().unwrap();
-        assert_eq!(code, 0);
-        assert!(message.contains("see_org_inference_usage"));
+                if status == 403 {
+                    assert!(matches!(&error, AppError::Permission(_)));
+                    assert!(error.user_message().contains("see_org_inference_usage"));
+                } else {
+                    assert!(matches!(&error, AppError::Http { status: 401, .. }));
+                }
+                assert!(!error.user_message().contains("private-account"));
+                assert_eq!(
+                    cache.read_last_error(),
+                    Some((status, crate::error::AUTH_FAILURE_MESSAGE.to_string()))
+                );
+                assert!(cache.is_stale());
+                budget.assert_async().await;
+                subscription.assert_async().await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_keeps_the_cache_stale_without_repeating_requests() {
+        for warm_cache in [false, true] {
+            let mut server = mockito::Server::new_async().await;
+            let budget = server
+                .mock("GET", "/billing/budget")
+                .with_status(429)
+                .with_body(r#"{"message":"rate limited"}"#)
+                .expect(1)
+                .create_async()
+                .await;
+            let subscription = server
+                .mock("GET", "/billing/subscription")
+                .with_status(500)
+                .expect(1)
+                .create_async()
+                .await;
+            let (_dir, cache) = cache();
+            let endpoints = endpoints(&server);
+            let client = reqwest::Client::new();
+            if warm_cache {
+                prime(&cache, &endpoints, "mst-test");
+            }
+
+            let first =
+                fetch_snapshot(&client, "mst-test", &cache, &endpoints, Duration::ZERO).await;
+            let deadline = std::fs::read(cache.retry_after_path()).unwrap();
+            let retry = fetch_snapshot(
+                &client,
+                "mst-test",
+                &cache,
+                &endpoints,
+                Duration::from_secs(60),
+            )
+            .await;
+            for result in [first, retry] {
+                if warm_cache {
+                    let outcome = result.unwrap();
+                    assert!(outcome.stale);
+                    assert_eq!(outcome.snapshot.api.unwrap().utilization_pct, 16);
+                    assert_eq!(outcome.last_error.unwrap().0, 429);
+                } else {
+                    assert!(matches!(result, Err(AppError::Http { status: 429, .. })));
+                }
+            }
+            assert_eq!(std::fs::read(cache.retry_after_path()).unwrap(), deadline);
+            budget.assert_async().await;
+            subscription.assert_async().await;
+        }
     }
 
     #[tokio::test]

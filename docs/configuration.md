@@ -74,9 +74,9 @@ enabled = true
 # credentials_path = "/home/you/.claude/.credentials.json"
 
 [anthropic_api]
-enabled = true             # disabled by default; requires an organization Admin key
+enabled = true             # disabled by default; requires organization report access
 api_key_env = "ANTHROPIC_ADMIN_KEY"
-# api_key = "sk-ant-admin01-..."  # not an inference key; chmod 600 if inline
+# api_key = "..."         # authorized report credential; chmod 600 if inline
 # monthly_limit = 1000     # optional positive, finite USD display limit
 
 [openai]
@@ -95,6 +95,16 @@ enabled = false           # opt in after `gh auth login --web`
 enabled = true
 api_key_env = "ZAI_API_KEY"
 # api_key = "..."          # used if ZAI_API_KEY is unset; chmod 600 the file!
+# On macOS the key can instead stay in the login Keychain. Name its service
+# in the top-level [keychain] table (`zai` here, or `"zai.work"` for a named
+# account). It is checked after ZAI_API_KEY and the inline api_key:
+#   [keychain]
+#   zai = "MyZaiKey"
+# Create the item with `security add-generic-password -a "$USER" -s MyZaiKey -w`.
+# It is read by service name and by the account "$USER". The service name
+# is stored in this file in plaintext; only the key stays in the Keychain.
+# The popover's Add Key dialog accepts the same reference: type
+# kc:MyZaiKey in the field and an accepted check writes the entry.
 # plan_tier = "lite"       # lite | pro | max — display-only
 
 [openrouter]
@@ -279,8 +289,8 @@ enabled = true             # disabled by default; enable once you've signed in t
 
 [kiro]
 enabled = true             # disabled by default; enable once you've run `kiro-cli login`
-# No API key: reads the AWS SSO OIDC session kiro-cli already wrote to its own
-# data.sqlite3 after you logged in there.
+# No API key: reads the AWS SSO OIDC or social-login (Google / GitHub) session
+# kiro-cli already wrote to its own data.sqlite3 after you logged in there.
 # db_path = "/home/you/.local/share/kiro-cli/data.sqlite3"
 
 [opencode-go]
@@ -570,3 +580,5 @@ detection continues to respect disabled providers. The command preserves other
 settings, comments, and credentials, and supports `--config PATH` to edit an
 existing alternate configuration. It does not sign in or select a primary
 provider. Successful writes return `{"ok":true}`; failures exit nonzero.
+
+See [Anthropic API setup and report permissions](anthropic-api.md) for supported key types and 401/403 troubleshooting.

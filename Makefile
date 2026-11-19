@@ -10,6 +10,7 @@ PLASMOID_DIR = $(abspath $(DESTDIR)$(PREFIX))/share/plasma/plasmoids/$(PLASMOID_
 
 .PHONY: build install uninstall install-plasmoid uninstall-plasmoid \
 	test desktop-test plugin-test omarchy-visual-test mint-test mint-runtime-test \
+	macos-app macos-app-dist \
 	qml-lint qml-test mjs-probe smoke clippy fmt clean
 
 build:
@@ -67,6 +68,29 @@ test:
 .PHONY: macos-package-test
 macos-package-test:
 	python3 -m unittest discover -s macos -p 'test_package_app.py'
+
+# The macOS menu-bar app: package the release binaries as "AI Usage.app",
+# keep the artifact under dist/, and install the copy into /Applications.
+# macOS-only and deliberately not part of `install`, which serves CLI users
+# on every platform. Quit the running app first: replacing a bundle whose
+# executable is open leaves the old process on a deleted file.
+VERSION := $(shell awk -F'"' '/^version = / {print $$2; exit}' Cargo.toml)
+APP_BUNDLE = AI Usage.app
+DIST_APP = dist/$(APP_BUNDLE)
+APPLICATIONS_APP = /Applications/$(APP_BUNDLE)
+
+.PHONY: macos-app macos-app-dist
+macos-app: macos-app-dist
+	rm -rf -- "$(APPLICATIONS_APP)"
+	cp -R -- "$(DIST_APP)" "$(APPLICATIONS_APP)"
+	@echo "✓ Installed $(APPLICATIONS_APP)"
+
+# Just build the bundle into dist/, without touching /Applications.
+macos-app-dist: build
+	mkdir -p dist
+	rm -rf -- "$(DIST_APP)"
+	python3 macos/package-app.py target/release "$(DIST_APP)" "$(VERSION)"
+	@echo "✓ Packaged $(DIST_APP)"
 
 changelog-check:
 	./scripts/check-changelog-immutable.sh

@@ -36,6 +36,7 @@ import {
   providerGroups,
   providerIconId,
   resolvedTheme,
+  rowKey,
   saveLayout,
   seedStars,
   sendCommand,
@@ -489,7 +490,7 @@ export default function App() {
       return;
     }
     if (action === "star") {
-      const result = toggleStar(layout.stars, id, key);
+      const result = toggleStar(layout.stars, id, key, card.rows.map(rowKey));
       if (result.error) {
         setStarError(result.error);
         window.setTimeout(() => setStarError(""), 2200);
@@ -663,7 +664,7 @@ export default function App() {
               onReorderRows={reorderRows}
               onToggleStar={(key) => {
                 if (!currentCard) return;
-                const result = toggleStar(layout.stars, currentCard.id, key);
+                const result = toggleStar(layout.stars, currentCard.id, key, currentCard.rows.map(rowKey));
                 if (result.error) {
                   setStarError(result.error);
                   window.setTimeout(() => setStarError(""), 2200);
@@ -739,6 +740,7 @@ export default function App() {
       <ApiKeyDialog
         keyCheck={payload.keyCheck}
         nowMs={nowMs}
+        os={payload.os}
         provider={keyProvider}
         returnFocus={keyFocus}
         onClose={closeKeyDialog}
