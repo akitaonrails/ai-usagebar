@@ -432,10 +432,11 @@ function normalizeEntry(raw) {
   };
 }
 
-// The colour the status page itself gives each status.
+// The colour the status page itself gives each status, using WCAG-AA text
+// tokens on light surfaces while keeping bright tones in dark mode.
 const INCIDENT_TONES = {
-  degraded_performance: "text-meter-yellow",
-  partial_outage: "text-notice",
+  degraded_performance: "text-incident-yellow",
+  partial_outage: "text-incident-orange",
   major_outage: "text-meter-red",
   under_maintenance: "text-meter-blue",
 };

@@ -114,7 +114,12 @@ fn vendor_components(vendor: VendorId) -> Option<&'static [&'static str]> {
         VendorId::Anthropic => Some(&["claude code", "claude api"]),
         VendorId::AnthropicApi => Some(&["claude api", "claude console"]),
         VendorId::Openai => Some(&["codex in chatgpt desktop", "login"]),
-        VendorId::Cursor => Some(&["ide", "cli", "cursor.com", "third-party models"]),
+        VendorId::Cursor => Some(&[
+            "ide",
+            "grok build and cursor: cli",
+            "grok build and cursor: cursor.com",
+            "third-party model providers",
+        ]),
         VendorId::Copilot => Some(&["copilot", "copilot ai model providers"]),
         _ => None,
     }

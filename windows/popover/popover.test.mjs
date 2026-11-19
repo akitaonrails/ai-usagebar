@@ -2934,10 +2934,10 @@ console.log('ok');
   assert.equal(incidentTone(null), '');
   assert.deepEqual(
     ['degraded_performance', 'partial_outage', 'major_outage', 'under_maintenance'].map((severity) => incidentTone({ severity })),
-    ['text-meter-yellow', 'text-notice', 'text-meter-red', 'text-meter-blue'],
+    ['text-incident-yellow', 'text-incident-orange', 'text-meter-red', 'text-meter-blue'],
   );
   // ASSERT: a name every object inherits is not a status: it reads as the mildest, like any unknown one.
-  assert.equal(incidentTone({ severity: 'constructor' }), 'text-meter-yellow');
+  assert.equal(incidentTone({ severity: 'constructor' }), 'text-incident-yellow');
   const incidentOf = (incident) => parseHostPayload(JSON.stringify({
     entries: [{ id: 'anthropic', display_name: 'Claude', status: 'ready', incident, sections: [] }],
   })).entries[0].incident;

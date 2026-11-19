@@ -130,7 +130,7 @@ contacted and no entry carries an `incident`.
 | Claude | `GET status.claude.com/api/v2/summary.json` | `Claude Code`, `Claude API` |
 | Anthropic API | same request | `Claude API`, `Claude Console` |
 | Codex | `GET status.openai.com/api/v2/summary.json` | `Codex in ChatGPT Desktop`, `Login` |
-| Cursor | `GET status.x.ai/api/compat/summary.json` (where `status.cursor.com` redirects) | `IDE`, `CLI`, `cursor.com`, `Third-party models` |
+| Cursor | `GET status.x.ai/api/compat/summary.json` (where `status.cursor.com` redirects) | `IDE`, `Grok Build and Cursor: CLI`, `Grok Build and Cursor: cursor.com`, `Third-party Model Providers` |
 | GitHub Copilot | `GET www.githubstatus.com/api/v2/summary.json` | `Copilot`, `Copilot AI Model Providers` |
 
 Components are matched by name, one by one, never by fragment: each of these
@@ -143,11 +143,10 @@ for the API platform and one for ChatGPT, and its summary gives nothing to tell
 them apart, so either one marks Codex.
 
 A component renamed by its page stops matching and the mark silently goes
-away, which is the safe direction. `make test` and CI run
-`status_page_components_live` (`make status-pages-test`), which checks every
-name against the live pages and fails naming the one that is gone. It fails
-only when a page answers 200 without a name; a page that is down or unreachable
-is reported and skipped.
+away, which is the safe direction. `make status-pages-test` (and `make smoke`)
+run `status_page_components_live`, which checks every name against the live
+pages and fails naming the one that is gone. It stays out of `make test` and
+CI so the normal test gate remains offline and hermetic.
 
 The mark follows the status the page shows for the component, in Statuspage's
 own vocabulary and colours:

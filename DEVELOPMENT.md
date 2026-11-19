@@ -106,8 +106,8 @@ can break them without touching Rust.
 
 | Target | What it runs |
 |---|---|
-| `make test` | `cargo test` + `status-pages-test` + `desktop-test` + `plugin-test` |
-| `make status-pages-test` | `status_page_components_live`: the component names the status mark matches, against the live status pages |
+| `make test` | `cargo test` + `desktop-test` + `plugin-test` + `mint-test` + `macos-package-test` |
+| `make status-pages-test` | `status_page_components_live`: opt-in live check that status-page component names still exist |
 | `make desktop-test` | GNOME, KDE, Windows popover `.test.mjs` |
 | `make plugin-test` | Omarchy `model.test.mjs` |
 | `make smoke` | `cargo test --test live -- --ignored --nocapture` |

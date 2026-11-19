@@ -815,7 +815,7 @@ try {
   };
   const incidentSection = sectionMarkup(emptyLayout(), 'en', incidentCard);
   assert.match(incidentSection, /data-incident="partial_outage"/);
-  assert.match(incidentSection, /text-notice[^>]*>Claude</);
+  assert.match(incidentSection, /text-incident-orange[^>]*>Claude</);
   assert.match(incidentSection, /aria-label="Active incident: Claude API outage"/);
   const incidentNative = renderToStaticMarkup(React.createElement(TooltipProvider, {},
     React.createElement(LanguageProvider, { language: 'en' },

@@ -60,7 +60,6 @@ uninstall-plasmoid:
 
 test:
 	cargo test
-	$(MAKE) status-pages-test
 	$(MAKE) desktop-test
 	$(MAKE) plugin-test
 	$(MAKE) mint-test

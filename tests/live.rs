@@ -1192,6 +1192,10 @@ async fn status_page_components_live() {
         .build()
         .unwrap();
     // Every vendor with a status source, so one added later is checked too.
+    // Cache fetched bodies by URL so providers sharing a status page (e.g.
+    // Claude and Anthropic API on status.claude.com) only fetch it once.
+    let mut fetched: std::collections::HashMap<&'static str, Option<String>> =
+        std::collections::HashMap::new();
     let mut checked = 0;
     for &vendor in VendorId::all() {
         let Some(url) = status_summary_url(vendor) else {
@@ -1199,28 +1203,38 @@ async fn status_page_components_live() {
         };
         checked += 1;
         let slug = vendor.slug();
-        let response = match client.get(url).send().await {
-            Ok(response) => response,
-            Err(error) => {
-                println!("⚠ status page — {slug}: {url} unreachable ({error}); not checked");
-                continue;
-            }
+        let body = if let Some(cached) = fetched.get(url) {
+            cached.clone()
+        } else {
+            let result = match client.get(url).send().await {
+                Ok(response) if response.status() == reqwest::StatusCode::OK => {
+                    match response.text().await {
+                        Ok(body) => Some(body),
+                        Err(error) => {
+                            println!(
+                                "⚠ status page — {slug}: {url} body not read ({error}); not checked"
+                            );
+                            None
+                        }
+                    }
+                }
+                Ok(response) => {
+                    println!(
+                        "⚠ status page — {slug}: {url} answered {}; not checked",
+                        response.status()
+                    );
+                    None
+                }
+                Err(error) => {
+                    println!("⚠ status page — {slug}: {url} unreachable ({error}); not checked");
+                    None
+                }
+            };
+            fetched.insert(url, result.clone());
+            result
         };
-        if response.status() != reqwest::StatusCode::OK {
-            println!(
-                "⚠ status page — {slug}: {url} answered {}; not checked",
-                response.status()
-            );
+        let Some(body) = body else {
             continue;
-        }
-        // A body cut off in transit is a transport failure like the ones above,
-        // not a page that answered without a name.
-        let body = match response.text().await {
-            Ok(body) => body,
-            Err(error) => {
-                println!("⚠ status page — {slug}: {url} body not read ({error}); not checked");
-                continue;
-            }
         };
         // A 200 that is not a status summary lists none of the names either.
         let unmatched = unmatched_components(vendor, &body).unwrap_or_else(|| {
