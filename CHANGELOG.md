@@ -2,6 +2,14 @@
 
 ### Fixed
 
+- **Antigravity's live-session cards refresh their complete quota.** A status
+  line can report an unused weekly bucket while `/quota` already records
+  usage. The report prefers fresh local RPC or `agy` quota for the verified
+  same account, including reset times and per-model pools. The CLI fallback
+  checks its saved ID-token identity before fetching and before caching, and
+  uses an independent credential-scoped cache. Unmatched, unverified and stale
+  readings keep the session's own data (#597).
+
 - **Antigravity:** restrict local server discovery to `language_server*` and
   `agy` executables (matched by `comm` or executable basename) so the Electron
   shell (`Antigravity` / `Antigravity.exe` `HostBridgeServer`), `agy-node`
