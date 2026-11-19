@@ -193,14 +193,20 @@ pub fn run() -> i32 {
         // A cache dir that cannot be written must not keep the tray from
         // starting; the cost is that two copies can then coexist.
         Acquire::Unavailable(reason) => {
-            eprintln!("ai-usagebar-tray: single-instance lock unavailable ({reason}); continuing.");
+            eprintln!(
+                "ai-usagebar-tray: single-instance lock unavailable ({}); continuing.",
+                crate::display::sanitize_untrusted_line(&reason)
+            );
             None
         }
     };
     match run_loop(lock) {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("ai-usagebar-tray: {error}");
+            eprintln!(
+                "ai-usagebar-tray: {}",
+                crate::display::sanitize_untrusted_line(&error)
+            );
             1
         }
     }
@@ -263,7 +269,10 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
     let webview = match webview {
         Ok(webview) => Some(webview),
         Err(error) => {
-            eprintln!("ai-usagebar-tray: the popover WebView could not start: {error}");
+            eprintln!(
+                "ai-usagebar-tray: the popover WebView could not start: {}",
+                crate::display::sanitize_untrusted_line(&error)
+            );
             let _ = tray.set_tooltip(Some(WEBVIEW_MISSING));
             None
         }
@@ -1245,6 +1254,11 @@ fn build_webview(
             if !ipc_allowed(&request.uri().to_string()) {
                 return;
             }
+            // Dropped before the clone and the queue: an oversized body never
+            // reaches the UI thread's parse.
+            if !ipc_body_within_limit(request.body().len()) {
+                return;
+            }
             let body = request.body().clone();
             let _ = proxy.send_event(UserEvent::Ipc(body));
         })
@@ -1276,8 +1290,26 @@ fn navigation_allowed(url: &str) -> bool {
     }
 }
 
+/// Largest IPC message the host accepts: the 16 MiB PNG limit of
+/// `copy-image`, as base64 (about 21.4 MiB), plus the JSON envelope.
+const MAX_IPC_BODY_BYTES: usize = 24 * 1024 * 1024;
+
+fn ipc_body_within_limit(len: usize) -> bool {
+    len <= MAX_IPC_BODY_BYTES
+}
+
+/// Sent on every 200 from the `aiub` protocol: the popover has no use for
+/// frames, plugins or embedded documents, and a frame would reach the IPC
+/// bridge under the main frame's URL (wry reports that URL for subframes).
+/// Script, style, image and connect sources are deliberately left open.
+const POPOVER_CSP: &str =
+    "frame-src 'none'; child-src 'none'; object-src 'none'; frame-ancestors 'none'";
+
 fn protocol_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
-    let path = request.uri().path();
+    asset_response(request.uri().path())
+}
+
+fn asset_response(path: &str) -> Response<Cow<'static, [u8]>> {
     let (body, mime): (&'static [u8], &str) = match path {
         "/" | "/index.html" => (INDEX_HTML.as_bytes(), "text/html; charset=utf-8"),
         "/popover.css" => (POPOVER_CSS.as_bytes(), "text/css; charset=utf-8"),
@@ -1292,6 +1324,7 @@ fn protocol_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> 
     Response::builder()
         .header(CONTENT_TYPE, mime)
         .header("Access-Control-Allow-Origin", "*")
+        .header("Content-Security-Policy", POPOVER_CSP)
         .body(Cow::Borrowed(body))
         .unwrap_or_else(|_| Response::new(Cow::Borrowed(body)))
 }
@@ -1340,6 +1373,16 @@ impl SingleInstance {
     }
 
     fn acquire_at(path: &Path) -> Acquire {
+        // Before opening: a link, FIFO, directory or device at the lock path is
+        // never opened (opening a FIFO for writing can block before the flock).
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if !meta.file_type().is_file() => {
+                return Acquire::Unavailable("the lock path is not a regular file".to_string());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Acquire::Unavailable(error.to_string()),
+        }
         if let Some(parent) = path.parent()
             && let Err(error) = std::fs::create_dir_all(parent)
         {
@@ -1355,12 +1398,32 @@ impl SingleInstance {
             Ok(file) => file,
             Err(error) => return Acquire::Unavailable(error.to_string()),
         };
+        // After opening: the descriptor itself must be our own regular file.
+        let verdict = file
+            .metadata()
+            .map_err(|error| error.to_string())
+            .and_then(|meta| lock_file_verdict(&meta, rustix::process::getuid().as_raw()));
+        if let Err(reason) = verdict {
+            return Acquire::Unavailable(reason);
+        }
         match file.try_lock_exclusive() {
             Ok(()) => Acquire::Held(Self { _file: file }),
             Err(error) if is_contended(&error) => Acquire::Busy,
             Err(error) => Acquire::Unavailable(error.to_string()),
         }
     }
+}
+
+/// A lock file is trusted only when it is a regular file owned by `uid`.
+fn lock_file_verdict(meta: &std::fs::Metadata, uid: u32) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    if !meta.file_type().is_file() {
+        return Err("the lock path is not a regular file".to_string());
+    }
+    if meta.uid() != uid {
+        return Err("the lock file belongs to another user".to_string());
+    }
+    Ok(())
 }
 
 fn is_contended(error: &std::io::Error) -> bool {
@@ -1723,6 +1786,148 @@ mod tests {
         // A path *under a regular file* can be neither created nor opened.
         let outcome = SingleInstance::acquire_at(&file.join("tray.lock"));
         assert!(matches!(outcome, Acquire::Unavailable(_)));
+    }
+
+    #[test]
+    fn a_symlink_at_the_lock_path_is_unavailable_even_when_it_points_at_a_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("target");
+        std::fs::write(&target, b"x").expect("write");
+        let link = dir.path().join("tray.lock");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+        assert!(matches!(
+            SingleInstance::acquire_at(&link),
+            Acquire::Unavailable(_)
+        ));
+    }
+
+    #[test]
+    fn a_fifo_at_the_lock_path_is_unavailable_and_never_blocks() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let fifo = dir.path().join("tray.lock");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success());
+        // Opening a FIFO for writing blocks without a reader: run it on a
+        // thread so a regression fails by timeout instead of hanging the suite.
+        // (A blocked thread is leaked on failure; the process ends anyway.)
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(matches!(
+                SingleInstance::acquire_at(&fifo),
+                Acquire::Unavailable(_)
+            ));
+        });
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(5)),
+            Ok(true),
+            "a FIFO must be refused before it is opened"
+        );
+    }
+
+    #[test]
+    fn a_directory_at_the_lock_path_is_unavailable() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("tray.lock");
+        std::fs::create_dir(&path).expect("mkdir");
+        assert!(matches!(
+            SingleInstance::acquire_at(&path),
+            Acquire::Unavailable(_)
+        ));
+    }
+
+    #[test]
+    fn our_own_regular_lock_file_is_held_and_reacquirable_after_release() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("tray.lock");
+        std::fs::write(&path, b"").expect("pre-existing own file");
+        let first = SingleInstance::acquire_at(&path);
+        assert!(matches!(first, Acquire::Held(_)));
+        drop(first);
+        assert!(matches!(
+            SingleInstance::acquire_at(&path),
+            Acquire::Held(_)
+        ));
+    }
+
+    #[test]
+    fn an_opened_lock_file_must_be_regular_and_owned_by_the_caller() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("f");
+        std::fs::write(&file, b"").expect("write");
+        let own = rustix::process::getuid().as_raw();
+        let file_meta = std::fs::metadata(&file).expect("meta");
+        assert!(lock_file_verdict(&file_meta, own).is_ok());
+        // Another uid (the opener is never root-owned here): refused.
+        assert!(lock_file_verdict(&file_meta, own.wrapping_add(1)).is_err());
+        // A directory is never a lock file, whoever owns it.
+        let dir_meta = std::fs::metadata(dir.path()).expect("meta");
+        assert!(lock_file_verdict(&dir_meta, own).is_err());
+    }
+
+    // --- Popover protocol ---------------------------------------------------
+
+    #[test]
+    fn every_served_asset_carries_the_frame_blocking_csp() {
+        for path in ["/", "/index.html", "/popover.css", "/popover.js"] {
+            let response = asset_response(path);
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let csp = response
+                .headers()
+                .get("Content-Security-Policy")
+                .unwrap_or_else(|| panic!("{path}: no CSP"))
+                .to_str()
+                .expect("ascii");
+            assert_eq!(csp, POPOVER_CSP, "{path}");
+        }
+    }
+
+    #[test]
+    fn the_csp_blocks_embedding_and_nothing_else() {
+        for directive in [
+            "frame-src 'none'",
+            "child-src 'none'",
+            "object-src 'none'",
+            "frame-ancestors 'none'",
+        ] {
+            assert!(POPOVER_CSP.contains(directive), "{directive}");
+        }
+        for open in [
+            "default-src",
+            "script-src",
+            "style-src",
+            "img-src",
+            "connect-src",
+        ] {
+            assert!(
+                !POPOVER_CSP.contains(open),
+                "{open} would restrict the page"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_path_is_still_a_404() {
+        for path in ["/missing", "/../etc/passwd", "/popover.js/", ""] {
+            assert_eq!(
+                asset_response(path).status(),
+                StatusCode::NOT_FOUND,
+                "{path:?}"
+            );
+        }
+    }
+
+    // --- IPC body budget -----------------------------------------------------
+
+    #[test]
+    fn an_ipc_body_at_the_limit_is_accepted_and_one_byte_more_is_not() {
+        assert!(ipc_body_within_limit(0));
+        assert!(ipc_body_within_limit(MAX_IPC_BODY_BYTES));
+        assert!(!ipc_body_within_limit(MAX_IPC_BODY_BYTES + 1));
+        // The largest PNG the image path allows still fits, as base64.
+        assert!(ipc_body_within_limit(16 * 1024 * 1024 / 3 * 4 + 4096));
     }
 
     // --- Static sanity ----------------------------------------------------

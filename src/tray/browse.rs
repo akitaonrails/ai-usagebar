@@ -43,13 +43,42 @@ pub fn open(raw: &str) {
     {
         // PATH lookup is deliberate: NixOS has no /usr/bin. `arg` passes the
         // URL as one argument; no shell ever interprets it.
-        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        let _ = spawn_reaped(std::process::Command::new("xdg-open").arg(url));
     }
+}
+
+/// Spawns `command` and collects its exit status on a separate thread, so a
+/// finished `xdg-open` never lingers as a zombie for the life of the tray and
+/// the calling (GTK) thread never blocks. Returns the child's pid and the
+/// reaper's handle.
+#[cfg(all(target_os = "linux", feature = "linux-tray"))]
+fn spawn_reaped(
+    command: &mut std::process::Command,
+) -> std::io::Result<(u32, std::thread::JoinHandle<()>)> {
+    let mut child = command.spawn()?;
+    let pid = child.id();
+    let reaper = std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok((pid, reaper))
 }
 
 #[cfg(test)]
 mod tests {
     use super::http_url;
+
+    #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+    #[test]
+    fn a_finished_child_is_collected_not_left_as_a_zombie() {
+        let (pid, reaper) =
+            super::spawn_reaped(std::process::Command::new("true").arg("ignored")).unwrap();
+        reaper.join().unwrap();
+        // A reaped pid has no /proc entry; an uncollected child stays as `Z`.
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "pid {pid} was not collected"
+        );
+    }
 
     #[test]
     fn accepts_http_and_https() {

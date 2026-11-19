@@ -53,38 +53,56 @@ pub(crate) fn set_enabled_at(dir: &Path, exe: &Path, enabled: bool) -> Result<()
         };
     }
 
+    // Serialized first: a path the format cannot carry faithfully is refused
+    // before the directory or any file is created.
+    let entry = desktop_entry(exe)?;
     fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     // Same directory as the destination: the rename below stays atomic and
     // never crosses a filesystem boundary. `NamedTempFile` removes its file
     // on any error, including a failed persist.
     let mut temp = NamedTempFile::new_in(dir).map_err(|error| error.to_string())?;
-    temp.write_all(desktop_entry(exe).as_bytes())
+    temp.write_all(entry.as_bytes())
         .map_err(|error| error.to_string())?;
     temp.persist(&path).map_err(|error| error.to_string())?;
     Ok(())
 }
 
-/// The Desktop Entry Spec quotes `Exec=` values in double quotes, inside
-/// which backslash, double quote, dollar and backtick need a backslash.
-fn escape_exec(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
+/// The `Exec=` value for `exe`, serialized in the two layers the Desktop Entry
+/// Spec stacks: (a) the argument quoted in double quotes, where `"`, `` ` ``,
+/// `$` and `\` take a backslash and a literal `%` is written `%%` (a bare one
+/// starts a field code); (b) the whole value then goes through the keyfile
+/// string escape, where `\` becomes `\\`. A path that is not UTF-8, or that
+/// holds any control character (`\n`, `\r` and `\t` included, which the
+/// keyfile layer cannot carry without changing the file's structure), is
+/// refused instead of being altered.
+fn exec_value(exe: &Path) -> Result<String, String> {
+    let path = exe
+        .to_str()
+        .ok_or_else(|| "the executable path is not valid UTF-8".to_string())?;
+    if path.chars().any(char::is_control) {
+        return Err("the executable path contains a control character".to_string());
+    }
+    let mut quoted = String::with_capacity(path.len() + 2);
+    quoted.push('"');
+    for ch in path.chars() {
         match ch {
             '\\' | '"' | '$' | '`' => {
-                escaped.push('\\');
-                escaped.push(ch);
+                quoted.push('\\');
+                quoted.push(ch);
             }
-            _ => escaped.push(ch),
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(ch),
         }
     }
-    escaped
+    quoted.push('"');
+    Ok(quoted.replace('\\', "\\\\"))
 }
 
-fn desktop_entry(exe: &Path) -> String {
-    format!(
-        "[Desktop Entry]\nType=Application\nName=AI Usage Bar\nExec=\"{}\"\nIcon=ai-usagebar\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n",
-        escape_exec(&exe.to_string_lossy())
-    )
+fn desktop_entry(exe: &Path) -> Result<String, String> {
+    Ok(format!(
+        "[Desktop Entry]\nType=Application\nName=AI Usage Bar\nExec={}\nIcon=ai-usagebar\nX-GNOME-Autostart-enabled=true\nNoDisplay=true\n",
+        exec_value(exe)?
+    ))
 }
 
 #[cfg(test)]
@@ -115,22 +133,118 @@ mod tests {
     #[test]
     fn writes_the_expected_desktop_entry_with_an_escaped_exec() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = Path::new("/opt/My Apps/ai-\"usage\"\\bar$HOME`id`/tray");
+        let exe = Path::new("/opt/My Apps/ai-\"usage\"\\bar$HOME`id`/100%/tray");
         set_enabled_at(dir.path(), exe, true).unwrap();
 
         assert!(is_enabled_at(dir.path()));
         assert_eq!(
             fs::read_to_string(dir.path().join(FILE_NAME)).unwrap(),
-            concat!(
+            [
                 "[Desktop Entry]\n",
                 "Type=Application\n",
                 "Name=AI Usage Bar\n",
-                "Exec=\"/opt/My Apps/ai-\\\"usage\\\"\\\\bar\\$HOME\\`id\\`/tray\"\n",
+                r#"Exec="/opt/My Apps/ai-\\"usage\\"\\\\bar\\$HOME\\`id\\`/100%%/tray""#,
+                "\n",
                 "Icon=ai-usagebar\n",
                 "X-GNOME-Autostart-enabled=true\n",
                 "NoDisplay=true\n",
-            )
+            ]
+            .concat()
         );
+    }
+
+    /// Undoes the two layers in reverse order, strictly: the keyfile string
+    /// escape first, then the `Exec` double-quote rules. Anything the encoder
+    /// should never emit (a lone `\`, `%`, or an unescaped `"`) panics.
+    fn decode_exec(line: &str) -> String {
+        let value = line.strip_prefix("Exec=").expect("an Exec= line");
+        let mut unkeyed = String::new();
+        let mut chars = value.chars();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                assert_eq!(chars.next(), Some('\\'), "keyfile layer: lone backslash");
+            }
+            unkeyed.push(ch);
+        }
+        let inner = unkeyed
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .expect("one quoted argument");
+        let mut out = String::new();
+        let mut chars = inner.chars();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\\' => {
+                    let next = chars.next().expect("Exec layer: dangling backslash");
+                    assert!(
+                        matches!(next, '\\' | '"' | '$' | '`'),
+                        "bad escape \\{next}"
+                    );
+                    out.push(next);
+                }
+                '%' => {
+                    assert_eq!(chars.next(), Some('%'), "Exec layer: bare field code");
+                    out.push('%');
+                }
+                '"' | '$' | '`' => panic!("unescaped {ch:?}"),
+                _ => out.push(ch),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_exec_line_round_trips_through_both_layers() {
+        for exe in [
+            "/opt/My Apps/tray",
+            "/opt/a\"b/tray",
+            "/opt/a`b/tray",
+            "/opt/a$b/tray",
+            "/opt/a\\b/tray",
+            "/opt/100%/tray",
+            "/opt/50%%/%s/tray",
+            "/opt/Início ção/日本/tray",
+            "/opt/\\\"$`%/all/tray",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            set_enabled_at(dir.path(), Path::new(exe), true).unwrap();
+            let written = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+            let line = written
+                .lines()
+                .find(|line| line.starts_with("Exec="))
+                .unwrap();
+            assert_eq!(decode_exec(line), exe, "round trip of {exe:?}");
+        }
+    }
+
+    #[test]
+    fn a_control_character_in_the_path_is_refused_and_nothing_is_written() {
+        for exe in [
+            "/opt/a\nb/tray",
+            "/opt/a\rb/tray",
+            "/opt/a\tb/tray",
+            "/opt/a\u{1}b",
+            "/opt/a\u{7f}b",
+            "/opt/a\u{85}b",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("autostart");
+            let error = set_enabled_at(&dir, Path::new(exe), true).unwrap_err();
+            assert!(error.contains("control character"), "{exe:?}: {error}");
+            assert!(!dir.exists(), "{exe:?}: the directory was created");
+        }
+    }
+
+    #[test]
+    fn a_non_utf8_path_is_refused_and_nothing_is_written() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("autostart");
+        let exe = Path::new(OsStr::from_bytes(b"/opt/\xff\xfe/tray"));
+        let error = set_enabled_at(&dir, exe, true).unwrap_err();
+        assert!(error.contains("UTF-8"), "{error}");
+        assert!(!dir.exists());
     }
 
     #[test]
