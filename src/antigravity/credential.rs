@@ -63,6 +63,9 @@ pub struct StoredToken {
     /// refresh to this sign-in, so a re-login never gets the old session's
     /// cached access token.
     pub fingerprint: String,
+    /// Hash of the email the official CLI saved with its ID-token identity.
+    /// Kept separate from the credential fingerprint used to scope caches.
+    pub account_hash: Option<String>,
 }
 
 /// Decode the raw keyring value into a [`StoredToken`].
@@ -120,6 +123,11 @@ pub fn parse_keyring_blob(raw: &str) -> Result<StoredToken> {
         refresh_token,
         expires_at,
         fingerprint,
+        account_hash: root
+            .get("id_token_email")
+            .and_then(serde_json::Value::as_str)
+            .filter(|email| !email.trim().is_empty())
+            .map(super::account_hash),
     })
 }
 
@@ -422,6 +430,35 @@ mod tests {
         .unwrap();
         assert_eq!(token.access_token, "nested-at");
         assert_eq!(token.refresh_token.as_deref(), Some("nested-rt"));
+    }
+
+    #[test]
+    fn cli_identity_is_hashed_without_changing_the_credential_fingerprint() {
+        let raw = r#"{"id_token_email":" Someone@Example.COM ","token":{"access_token":"at","refresh_token":"rt"}}"#;
+        let token = parse_keyring_blob(raw).unwrap();
+        assert_eq!(
+            token.account_hash,
+            Some(super::super::account_hash("someone@example.com"))
+        );
+        assert_eq!(parse_keyring_blob(&encode(raw)).unwrap(), token);
+        let without_identity =
+            parse_keyring_blob(r#"{"access_token":"at","refresh_token":"rt"}"#).unwrap();
+        assert_eq!(token.fingerprint, without_identity.fingerprint);
+        assert_eq!(without_identity.account_hash, None);
+        for metadata in [
+            serde_json::json!(null),
+            serde_json::json!(false),
+            serde_json::json!(" "),
+        ] {
+            let raw = serde_json::json!({"id_token_email":metadata,"access_token":"at"});
+            assert_eq!(
+                parse_keyring_blob(&raw.to_string()).unwrap().account_hash,
+                None
+            );
+        }
+        let arbitrary_email =
+            parse_keyring_blob(r#"{"email":"someone@example.com","access_token":"at"}"#).unwrap();
+        assert_eq!(arbitrary_email.account_hash, None);
     }
 
     #[test]

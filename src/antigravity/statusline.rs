@@ -14,7 +14,7 @@ use hmac::{Hmac, KeyInit, Mac};
 #[cfg(any(target_os = "macos", test))]
 use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "macos", test))]
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::error::{AppError, Result};
 #[cfg(any(target_os = "macos", test))]
@@ -380,11 +380,7 @@ fn snapshot_from_payload(
 ) -> Option<SessionSnapshot> {
     let email = value.get("email")?.as_str()?.trim();
     let masked_email = mask_email(email)?;
-    let normalized_email = email.to_lowercase();
-    let account_hash = Sha256::digest(normalized_email.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let account_hash = super::account_hash(email);
     let plan = value
         .get("plan_tier")
         .and_then(serde_json::Value::as_str)
@@ -856,6 +852,7 @@ fn aggregate_active(
 
 #[cfg(test)]
 mod tests {
+    use sha2::Digest;
     use std::collections::HashMap;
     use std::ffi::{OsStr, OsString};
     use std::fs;

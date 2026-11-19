@@ -1206,14 +1206,21 @@ export function defaultStars(cards) {
 /**
  * Star or unstar a metric. Caps at two per provider; the extra click is a
  * no-op that returns an error the Customize row can show.
+ *
+ * A star whose row the card no longer has (Claude without a five-hour window,
+ * an Antigravity cadence the running product does not report) stays stored
+ * while there is room, so it is back when the row returns. It does not hold a
+ * slot against a new star: Customize lists only the card's rows, so nothing
+ * could unstar it.
+ * @param {string[]} [rowKeys] keys of the rows the card has now
  * @returns {{ stars: Record<string, string[]>, error: string }}
  */
-export function toggleStar(stars, providerId, key) {
+export function toggleStar(stars, providerId, key, rowKeys) {
   const id = clean(providerId, 180).trim();
   const metric = clean(key, 180).trim();
   const current = Object.assign({}, stars && typeof stars === "object" ? stars : {});
   if (!id || !metric) return { stars: current, error: "" };
-  const list = Array.isArray(current[id]) ? current[id].slice() : [];
+  let list = Array.isArray(current[id]) ? current[id].slice() : [];
   const idx = list.indexOf(metric);
   if (idx >= 0) {
     list.splice(idx, 1);
@@ -1222,6 +1229,9 @@ export function toggleStar(stars, providerId, key) {
     // unlike a provider that never had an entry.
     current[id] = list;
     return { stars: current, error: "" };
+  }
+  if (list.length >= MAX_STARS_PER_PROVIDER && Array.isArray(rowKeys)) {
+    list = list.filter((stored) => rowKeys.indexOf(stored) >= 0);
   }
   if (list.length >= MAX_STARS_PER_PROVIDER) {
     return { stars: current, error: "Up to 2 stars per provider" };
