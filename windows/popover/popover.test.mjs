@@ -1903,6 +1903,40 @@ assert.equal(resolvedTheme('system'), 'light');
   assert.equal(stripCommand({ ...seeded, showAs: 'sideways' }, cards).show_as, 'left');
 }
 
+// --- a star whose row the card no longer has does not hold a slot (#639) --
+
+{
+  // ARRANGE: first-launch stars on Session and Weekly, then a report without the
+  // five-hour window, so Customize has no Session row to unstar it from
+  const payload = parseHostPayload({
+    entries: [{
+      id: 'anthropic',
+      display_name: 'Claude',
+      sections: [
+        { type: 'metric', label: 'Weekly (7d)', percent: 19 },
+        { type: 'metric', label: 'Fable (7d)', percent: 7 },
+        { type: 'text', label: 'Extra usage', value: '$1' },
+      ],
+    }],
+  });
+  const rowKeys = projectCards(payload, 0)[0].rows.map(rowKey);
+  const stars = { anthropic: ['metric:Session (5h)', 'metric:Weekly (7d)'] };
+
+  // ACT
+  const added = toggleStar(stars, 'anthropic', 'metric:Fable (7d)', rowKeys);
+  const capped = toggleStar(added.stars, 'anthropic', 'text:Extra usage', rowKeys);
+  const roomy = toggleStar({ anthropic: ['metric:Session (5h)'] }, 'anthropic', 'metric:Weekly (7d)', rowKeys);
+
+  // ASSERT: the new star takes the absent row's slot; two present stars still
+  // cap; with room to spare the absent star stays for when its row returns
+  assert.equal(added.error, '');
+  assert.deepEqual(added.stars.anthropic, ['metric:Weekly (7d)', 'metric:Fable (7d)']);
+  assert.equal(capped.error, 'Up to 2 stars per provider');
+  assert.deepEqual(capped.stars, added.stars);
+  assert.equal(roomy.error, '');
+  assert.deepEqual(roomy.stars.anthropic, ['metric:Session (5h)', 'metric:Weekly (7d)']);
+}
+
 // --- stars for providers that arrive late, and stars taken off on purpose (#437) --
 
 {

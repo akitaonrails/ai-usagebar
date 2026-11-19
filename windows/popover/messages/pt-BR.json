@@ -26,6 +26,7 @@
   "api_key_rejected": "{provider} recusou esta chave.",
   "api_key_save": "Salvar",
   "api_key_stored_note": "Salva no config.toml, legível só por você.",
+  "api_key_keychain_hint": "No macOS você pode apontar para um item do Keychain em vez de colar a chave: digite kc: seguido do nome do item, ex.: kc:MinhaChaveZAI. É o nome do -s em security add-generic-password. O nome é salvo na tabela [keychain] do config.toml; a chave continua no Keychain.",
   "api_keys": "Chaves de API",
   "app_icon": "Ícone do app",
   "appearance": "Aparência",

@@ -26,6 +26,7 @@
   "api_key_rejected": "{provider} rejected this key.",
   "api_key_save": "Save",
   "api_key_stored_note": "Saved in config.toml, readable only by you.",
+  "api_key_keychain_hint": "On macOS you can point at a login-Keychain item instead of pasting the key: type kc: followed by the item's name, e.g. kc:MyZaiKey. That is the -s name from security add-generic-password. The name is saved to the [keychain] table in config.toml; the key itself stays in the Keychain.",
   "api_keys": "API Keys",
   "app_icon": "App Icon",
   "appearance": "Appearance",

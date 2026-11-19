@@ -168,6 +168,22 @@ fn key_present(config: &Config, vendor: VendorId) -> bool {
                 )
                 .is_some()
             })
+        || keychain_entry_present(config, vendor)
+}
+
+/// On macOS, a declared `[keychain]` entry (for the vendor or one of its named
+/// accounts) counts as present without spawning `security(1)`, matching the
+/// provider catalog.
+fn keychain_entry_present(config: &Config, vendor: VendorId) -> bool {
+    if !crate::keychain::SUPPORTED || !Config::KEYCHAIN_VENDORS.contains(&vendor) {
+        return false;
+    }
+    config.keychain_entry(vendor, None).is_some()
+        || config.api_key_accounts(vendor).is_some_and(|accounts| {
+            accounts
+                .iter()
+                .any(|a| config.keychain_entry(vendor, Some(&a.label)).is_some())
+        })
 }
 
 /// The default Claude account exactly as the fetch resolves it: an explicit
@@ -712,6 +728,46 @@ mod tests {
         // Another vendor's array is not this vendor's credential.
         config.kilo.api_key_env.clear();
         assert!(!key_present(&config, VendorId::Kilo));
+    }
+
+    #[test]
+    fn keychain_entry_counts_as_a_credential_only_where_supported() {
+        // Empty `api_key_env`s keep the probe off the real environment.
+        let mut config = Config::default();
+        config.zai.api_key_env.clear();
+        config.openrouter.api_key_env.clear();
+        config.kilo.api_key_env.clear();
+        config.ollama.api_key_env.clear();
+
+        let expected = crate::keychain::SUPPORTED;
+        config.keychain.insert("zai".into(), "ZaiKey".into());
+        let has_zai = has_local_credentials(VendorId::Zai, &config);
+        assert_eq!(has_zai, expected);
+        assert!(!has_local_credentials(VendorId::Kilo, &config));
+
+        // Named-account entries require a matching [[<vendor>.accounts]] entry.
+        let or_key = "ORWorkKey";
+        config
+            .keychain
+            .insert("openrouter.work".into(), or_key.into());
+        let has_or = has_local_credentials(VendorId::Openrouter, &config);
+        assert!(!has_or);
+        config
+            .openrouter
+            .accounts
+            .push(crate::config::ApiKeyAccount {
+                label: "work".into(),
+                api_key_env: None,
+                api_key: None,
+                management_api_key_env: None,
+                monthly_limit: None,
+            });
+        let has_or = has_local_credentials(VendorId::Openrouter, &config);
+        assert_eq!(has_or, expected);
+
+        // Non-KEYCHAIN_VENDORS never qualify through [keychain].
+        config.keychain.insert("ollama".into(), "OllamaKey".into());
+        assert!(!has_local_credentials(VendorId::Ollama, &config));
     }
 
     #[test]

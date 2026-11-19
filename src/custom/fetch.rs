@@ -109,11 +109,13 @@ async fn fetch_live(
     auth.set_sensitive(true);
     request = request.header(header_name(id, &spec.auth_header)?, auth);
 
-    // The timeout message deliberately omits the URL: a user may have put a
-    // query-string token in it, and this string ends up in `.last_error`.
+    // Errors omit the URL: a user may have put a query-string token in it,
+    // and both transport and redirect failures can reach UI diagnostics or
+    // `.last_error`.
     let resp = tokio::time::timeout(HTTP_TIMEOUT, request.send())
         .await
-        .map_err(|_| AppError::Transport(format!("custom {id}: request timed out")))??;
+        .map_err(|_| AppError::Transport(format!("custom {id}: request timed out")))?
+        .map_err(|err| AppError::from(err.without_url()))?;
 
     let status = resp.status();
     let bytes = crate::vendor::read_body_capped(resp, crate::vendor::MAX_BODY_BYTES).await?;
@@ -174,12 +176,16 @@ mod tests {
     }
 
     fn spec_for(server: &mockito::ServerGuard) -> CustomProviderConfig {
+        spec_at(format!("{}/v1/usage", server.url()))
+    }
+
+    fn spec_at(url: String) -> CustomProviderConfig {
         CustomProviderConfig {
             id: "mytool".into(),
             name: "My Tool".into(),
             short_name: "myt".into(),
             enabled: true,
-            url: format!("{}/v1/usage", server.url()),
+            url,
             allow_http: true,
             metrics: vec![CustomMetricSpec {
                 label: "Requests".into(),
@@ -430,6 +436,50 @@ mod tests {
         assert!(
             err.to_string().contains("/requests/limit is missing"),
             "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn redirect_limit_error_omits_query_bearing_url() {
+        let token = "secret-query-token";
+        let path = format!("/v1/usage?token={token}");
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", path.as_str())
+            .with_status(302)
+            .with_header("location", path.as_str())
+            .create_async()
+            .await;
+
+        let (_td, cache) = cache_fixture();
+        let spec = spec_at(format!("{}{path}", server.url()));
+        let err = fetch(&spec, KEY, &cache, Duration::ZERO).await.unwrap_err();
+        assert!(!err.is_transient(), "{err:?}");
+        let shown = err.to_string();
+        assert!(!shown.contains(token), "{shown}");
+        assert!(!shown.contains("token="), "{shown}");
+        let persisted = std::fs::read_to_string(cache.last_error_path()).unwrap();
+        assert!(!persisted.contains(token), "{persisted}");
+        assert!(!persisted.contains("token="), "{persisted}");
+    }
+
+    #[tokio::test]
+    async fn connect_error_omits_query_bearing_url() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let token = "secret-query-token";
+        let (_td, cache) = cache_fixture();
+        let spec = spec_at(format!("http://{addr}/v1/usage?token={token}"));
+        let err = fetch(&spec, KEY, &cache, Duration::ZERO).await.unwrap_err();
+        assert!(err.is_transient(), "{err:?}");
+        let shown = err.to_string();
+        assert!(!shown.contains(token), "{shown}");
+        assert!(!shown.contains("token="), "{shown}");
+        assert!(
+            shown.contains("Connection refused") || shown.contains("refused"),
+            "the OS cause must survive without the URL: {shown:?}"
         );
     }
 }

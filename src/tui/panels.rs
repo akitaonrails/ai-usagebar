@@ -189,7 +189,7 @@ impl SectionBuilder {
         };
         last.percent_precise = Some(pct);
         if let Section::Metric { value_label, .. } = &mut last.section {
-            *value_label = format_precise_pct(pct);
+            *value_label = crate::format::precise_pct(pct);
         }
     }
 
@@ -344,6 +344,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             cells.push(pct("W", s.weekly.utilization_pct));
             if let Some(sonnet) = &s.sonnet {
                 cells.push(pct("Son", sonnet.utilization_pct));
+            }
+            if let Some(extra) = &s.extra {
+                let text = match extra.fmt_limit() {
+                    Some(limit) => format!("{} of {}", extra.fmt_spent(), limit),
+                    None => extra.fmt_spent(),
+                };
+                cells.push((text, severity_for(extra.percent())));
             }
             (s.plan.clone(), cells)
         }
@@ -613,6 +620,74 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         *text = crate::display::sanitize_untrusted_field(text);
     }
     (crate::display::sanitize_untrusted_field(&plan), cells)
+}
+
+/// Combined extra-usage money for the Overview. One entry per currency and
+/// scale, and only when at least two accounts report that extra usage, so a
+/// lone row is not repeated as a total. A missing limit on any account in the
+/// group drops the combined cap: the spend still adds, the cap does not.
+pub fn extra_usage_totals<'a>(
+    snapshots: impl IntoIterator<Item = &'a VendorSnapshot>,
+) -> Vec<(String, PaceSeverity)> {
+    use crate::usage::{Cents, ExtraUsage, ExtraUsageStatus};
+    use std::collections::BTreeMap;
+
+    struct Bucket {
+        spent: i64,
+        limit: Option<i64>,
+        count: usize,
+        currency: Option<String>,
+        decimal_places: Option<u32>,
+    }
+
+    let mut buckets: BTreeMap<(String, i32), Bucket> = BTreeMap::new();
+    for snapshot in snapshots {
+        let VendorSnapshot::Anthropic(snapshot) = snapshot else {
+            continue;
+        };
+        let Some(extra) = &snapshot.extra else {
+            continue;
+        };
+        let key = (
+            extra.currency.clone().unwrap_or_default(),
+            extra
+                .decimal_places
+                .map(|places| places as i32)
+                .unwrap_or(-1),
+        );
+        let bucket = buckets.entry(key).or_insert_with(|| Bucket {
+            spent: 0,
+            limit: Some(0),
+            count: 0,
+            currency: extra.currency.clone(),
+            decimal_places: extra.decimal_places,
+        });
+        bucket.spent = bucket.spent.saturating_add(extra.spent.0);
+        bucket.count += 1;
+        bucket.limit = match (bucket.limit, extra.limit) {
+            (Some(sum), Some(limit)) => Some(sum.saturating_add(limit.0)),
+            _ => None,
+        };
+    }
+
+    buckets
+        .into_values()
+        .filter(|bucket| bucket.count >= 2)
+        .map(|bucket| {
+            let extra = ExtraUsage {
+                limit: bucket.limit.map(Cents),
+                spent: Cents(bucket.spent),
+                currency: bucket.currency,
+                decimal_places: bucket.decimal_places,
+                status: ExtraUsageStatus::Active,
+            };
+            let text = match extra.fmt_limit() {
+                Some(limit) => format!("{} of {}", extra.fmt_spent(), limit),
+                None => extra.fmt_spent(),
+            };
+            (text, severity_for(extra.percent()))
+        })
+        .collect()
 }
 
 /// The single most-relevant percentage for a vendor in the Overview — what its
@@ -1521,7 +1596,42 @@ fn nous_sections(
         left: "Nous Research".into(),
         right: None,
     }]);
-    if let Some(value) = s.usage_percent() {
+    if s.has_usage_windows() {
+        // Migrated plans report consumption as daily/weekly/monthly windows and
+        // leave the credit balances at zero. One meter per window; the credits
+        // below stay visible as a secondary balance, never as the headline
+        // percentage (a zero credit balance is not "0 % used").
+        for gauge in &s.gauges {
+            let pct = gauge.percent();
+            let metric = Section::Metric {
+                label: crate::nous::vendor::gauge_label(gauge),
+                pct: clamp_pct(pct),
+                severity: severity_for(i32::from(clamp_pct(pct))),
+                value_label: format!("{}%", clamp_pct(pct)),
+                footnote: String::new(),
+            };
+            match gauge.id.as_str() {
+                "day" => sections.push_metric_in_window(
+                    metric,
+                    gauge.reset_at,
+                    chrono::Duration::days(1),
+                ),
+                "week" => sections.push_metric_in_window(
+                    metric,
+                    gauge.reset_at,
+                    chrono::Duration::days(7),
+                ),
+                _ => sections.push_metric(metric, gauge.reset_at),
+            }
+            sections.precise_last_metric(pct);
+            if gauge.reset_at.is_some() {
+                sections.push(Section::Text {
+                    label: "Resets".into(),
+                    value: countdown::format(gauge.reset_at, now),
+                });
+            }
+        }
+    } else if let Some(value) = s.usage_percent() {
         let pct = clamp_pct(value);
         // `[nous] headline = "amount"` puts the credits still usable on the
         // bar, the way the prepaid-balance vendors do. The consumed percentage
@@ -2832,15 +2942,6 @@ fn push_droid_window(
 }
 
 /// One decimal when it matters ("70.5%"), none when it does not ("70%").
-fn format_precise_pct(pct: f64) -> String {
-    let rounded = (pct * 10.0).round() / 10.0;
-    if rounded == rounded.trunc() {
-        format!("{rounded:.0}%")
-    } else {
-        format!("{rounded}%")
-    }
-}
-
 fn push_window(
     sections: &mut SectionBuilder,
     label: &str,
@@ -3203,6 +3304,7 @@ mod tests {
             total_usable_credits: Some(12.93),
             rollover_credits: Some(10.0),
             current_period_end: None,
+            gauges: Vec::new(),
         }
     }
 
@@ -3259,6 +3361,53 @@ mod tests {
         assert!(sections.iter().any(|s| matches!(
             &s.section,
             Section::Text { label, value } if label == "Total usable credits" && value == "$12.93"
+        )));
+    }
+
+    #[test]
+    fn nous_usage_windows_render_one_meter_each_not_a_zero_credit_headline() {
+        let snapshot = crate::nous::types::parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "monthly_credits": 0.0,
+            "credits_remaining": 0.0,
+            "usage_window": {
+                "gauges": [
+                    {"id": "day", "scope": "all", "label": "Today", "used_bp": 180, "resets_at_ms": 1_780_000_000_000i64},
+                    {"id": "week", "scope": "all", "label": "This week", "used_bp": 3131, "resets_at_ms": 1_780_000_000_000i64},
+                    {"id": "month", "scope": "all", "label": "This month", "used_bp": 1043, "resets_at_ms": 1_780_000_000_000i64},
+                    {"id": "top_tier", "scope": "top_tier", "label": "Large models (monthly)", "used_bp": 30, "resets_at_ms": 1_780_000_000_000i64}
+                ]
+            }
+        }))
+        .unwrap();
+        let sections =
+            sections_with_metadata_for(&ready(VendorSnapshot::NousResearch(snapshot)), now(), 5);
+        let metrics: Vec<_> = sections
+            .iter()
+            .filter_map(|projection| match &projection.section {
+                Section::Metric {
+                    label, value_label, ..
+                } => Some((label.clone(), value_label.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            metrics,
+            vec![
+                ("Today".to_string(), "1.8%".to_string()),
+                ("This week".to_string(), "31.3%".to_string()),
+                ("This month".to_string(), "10.4%".to_string()),
+                ("Large models (monthly)".to_string(), "0.3%".to_string()),
+            ]
+        );
+        // The zeroed credit balance stays a secondary row, never the headline.
+        assert!(!sections.iter().any(|projection| matches!(
+            &projection.section,
+            Section::Metric { value_label, .. } if value_label.starts_with('$')
+        )));
+        assert!(sections.iter().any(|projection| matches!(
+            &projection.section,
+            Section::Text { label, .. } if label == "Subscription credits"
         )));
     }
 
@@ -3677,6 +3826,77 @@ mod tests {
         let cells: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
         assert_eq!(cells, ["W 41%"]);
         assert_eq!(headline_pct(&snapshot), Some(41));
+    }
+
+    #[test]
+    fn overview_shows_extra_usage_money_and_adds_it_across_accounts() {
+        let extra = |spent: i64, limit: i64| ExtraUsage {
+            limit: Some(Cents(limit)),
+            spent: Cents(spent),
+            currency: None,
+            decimal_places: Some(2),
+            status: crate::usage::ExtraUsageStatus::Active,
+        };
+        let snap = |spent: i64, limit: i64| {
+            VendorSnapshot::Anthropic(AnthropicSnapshot {
+                plan: "Pro".into(),
+                session: None,
+                weekly: UsageWindow {
+                    utilization_pct: 1,
+                    resets_at: None,
+                    window_duration: chrono::Duration::days(7),
+                },
+                sonnet: None,
+                scoped: vec![],
+                extra: Some(extra(spent, limit)),
+                reset_credits: Default::default(),
+                cloud_credits: None,
+                usage_credits: None,
+            })
+        };
+        let first = snap(250, 5000);
+        let (_, cells) = compact_cells(&first);
+        let cells: Vec<&str> = cells.iter().map(|(text, _)| text.as_str()).collect();
+        assert_eq!(cells, ["W 1%", "$2.50 of $50.00"]);
+
+        let totals = extra_usage_totals([&first, &snap(1000, 2000)]);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].0, "$12.50 of $70.00");
+        assert!(extra_usage_totals([&first]).is_empty());
+
+        // Missing limit on one account drops the combined cap while still summing spend.
+        let mut uncapped = snap(500, 0);
+        if let VendorSnapshot::Anthropic(ref mut a) = uncapped {
+            a.extra.as_mut().unwrap().limit = None;
+        }
+        let totals = extra_usage_totals([&first, &uncapped]);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].0, "$7.50");
+
+        // Multi-currency: buckets with only 1 account are omitted; buckets with 2+ sum separately.
+        let brl = |spent: i64| {
+            let mut s = snap(spent, 10_000);
+            if let VendorSnapshot::Anthropic(ref mut a) = s {
+                a.extra.as_mut().unwrap().currency = Some("BRL".into());
+            }
+            s
+        };
+        let brl_one = brl(150);
+        let brl_two = brl(350);
+        assert!(extra_usage_totals([&first, &brl_one]).is_empty());
+        let totals = extra_usage_totals([&first, &snap(1000, 2000), &brl_one, &brl_two]);
+        let texts: Vec<&str> = totals.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(texts, ["$12.50 of $70.00", "R$5.00 of R$200.00"]);
+
+        // Non-Anthropic snapshots are ignored; zero and negative spend keep sign outside symbol.
+        let non_anthropic = VendorSnapshot::Custom(crate::custom::types::CustomSnapshot {
+            plan: None,
+            metrics: vec![],
+            texts: vec![],
+        });
+        let totals = extra_usage_totals([&snap(0, 1000), &snap(-50, 1000), &non_anthropic]);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].0, "-$0.50 of $20.00");
     }
 
     fn claude_snapshot_with_credits(
@@ -5117,6 +5337,22 @@ mod tests {
             headline_pct(&VendorSnapshot::Cursor(cursor_snap())),
             Some(99)
         );
+
+        // Nous: a migrated plan reports four windows, and the Overview bar
+        // shows the one closest to its limit — not the broadest, and not the
+        // credit balance the new plans leave at zero.
+        let nous = crate::nous::types::parse_account(&serde_json::json!({
+            "plan": "Ultra",
+            "monthly_credits": 0.0,
+            "credits_remaining": 0.0,
+            "usage_window": {"gauges": [
+                {"id": "day", "used_bp": 9900},
+                {"id": "week", "used_bp": 3131},
+                {"id": "month", "used_bp": 1043}
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(headline_pct(&VendorSnapshot::NousResearch(nous)), Some(99));
 
         // Balance-only vendors have no meaningful percentage → no bar.
         let kilo = VendorSnapshot::Kilo(crate::usage::KiloSnapshot {

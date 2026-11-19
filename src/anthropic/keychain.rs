@@ -93,7 +93,7 @@ const ERR_SEC_ITEM_NOT_FOUND: i32 = 44;
 
 /// A `/usr/bin/security` invocation that does not inherit this process's
 /// provider keys — the rule every credential lookup in this crate follows.
-fn security_command() -> Command {
+pub(crate) fn security_command() -> Command {
     let mut command = Command::new("/usr/bin/security");
     for var in crate::vendor::vendor_secret_env_vars_to_remove(&[]) {
         command.env_remove(var);

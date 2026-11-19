@@ -16,8 +16,123 @@
   4-second timeout. A status page that does not answer is not asked again for
   5 minutes, and in the meantime the provider shows no mark, which says
   nothing about its health either way. `[ui] provider_status = false` turns it
-  off.
+  off (#623).
   See [docs/vendor-endpoints.md](docs/vendor-endpoints.md#service-status).
+
+- **`[anthropic] default_label` names the unnamed Claude account.** Set it to
+  a label such as `home` and the default account reads `Claude · home` in the
+  TUI tabs and in the `display_name` of `usage --json` (read by GNOME, KDE,
+  Omarchy and the tray popovers; plain `ai-usagebar usage` keeps the machine
+  `name`, and the macOS menu bar builds its own labels and does not apply it
+  yet), the same way a named account's label is appended. Display only: ids,
+  `name`, credentials, cache and `--account` selection are unchanged. The label
+  must be a single line without control characters and must not equal an
+  `[[anthropic.accounts]]` label (config error). Optional: an unset config
+  renders exactly as before (#605).
+
+- **TUI Overview shows extra-usage money across Claude accounts.** Each Claude
+  row in Overview now shows its extra-usage spend alongside percentages, and
+  when two or more Claude accounts share a currency a `Claude extra` summary
+  row totals their spend (and cap when every account has one) (#605).
+
+### Fixed
+
+- **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
+  Portal moved its plans from a credit allocation to daily, weekly and monthly
+  limits, reporting consumption in `usage_window.gauges` and leaving
+  `credits_remaining` at zero. With no reader for those windows the bar, the
+  panels and `usage --json` showed a spent balance for an account nowhere near
+  its limit. Each window now gets its own meter, figure and countdown, the
+  credit rows stay as a secondary balance, and `{nous_pct}` reports the
+  all-model window (`day`, `week`, or `month`) closest to its limit with
+  `{nous_renewal}` counting down to that window's reset, while subset caps such
+  as `Large models (monthly)` render as their own row without driving the
+  account-wide headline. Accounts that still report a credit allocation are
+  unchanged (#602).
+
+- **Antigravity's live-session cards refresh their complete quota.** A status
+  line can report an unused weekly bucket while `/quota` already records
+  usage. The report prefers fresh local RPC or `agy` quota for the verified
+  same account, including reset times and per-model pools. The CLI fallback
+  checks its saved ID-token identity before fetching and before caching, and
+  uses an independent credential-scoped cache. Unmatched, unverified and stale
+  readings keep the session's own data (#597).
+
+- **Antigravity:** restrict local server discovery to `language_server*` and
+  `agy` executables (matched by `comm` or executable basename) so the Electron
+  shell (`Antigravity` / `Antigravity.exe` `HostBridgeServer`), `agy-node`
+  `ELECTRON_RUN_AS_NODE=1` sidecars (including orphaned `swarm_board` listeners
+  on Windows), and non-RPC helpers installed beneath `antigravity*` directories
+  do not return `HTTP 401 {"error":"unauthorized"}` and block the `agy` CLI and
+  saved-session fallback (#635).
+
+## [1.52.3] — 2026-11-18
+
+### Fixed
+
+- **A starred Cursor On-Demand row reaches the macOS and Windows menu bar.**
+  The popover draws On-Demand spend as a bar and lets it be starred, but the
+  menu-bar strip skipped every text row, so that star painted nothing: Chart
+  dropped the bar, and Logos left Cursor out when On-Demand was its only star.
+  The strip now reads a text row that carries `percent` and `severity` as a
+  metric headed by its amount, and the highest-window race still passes it
+  over (#641).
+
+- **A tray star whose metric the provider stopped reporting no longer blocks a
+  new one.** Customize lists only the rows a card has now, so a starred row that
+  left the card (Claude without a five-hour window, an Antigravity cadence the
+  running product does not report) could not be unstarred, yet it still counted
+  toward the two-star cap: starring another metric answered "Up to 2 stars per
+  provider" with one star or none in view. Starring at the cap now drops the
+  stars the card cannot show; with room to spare they stay for when their rows
+  return (#639).
+## [1.52.2] — 2026-11-16
+
+### Fixed
+
+- **A retired Anthropic refresh token still fetches the live weekly reading.**
+  When the token endpoint answered 4xx other than 429 (the parser already
+  accepts 400 "Refresh token expired"), the fetch returned before GET usage
+  and served the last cached weekly percent. An empty `refreshToken` already
+  continues with the current access token; a present token the endpoint has
+  retired now does the same. A 429 or a 5xx still stops before that GET (#637).
+
+- **Antigravity:** match local server discovery against the executable basename
+  rather than directory substrings in `/proc/<pid>/exe`, so helper processes
+  installed under `antigravity-*` paths (such as `agy_acp_server.par` and
+  `localharness_external` from `antigravity-acp`) are not probed as language
+  servers or treated as signed-out `401` rejections that block the `agy` CLI and
+  saved-session fallback.
+## [1.52.1] — 2026-11-14
+
+### Fixed
+
+- **Custom providers (`[[custom]]`):** redact API keys in `.last_error`,
+  `usage.json`, and surfaced error messages, and strip URLs carrying query
+  tokens from `reqwest` request errors (#631).
+
+- **`detect` recognizes macOS `[keychain]` API-key entries.** Auto-detection
+  previously checked only environment variables and inline `api_key` settings,
+  leaving vendors configured solely through `[keychain]` unenabled until
+  `enabled = true` was set by hand (#629).
+
+- **Tray `kc:` key checks keep the Keychain service name in failed verdicts.**
+  `run_key_check` previously passed the Keychain service name to `scrub_key`,
+  turning missing or locked Keychain diagnostics (and their
+  `security add-generic-password` guidance) into `[key]` or a partial-echo
+  notice (#627).
+
+- **Keychain-backed named API-key accounts pass config validation.** Adding a
+  Keychain reference for a `[[<vendor>.accounts]]` entry without `api_key_env`
+  or an inline `api_key` previously failed `Config::validate()` because only
+  env and inline sources were checked (#625).
+
+## [1.52.0] — 2026-11-13
+
+### Fixed
+
+- **macOS:** keep the tray click target aligned with the final menu-bar image,
+  so App Icon mode opens the popover when clicked (#620).
 
 ## [1.51.0] — 2026-11-12
 
@@ -5527,7 +5642,11 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...HEAD
+[1.52.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...v1.52.3
+[1.52.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...v1.52.2
+[1.52.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...v1.52.1
+[1.52.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...v1.52.0
 [1.51.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...v1.51.0
 [1.50.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...v1.49.0

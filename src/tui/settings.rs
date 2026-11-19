@@ -1060,6 +1060,155 @@ pub(crate) fn restore_inline_key_snapshot(
     })
 }
 
+/// The verdict the `kc:` key check publishes when a `[keychain]` entry for
+/// the vendor already exists: same rule as [`KEY_ALREADY_SAVED_MESSAGE`] —
+/// the dialog exists to add a credential, not to replace a declared one.
+pub(crate) const KEYCHAIN_ALREADY_SAVED_MESSAGE: &str =
+    "A Keychain item is already referenced in config.toml; edit the [keychain] table to change it.";
+
+/// Validate a Keychain service name the dialog's `kc:` form carries. It
+/// applies [`crate::keychain::validate_service_name`], the same rules
+/// `Config::validate` applies to the saved entry, so the dialog cannot write
+/// a name that the next config load refuses.
+pub(crate) fn validate_keychain_service(vendor: &KeyVendor, service: &str) -> Result<()> {
+    crate::keychain::validate_service_name(service).map_err(|reason| {
+        AppError::Other(format!(
+            "Keychain item name for {:?} {reason}; name the item after kc:, e.g. kc:MyKey",
+            vendor.id.slug()
+        ))
+    })
+}
+
+/// The `[keychain]` state the `kc:` check must be able to give back: whether
+/// the table existed, the vendor's entry, and the vendor section's `enabled`
+/// switch. Same shape as [`KeySnapshot`], one level up in the document.
+pub(crate) struct KeychainSnapshot {
+    pub table_existed: bool,
+    pub entry: Option<KeyItemSnapshot>,
+    pub enabled: Option<KeyItemSnapshot>,
+    pub section_existed: bool,
+}
+
+fn keychain_snapshot_of_doc(doc: &toml_edit::DocumentMut, vendor: &KeyVendor) -> KeychainSnapshot {
+    let entry = doc
+        .get("keychain")
+        .and_then(toml_edit::Item::as_table_like)
+        .and_then(|table| capture_key_item(table, vendor.section));
+    let (section_existed, enabled) = match doc
+        .get(vendor.section)
+        .and_then(toml_edit::Item::as_table_like)
+    {
+        Some(table) => (true, capture_key_item(table, "enabled")),
+        None => (false, None),
+    };
+    KeychainSnapshot {
+        table_existed: doc
+            .get("keychain")
+            .and_then(toml_edit::Item::as_table_like)
+            .is_some(),
+        entry,
+        enabled,
+        section_existed,
+    }
+}
+
+/// The `kc:` check's whole read-modify-write in one locked step, mirroring
+/// [`snapshot_and_write_inline_key_if_absent`]: snapshot the `[keychain]`
+/// entry and the vendor's `enabled` switch, and only while no entry is
+/// declared, write it — the reference, never the secret — plus the opt-in.
+pub(crate) fn snapshot_and_write_keychain_entry_if_absent(
+    path: &Path,
+    vendor: &KeyVendor,
+    service: &str,
+) -> Result<KeychainSnapshot> {
+    validate_keychain_service(vendor, service)?;
+    edit_config_document(path, |doc| {
+        let snapshot = keychain_snapshot_of_doc(doc, vendor);
+        let declared = snapshot
+            .entry
+            .as_ref()
+            .and_then(|item| item.value.as_str())
+            .is_some_and(|value| !value.is_empty());
+        if declared {
+            return Err(AppError::Other(KEYCHAIN_ALREADY_SAVED_MESSAGE.to_string()));
+        }
+        set_string(doc, "keychain", vendor.section, service)?;
+        set_bool(doc, vendor.section, "enabled", true)?;
+        Ok(snapshot)
+    })
+}
+
+/// Give the config back the state [`snapshot_and_write_keychain_entry_if_absent`]
+/// captured, compare-and-restore with the same ownership rule as
+/// [`restore_inline_key_snapshot`]: the vendor's entry in `[keychain]` and
+/// its `enabled` switch go back only while they still hold exactly what the
+/// check wrote. The `[keychain]` table the check created is removed when
+/// nothing else is left in it.
+pub(crate) fn restore_keychain_snapshot(
+    path: &Path,
+    vendor: &KeyVendor,
+    snapshot: &KeychainSnapshot,
+    candidate: &str,
+) -> Result<()> {
+    edit_config_document(path, |doc| {
+        let table = doc
+            .entry("keychain")
+            .or_insert_with(toml_edit::table)
+            .as_table_like_mut()
+            .ok_or_else(|| AppError::Other("config.toml: [keychain] is not a table".to_string()))?;
+        let current = table.get(vendor.section).and_then(toml_edit::Item::as_str);
+        match &snapshot.entry {
+            Some(captured) if current == Some(candidate) => {
+                if let Some((mut key, item)) = table.get_key_value_mut(vendor.section) {
+                    *key.leaf_decor_mut() = captured.key_decor.clone();
+                    *item = toml_edit::Item::Value(captured.value.clone());
+                }
+            }
+            None if current == Some(candidate) => {
+                table.remove(vendor.section);
+            }
+            _ => {}
+        }
+        if let Some(vendor_table) = doc
+            .get_mut(vendor.section)
+            .and_then(toml_edit::Item::as_table_like_mut)
+        {
+            let current_enabled = vendor_table
+                .get("enabled")
+                .and_then(toml_edit::Item::as_bool);
+            match &snapshot.enabled {
+                Some(captured) if current_enabled == Some(true) => {
+                    if let Some((mut key, item)) = vendor_table.get_key_value_mut("enabled") {
+                        *key.leaf_decor_mut() = captured.key_decor.clone();
+                        *item = toml_edit::Item::Value(captured.value.clone());
+                    }
+                }
+                None if current_enabled == Some(true) => {
+                    vendor_table.remove("enabled");
+                }
+                _ => {}
+            }
+        }
+        if !snapshot.table_existed
+            && doc
+                .get("keychain")
+                .and_then(toml_edit::Item::as_table_like)
+                .is_some_and(toml_edit::TableLike::is_empty)
+        {
+            doc.remove("keychain");
+        }
+        if !snapshot.section_existed
+            && doc
+                .get(vendor.section)
+                .and_then(toml_edit::Item::as_table_like)
+                .is_some_and(|table| table.is_empty())
+        {
+            doc.remove(vendor.section);
+        }
+        Ok(())
+    })
+}
+
 /// Apply one credential field to the document. Untouched fields are left
 /// alone; a field the user cleared is *removed*, so an inline secret can be
 /// deleted from the overlay rather than lingering in the file. Writing a

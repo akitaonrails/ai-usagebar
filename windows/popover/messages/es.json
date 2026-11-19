@@ -26,6 +26,7 @@
   "api_key_rejected": "{provider} rechazó esta clave.",
   "api_key_save": "Guardar",
   "api_key_stored_note": "Guardada en config.toml, legible solo por ti.",
+  "api_key_keychain_hint": "En macOS puedes apuntar a un elemento del Llavero en lugar de pegar la clave: escribe kc: seguido del nombre del elemento, p. ej. kc:MiClaveZai. Es el nombre de -s en security add-generic-password. El nombre se guarda en la tabla [keychain] de config.toml; la clave se queda en el Llavero.",
   "api_keys": "Claves de API",
   "app_icon": "Icono de la app",
   "appearance": "Apariencia",

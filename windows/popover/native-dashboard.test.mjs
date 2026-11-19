@@ -671,6 +671,12 @@ try {
   const keyNoAnswer = keyView({ noAnswer: true });
   assert.match(keyNoAnswer, /No answer from Z\.AI yet/);
   assert.doesNotMatch(keyNoAnswer, /<input[^>]*\sdisabled=""/);
+  // The Keychain hint exists on macOS only: an info mark beside the storage
+  // note, its tooltip naming the kc: form; other platforms render none.
+  assert.doesNotMatch(keyIdle, /kc:MyZaiKey/);
+  const keyMac = keyView({ os: 'macos' });
+  assert.match(keyMac, /role="img" aria-label="[^"]*kc:MyZaiKey/);
+  assert.doesNotMatch(keyView({ os: 'windows' }), /kc:MyZaiKey/);
   // Closed renders nothing.
   assert.equal(renderToStaticMarkup(React.createElement(LanguageProvider, { language: 'en' },
     React.createElement(ApiKeyDialog, { provider: null, keyCheck: null, nowMs: 1, onClose() {} }))), '');

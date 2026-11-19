@@ -33,6 +33,7 @@
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_CheckingInputs */
 /** @typedef {{}} Api_Key_Checking_ShortInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_Dialog_TitleInputs */
+/** @typedef {{}} Api_Key_Keychain_HintInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_No_AnswerInputs */
 /** @typedef {{ provider: NonNullable<unknown> }} Api_Key_RejectedInputs */
 /** @typedef {{}} Api_Key_SaveInputs */
@@ -453,6 +454,10 @@ export const api_key_checking_short = /** @type {(inputs: Api_Key_Checking_Short
 
 export const api_key_dialog_title = /** @type {(inputs: Api_Key_Dialog_TitleInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`Clave de ${i?.provider}`)
+};
+
+export const api_key_keychain_hint = /** @type {(inputs: Api_Key_Keychain_HintInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`En macOS puedes apuntar a un elemento del Llavero en lugar de pegar la clave: escribe kc: seguido del nombre del elemento, p. ej. kc:MiClaveZai. Es el nombre de -s en security add-generic-password. El nombre se guarda en la tabla [keychain] de config.toml; la clave se queda en el Llavero.`)
 };
 
 export const api_key_no_answer = /** @type {(inputs: Api_Key_No_AnswerInputs) => LocalizedString} */ (i) => {

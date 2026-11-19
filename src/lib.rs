@@ -42,6 +42,7 @@ pub mod grokbot;
 pub(crate) mod guard;
 pub mod incident;
 pub mod jwt;
+pub mod keychain;
 pub mod kilo;
 pub mod kimi;
 pub mod kiro;

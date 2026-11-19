@@ -130,10 +130,23 @@ fn compact_source_label(tab: &TabId) -> &str {
     }
 }
 
+/// The account name a tab shows after its source: its own label for a named
+/// account, or `[anthropic] default_label` for the unnamed Claude account when
+/// that is set (display only; the tab's identity stays `account: None`).
+fn shown_account<'a>(tab: &'a TabId, default_label: Option<&'a str>) -> Option<&'a str> {
+    match (&tab.account, &tab.source) {
+        (Some(acct), _) => Some(acct),
+        (None, TabSource::Builtin(VendorId::Anthropic)) => default_label
+            .map(str::trim)
+            .filter(|label| !label.is_empty()),
+        (None, _) => None,
+    }
+}
+
 /// Tab label for the header/sidebar/detail title. A named account appends its
 /// label, e.g. `Claude · work` or `OpenRouter · personal`.
-fn tab_label(tab: &TabId) -> String {
-    let label = match &tab.account {
+fn tab_label(tab: &TabId, default_label: Option<&str>) -> String {
+    let label = match shown_account(tab, default_label) {
         Some(acct) => format!("{} · {}", source_label(tab), acct),
         None => source_label(tab).to_string(),
     };
@@ -141,8 +154,8 @@ fn tab_label(tab: &TabId) -> String {
 }
 
 /// Compact variant for the narrow top-nav strip.
-fn compact_tab_label(tab: &TabId) -> String {
-    let label = match &tab.account {
+fn compact_tab_label(tab: &TabId, default_label: Option<&str>) -> String {
+    let label = match shown_account(tab, default_label) {
         Some(acct) => format!("{} · {}", compact_source_label(tab), acct),
         None => compact_source_label(tab).to_string(),
     };
@@ -188,7 +201,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         "Overview".to_string()
     } else {
         app.active_tab_id()
-            .map(tab_label)
+            .map(|tab| tab_label(tab, app.anthropic_default_label.as_deref()))
             .unwrap_or_else(|| "no vendor".to_string())
     };
     let line = Line::from(vec![
@@ -270,7 +283,10 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
         // The tab's own status stays: during an incident is exactly when
         // "error" and "refreshing" matter, and the mark and colour already
         // carry the incident.
-        let label = with_incident_mark(tab_label(tab), app.tab_incident(index));
+        let label = with_incident_mark(
+            tab_label(tab, app.anthropic_default_label.as_deref()),
+            app.tab_incident(index),
+        );
         ListItem::new(label).description(tab_status(
             app.tabs.get(index),
             app.tab_is_refreshing(index),
@@ -299,7 +315,10 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
         }
         if let Some(inc) = app.tab_incident(index) {
             let fg = incident_fg(&app.theme, &theme, inc);
-            let label = with_incident_mark(tab_label(tab), Some(inc));
+            let label = with_incident_mark(
+                tab_label(tab, app.anthropic_default_label.as_deref()),
+                Some(inc),
+            );
             let label_cols = (crate::display::text_width(&label) as u16).saturating_add(2);
             let max_x = inner.x.saturating_add(inner.width.min(label_cols));
             let buf = f.buffer_mut();
@@ -341,7 +360,10 @@ fn draw_top_nav(f: &mut Frame, app: &App, area: Rect) {
         let inc = app.tab_incident(index);
         entries.push((
             NavTarget::Tab(index),
-            with_incident_mark(compact_tab_label(tab), inc),
+            with_incident_mark(
+                compact_tab_label(tab, app.anthropic_default_label.as_deref()),
+                inc,
+            ),
             selected,
             inc,
         ));
@@ -393,7 +415,10 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
         app.active_tab_id()
             .map(|tab| {
                 let refreshing = if app.is_refreshing(tab) { " ↻" } else { "" };
-                let label = with_incident_mark(tab_label(tab), app.tab_incident(app.active));
+                let label = with_incident_mark(
+                    tab_label(tab, app.anthropic_default_label.as_deref()),
+                    app.tab_incident(app.active),
+                );
                 format!(" {label}{refreshing} ")
             })
             .unwrap_or_else(|| " details ".to_string())
@@ -450,16 +475,22 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
         );
         return;
     }
+    const EXTRA_TOTALS_LABEL: &str = "Claude extra";
+    let totals = panels::extra_usage_totals(idxs.iter().filter_map(|&i| match app.tabs.get(i) {
+        Some(TabState::Ready(ready)) => Some(&ready.snapshot),
+        _ => None,
+    }));
     // Left-align the metric columns by padding the vendor-name column to the
     // widest name (bounded so one long account label can't blow out the layout).
     let name_w = idxs
         .iter()
         .map(|&i| {
             crate::display::text_width(&with_incident_mark(
-                tab_label(&app.tabs_meta[i]),
+                tab_label(&app.tabs_meta[i], app.anthropic_default_label.as_deref()),
                 app.tab_incident(i),
             ))
         })
+        .chain((!totals.is_empty()).then(|| crate::display::text_width(EXTRA_TOTALS_LABEL)))
         .max()
         .unwrap_or(6)
         .clamp(6, 24);
@@ -467,7 +498,10 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     for &i in &idxs {
         let inc = app.tab_incident(i);
-        let name = with_incident_mark(tab_label(&app.tabs_meta[i]), inc);
+        let name = with_incident_mark(
+            tab_label(&app.tabs_meta[i], app.anthropic_default_label.as_deref()),
+            inc,
+        );
         let pad = name_w.saturating_sub(crate::display::text_width(&name));
         let name_style = match inc {
             Some(incident) => theme.text.fg(incident_fg(&app.theme, &theme, incident)),
@@ -526,6 +560,21 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::from(spans));
         lines.push(Line::from(""));
+    }
+    if !totals.is_empty() {
+        let pad = name_w.saturating_sub(crate::display::text_width(EXTRA_TOTALS_LABEL));
+        let mut spans = vec![
+            Span::styled(EXTRA_TOTALS_LABEL, theme.text),
+            theme.span(" ".repeat(pad + 2)),
+        ];
+        for (j, (text, sev)) in totals.iter().enumerate() {
+            if j > 0 {
+                spans.push(theme.span("  "));
+            }
+            let color = severity_color(&app.theme, &theme, *sev);
+            spans.push(Span::styled(text.clone(), Style::default().fg(color)));
+        }
+        lines.push(Line::from(spans));
     }
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -994,7 +1043,7 @@ mod tests {
 
         let hit = app.hit.borrow();
         let tab = &hit.nav_entries[1];
-        let label = compact_tab_label(&app.tabs_meta[0]);
+        let label = compact_tab_label(&app.tabs_meta[0], app.anthropic_default_label.as_deref());
         assert_eq!(tab.0, NavTarget::Tab(0));
         // Marker (1) + gap (1) + label columns == clickable width.
         assert_eq!(tab.1.width, crate::display::text_width(&label) as u16 + 2);
@@ -1033,7 +1082,7 @@ mod tests {
 
         let hit = app.hit.borrow();
         let tab = &hit.nav_entries[1];
-        let label = compact_tab_label(&app.tabs_meta[0]);
+        let label = compact_tab_label(&app.tabs_meta[0], app.anthropic_default_label.as_deref());
         assert_eq!(tab.0, NavTarget::Tab(0));
         assert_eq!(tab.1.width, crate::display::text_width(&label) as u16 + 2);
         // Column-aware width (1) means the rect ends exactly at the label, not
@@ -1218,5 +1267,58 @@ mod tests {
             found_colored_claude,
             "incident badge and provider name must be colored with incident fg"
         );
+    }
+}
+
+#[cfg(test)]
+mod default_label_tests {
+    use super::*;
+
+    #[test]
+    fn default_label_names_only_the_unnamed_claude_tab() {
+        let default = TabId::vendor(VendorId::Anthropic);
+        assert_eq!(tab_label(&default, Some("home")), "Claude · home");
+        assert_eq!(compact_tab_label(&default, Some("home")), "Claude · home");
+        assert_eq!(tab_label(&default, None), "Claude");
+        assert_eq!(tab_label(&default, Some("   ")), "Claude");
+        // A named account keeps its own label, whatever the default is set to.
+        let named = TabId::account("work");
+        assert_eq!(tab_label(&named, Some("home")), "Claude · work");
+    }
+
+    #[test]
+    fn default_label_parses_from_the_anthropic_section() {
+        let config: crate::config::Config =
+            toml::from_str("[anthropic]\ndefault_label = \"home\"\n").unwrap();
+        assert_eq!(config.anthropic.default_label.as_deref(), Some("home"));
+        let unset: crate::config::Config = toml::from_str("[anthropic]\n").unwrap();
+        assert_eq!(unset.anthropic.default_label, None);
+    }
+
+    #[test]
+    fn default_label_leaves_other_vendors_unnamed_tabs_alone() {
+        for vendor in [VendorId::Cursor, VendorId::Openai, VendorId::Openrouter] {
+            let tab = TabId::vendor(vendor);
+            assert_eq!(
+                tab_label(&tab, Some("home")),
+                tab_label(&tab, None),
+                "{vendor:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_label_is_one_line_in_the_tab() {
+        let default = TabId::vendor(VendorId::Anthropic);
+        let config: crate::config::Config =
+            toml::from_str("[anthropic]\ndefault_label = \" home \"\n").unwrap();
+        let label = config.anthropic.resolved_default_label();
+        assert_eq!(tab_label(&default, label.as_deref()), "Claude · home");
+        let built = crate::config::AnthropicConfig {
+            default_label: Some("ho\nme".into()),
+            ..Default::default()
+        };
+        let label = built.resolved_default_label().unwrap();
+        assert!(!label.contains('\n'), "{label:?}");
     }
 }

@@ -611,7 +611,6 @@ fn apply_facts(state: &mut TrayState) {
 fn apply_strip_icon(state: &mut TrayState) {
     let content = content_from_payload(&state.payload, &state.stars, &state.strip_order);
     let tooltip_text = tooltip(&content, state.usage_reading);
-    let _ = state.tray.set_tooltip(Some(tooltip_text.as_str()));
     state.tray.set_title(Some(""));
     let segments = menu_bar::logo_segments(
         &content,
@@ -654,6 +653,8 @@ fn apply_strip_icon(state: &mut TrayState) {
             }
         }
     }
+    // Synchronize tray-icon's mouse-event view after native image changes.
+    let _ = state.tray.set_tooltip(Some(tooltip_text.as_str()));
 }
 
 fn bars_icon(fractions: &[f64]) -> Result<Icon, tray_icon::BadIcon> {

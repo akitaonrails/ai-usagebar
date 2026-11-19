@@ -5,6 +5,24 @@
 # file (`chmod 600 ~/.config/ai-usagebar/config.toml`). Otherwise env vars
 # are the safer choice.
 
+# API keys can also live in the macOS login Keychain instead of the env or
+# the file: map a vendor (or a named account "vendor.label") to the service
+# name of a generic-password item you created, e.g.
+#   security add-generic-password -a "$USER" -s MyZaiKey -w
+# The item is looked up by that service name and by the account "$USER", so
+# create it with -a "$USER" as above. The service name is stored here in
+# plaintext; only the key stays in the Keychain. Checked only after the env
+# var and any inline api_key miss. If the entry is set and the item is
+# missing, locked or denied, the error names the Keychain item.
+# Served sections: anthropic_api, zai, openrouter, deepseek, deepinfra, kilo,
+# novita, moonshot, grok, minimax, orcarouter, lyceum, synthetic, deeprelay,
+# mistral. An entry for any other section is a config error.
+# macOS only. On other platforms an entry is validated but never read, and
+# it does not mark the vendor as configured.
+[keychain]
+# zai = "MyZaiKey"
+# "openrouter.work" = "MyWorkKey"
+
 [ui]
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.
@@ -153,6 +171,14 @@ enabled = true
 # above — otherwise you get an extra tab for the ambient ~/.claude / Keychain
 # login. Default true; ignored when there are no named accounts.
 # show_default_account = false
+# Name the default (unnamed) Claude account so its tab and report row read
+# `Claude · home` the way a named account's does (TUI and `usage --json`
+# `display_name`, read by GNOME, KDE, Omarchy and the tray popovers; plain
+# `usage` keeps the machine `name` and the macOS menu bar does not apply it).
+# Display only: credentials, cache, ids and `--account` selection are unchanged.
+# One line, no control characters, and not equal to an [[anthropic.accounts]]
+# label. Unset or blank keeps `Claude`.
+# default_label = "home"
 # Where the Claude *Desktop app*'s saved accounts live, for `account switch`.
 # Defaults to the store claude-acc creates (https://github.com/ohmaseclaro/claude-acc);
 # unrelated to accounts_dir above, which is the `claude` CLI's own accounts.

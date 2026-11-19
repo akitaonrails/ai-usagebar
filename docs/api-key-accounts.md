@@ -46,7 +46,9 @@ api_key = "sk-personal"
 ```
 
 An account can use `api_key_env`, an inline `api_key`, or both. The environment
-variable wins when both are set. If you store any key inline, ai-usagebar
+variable wins when both are set. On macOS a `[keychain]` entry (keyed `vendor`
+for the default key or `"vendor.label"` for an account) is the last resort
+after both. If you store any key inline, ai-usagebar
 tightens the config file to mode `0600` on Unix.
 
 Labels cannot be empty, contain path separators, drive prefixes, or control

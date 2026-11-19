@@ -26,6 +26,7 @@
   "api_key_rejected": "{provider}에서 이 키를 거부했습니다.",
   "api_key_save": "저장",
   "api_key_stored_note": "config.toml에 저장되며, 본인이만 읽을 수 있습니다.",
+  "api_key_keychain_hint": "macOS에서는 키를 붙여넣는 대신 로그인 키체인 항목을 가리킬 수 있습니다: kc: 뒤에 항목 이름을 붙여 입력하세요, 예: kc:MyZaiKey. security add-generic-password의 -s 이름입니다. 이름은 config.toml의 [keychain] 테이블에 저장되고, 키는 키체인에 남습니다.",
   "api_keys": "API 키",
   "app_icon": "앱 아이콘",
   "appearance": "모양",
