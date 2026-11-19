@@ -27,8 +27,13 @@ mod strip;
 mod host;
 #[cfg(all(target_os = "linux", feature = "linux-tray"))]
 mod host_linux;
+// Hyprland placement for the Linux popover. Compiled under `test` too, so its pure tests run in CI
+// without the feature; only `host_linux` calls it.
 #[cfg(target_os = "macos")]
 mod host_macos;
+#[cfg(all(target_os = "linux", any(test, feature = "linux-tray")))]
+#[cfg_attr(not(feature = "linux-tray"), allow(dead_code))]
+mod hypr_linux;
 #[cfg(windows)]
 mod startup;
 #[cfg(target_os = "macos")]

@@ -9,9 +9,11 @@
 //!   gives a click *position*, never the icon's rectangle, and draws the
 //!   right-click menu itself from the snapshot of the `muda` menu;
 //! - there is no blur/glass material, so the `Native` style renders as `Classic`;
-//! - a Wayland compositor may ignore `set_outer_position` and `always_on_top`:
-//!   the popover is then placed by the compositor. That is accepted, not worked
-//!   around;
+//! - a Wayland compositor ignores `set_outer_position` and may ignore
+//!   `always_on_top`. On Hyprland the popover is placed through `hyprctl`
+//!   (`hypr_linux`: the cursor at the click, a window rule, the monitor's bar);
+//!   on any other compositor it is wherever that compositor puts it, which is
+//!   accepted, not worked around;
 //! - the global shortcut is not registered: `set-shortcut` leaves it
 //!   unavailable through the same outcome/fact the other hosts use when the
 //!   registration fails;
@@ -32,7 +34,7 @@ use gdk::prelude::MonitorExt;
 use gdk_pixbuf::prelude::PixbufLoaderExt;
 use serde_json::Value;
 use tao::dpi::{LogicalSize, PhysicalPosition};
-use tao::event::{Event, WindowEvent};
+use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
 use tao::monitor::MonitorHandle;
 use tao::platform::unix::{MonitorHandleExtUnix, WindowBuilderExtUnix, WindowExtUnix};
@@ -44,6 +46,7 @@ use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder, WebViewBuilder
 
 use super::browse;
 use super::hotkey;
+use super::hypr_linux as hypr;
 use super::icon::{Ink, Severity, apply_ink, tray_icon_rgba};
 use super::ipc_origin::{self, Navigation, Os};
 use super::options_menu::{self, OptionsAction, OptionsLabels};
@@ -80,6 +83,9 @@ const BLUR_DEBOUNCE: Duration = Duration::from_millis(350);
 /// A click on the icon this soon after a blur closed the popover is the same
 /// click: the press took the focus away first, and the release must not reopen.
 const REOPEN_DEBOUNCE: Duration = Duration::from_millis(350);
+/// How long an opening waits for `hyprctl` before the popover shows where the
+/// compositor puts it.
+const PLACEMENT_WAIT: Duration = Duration::from_millis(400);
 /// How long a relaunched process keeps retrying the lock.
 const RELAUNCH_WAIT: Duration = Duration::from_secs(10);
 /// Raster side asked of the icon set; the panel scales it to its own slot.
@@ -87,6 +93,8 @@ const ICON_SIDE: u32 = 32;
 /// Linux panels are dark more often than not (Waybar's default, Omarchy), and
 /// there is no portable way to ask the panel; a fixed white glyph it is.
 const ICON_INK: Ink = Ink::White;
+/// StatusNotifierItem id; also the binary name, so a pin by id reads clearly.
+const TRAY_ID: &str = "ai-usagebar-tray";
 
 /// What the page said it is told on `resize`; tao is the only place a theme
 /// reaches the window.
@@ -121,7 +129,8 @@ impl Theme {
 }
 
 enum UserEvent {
-    Tray(TrayIconEvent),
+    /// A tray event, with the cursor read at the moment of a left click (Hyprland).
+    Tray(TrayIconEvent, Option<hypr::Anchor>),
     Menu(MenuEvent),
     Ipc(String),
     Report(Value),
@@ -130,6 +139,14 @@ enum UserEvent {
     /// An update asked for a restart. Linux never self-updates (`installable`
     /// refuses), so this is only the shared worker's callback being satisfied.
     Restart(Option<PathBuf>),
+    /// The Hyprland worker placed an opening: show the popover.
+    Placed {
+        generation: u64,
+        /// `None` when Hyprland could not place the popover.
+        height: Option<u32>,
+        anchor: Option<hypr::Anchor>,
+        opening: bool,
+    },
 }
 
 enum WorkerCmd {
@@ -175,6 +192,20 @@ struct TrayState {
     last_blur_hide: Option<Instant>,
     /// The last usable click position, reused when a menu entry opens the popover.
     last_anchor: Option<(i32, i32)>,
+    /// Hyprland only: asks `hyprctl`, off this thread, where the popover goes.
+    /// `None` on any other compositor, which keeps the previous behavior.
+    positioner: Option<hypr::Positioner>,
+    /// The newest placement request; every open, close and resize advances it.
+    generation: Arc<hypr::Generation>,
+    /// Generation of the opening in progress, so a resize reuses its anchor.
+    opening: u64,
+    /// Where the opening's cursor was, in Hyprland's logical pixels.
+    hypr_anchor: Option<hypr::Anchor>,
+    /// Whether the window is on screen. `popover_open` turns on a click; this one
+    /// when the placement came back (or [`PLACEMENT_WAIT`] ran out).
+    shown: bool,
+    /// Until when an opening waits for its placement before showing unplaced.
+    show_deadline: Option<Instant>,
     theme: Theme,
     style: PopoverStyle,
     /// Last valid CSS/logical height reported by the page.
@@ -220,7 +251,19 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
     {
         let proxy = proxy.clone();
         TrayIconEvent::set_event_handler(Some(move |event| {
-            let _ = proxy.send_event(UserEvent::Tray(event));
+            // The click is the only moment the cursor is on the icon, so it is read
+            // here, on the ksni thread, not later on the worker.
+            let cursor = matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            )
+            .then(hypr::capture)
+            .flatten();
+            let _ = proxy.send_event(UserEvent::Tray(event, cursor));
         }));
     }
     {
@@ -278,6 +321,27 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         }
     };
 
+    let generation = Arc::new(hypr::Generation::default());
+    let omarchy = hypr::omarchy_detected(
+        std::env::var_os("OMARCHY_PATH").as_deref().map(Path::new),
+        Path::new("/usr/share/omarchy"),
+    );
+    let positioner = {
+        let proxy = proxy.clone();
+        hypr::Positioner::start(
+            Arc::clone(&generation),
+            omarchy,
+            move |generation, height, anchor, opening| {
+                let _ = proxy.send_event(UserEvent::Placed {
+                    generation,
+                    height,
+                    anchor,
+                    opening,
+                });
+            },
+        )
+    };
+
     let mut state = TrayState {
         window,
         webview,
@@ -297,6 +361,12 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         last_shown: None,
         last_blur_hide: None,
         last_anchor: None,
+        positioner,
+        generation,
+        opening: 0,
+        hypr_anchor: None,
+        shown: false,
+        show_deadline: None,
         theme: Theme::Light,
         style: PopoverStyle::Classic,
         popover_height: panel::WINDOW_HEIGHT,
@@ -306,9 +376,23 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
     event_loop.run(move |event, _, control_flow| {
         // The single-instance lock lives as long as the loop, which is the process.
         let _lock = &lock;
-        *control_flow = ControlFlow::Wait;
+        *control_flow = wait_for(state.show_deadline);
         match event {
-            Event::UserEvent(UserEvent::Tray(tray_event)) => handle_tray(&mut state, tray_event),
+            Event::UserEvent(UserEvent::Tray(tray_event, cursor)) => {
+                handle_tray(&mut state, tray_event, cursor);
+            }
+            Event::UserEvent(UserEvent::Placed {
+                generation,
+                height,
+                anchor,
+                opening,
+            }) => handle_placed(&mut state, generation, height, anchor, opening),
+            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                if placement_wait_over(&state, Instant::now()) {
+                    state.show_deadline = None;
+                    reveal_unplaced(&mut state);
+                }
+            }
             Event::UserEvent(UserEvent::Menu(menu_event)) => {
                 handle_menu(&mut state, &menu_event, control_flow);
             }
@@ -342,7 +426,14 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
             }
             _ => {}
         }
+        if !matches!(*control_flow, ControlFlow::Exit) {
+            *control_flow = wait_for(state.show_deadline);
+        }
     });
+}
+
+fn wait_for(deadline: Option<Instant>) -> ControlFlow {
+    deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil)
 }
 
 /// Shown as the icon's tooltip when WebKitGTK could not start: the popover
@@ -375,6 +466,15 @@ fn blur_closes(since_shown: Option<Duration>) -> bool {
 /// closed it is the press that caused the blur: it stays closed.
 fn click_reopens(since_blur_hide: Option<Duration>) -> bool {
     since_blur_hide.is_none_or(|elapsed| elapsed >= REOPEN_DEBOUNCE)
+}
+
+/// Whether an opening that is still waiting for `hyprctl` has waited long enough.
+fn placement_wait_over(state: &TrayState, now: Instant) -> bool {
+    placement_overdue(state.popover_open, state.shown, state.show_deadline, now)
+}
+
+fn placement_overdue(open: bool, shown: bool, deadline: Option<Instant>, now: Instant) -> bool {
+    open && !shown && deadline.is_some_and(|at| now >= at)
 }
 
 /// The click position a host reported, when it is usable: finite, and not the
@@ -811,7 +911,7 @@ fn decode_png(bytes: &[u8]) -> Option<gdk_pixbuf::Pixbuf> {
 // Tray, menu, IPC
 // ---------------------------------------------------------------------------
 
-fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
+fn handle_tray(state: &mut TrayState, event: TrayIconEvent, cursor: Option<hypr::Anchor>) {
     // The right-click menu belongs to the SNI host: it never reaches here.
     if let TrayIconEvent::Click {
         button: MouseButton::Left,
@@ -825,7 +925,7 @@ fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
         if state.popover_open {
             hide_popover(state);
         } else if click_reopens(since_blur_hide) {
-            show_popover(state, anchor);
+            show_popover(state, anchor, cursor);
         }
     }
 }
@@ -1017,6 +1117,10 @@ fn handle_resize(state: &mut TrayState, value: &Value) {
         resize = true;
     }
     if resize {
+        if state.positioner.is_some() {
+            resize_through_hyprland(state);
+            return;
+        }
         state.window.set_inner_size(LogicalSize::new(
             state.style.window_width(panel::WINDOW_WIDTH),
             state.popover_height,
@@ -1097,7 +1201,7 @@ fn open_popover_action(state: &mut TrayState, action: OptionsAction) {
         return;
     };
     if !state.popover_open {
-        show_popover(state, state.last_anchor);
+        show_popover(state, state.last_anchor, None);
     }
     if state.js_ready {
         run_menu_action(state, screen);
@@ -1110,13 +1214,90 @@ fn open_popover_action(state: &mut TrayState, action: OptionsAction) {
 // Window
 // ---------------------------------------------------------------------------
 
-fn show_popover(state: &mut TrayState, anchor: Option<(i32, i32)>) {
+/// Opens the popover. On Hyprland the window stays hidden until `hyprctl` has
+/// registered where it goes (or [`PLACEMENT_WAIT`] runs out); elsewhere it is
+/// positioned by `set_outer_position` and shown at once.
+fn show_popover(state: &mut TrayState, anchor: Option<(i32, i32)>, cursor: Option<hypr::Anchor>) {
     if anchor.is_some() {
         state.last_anchor = anchor;
     }
+    if open_through_hyprland(state, anchor, cursor) {
+        return;
+    }
     position_window(&state.window, state.last_anchor);
+    reveal_popover(state);
+}
+
+/// Logical size the popover has, as whole pixels for the compositor.
+fn popover_size(state: &TrayState) -> (u32, u32) {
+    let width = state.style.window_width(panel::WINDOW_WIDTH);
+    (
+        width.round().max(1.0) as u32,
+        state.popover_height.round().max(1.0) as u32,
+    )
+}
+
+/// Lets GTK take another size: a window fixed at the old one makes the
+/// compositor turn a resize down.
+fn release_bounds(window: &Window) {
+    window.set_min_inner_size(None::<LogicalSize<f64>>);
+    window.set_max_inner_size(None::<LogicalSize<f64>>);
+    window.set_resizable(true);
+}
+
+fn fix_size(window: &Window, width: u32, height: u32) {
+    let fixed = LogicalSize::new(f64::from(width), f64::from(height));
+    window.set_inner_size(fixed);
+    window.set_min_inner_size(Some(fixed));
+    window.set_max_inner_size(Some(fixed));
+    window.set_resizable(false);
+}
+
+/// Queues the opening's placement and arms the wait. `false` when this is not
+/// Hyprland or the worker is gone: the caller then opens the previous way.
+///
+/// The anchor is the cursor read at the click, else the position the tray
+/// protocol reported; with neither the worker reads the cursor itself.
+fn open_through_hyprland(
+    state: &mut TrayState,
+    anchor: Option<(i32, i32)>,
+    cursor: Option<hypr::Anchor>,
+) -> bool {
+    if state.positioner.is_none() {
+        return false;
+    }
+    let click = cursor.or_else(|| {
+        anchor.map(|(x, y)| hypr::Anchor {
+            x: f64::from(x),
+            y: f64::from(y),
+        })
+    });
+    let (width, height) = popover_size(state);
+    let generation = hypr::advance(&state.generation);
+    release_bounds(&state.window);
+    state.window.set_inner_size(LogicalSize::new(width, height));
+    let sent = state.positioner.as_ref().is_some_and(|p| {
+        p.send(hypr::click_request(generation, click, width, height))
+            .is_ok()
+    });
+    if !sent {
+        fix_size(&state.window, width, height);
+        return false;
+    }
+    state.opening = generation;
+    state.hypr_anchor = click;
+    state.popover_open = true;
+    state.shown = false;
+    state.show_deadline = Some(Instant::now() + PLACEMENT_WAIT);
+    true
+}
+
+/// Puts the window on screen and hands the page its payload.
+fn reveal_popover(state: &mut TrayState) {
     state.window.set_visible(true);
     state.popover_open = true;
+    state.shown = true;
+    state.show_deadline = None;
     state.last_shown = Some(Instant::now());
     if let Some(webview) = state.webview.as_ref() {
         let _ = webview.evaluate_script(&format!(
@@ -1130,9 +1311,135 @@ fn show_popover(state: &mut TrayState, anchor: Option<(i32, i32)>) {
     state.window.set_focus();
 }
 
+/// The placement wait ran out: show the popover wherever the compositor puts it,
+/// at the size the page asked for.
+fn reveal_unplaced(state: &mut TrayState) {
+    let (width, height) = popover_size(state);
+    fix_size(&state.window, width, height);
+    reveal_popover(state);
+}
+
+/// A reply from the Hyprland worker. Only the answer to the newest request counts:
+/// a click that closed the popover, or a newer opening, made it stale.
+///
+/// The window's size is never set client-side once Hyprland has placed it: a client
+/// resize of a floating window is done around its center, which would lift a window
+/// anchored at the bar behind it. A placement that failed (`None`) leaves the window
+/// where it is, bounds held at its current size.
+fn handle_placed(
+    state: &mut TrayState,
+    generation: u64,
+    height: Option<u32>,
+    used_anchor: Option<hypr::Anchor>,
+    opening: bool,
+) {
+    let current = hypr::current(&state.generation);
+    let Some(height) = hypr::applied_height(current, generation, height) else {
+        return;
+    };
+    if !state.popover_open {
+        return;
+    }
+    if state.hypr_anchor.is_none() {
+        state.hypr_anchor = used_anchor;
+    }
+    let (width, _) = popover_size(state);
+    let Some(height) = height else {
+        if opening && !state.shown {
+            reveal_unplaced(state);
+        } else {
+            hold_current_size(&state.window);
+        }
+        return;
+    };
+    if !opening {
+        // A resize landed: hold the window at the height the compositor applied.
+        hold_size(&state.window, width, height);
+        return;
+    }
+    // The opening rule is in place: map the window there at the applied height, then
+    // correct it through the mapped window in case it came up at another size.
+    if !state.shown {
+        fix_size(&state.window, width, height);
+        reveal_popover(state);
+    }
+    send_resize(state, generation);
+}
+
+/// Fixes the window's size hints at `width` x `height` without asking GTK for that size:
+/// the compositor already gave the window it.
+fn hold_size(window: &Window, width: u32, height: u32) {
+    let fixed = LogicalSize::new(f64::from(width), f64::from(height));
+    window.set_min_inner_size(Some(fixed));
+    window.set_max_inner_size(Some(fixed));
+    window.set_resizable(false);
+}
+
+/// Fixes the size hints at whatever size the window has now.
+fn hold_current_size(window: &Window) {
+    let size = window.inner_size().to_logical::<f64>(window.scale_factor());
+    window.set_min_inner_size(Some(size));
+    window.set_max_inner_size(Some(size));
+    window.set_resizable(false);
+}
+
+/// Asks the worker to move and resize the mapped window under `generation`.
+fn send_resize(state: &mut TrayState, generation: u64) {
+    let (width, height) = popover_size(state);
+    release_bounds(&state.window);
+    let sent = state.positioner.as_ref().is_some_and(|p| {
+        p.send(hypr::resize_request(
+            generation,
+            state.opening,
+            state.hypr_anchor,
+            width,
+            height,
+        ))
+        .is_ok()
+    });
+    if !sent {
+        fix_size(&state.window, width, height);
+    }
+}
+
+/// The page changed the popover's size or style. Hidden: size the window. Waiting
+/// for its placement: ask again with the new size. Visible: have Hyprland resize
+/// it around its anchor, which a client-side resize would not keep.
+fn resize_through_hyprland(state: &mut TrayState) {
+    let (width, height) = popover_size(state);
+    if !state.popover_open {
+        fix_size(&state.window, width, height);
+        return;
+    }
+    let generation = hypr::advance(&state.generation);
+    if state.shown {
+        send_resize(state, generation);
+        return;
+    }
+    state.opening = generation;
+    release_bounds(&state.window);
+    state.window.set_inner_size(LogicalSize::new(width, height));
+    let sent = state.positioner.as_ref().is_some_and(|p| {
+        p.send(hypr::click_request(
+            generation,
+            state.hypr_anchor,
+            width,
+            height,
+        ))
+        .is_ok()
+    });
+    if !sent {
+        reveal_unplaced(state);
+    }
+}
+
 fn hide_popover(state: &mut TrayState) {
+    // Whatever the worker is placing for the closed popover is now stale.
+    hypr::advance(&state.generation);
     state.window.set_visible(false);
     state.popover_open = false;
+    state.shown = false;
+    state.show_deadline = None;
     // Closing resets navigation so the next open lands on the dashboard — a
     // screen choice still waiting for `ready` included.
     state.pending_menu_action = None;
@@ -1217,6 +1524,10 @@ fn icon_from_severity(severity: Severity) -> Result<Icon, tray_icon::BadIcon> {
 fn build_tray(payload: &Value, menu: &Menu) -> Result<TrayIcon, String> {
     let icon = icon_from_severity(worst_severity(payload)).map_err(|error| error.to_string())?;
     TrayIconBuilder::new()
+        // A stable StatusNotifierItem id: bars that remember pinned icons by
+        // id (Omarchy's tray) keep the pin across restarts. Without it the id
+        // is `<pid>-<n>` and changes on every launch.
+        .with_id(TRAY_ID)
         .with_icon(icon)
         .with_title(WINDOW_TITLE)
         .with_tooltip(WINDOW_TITLE)
@@ -1590,6 +1901,33 @@ mod tests {
     }
 
     // --- Click anchor ------------------------------------------------------
+
+    #[test]
+    fn an_opening_shows_unplaced_only_once_its_wait_is_over() {
+        let now = Instant::now();
+        let deadline = Some(now + PLACEMENT_WAIT);
+        assert!(!placement_overdue(true, false, deadline, now));
+        assert!(placement_overdue(
+            true,
+            false,
+            deadline,
+            now + PLACEMENT_WAIT
+        ));
+        // Closed, already shown or never armed: nothing to reveal.
+        assert!(!placement_overdue(
+            false,
+            false,
+            deadline,
+            now + PLACEMENT_WAIT
+        ));
+        assert!(!placement_overdue(
+            true,
+            true,
+            deadline,
+            now + PLACEMENT_WAIT
+        ));
+        assert!(!placement_overdue(true, false, None, now + PLACEMENT_WAIT));
+    }
 
     #[test]
     fn a_click_position_is_used_when_it_is_real() {
