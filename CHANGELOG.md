@@ -2,6 +2,10 @@
 
 ### Added
 
+- **Homebrew cask for macOS.** Install AI Usage.app and its CLI and TUI on
+  Apple Silicon or Intel from `akitaonrails/tap/ai-usagebar`. Releases publish
+  the cask automatically, and the tray keeps its built-in updater (#622).
+
 - **Grouped `[[custom]]` sources as account tabs.** Setting `group` and
   `account` together on `[[custom]]` entries with the same display `name`
   groups them under one category (`custom:<group>@<account>`) with account tabs
@@ -47,6 +51,13 @@
   row in Overview now shows its extra-usage spend alongside percentages, and
   when two or more Claude accounts share a currency a `Claude extra` summary
   row totals their spend (and cap when every account has one) (#605).
+
+### Changed
+
+- **macOS releases are signed and notarized.** The app bundle and the
+  standalone `ai-usagebar`, `ai-usagebar-tui` and `ai-usagebar-tray` binaries
+  carry a Developer ID signature, and the bundle is notarized and stapled, so
+  Gatekeeper accepts a quarantined download such as Homebrew's (#622).
 
 ### Fixed
 
