@@ -5,6 +5,9 @@ bar. For configuration and how it works, see [README.md](README.md).
 
 ## Install a release
 
+See the [Homebrew install and upgrade instructions](../README.md#macos-menu-bar-and-windows-tray)
+to install the app and both command-line tools with Homebrew.
+
 Download the macOS archive for your Mac from [Releases](https://github.com/akitaonrails/ai-usagebar/releases)
 (`aarch64` for Apple Silicon, `x86_64` for Intel). Extract it, move **AI Usage.app**
 to `/Applications`, and open the app. No Rust or Node is
@@ -94,7 +97,7 @@ if they are already there as plain files. Settings → Updates chooses
 Automatic, Notify me or Off.
 
 The tray leaves itself alone, and offers the release page instead, when
-another tool owns the file — a Homebrew or Nix install, a link into place, or
+another tool owns the file — a Homebrew formula or Nix install, a link into place, or
 a copy running straight from cargo's `target/` directory — when it may not
 write its directory, and when a release has no macOS binary. Run from the
 source tree, it follows the tree; rebuild:

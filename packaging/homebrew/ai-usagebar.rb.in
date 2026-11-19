@@ -1,0 +1,33 @@
+cask "ai-usagebar" do
+  arch arm: "aarch64", intel: "x86_64"
+
+  version "@VERSION@"
+  sha256 arm:   "@ARM_SHA256@",
+         intel: "@INTEL_SHA256@"
+
+  url "https://github.com/akitaonrails/ai-usagebar/releases/download/v#{version}/ai-usagebar-macos-#{arch}.tar.gz"
+  name "AI Usage"
+  desc "Menu bar app for tracking AI plan usage"
+  homepage "https://github.com/akitaonrails/ai-usagebar"
+
+  livecheck do
+    url :homepage
+    strategy :github_latest
+  end
+
+  auto_updates true
+  depends_on :macos
+
+  app "AI Usage.app"
+  binary "#{appdir}/AI Usage.app/Contents/MacOS/ai-usagebar"
+  binary "#{appdir}/AI Usage.app/Contents/MacOS/ai-usagebar-tui"
+
+  uninstall quit: "com.akitaonrails.ai-usagebar-tray"
+
+  zap trash: [
+    "~/.config/ai-usagebar",
+    "~/Library/Application Support/ai-usagebar",
+    "~/Library/Caches/ai-usagebar",
+    "~/Library/LaunchAgents/com.akitaonrails.ai-usagebar-tray.plist",
+  ]
+end

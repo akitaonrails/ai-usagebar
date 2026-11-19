@@ -990,10 +990,21 @@ privileges, and does not overwrite user configuration.
 
 ### macOS menu bar and Windows tray
 
-For macOS releases, move **AI Usage.app** from the archive into `/Applications`
-and open it. The bundle includes the tray, CLI and TUI, and gives menu-bar
-managers a stable application identity. See [installation](macos/INSTALL.md),
-including migration from a bare tray executable and Hidden Bar troubleshooting.
+On macOS, install **AI Usage.app**, `ai-usagebar` and `ai-usagebar-tui` with Homebrew:
+
+```bash
+brew install --cask akitaonrails/tap/ai-usagebar
+```
+
+Open **AI Usage** from Applications. The app updates itself through Settings →
+Updates, and `brew upgrade` replaces it with the current release whenever
+Homebrew sees an older bundle version.
+
+For a manual install, move **AI Usage.app** from the release archive into
+`/Applications` and open it. The bundle includes the tray, CLI and TUI, and
+gives menu-bar managers a stable application identity. See
+[installation](macos/INSTALL.md) for migration from a bare tray executable and
+Hidden Bar troubleshooting.
 
 `ai-usagebar-tray` shows the same report in a popover that opens from the
 macOS menu bar or the Windows notification area. The **Popover Style** setting
