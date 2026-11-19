@@ -22,15 +22,23 @@ pub fn open(raw: &str) {
     let Some(url) = http_url(raw) else {
         return;
     };
+    let _ = command(url).spawn();
+}
+
+/// The process that opens `url` in the default browser.
+#[cfg(any(windows, target_os = "macos"))]
+fn command(url: &str) -> std::process::Command {
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "start", "", url])
-            .spawn();
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
+        let mut command = std::process::Command::new("/usr/bin/open");
+        command.arg(url);
+        command
     }
 }
 
