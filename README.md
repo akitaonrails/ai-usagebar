@@ -744,8 +744,9 @@ It exposes two read-only tools:
 
 - `get_usage` returns the same versioned report as `usage --json`. With no
   arguments it queries every enabled provider. `provider` accepts a built-in
-  slug such as `anthropic` or `openai` (or `custom:<id>`); optional `account`
-  narrows it to one named account.
+  slug such as `anthropic` or `openai`, or `custom:<id>` (`custom:<group>` for
+  grouped `[[custom]]` sources); optional `account` narrows it to one named
+  account.
 - `list_providers` returns the local `vendors --json` catalog without making
   network requests or exposing credential values.
 

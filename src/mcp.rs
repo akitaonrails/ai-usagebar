@@ -19,7 +19,8 @@ type CatalogCollector = fn() -> Result<String, String>;
 
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 struct GetUsageArgs {
-    /// Built-in provider slug (`anthropic`, `openai`) or `custom:<id>`.
+    /// Built-in provider slug (`anthropic`, `openai`) or `custom:<id>`;
+    /// `custom:<group>` for grouped `[[custom]]` sources.
     provider: Option<String>,
     /// Named account label. Requires `provider`.
     account: Option<String>,
