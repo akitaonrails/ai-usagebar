@@ -173,6 +173,10 @@ omarchy bar set akitaonrails.ai-usagebar showAll true --json
 # (green → yellow → orange → red from the Omarchy theme). The default is false.
 omarchy bar set akitaonrails.ai-usagebar colorCodeUsage true --json
 
+# Draw a tick on each panel meter where an even burn would sit by now (in the
+# left reading, the share that should still remain). The default is true.
+omarchy bar set akitaonrails.ai-usagebar paceMarker false --json
+
 # Which quota window the top bar shows: auto (highest, the historical
 # default), session (5-hour), weekly (7-day), or monthly. The default is auto.
 omarchy bar set akitaonrails.ai-usagebar barWindow session
@@ -213,7 +217,8 @@ The refresh interval is clamped to 30–3600 seconds. The `provider` setting
 prefers an exact entry id; if there is no exact match, a base id such as
 `anthropic` selects all accounts for that provider. `showValue`,
 `showProvider`, and `showAll` change only the top-bar label; `colorCodeUsage`
-also recolors the panel meters and tooltip; `barWindow`
+also recolors the panel meters and tooltip; `paceMarker` only adds or removes
+the tick on the panel meters; `barWindow`
 changes the top-bar value and its tooltip/hero echo; none hide report
 details or change provider fetching. Cursor is the exception to the window
 pin: its two included pools are model categories, so the chip shows Cursor

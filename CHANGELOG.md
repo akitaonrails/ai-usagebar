@@ -8,9 +8,189 @@
   `credits_remaining` at zero. With no reader for those windows the bar, the
   panels and `usage --json` showed a spent balance for an account nowhere near
   its limit. Each window now gets its own meter, figure and countdown, the
-  credit rows stay as a secondary balance, and `{nous_pct}` reports the window
-  closest to its limit with `{nous_renewal}` counting down to that window's
-  reset. Accounts that still report a credit allocation are unchanged (#569).
+  credit rows stay as a secondary balance, and `{nous_pct}` reports the
+  all-model window (`day`, `week`, or `month`) closest to its limit with
+  `{nous_renewal}` counting down to that window's reset, while subset caps such
+  as `Large models (monthly)` render as their own row without driving the
+  account-wide headline. Accounts that still report a credit allocation are
+  unchanged (#602).
+
+- **Antigravity's live-session cards refresh their complete quota.** A status
+  line can report an unused weekly bucket while `/quota` already records
+  usage. The report prefers fresh local RPC or `agy` quota for the verified
+  same account, including reset times and per-model pools. The CLI fallback
+  checks its saved ID-token identity before fetching and before caching, and
+  uses an independent credential-scoped cache. Unmatched, unverified and stale
+  readings keep the session's own data (#597).
+
+- **Antigravity:** restrict local server discovery to `language_server*` and
+  `agy` executables (matched by `comm` or executable basename) so the Electron
+  shell (`Antigravity` / `Antigravity.exe` `HostBridgeServer`), `agy-node`
+  `ELECTRON_RUN_AS_NODE=1` sidecars (including orphaned `swarm_board` listeners
+  on Windows), and non-RPC helpers installed beneath `antigravity*` directories
+  do not return `HTTP 401 {"error":"unauthorized"}` and block the `agy` CLI and
+  saved-session fallback (#635).
+
+## [1.52.3] — 2026-11-18
+
+### Fixed
+
+- **A starred Cursor On-Demand row reaches the macOS and Windows menu bar.**
+  The popover draws On-Demand spend as a bar and lets it be starred, but the
+  menu-bar strip skipped every text row, so that star painted nothing: Chart
+  dropped the bar, and Logos left Cursor out when On-Demand was its only star.
+  The strip now reads a text row that carries `percent` and `severity` as a
+  metric headed by its amount, and the highest-window race still passes it
+  over (#641).
+
+- **A tray star whose metric the provider stopped reporting no longer blocks a
+  new one.** Customize lists only the rows a card has now, so a starred row that
+  left the card (Claude without a five-hour window, an Antigravity cadence the
+  running product does not report) could not be unstarred, yet it still counted
+  toward the two-star cap: starring another metric answered "Up to 2 stars per
+  provider" with one star or none in view. Starring at the cap now drops the
+  stars the card cannot show; with room to spare they stay for when their rows
+  return (#639).
+## [1.52.2] — 2026-11-16
+
+### Fixed
+
+- **A retired Anthropic refresh token still fetches the live weekly reading.**
+  When the token endpoint answered 4xx other than 429 (the parser already
+  accepts 400 "Refresh token expired"), the fetch returned before GET usage
+  and served the last cached weekly percent. An empty `refreshToken` already
+  continues with the current access token; a present token the endpoint has
+  retired now does the same. A 429 or a 5xx still stops before that GET (#637).
+
+- **Antigravity:** match local server discovery against the executable basename
+  rather than directory substrings in `/proc/<pid>/exe`, so helper processes
+  installed under `antigravity-*` paths (such as `agy_acp_server.par` and
+  `localharness_external` from `antigravity-acp`) are not probed as language
+  servers or treated as signed-out `401` rejections that block the `agy` CLI and
+  saved-session fallback.
+## [1.52.1] — 2026-11-14
+
+### Fixed
+
+- **Custom providers (`[[custom]]`):** redact API keys in `.last_error`,
+  `usage.json`, and surfaced error messages, and strip URLs carrying query
+  tokens from `reqwest` request errors (#631).
+
+- **`detect` recognizes macOS `[keychain]` API-key entries.** Auto-detection
+  previously checked only environment variables and inline `api_key` settings,
+  leaving vendors configured solely through `[keychain]` unenabled until
+  `enabled = true` was set by hand (#629).
+
+- **Tray `kc:` key checks keep the Keychain service name in failed verdicts.**
+  `run_key_check` previously passed the Keychain service name to `scrub_key`,
+  turning missing or locked Keychain diagnostics (and their
+  `security add-generic-password` guidance) into `[key]` or a partial-echo
+  notice (#627).
+
+- **Keychain-backed named API-key accounts pass config validation.** Adding a
+  Keychain reference for a `[[<vendor>.accounts]]` entry without `api_key_env`
+  or an inline `api_key` previously failed `Config::validate()` because only
+  env and inline sources were checked (#625).
+
+## [1.52.0] — 2026-11-13
+
+### Fixed
+
+- **macOS:** keep the tray click target aligned with the final menu-bar image,
+  so App Icon mode opens the popover when clicked (#620).
+
+## [1.51.0] — 2026-11-12
+
+### Added
+
+- **Kiro CLI: Google and GitHub social logins.** `[kiro]` now recognizes
+  sessions stored under `kirocli:social:token` alongside AWS Builder ID and IAM
+  Identity Center (`kirocli:odic:token`), selecting the valid session with the
+  newer expiry when both rows exist, refreshing social tokens against Kiro's
+  desktop auth service (preserving any canonical `profileArn` and rebinding the
+  quota host to its region), and refusing HTTP redirects on token and quota
+  calls.
+- **Omarchy panel: pace marker on each meter.** A metric with a window length
+  and a future reset draws a tick where an even burn would sit by now, the
+  panel's take on the trays' pace tick, so "14pts under" reads at a glance. The
+  tick lives in the same space as the fill: in the "left" reading it marks the
+  share that should still remain. Grouped sub-rows
+  and value headlines get none. On by default; the **Show pace marker** switch
+  in Settings (`paceMarker`) turns it off.
+
+### Fixed
+
+- **macOS menu bar parses Anthropic API named accounts.**
+  `[[anthropic_api.accounts]]` was added to `Config::API_KEY_ACCOUNT_VENDORS` in
+  Rust (#599, #606), but `API_KEY_ACCOUNT_VENDORS` in the macOS menu bar was not
+  updated. It now includes `anthropic_api` so named Console organizations appear
+  in Preferences and the Switch Provider menu, and honors `show_default_account`.
+  A structural guard test ensures the Swift mirror cannot drift from Rust (#608).
+- **macOS:** include Kimi's monthly pool in the native menu bar's quota rows
+  and Overview headline. Accounts without a monthly pool and older binary
+  output keep their existing session and weekly readings.
+- **Mistral:** keep the last matching budgets marked stale on HTTP 401/403,
+  following the API-key cache policy, with the fixed authentication diagnostic.
+  Without usable cached budgets, HTTP 403 retains its billing-permission guidance.
+- **A Claude account that is also the live `claude` login now reads its own
+  Keychain item on macOS.** When `~/.claude.json` named a configured account
+  and that account's `.credentials.json` was missing, ai-usagebar assumed
+  `account switch` had moved it into the CLI's default slot. On macOS a
+  `CLAUDE_CONFIG_DIR` login never writes that file; the credential lives in
+  the `Claude Code-credentials-<hash>` Keychain item. The account was then read
+  from the default `Claude Code-credentials` item, and when that item held a
+  different login, the tab showed the other account's plan and quota. The
+  scoped Keychain item now counts as the account's own slot, which is the check
+  the provider catalog already made (#331). After a switch empties it, the
+  default slot is read as before. If the item is locked or access is denied,
+  the account reports the Keychain error instead of falling back.
+
+## [1.50.0] — 2026-11-09
+
+### Added
+
+- **Anthropic API: several Console organizations.** `[anthropic_api]` accepts
+  `[[anthropic_api.accounts]]` like the other API-key providers, one Admin key
+  per organization. Each entry gets its own tab, `anthropic_api@<label>` report
+  entry and cache directory, and may set its own `monthly_limit` (falling back
+  to the section value). Without the array nothing changes (#599).
+
+### Changed
+
+- **Anthropic API report setup guidance** now describes organization report
+  permissions instead of requiring an Admin-key prefix, including the widget
+  tooltip and translated credential notes. Document 401/403 troubleshooting
+  and preserve the shared same-key, same-month stale-cache policy.
+
+### Fixed
+
+- **The `usage` text report lines its columns up.** Provider names, metric
+  values and details now share fixed columns instead of the metric column's
+  byte-width guess, so a mixed list (a wide provider name, a short percentage,
+  a long balance) reads as a table. Widths are measured in terminal columns, so
+  CJK labels and combining marks land on the same edge; a value too wide for
+  its column moves to the detail column rather than being truncated. The JSON
+  report is untouched.
+- **Mistral budgets in the macOS menu bar omit the elapsed pacing marker.**
+  Because calendar-month allowances have no fixed cycle length, neither budget
+  supports pacing against time. The Vibe Code budget was already set without an
+  elapsed marker, but the API budget retained the generic slot-13 default and
+  drew a phantom pacing marker at 0%. Both budgets now omit the marker (#600).
+- **The Anthropic usage request presents a current `claude-cli` version.**
+  Anthropic began refusing older client versions on the usage endpoint, so a
+  pinned User-Agent the server no longer accepts left a valid login reporting an
+  auth error. It now identifies as `claude-cli/2.1.319`; the token endpoint
+  keeps its own agent, and the existing test still pins the `claude-cli/`
+  prefix.
+- **macOS App Icon menu-bar mode.** Settings can keep About's gauge in the
+  menu bar instead of usage charts or provider logos, without clearing
+  starred metrics. The symbol follows the menu bar's light and dark ink.
+- **Popover favorites follow the theme's blue accent.** Selected metric stars
+  use the app's accent in light and dark themes.
+- **Provider headers keep account labels out of the title.** Classic and
+  Native use the catalog name even for a single account; multiple accounts
+  keep their labels in the account tabs. Keyboard focus stays visible on
+  those tabs in every style, including Native Windows.
 
 ## [1.49.0] — 2026-11-07
 
@@ -5427,7 +5607,13 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...HEAD
+[1.52.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...v1.52.3
+[1.52.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...v1.52.2
+[1.52.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...v1.52.1
+[1.52.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.51.0...v1.52.0
+[1.51.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.50.0...v1.51.0
+[1.50.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.3...v1.49.0
 [1.48.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.2...v1.48.3
 [1.48.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.48.1...v1.48.2

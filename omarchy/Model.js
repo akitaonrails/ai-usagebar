@@ -292,6 +292,30 @@ function shownPercent(percent, showAs) {
   return normalizeShowAs(showAs) === "left" ? Math.max(0, 100 - number) : number
 }
 
+/**
+ * Where the pace marker sits on a metric's meter: the share of the window an
+ * even burn would have spent by now. The meter fills with the shown reading,
+ * so in the "left" reading the marker is the share that should still remain.
+ * Mirrors `pacing::calc`'s elapsed figure, kept live against `nowMs`.
+ * @param {Object} row Metric row from the report.
+ * @param {number} nowMs Current time in epoch milliseconds.
+ * @param {*} showAs Raw reading setting.
+ * @returns {number|null} Marker position as a percent of the meter width, or
+ *   null when the row has no window length, no future reset, or is a grouped
+ *   sub-row or value headline.
+ */
+function paceMarkerPercent(row, nowMs, showAs) {
+  if (!row || row.type !== "metric" || cleanText(row.group, 80) !== "" || row.headline === "value") return null
+  var windowSecs = Number(row.window_secs)
+  if (!isFinite(windowSecs) || windowSecs <= 0) return null
+  var resetMs = new Date(String(row.reset_at || "")).getTime()
+  var now = Number(nowMs)
+  if (!isFinite(resetMs) || !isFinite(now) || resetMs <= now) return null
+  var windowMs = windowSecs * 1000
+  var elapsed = Math.max(0, Math.min(100, (windowMs - (resetMs - now)) * 100 / windowMs))
+  return metricShowAs(row, showAs) === "left" ? 100 - elapsed : elapsed
+}
+
 // Prints a shown percentage with at most one decimal ("70.5%", "70%") so a
 // precise figure does not collapse to a whole number. Meters keep integers.
 function shownPctText(shown) {

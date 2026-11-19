@@ -9,7 +9,7 @@ export interface RowPrefs {
 export type TimeFormat = "12" | "24" | "auto";
 export type Language = "en" | "pt-BR" | "ko" | "es";
 export type PopoverStyle = "classic" | "native";
-export type MenuBarLook = "chart" | "logos" | "quattro";
+export type MenuBarLook = "icon" | "chart" | "logos" | "quattro";
 
 export interface Layout {
   /** The account tab each provider's card shows (provider id → card id); the first card when absent. */

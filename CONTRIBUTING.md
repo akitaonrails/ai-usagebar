@@ -51,7 +51,14 @@ These are in `CLAUDE.md` in full. The ones contributors hit most:
   executable that runs on every refresh should not be an ambient choice — see
   `[supergrok] grok_binary` and `[copilot] gh_binary`.
 - **Credentials are read, never rewritten**, unless the vendor owns the file.
-  CLI, editor and browser credentials are never parsed, copied, or stored.
+  Browser cookies and unrelated CLI/editor stores are never parsed, copied, or
+  stored. When a read-only CLI or desktop store holds a short-lived OAuth
+  session that rotates its refresh token on renewal and offers no
+  non-interactive CLI renewal command (e.g. Kiro CLI's `data.sqlite3`, Grok
+  Bot's `sand-secrets.json`, Antigravity's keyring fallback), rotated tokens
+  are written only to an atomic, mode-`0600`, account-fingerprinted
+  `oauth.json` sidecar in that vendor's cache directory — never back to the
+  application's own store.
 - **Tests are hermetic.** A `#[test]` must never read or write a real `$HOME`
   or `$XDG` path, or branch on an ambient environment variable — the AUR
   package runs `cargo test` during install, so a test coupled to your machine

@@ -9,6 +9,7 @@ The array works for these sections:
 
 | Section | Provider |
 |---|---|
+| `[anthropic_api]` | Anthropic API (Claude Console Admin key, one per organization) |
 | `[zai]` | Z.AI |
 | `[openrouter]` | OpenRouter — see also the [OpenRouter account guide](openrouter-accounts.md) |
 | `[deepseek]` | DeepSeek |
@@ -45,7 +46,9 @@ api_key = "sk-personal"
 ```
 
 An account can use `api_key_env`, an inline `api_key`, or both. The environment
-variable wins when both are set. If you store any key inline, ai-usagebar
+variable wins when both are set. On macOS a `[keychain]` entry (keyed `vendor`
+for the default key or `"vendor.label"` for an account) is the last resort
+after both. If you store any key inline, ai-usagebar
 tightens the config file to mode `0600` on Unix.
 
 Labels cannot be empty, contain path separators, drive prefixes, or control
@@ -70,10 +73,34 @@ Everything else in the section applies to every account of that provider:
   own team; a pinned id is sent with every account's key.
 - `display_limit` and `headline` — one tank size and bar number for the
   provider.
+- `monthly_limit` (`[anthropic_api]`) — the section value is only the
+  fallback: an entry may set its own `monthly_limit`, since each Console
+  organization has its own spend limit.
 
 On OpenRouter, keys created inside one workspace share that workspace's
 billing account; the [OpenRouter account guide](openrouter-accounts.md#what-one-entry-separates)
 explains what that means for the split.
+
+## Anthropic API: one Admin key per organization
+
+An Admin key belongs to a single Console organization, so reading a second
+organization takes a second key:
+
+```toml
+[anthropic_api]
+enabled = true
+api_key_env = "ANTHROPIC_ADMIN_KEY"
+monthly_limit = 1000            # fallback for accounts that set none
+
+[[anthropic_api.accounts]]
+label = "work"
+api_key_env = "ANTHROPIC_WORK_ADMIN_KEY"
+monthly_limit = 500             # this organization's own limit
+```
+
+The report entry is `anthropic_api@work`. The fetch keys its cache on an
+organization fingerprint, and each account also has its own cache directory,
+so one organization's numbers are never served for another.
 
 ## Select an account
 

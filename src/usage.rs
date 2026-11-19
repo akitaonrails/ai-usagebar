@@ -387,9 +387,10 @@ impl CursorSnapshot {
 
 /// Kiro CLI (AWS CodeWhisperer / Q Developer backend) — a single credit pool
 /// from `AmazonCodeWhispererService.GetUsageLimits`, the same call kiro-cli's
-/// own `/usage` slash command makes. Authenticated with the AWS SSO OIDC
-/// bearer token kiro-cli already cached locally, refreshed with the paired
-/// refresh token when it's close to expiry — see `kiro::db` and `kiro::oauth`.
+/// own `/usage` slash command makes. Authenticated with the AWS SSO OIDC or
+/// social-login bearer token kiro-cli already cached locally, refreshed with
+/// the paired refresh token when it's close to expiry — see `kiro::db` and
+/// `kiro::oauth`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KiroSnapshot {
     /// Subscription tier label (`subscriptionInfo.subscriptionTitle`, e.g.

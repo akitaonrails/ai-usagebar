@@ -152,8 +152,8 @@ const portugueseMessages = JSON.parse(readFileSync(new URL('./messages/pt-BR.jso
 assert.deepEqual(Object.keys(portugueseMessages).sort(), Object.keys(englishMessages).sort());
 assert.ok(Object.values(englishMessages).every((value) => typeof value === 'string' && value.trim()));
 assert.ok(Object.values(portugueseMessages).every((value) => typeof value === 'string' && value.trim()));
-assert.equal(englishMessages.menu_bar_shows_hint, "Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.");
-assert.equal(portugueseMessages.menu_bar_shows_hint, "Gráfico e Logotipos mostram as métricas marcadas de todos os provedores. Quattro mostra o maior uso do provedor selecionado.");
+assert.equal(englishMessages.menu_bar_shows_hint, "App Icon shows the app's gauge. Chart and Logos show every provider's starred metrics. Quattro shows the selected provider's highest usage.");
+assert.equal(portugueseMessages.menu_bar_shows_hint, "Ícone do app mostra o medidor do aplicativo. Gráfico e Logotipos mostram as métricas marcadas de todos os provedores. Quattro mostra o maior uso do provedor selecionado.");
 for (const key of ['focused_provider', 'highest_consumption', 'usage_window']) {
   assert.equal(Object.hasOwn(englishMessages, key), false);
   assert.equal(Object.hasOwn(portugueseMessages, key), false);
@@ -223,6 +223,8 @@ assert.equal(parseHostPayload({ menu_bar_look: 'sparkles' }).menuBarLook, 'chart
 assert.equal(parseHostPayload({}).menuBarLook, 'chart');
 assert.equal(emptyPayload('').menuBarLook, 'chart');
 assert.equal(parseHostPayload({ menu_bar_look: 'logos' }).menuBarLook, 'logos');
+// Mutation captured: treating icon as unknown resets the host-selected mode to Chart.
+assert.equal(parseHostPayload({ menu_bar_look: 'icon' }).menuBarLook, 'icon');
 assert.equal(parseHostPayload({ menu_bar_look: 'quattro' }).menuBarLook, 'quattro');
 // The host only reports `quattro`; the 1.32.0 spelling is read on the Rust side, so `name` is unknown here.
 assert.equal(parseHostPayload({ menu_bar_look: 'name' }).menuBarLook, 'chart');
@@ -1898,6 +1900,40 @@ assert.equal(resolvedTheme('system'), 'light');
   // The menu bar follows the Used/Left reading, so the strip message carries it.
   assert.equal(stripCommand({ ...seeded, showAs: 'used' }, cards).show_as, 'used');
   assert.equal(stripCommand({ ...seeded, showAs: 'sideways' }, cards).show_as, 'left');
+}
+
+// --- a star whose row the card no longer has does not hold a slot (#639) --
+
+{
+  // ARRANGE: first-launch stars on Session and Weekly, then a report without the
+  // five-hour window, so Customize has no Session row to unstar it from
+  const payload = parseHostPayload({
+    entries: [{
+      id: 'anthropic',
+      display_name: 'Claude',
+      sections: [
+        { type: 'metric', label: 'Weekly (7d)', percent: 19 },
+        { type: 'metric', label: 'Fable (7d)', percent: 7 },
+        { type: 'text', label: 'Extra usage', value: '$1' },
+      ],
+    }],
+  });
+  const rowKeys = projectCards(payload, 0)[0].rows.map(rowKey);
+  const stars = { anthropic: ['metric:Session (5h)', 'metric:Weekly (7d)'] };
+
+  // ACT
+  const added = toggleStar(stars, 'anthropic', 'metric:Fable (7d)', rowKeys);
+  const capped = toggleStar(added.stars, 'anthropic', 'text:Extra usage', rowKeys);
+  const roomy = toggleStar({ anthropic: ['metric:Session (5h)'] }, 'anthropic', 'metric:Weekly (7d)', rowKeys);
+
+  // ASSERT: the new star takes the absent row's slot; two present stars still
+  // cap; with room to spare the absent star stays for when its row returns
+  assert.equal(added.error, '');
+  assert.deepEqual(added.stars.anthropic, ['metric:Weekly (7d)', 'metric:Fable (7d)']);
+  assert.equal(capped.error, 'Up to 2 stars per provider');
+  assert.deepEqual(capped.stars, added.stars);
+  assert.equal(roomy.error, '');
+  assert.deepEqual(roomy.stars.anthropic, ['metric:Session (5h)', 'metric:Weekly (7d)']);
 }
 
 // --- stars for providers that arrive late, and stars taken off on purpose (#437) --

@@ -5,6 +5,24 @@
 # file (`chmod 600 ~/.config/ai-usagebar/config.toml`). Otherwise env vars
 # are the safer choice.
 
+# API keys can also live in the macOS login Keychain instead of the env or
+# the file: map a vendor (or a named account "vendor.label") to the service
+# name of a generic-password item you created, e.g.
+#   security add-generic-password -a "$USER" -s MyZaiKey -w
+# The item is looked up by that service name and by the account "$USER", so
+# create it with -a "$USER" as above. The service name is stored here in
+# plaintext; only the key stays in the Keychain. Checked only after the env
+# var and any inline api_key miss. If the entry is set and the item is
+# missing, locked or denied, the error names the Keychain item.
+# Served sections: anthropic_api, zai, openrouter, deepseek, deepinfra, kilo,
+# novita, moonshot, grok, minimax, orcarouter, lyceum, synthetic, deeprelay,
+# mistral. An entry for any other section is a config error.
+# macOS only. On other platforms an entry is validated but never read, and
+# it does not mark the vendor as configured.
+[keychain]
+# zai = "MyZaiKey"
+# "openrouter.work" = "MyWorkKey"
+
 [ui]
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.
@@ -82,7 +100,8 @@
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"
-# macOS menu bar: "bars" (default) draws the usage chart; "provider" draws each
+# macOS menu bar: "icon" shows the app gauge without changing favorites;
+# "bars" (default) draws the usage chart; "provider" draws each
 # provider's logo followed by its value; "quattro" draws one chip, the logo, the
 # short name (cld, cdx, …) and the highest percentage among all the windows of
 # the provider selected in the popover, like the Quattro bar, leaving out any
@@ -172,11 +191,10 @@ enabled = true
 # real total spend. See
 # https://platform.claude.com/docs/en/manage-claude/usage-cost-api
 #
-# Opt-in (disabled until you set a key). Requires a Console *Admin key*
-# (`sk-ant-admin01-...`, sent as the `x-api-key` header), distinct from an
-# inference key. Admin keys exist only for ORGANIZATION accounts: set one up
-# first (Console > Settings > Organization) — the .../settings/admin-keys page
-# 404s for individual accounts.
+# Opt-in organization cost reports. Use an Admin API key or a personal/service
+# account key with organization scope and the required report permissions.
+# Availability depends on account type and roles; see docs/anthropic-api.md.
+# This reports spend, not prepaid balance.
 [anthropic_api]
 enabled = false
 api_key_env = "ANTHROPIC_ADMIN_KEY"  # checked first; if set + non-empty, used
@@ -278,8 +296,8 @@ api_key_env = "OPENROUTER_API_KEY"
 # api_key = "sk-or-v1-..."  # optional fallback; chmod 600 when inline
 # management_api_key_env = "OPENROUTER_WORK_MANAGEMENT_API_KEY"  # optional
 #
-# The same array works for [zai], [deepseek], [deepinfra], [kilo], [novita],
-# [moonshot], [grok], [minimax], [orcarouter], and [lyceum] — e.g.
+# The same array works for [anthropic_api], [zai], [deepseek], [deepinfra],
+# [kilo], [novita], [moonshot], [grok], [minimax], [orcarouter], and [lyceum] - e.g.
 # [[deepinfra.accounts]] — with the same show_default_account switch.
 # Region/team/organization/display settings stay per provider. See
 # docs/api-key-accounts.md.
@@ -575,10 +593,11 @@ api_key_env = "MINIMAX_API_KEY"    # checked first; if set + non-empty, used
 #   global -> api.minimax.io   |   cn -> api.minimaxi.com
 # region = "global"
 
-# Kiro CLI — no separate login step: reads the AWS SSO OIDC session kiro-cli
-# already wrote to its own local database after `kiro-cli login`. Shows the
-# credit pool from AmazonCodeWhispererService.GetUsageLimits — the same call
-# kiro-cli's own `/usage` slash command makes.
+# Kiro CLI — no separate login step: reads the AWS SSO OIDC or social-login
+# (Google / GitHub) session kiro-cli already wrote to its own local database
+# after `kiro-cli login`. Shows the credit pool from
+# AmazonCodeWhispererService.GetUsageLimits — the same call kiro-cli's own
+# `/usage` slash command makes.
 [kiro]
 # Disabled by default — enable once you've run `kiro-cli login` at least once
 # (it needs no key from you, but it does need that one-time login to exist).
