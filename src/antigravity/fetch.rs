@@ -262,6 +262,9 @@ async fn fetch_account_snapshot_at(
         return local;
     }
 
+    if !remote.agy.is_available() {
+        return local;
+    }
     let credential = remote.credential;
     let Ok(before) = saved_session(credential, RemoteFallbackReason::NoLocalServer) else {
         return local;
@@ -272,17 +275,22 @@ async fn fetch_account_snapshot_at(
     // A local server for another account must not block this account's CLI.
     remote.local_bases = Some(Vec::new());
     let cli_cache = Cache::at(cache.dir().join("agy").join(&before.fingerprint));
-    let Ok(mut reading) = fetch_snapshot_at(client, &cli_cache, cache_ttl, None, remote, now).await
-    else {
-        return local;
-    };
+    let mut reading =
+        match fetch_snapshot_inner(client, &cli_cache, cache_ttl, None, remote, now, false).await {
+            Ok(reading) => reading,
+            Err(AppError::Credentials(message)) if message == ACCOUNT_CHANGED_DURING_QUOTA => {
+                return Err(AppError::Credentials(message));
+            }
+            Err(_) => return local,
+        };
     let Ok(after) = saved_session(credential, RemoteFallbackReason::NoLocalServer) else {
-        return local;
+        return Err(AppError::Credentials(ACCOUNT_CHANGED_DURING_QUOTA.into()));
     };
+    if after.fingerprint != before.fingerprint || after.account_hash.as_deref() != Some(account) {
+        return Err(AppError::Credentials(ACCOUNT_CHANGED_DURING_QUOTA.into()));
+    }
     if reading.snapshot.source != AntigravitySource::Agy
         || reading.snapshot.account != remote_account(&before.fingerprint)
-        || after.fingerprint != before.fingerprint
-        || after.account_hash.as_deref() != Some(account)
     {
         return local;
     }
@@ -302,6 +310,18 @@ pub async fn fetch_snapshot_at(
     oauth: Option<&cloud::OauthClient>,
     remote: RemoteOverride<'_>,
     now: DateTime<Utc>,
+) -> Result<FetchOutcome> {
+    fetch_snapshot_inner(client, cache, cache_ttl, oauth, remote, now, true).await
+}
+
+async fn fetch_snapshot_inner(
+    client: &reqwest::Client,
+    cache: &Cache,
+    cache_ttl: Duration,
+    oauth: Option<&cloud::OauthClient>,
+    remote: RemoteOverride<'_>,
+    now: DateTime<Utc>,
+    allow_cloud_code: bool,
 ) -> Result<FetchOutcome> {
     cache.ensure_dir()?;
     let _lock = acquire_lock_async(&cache.lock_path(), LOCK_TIMEOUT).await?;
@@ -355,7 +375,18 @@ pub async fn fetch_snapshot_at(
                 agy: &remote.agy,
                 credential: remote.credential,
             };
-            match fetch_remote(client, cache, oauth, endpoints, token, renewal, now).await {
+            match fetch_remote(
+                client,
+                cache,
+                oauth,
+                endpoints,
+                token,
+                renewal,
+                now,
+                allow_cloud_code,
+            )
+            .await
+            {
                 Ok(RemoteReading::Live(snap)) => Ok(snap),
                 Ok(RemoteReading::Kept(outcome)) => return Ok(outcome),
                 Ok(RemoteReading::Backoff(remaining)) => {
@@ -839,6 +870,7 @@ async fn fetch_remote(
     token: Result<StoredToken>,
     renewal: Renewal<'_>,
     now: DateTime<Utc>,
+    allow_cloud_code: bool,
 ) -> Result<RemoteReading> {
     let mut token = token?;
     let oauth_path = cloud::oauth_cache_path(cache);
@@ -871,6 +903,11 @@ async fn fetch_remote(
             }
         }
         None => {}
+    }
+    if !allow_cloud_code {
+        return Err(AppError::Other(
+            "Antigravity: `agy` did not return a quota reading".into(),
+        ));
     }
     // Local RPC and `agy` can still answer after a cached window expires.
     // Once neither has a figure, honor the shared backoff before any OAuth
@@ -958,6 +995,7 @@ fn kept_agy_reading(cache: &Cache, account: &str, now: DateTime<Utc>) -> Option<
 fn account_key(user_status: &serde_json::Value) -> String {
     let email = user_status["userStatus"]["email"]
         .as_str()
+        .map(str::trim)
         .filter(|s| !s.is_empty());
     match email {
         Some(e) => {
@@ -4861,8 +4899,11 @@ mod tests {
             )
             .await;
             assert!(
-                out.is_err(),
-                "{changed} changed while agy was reading quota"
+                matches!(
+                    out,
+                    Err(AppError::Credentials(ref msg)) if msg == ACCOUNT_CHANGED_DURING_QUOTA
+                ),
+                "{changed} changed while agy was reading quota; got {out:?}"
             );
             assert!(!cache.payload_path().exists());
             assert!(
@@ -4897,6 +4938,71 @@ mod tests {
             assert_eq!(std::fs::read_to_string(&runs).unwrap().lines().count(), 2);
             plan.assert_async().await;
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn session_account_does_not_call_cloud_code_when_agy_unavailable_or_fails() {
+        let mut server = mockito::Server::new_async().await;
+        let eps = endpoints(&server);
+        let quota = server
+            .mock("POST", "/daily/quota")
+            .with_status(200)
+            .with_body(QUOTA_JSON)
+            .expect(0)
+            .create_async()
+            .await;
+        let (td, cache) = fixture();
+        let mut blob: serde_json::Value = serde_json::from_str(&keyring_blob(VALID, true)).unwrap();
+        blob["id_token_email"] = serde_json::json!("same@example.com");
+        let blob = blob.to_string();
+        let fingerprint = credential::parse_keyring_blob(&blob).unwrap().fingerprint;
+        let cli_cache = Cache::at(cache.dir().join("agy").join(fingerprint));
+        let account = super::super::account_hash("same@example.com");
+
+        // Case 1: `agy` is unavailable (`AgyCommand::Off`).
+        let out = fetch_account_snapshot_at(
+            &reqwest::Client::new(),
+            &cache,
+            Duration::ZERO,
+            &account,
+            RemoteOverride {
+                credential: SavedCredential::Blob(&blob),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![]),
+                agy: super::super::agy::AgyCommand::Off,
+                ..Default::default()
+            },
+            now(),
+        )
+        .await;
+        assert!(out.is_err());
+        assert!(!cli_cache.payload_path().exists());
+
+        // Case 2: `agy` is installed but exits non-zero.
+        let failing_agy = td.path().join("agy-fail");
+        super::super::agy::test_support::write_script(&failing_agy, "exit 1");
+        let out = fetch_account_snapshot_at(
+            &reqwest::Client::new(),
+            &cache,
+            Duration::ZERO,
+            &account,
+            RemoteOverride {
+                credential: SavedCredential::Blob(&blob),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![]),
+                agy: super::super::agy::AgyCommand::At(failing_agy),
+                ..Default::default()
+            },
+            now(),
+        )
+        .await;
+        assert!(out.is_err());
+        assert!(
+            !cli_cache.payload_path().exists(),
+            "a failed agy run must not fall back to Cloud Code or cache a Remote payload"
+        );
+        quota.assert_async().await;
     }
 
     /// #450: `agy`'s own reading answers before the Cloud Code API is asked,
