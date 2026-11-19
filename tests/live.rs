@@ -1167,3 +1167,84 @@ async fn cline_live() {
         out.snapshot.thirty_day.as_ref().map(|w| w.pct()),
     );
 }
+
+/// Every status-page component a provider's mark depends on must still exist
+/// on the live page under that exact name. The match is by name, so a renamed
+/// component fails silently in production: the mark just stops appearing. This
+/// is the only place that drift becomes visible. Needs no credentials.
+///
+/// It fails on one thing only: a page that answers 200 and does not list a
+/// name. A page that is down, rate limiting or unreachable says nothing about
+/// its component names, so it is reported and skipped rather than failing a
+/// gate that has nothing to do with it.
+#[tokio::test]
+#[ignore]
+async fn status_page_components_live() {
+    use ai_usagebar::incident::{status_summary_url, unmatched_components};
+    use ai_usagebar::vendor::{VendorId, same_origin_redirect_policy};
+
+    // The redirect policy the app's own client has: a page that moved to
+    // another host answers this test with the redirect, as it answers the app,
+    // instead of being followed to a 200 the app would never see.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(same_origin_redirect_policy())
+        .build()
+        .unwrap();
+    // Every vendor with a status source, so one added later is checked too.
+    // Cache fetched bodies by URL so providers sharing a status page (e.g.
+    // Claude and Anthropic API on status.claude.com) only fetch it once.
+    let mut fetched: std::collections::HashMap<&'static str, Option<String>> =
+        std::collections::HashMap::new();
+    let mut checked = 0;
+    for &vendor in VendorId::all() {
+        let Some(url) = status_summary_url(vendor) else {
+            continue;
+        };
+        checked += 1;
+        let slug = vendor.slug();
+        let body = if let Some(cached) = fetched.get(url) {
+            cached.clone()
+        } else {
+            let result = match client.get(url).send().await {
+                Ok(response) if response.status() == reqwest::StatusCode::OK => {
+                    match response.text().await {
+                        Ok(body) => Some(body),
+                        Err(error) => {
+                            println!(
+                                "⚠ status page — {slug}: {url} body not read ({error}); not checked"
+                            );
+                            None
+                        }
+                    }
+                }
+                Ok(response) => {
+                    println!(
+                        "⚠ status page — {slug}: {url} answered {}; not checked",
+                        response.status()
+                    );
+                    None
+                }
+                Err(error) => {
+                    println!("⚠ status page — {slug}: {url} unreachable ({error}); not checked");
+                    None
+                }
+            };
+            fetched.insert(url, result.clone());
+            result
+        };
+        let Some(body) = body else {
+            continue;
+        };
+        // A 200 that is not a status summary lists none of the names either.
+        let unmatched = unmatched_components(vendor, &body).unwrap_or_else(|| {
+            panic!("{slug}: {url} answered 200 with a body that is not a status summary")
+        });
+        assert!(
+            unmatched.is_empty(),
+            "{slug}: {url} no longer lists {unmatched:?}"
+        );
+        println!("✅ status page — {slug} components all present");
+    }
+    assert!(checked > 0, "no vendor has a status source to check");
+}

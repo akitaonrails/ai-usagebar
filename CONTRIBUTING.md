@@ -18,7 +18,8 @@ cargo machete                               # no unused dependencies
 
 `make test` rather than `cargo test`: the frontends have Node and Python
 contract tests, and a change to the report shape can break them without
-touching Rust.
+touching Rust. Both stay offline and hermetic. To also check live provider
+status-page component names, run `make status-pages-test` (or `make smoke`).
 
 ## Checklist
 

@@ -135,6 +135,12 @@ export interface CardWarning {
   title: string;
 }
 
+export interface IncidentInfo {
+  severity: "degraded_performance" | "partial_outage" | "major_outage" | "under_maintenance";
+  title: string;
+  url: string;
+}
+
 export interface ResetCredit {
   expiresAt: string;
   title: string;
@@ -161,6 +167,7 @@ export interface Card {
   stale: boolean;
   title: string;
   warning: CardWarning | null;
+  incident?: IncidentInfo | null;
 }
 
 export interface MetricSection {
@@ -204,6 +211,7 @@ export interface Entry {
   shortName: string;
   stale: boolean;
   status: string;
+  incident?: IncidentInfo | null;
 }
 
 export type UpdateMode = "auto" | "notify" | "off";

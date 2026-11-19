@@ -40,6 +40,8 @@
   --red: #ff3b30;
   --orange: #ff9500;
   --green: #34c759;
+  --incident-yellow: #8a5a00;
+  --incident-orange: #b84a00;
   --accent: var(--blue);
 
   /* Chrome: back/reset circles, Options capsule, translucent bars. */
@@ -203,6 +205,8 @@
   --red: #ff453a;
   --orange: #ff9f0a;
   --green: #30d158;
+  --incident-yellow: var(--yellow);
+  --incident-orange: var(--orange);
   --control-fill: rgba(255, 255, 255, 0.08);
   --control-fill-hover: rgba(255, 255, 255, 0.14);
   --bar-glass: rgba(30, 30, 30, 0.82);
@@ -243,6 +247,8 @@
   --color-meter-yellow: var(--yellow);
   --color-meter-red: var(--red);
   --color-notice: var(--orange);
+  --color-incident-yellow: var(--incident-yellow);
+  --color-incident-orange: var(--incident-orange);
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;

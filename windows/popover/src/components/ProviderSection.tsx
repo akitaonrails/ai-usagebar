@@ -60,6 +60,7 @@ import {
   resetCreditDetails,
   resetText,
   rowKey,
+  incidentTone,
   sendCommand,
   usageGoal,
   usageGoalPercent,
@@ -292,18 +293,45 @@ export function ProviderSectionHeader({
   const name = title || card.title;
   const { language } = useI18n();
   const age = card.stale && card.fetchedAt && nowMs > card.fetchedAt ? ` · ${formatAgo(nowMs - card.fetchedAt, language)}` : "";
+  const incident = card.incident || null;
+  const tone = incidentTone(incident);
   return (
     <header
       className="group/header flex items-center gap-[var(--gap-inline)] px-[var(--card-pad)] py-[var(--space-2xs)]"
+      data-incident={incident?.severity}
       {...handle?.attributes}
       {...handle?.listeners}
     >
-      <ProviderIcon className="text-label-2" size="var(--sz-icon)" slug={card.icon} title={name} />
+      <ProviderIcon className={cn("text-label-2", tone)} size="var(--sz-icon)" slug={card.icon} title={name} />
       <div className="flex min-w-0 items-baseline gap-[var(--gap-inline)]">
-        <TruncatedText className="min-w-0 text-[length:var(--sz-header)] font-semibold">{name}</TruncatedText>
+        <TruncatedText
+          className={cn("min-w-0 text-[length:var(--sz-header)] font-semibold", tone)}
+          hint={incident?.title}
+        >
+          {name}
+        </TruncatedText>
         {plan ? <span className="shrink-0 text-[length:var(--sz-badge)] text-label-2">{plan}</span> : null}
         {card.stale ? <span className="text-[length:var(--sz-badge)] text-label-3">{m.stale()}{age}</span> : null}
       </div>
+      {incident ? (
+        <Hint content={incident.title}>
+          <button
+            type="button"
+            aria-label={m.incident_active({ title: incident.title })}
+            className={cn("plain-btn shrink-0", tone)}
+            disabled={!incident.url}
+            onClick={() => {
+              if (incident.url) sendCommand("open-url", { url: incident.url });
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <MdiAlert className="size-[var(--icon-mark)] shrink-0">
+              <title>{incident.title}</title>
+            </MdiAlert>
+          </button>
+        </Hint>
+      ) : null}
       {card.errorTitle ? (
         <MdiAlert className="size-[var(--icon-mark)] shrink-0 text-meter-red" aria-label={card.errorTitle}>
           <title>{card.errorDetail}</title>
