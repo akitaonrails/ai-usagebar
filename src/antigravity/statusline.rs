@@ -141,12 +141,12 @@ impl ProcessInspector for MacProcessInspector {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", all(unix, test)))]
 struct LinuxProcessInspector {
     proc_root: PathBuf,
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", all(unix, test)))]
 impl LinuxProcessInspector {
     #[cfg(target_os = "linux")]
     fn system() -> Self {
@@ -155,7 +155,7 @@ impl LinuxProcessInspector {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(unix, test))]
     fn at(proc_root: impl Into<PathBuf>) -> Self {
         Self {
             proc_root: proc_root.into(),
@@ -174,7 +174,7 @@ fn parse_proc_stat_ppid(stat: &str) -> Option<u32> {
     (ppid > 0).then_some(ppid)
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", all(unix, test)))]
 impl ProcessInspector for LinuxProcessInspector {
     fn parent_pid(&self, pid: u32) -> Option<u32> {
         let stat =
