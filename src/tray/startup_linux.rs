@@ -69,18 +69,22 @@ pub(crate) fn set_enabled_at(dir: &Path, exe: &Path, enabled: bool) -> Result<()
 
 /// The `Exec=` value for `exe`, serialized in the two layers the Desktop Entry
 /// Spec stacks: (a) the argument quoted in double quotes, where `"`, `` ` ``,
-/// `$` and `\` take a backslash and a literal `%` is written `%%` (a bare one
-/// starts a field code); (b) the whole value then goes through the keyfile
-/// string escape, where `\` becomes `\\`. A path that is not UTF-8, or that
-/// holds any control character (`\n`, `\r` and `\t` included, which the
-/// keyfile layer cannot carry without changing the file's structure), is
-/// refused instead of being altered.
+/// `$` and `\` take a backslash; (b) the whole value then goes through the
+/// keyfile string escape, where `\` becomes `\\`. A path that is not UTF-8,
+/// that holds any control character (`\n`, `\r` and `\t` included, which the
+/// keyfile layer cannot carry without changing the file's structure), or that
+/// holds a `%` is refused instead of being altered. The spec writes a literal
+/// `%` as `%%`, but GIO's `DesktopAppInfo` refuses such an entry outright (seen
+/// with GLib 2.90), so the entry would be written yet never start.
 fn exec_value(exe: &Path) -> Result<String, String> {
     let path = exe
         .to_str()
         .ok_or_else(|| "the executable path is not valid UTF-8".to_string())?;
     if path.chars().any(char::is_control) {
         return Err("the executable path contains a control character".to_string());
+    }
+    if path.contains('%') {
+        return Err("the executable path contains a '%', which autostart cannot run".to_string());
     }
     let mut quoted = String::with_capacity(path.len() + 2);
     quoted.push('"');
@@ -90,7 +94,6 @@ fn exec_value(exe: &Path) -> Result<String, String> {
                 quoted.push('\\');
                 quoted.push(ch);
             }
-            '%' => quoted.push_str("%%"),
             _ => quoted.push(ch),
         }
     }
@@ -133,7 +136,7 @@ mod tests {
     #[test]
     fn writes_the_expected_desktop_entry_with_an_escaped_exec() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = Path::new("/opt/My Apps/ai-\"usage\"\\bar$HOME`id`/100%/tray");
+        let exe = Path::new("/opt/My Apps/ai-\"usage\"\\bar$HOME`id`/tray");
         set_enabled_at(dir.path(), exe, true).unwrap();
 
         assert!(is_enabled_at(dir.path()));
@@ -143,7 +146,7 @@ mod tests {
                 "[Desktop Entry]\n",
                 "Type=Application\n",
                 "Name=AI Usage Bar\n",
-                r#"Exec="/opt/My Apps/ai-\\"usage\\"\\\\bar\\$HOME\\`id\\`/100%%/tray""#,
+                r#"Exec="/opt/My Apps/ai-\\"usage\\"\\\\bar\\$HOME\\`id\\`/tray""#,
                 "\n",
                 "Icon=ai-usagebar\n",
                 "X-GNOME-Autostart-enabled=true\n",
@@ -155,7 +158,7 @@ mod tests {
 
     /// Undoes the two layers in reverse order, strictly: the keyfile string
     /// escape first, then the `Exec` double-quote rules. Anything the encoder
-    /// should never emit (a lone `\`, `%`, or an unescaped `"`) panics.
+    /// should never emit (a lone `\`, any `%`, or an unescaped `"`) panics.
     fn decode_exec(line: &str) -> String {
         let value = line.strip_prefix("Exec=").expect("an Exec= line");
         let mut unkeyed = String::new();
@@ -182,11 +185,7 @@ mod tests {
                     );
                     out.push(next);
                 }
-                '%' => {
-                    assert_eq!(chars.next(), Some('%'), "Exec layer: bare field code");
-                    out.push('%');
-                }
-                '"' | '$' | '`' => panic!("unescaped {ch:?}"),
+                '%' | '"' | '$' | '`' => panic!("unescaped {ch:?}"),
                 _ => out.push(ch),
             }
         }
@@ -201,10 +200,8 @@ mod tests {
             "/opt/a`b/tray",
             "/opt/a$b/tray",
             "/opt/a\\b/tray",
-            "/opt/100%/tray",
-            "/opt/50%%/%s/tray",
             "/opt/Início ção/日本/tray",
-            "/opt/\\\"$`%/all/tray",
+            "/opt/\\\"$`/all/tray",
         ] {
             let dir = tempfile::tempdir().unwrap();
             set_enabled_at(dir.path(), Path::new(exe), true).unwrap();
@@ -231,6 +228,17 @@ mod tests {
             let dir = root.path().join("autostart");
             let error = set_enabled_at(&dir, Path::new(exe), true).unwrap_err();
             assert!(error.contains("control character"), "{exe:?}: {error}");
+            assert!(!dir.exists(), "{exe:?}: the directory was created");
+        }
+    }
+
+    #[test]
+    fn a_percent_in_the_path_is_refused_and_nothing_is_written() {
+        for exe in ["/opt/100%/tray", "/opt/50%%/tray", "/opt/%s/tray"] {
+            let root = tempfile::tempdir().unwrap();
+            let dir = root.path().join("autostart");
+            let error = set_enabled_at(&dir, Path::new(exe), true).unwrap_err();
+            assert!(error.contains('%'), "{exe:?}: {error}");
             assert!(!dir.exists(), "{exe:?}: the directory was created");
         }
     }

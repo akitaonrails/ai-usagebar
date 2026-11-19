@@ -23,7 +23,8 @@ codebase.
 - An optional Claude Code context view reads recent local session usage without
   scanning entire histories.
 - Native integrations are available for Omarchy, GNOME Shell, KDE Plasma 6,
-  and a macOS/Windows system-tray popover (`ai-usagebar-tray`). An experimental
+  and a macOS/Windows system-tray popover (`ai-usagebar-tray`, opt-in on Linux,
+  see [Linux tray](#linux-tray-opt-in)). An experimental
   GTK tray frontend for Linux Mint is in [`linux-mint/`](linux-mint/README.md).
 - One bar item can cycle through enabled providers. `[ui] primary` controls the
   initial provider in both the widget and TUI.
@@ -998,6 +999,25 @@ On macOS, Chart (default) shows the starred metrics:
 Logos shows one highest-usage percentage per starred provider (lowest remaining
 in Left), excluding hidden metrics, just like Quattro's auto window. ·
 Quattro: one chip with the selected provider's logo, short name and highest percentage.
+
+### Linux tray (opt-in)
+
+The same popover runs on Linux behind the `linux-tray` cargo feature, which
+is off by default:
+
+```sh
+# needs GTK 3, WebKitGTK 4.1 (webkit2gtk-4.1) and libsoup 3
+cargo build --release --features linux-tray --bin ai-usagebar-tray
+./target/release/ai-usagebar-tray
+```
+
+The icon registers with any StatusNotifierItem tray (Waybar's `tray` module,
+KDE Plasma, GNOME with the AppIndicator extension); a left click toggles the
+popover and a right click opens the options menu. Start at Login writes
+`~/.config/autostart/ai-usagebar-tray.desktop` (or under `$XDG_CONFIG_HOME`).
+Wayland compositors decide where the popover opens, so it may not sit next to
+the icon. Not available yet on Linux: a global shortcut, Open TUI, and
+self-update (install new releases the way you installed this one).
 
 ### Desktop integrations
 

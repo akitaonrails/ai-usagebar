@@ -57,9 +57,14 @@ fn spawn_reaped(
 ) -> std::io::Result<(u32, std::thread::JoinHandle<()>)> {
     let mut child = command.spawn()?;
     let pid = child.id();
-    let reaper = std::thread::spawn(move || {
-        let _ = child.wait();
-    });
+    // `Builder::spawn` reports a refused thread instead of panicking on the
+    // GTK thread. Without a reaper the child is left to finish on its own and
+    // lingers as a zombie, which is the lesser failure.
+    let reaper = std::thread::Builder::new()
+        .name("xdg-open-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        })?;
     Ok((pid, reaper))
 }
 

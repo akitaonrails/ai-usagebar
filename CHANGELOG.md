@@ -2,6 +2,16 @@
 
 ### Added
 
+- **Linux system-tray popover (opt-in).** `ai-usagebar-tray` builds on Linux
+  with `cargo build --release --features linux-tray --bin ai-usagebar-tray`.
+  The icon goes to any StatusNotifierItem tray (Waybar, KDE, GNOME with
+  AppIndicator) and a left click toggles the same popover as on macOS and
+  Windows, rendered by WebKitGTK. Start at Login writes
+  `~/.config/autostart/ai-usagebar-tray.desktop`; links open with `xdg-open`.
+  Not in this first version: a global shortcut, Open TUI, and self-update.
+  The feature is off by default, so the default build, the AUR packages, Nix
+  and CI need no GTK or WebKit.
+
 - **Grouped `[[custom]]` sources as account tabs.** Setting `group` and
   `account` together on `[[custom]]` entries with the same display `name`
   groups them under one category (`custom:<group>@<account>`) with account tabs

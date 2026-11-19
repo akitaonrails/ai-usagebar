@@ -1040,14 +1040,20 @@ fn apply_theme(state: &mut TrayState, theme: Theme) {
 
 fn toggle_startup(state: &mut TrayState) {
     let next = !startup::is_enabled();
-    if startup::set_enabled(next).is_ok() {
-        if let Some(obj) = state.payload.as_object_mut() {
-            obj.insert("startup_enabled".into(), Value::Bool(next));
+    match startup::set_enabled(next) {
+        Ok(()) => {
+            if let Some(obj) = state.payload.as_object_mut() {
+                obj.insert("startup_enabled".into(), Value::Bool(next));
+            }
+            if state.js_ready {
+                push_to_webview(state);
+            }
+            refresh_menu(state);
         }
-        if state.js_ready {
-            push_to_webview(state);
-        }
-        refresh_menu(state);
+        Err(error) => eprintln!(
+            "ai-usagebar-tray: start at login was not changed: {}",
+            crate::display::sanitize_untrusted_line(&error)
+        ),
     }
 }
 
