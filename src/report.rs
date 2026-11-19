@@ -340,7 +340,7 @@ async fn collect_filtered_json_with(
     let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
     let tabs: Vec<TabId> = tabs_with_desktop(&config)
         .into_iter()
-        .filter(|tab| tab_provider_id(tab) == provider)
+        .filter(|tab| tab_provider_id(&config, tab) == provider)
         .collect();
     if tabs.is_empty() {
         return Err(format!("no enabled provider matches {provider}"));
@@ -374,11 +374,16 @@ async fn collect_filtered_json_with(
     ))
 }
 
-fn tab_provider_id(tab: &TabId) -> String {
-    match &tab.source {
-        TabSource::Builtin(vendor) => vendor.slug().to_string(),
-        TabSource::Custom { id, .. } => format!("custom:{id}"),
+/// The provider a filter names `tab` by: its report id up to any
+/// `@<account>`. A grouped `[[custom]]` source is `custom:<group>`, not its
+/// own `custom:<id>`, so the tabs kept here are the ones
+/// [`report_targets_for_filter_with_config`] can then match.
+fn tab_provider_id(config: &Config, tab: &TabId) -> String {
+    let mut id = tab_report_id(config, tab);
+    if let Some(at) = id.find('@') {
+        id.truncate(at);
     }
+    id
 }
 
 /// Snapshot one configured vendor or account — the entry whose `id` is
