@@ -7,9 +7,14 @@
   The icon goes to any StatusNotifierItem tray (Waybar, KDE, GNOME with
   AppIndicator) and a left click toggles the same popover as on macOS and
   Windows, rendered by WebKitGTK (the build needs npm to generate the popover
-  UI, unless `windows/popover/dist` is already built). Start at Login writes `ai-usagebar-tray.desktop` to
-  `$XDG_CONFIG_HOME/autostart` (default `~/.config/autostart`) and refuses an
-  executable path containing `%`; links open with `xdg-open`.
+  UI, unless `windows/popover/dist` is already built). On Hyprland the popover
+  opens next to the bar on the monitor that was clicked, placed through
+  `hyprctl` with a runtime window rule (other compositors place it
+  themselves). The tray item has the stable id `ai-usagebar-tray`, so a bar
+  that pins icons by id (Omarchy) keeps the pin across restarts. Start at
+  Login writes `ai-usagebar-tray.desktop` to `$XDG_CONFIG_HOME/autostart`
+  (default `~/.config/autostart`) and refuses an executable path containing
+  `%`; links open with `xdg-open`.
   Not in this first version: a global shortcut, Open TUI, and self-update.
   The feature is off by default, so the default build, the AUR packages, Nix
   and CI need no GTK or WebKit.

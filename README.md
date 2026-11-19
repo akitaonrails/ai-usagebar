@@ -270,7 +270,7 @@ verifying their `.sha256`; all three live in the `[tray]` section of
 `config.toml` (`shortcut`, `refresh_minutes` = 1, 5, 10, 15, 30 or 60; default 5;
 `updates`). See [windows/README.md](windows/README.md).
 
-![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](screenshots/windows-tray-icon.png)
+![Windows tray icon in the notification area, beside the overflow chevron (this screenshot predates the gauge icon)](screenshots/windows-tray-icon.png)
 
 Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
@@ -1019,8 +1019,10 @@ popover and a right click opens the options menu. Start at Login writes
 `ai-usagebar-tray.desktop` in `$XDG_CONFIG_HOME/autostart` (default
 `~/.config/autostart`); an executable path containing `%` is refused, because
 autostart cannot launch it.
-Wayland compositors decide where the popover opens, so it may not sit next to
-the icon. Not available yet on Linux: a global shortcut, Open TUI, and
+On Hyprland the popover opens next to the bar on the monitor you clicked
+(placed through `hyprctl`); other Wayland compositors decide where it opens.
+The tray item's id is `ai-usagebar-tray`, which is what Omarchy's tray uses to
+remember a pinned icon. Not available yet on Linux: a global shortcut, Open TUI, and
 self-update (install new releases the way you installed this one).
 
 ### Desktop integrations

@@ -225,7 +225,7 @@ screen writes them. The NotifyIcon is the gauge mark from the popover's About sc
 at 16/20/24/32/40/48 px so the shell gets the exact size for the current DPI.
 It has no hover tip; the popover is the readout.
 
-![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](../screenshots/windows-tray-icon.png)
+![Windows tray icon in the notification area, beside the overflow chevron (this screenshot predates the gauge icon)](../screenshots/windows-tray-icon.png)
 
 ## Tray icon rasters
 
