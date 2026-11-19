@@ -60,6 +60,13 @@
   when two or more Claude accounts share a currency a `Claude extra` summary
   row totals their spend (and cap when every account has one) (#605).
 
+### Changed
+
+- **Tray icon: the gauge from the About screen.** The Windows notification-area
+  icon and the Linux tray icon now draw the same `mdi:gauge` mark as the macOS
+  menu bar's app-icon mode and the popover's About screen, instead of three
+  bars in a ring.
+
 ### Fixed
 
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
