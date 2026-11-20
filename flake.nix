@@ -57,18 +57,25 @@
         in
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              actionlint
-              cargo
-              cargo-machete
-              clippy
-              gnumake
-              nasm
-              nixfmt-rfc-style
-              nodejs
-              rustc
-              rustfmt
-            ];
+            packages =
+              with pkgs;
+              [
+                actionlint
+                cargo
+                cargo-machete
+                clippy
+                gnumake
+                nasm
+                nixfmt-rfc-style
+                nodejs
+                rustc
+                rustfmt
+              ]
+              ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux mold;
+            env = pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+              "CARGO_TARGET_${pkgs.stdenv.hostPlatform.rust.cargoEnvVarTarget}_RUSTFLAGS" =
+                "-C link-arg=-fuse-ld=mold";
+            };
           };
         }
       );
