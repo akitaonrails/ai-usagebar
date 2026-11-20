@@ -157,7 +157,7 @@ See [docs/configuration.md](docs/configuration.md) for the full reference.
 ## Ollama Cloud
 
 Native provider — **not** a `[[custom]]` table. Bearer token from
-https://ollama.com/settings/keys against `GET https://ollama.com/api/usage`.
+https://ollama.com/settings/keys against `GET https://ollama.com/api/balance`.
 
 Copy the `[ollama]` section from [config.example.toml](config.example.toml)
 into your config and set `enabled = true`:
@@ -176,8 +176,8 @@ export OLLAMA_API_KEY="…"          # minted at ollama.com/settings/keys
 ```
 
 The local daemon at `127.0.0.1:11434` has **no** quota route. The Ed25519
-CLI key in `~/.ollama/id_ed25519` is a registry credential and is refused by
-`/api/usage` with 401.
+CLI key in `~/.ollama/id_ed25519` is a registry credential (`pull` / `push`),
+not an API key.
 
 Full walkthrough: [docs/ollama-setup.md](docs/ollama-setup.md).
 

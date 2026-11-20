@@ -79,6 +79,11 @@
   do not return `HTTP 401 {"error":"unauthorized"}` and block the `agy` CLI and
   saved-session fallback (#635).
 
+- **Setup guides match the code they describe.** `DEVELOPMENT.md`,
+  `docs/configuration.md` and the troubleshooting probe in
+  `docs/windows-build.md` still named Ollama's `/api/usage`, which now returns
+  usage history; they name `/api/balance`, the endpoint the provider requests.
+
 ## [1.52.3] — 2026-11-18
 
 ### Fixed

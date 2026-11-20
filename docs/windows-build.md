@@ -144,7 +144,7 @@ compare with `docs/vendor-endpoints.md`:
 
 ```powershell
 Invoke-RestMethod `
-  -Uri "https://ollama.com/api/usage" `
+  -Uri "https://ollama.com/api/balance" `
   -Headers @{ Authorization = "Bearer $env:OLLAMA_API_KEY" }
 ```
 

@@ -379,7 +379,7 @@ async fn commandcode_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> 
     ))
 }
 
-/// Ollama Cloud: Bearer key against `ollama.com/api/usage`. The local
+/// Ollama Cloud: Bearer key against `ollama.com/api/balance`. The local
 /// `ollama` daemon at 127.0.0.1:11434 has no quota route and is never
 /// contacted; the Ed25519 key the CLI keeps in `~/.ollama/id_ed25519` is a
 /// registry credential, not a quota one, and is never read.
