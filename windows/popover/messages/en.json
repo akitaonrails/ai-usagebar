@@ -320,5 +320,10 @@
   "sign_in_denied": "The sign-in was turned down in the browser.",
   "sign_in_failed": "Couldn't sign in.",
   "sign_in_try_again": "Try again",
-  "sign_in_no_answer": "The tray hasn't answered. Close this and try again."
+  "sign_in_no_answer": "The tray hasn't answered. Close this and try again.",
+  "popover_width": "Popover Width",
+  "popover_width_hint": "From three quarters to three times this style's own width, in points. Hold an arrow to go faster; the reset arrow restores the original.",
+  "restore_popover_width": "Restore original width",
+  "increase_popover_width": "Increase width",
+  "decrease_popover_width": "Decrease width"
 }

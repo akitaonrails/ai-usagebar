@@ -92,6 +92,7 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{}} Date_UnavailableInputs */
 /** @typedef {{ day: NonNullable<unknown>, time: NonNullable<unknown> }} Day_AtInputs */
 /** @typedef {{ days: NonNullable<unknown> }} Days_AgoInputs */
+/** @typedef {{}} Decrease_Popover_WidthInputs */
 /** @typedef {{}} Default_AccountInputs */
 /** @typedef {{}} Detect_ProvidersInputs */
 /** @typedef {{}} Development_BuildInputs */
@@ -116,6 +117,7 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{}} HighestInputs */
 /** @typedef {{ hours: NonNullable<unknown> }} Hours_AgoInputs */
 /** @typedef {{ title: NonNullable<unknown> }} Incident_ActiveInputs */
+/** @typedef {{}} Increase_Popover_WidthInputs */
 /** @typedef {{}} InstallInputs */
 /** @typedef {{}} Install_UpdateInputs */
 /** @typedef {{}} InstallingInputs */
@@ -188,6 +190,8 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{ percent: NonNullable<unknown> }} Percent_UsedInputs */
 /** @typedef {{}} Popover_StyleInputs */
 /** @typedef {{}} Popover_Style_HintInputs */
+/** @typedef {{}} Popover_WidthInputs */
+/** @typedef {{}} Popover_Width_HintInputs */
 /** @typedef {{}} PreferencesInputs */
 /** @typedef {{}} Press_KeysInputs */
 /** @typedef {{}} Press_Keys_EllipsisInputs */
@@ -226,6 +230,7 @@ import { getLocale, experimentalStaticLocale } from "../runtime.js"
 /** @typedef {{}} ResetsInputs */
 /** @typedef {{ exact: NonNullable<unknown> }} Resets_AtInputs */
 /** @typedef {{ duration: NonNullable<unknown> }} Resets_InInputs */
+/** @typedef {{}} Restore_Popover_WidthInputs */
 /** @typedef {{ duration: NonNullable<unknown> }} Retrying_Automatically_InInputs */
 /** @typedef {{}} Same_Readings_PowerInputs */
 /** @typedef {{}} SessionInputs */
@@ -1780,6 +1785,22 @@ export const days_ago = /** @type {((inputs: Days_AgoInputs, options?: { locale?
 /**
 * | output |
 * | --- |
+* | "Decrease width" |
+*
+* @param {Decrease_Popover_WidthInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const decrease_popover_width = /** @type {((inputs?: Decrease_Popover_WidthInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Decrease_Popover_WidthInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.decrease_popover_width(inputs)
+	if (locale === "ko") return __ko.decrease_popover_width(inputs)
+	if (locale === "es") return __es.decrease_popover_width(inputs)
+	return __en.decrease_popover_width(inputs)
+});
+/**
+* | output |
+* | --- |
 * | "Default" |
 *
 * @param {Default_AccountInputs} inputs
@@ -2160,6 +2181,22 @@ export const incident_active = /** @type {((inputs: Incident_ActiveInputs, optio
 	if (locale === "ko") return __ko.incident_active(inputs)
 	if (locale === "es") return __es.incident_active(inputs)
 	return __en.incident_active(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Increase width" |
+*
+* @param {Increase_Popover_WidthInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const increase_popover_width = /** @type {((inputs?: Increase_Popover_WidthInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Increase_Popover_WidthInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.increase_popover_width(inputs)
+	if (locale === "ko") return __ko.increase_popover_width(inputs)
+	if (locale === "es") return __es.increase_popover_width(inputs)
+	return __en.increase_popover_width(inputs)
 });
 /**
 * | output |
@@ -3316,6 +3353,38 @@ export const popover_style_hint = /** @type {((inputs?: Popover_Style_HintInputs
 /**
 * | output |
 * | --- |
+* | "Popover Width" |
+*
+* @param {Popover_WidthInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const popover_width = /** @type {((inputs?: Popover_WidthInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Popover_WidthInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.popover_width(inputs)
+	if (locale === "ko") return __ko.popover_width(inputs)
+	if (locale === "es") return __es.popover_width(inputs)
+	return __en.popover_width(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "From three quarters to three times this style's own width, in points. Hold an arrow to go faster; the reset arrow restores the original." |
+*
+* @param {Popover_Width_HintInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const popover_width_hint = /** @type {((inputs?: Popover_Width_HintInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Popover_Width_HintInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.popover_width_hint(inputs)
+	if (locale === "ko") return __ko.popover_width_hint(inputs)
+	if (locale === "es") return __es.popover_width_hint(inputs)
+	return __en.popover_width_hint(inputs)
+});
+/**
+* | output |
+* | --- |
 * | "Preferences" |
 *
 * @param {PreferencesInputs} inputs
@@ -3920,6 +3989,22 @@ export const resets_in = /** @type {((inputs: Resets_InInputs, options?: { local
 	if (locale === "ko") return __ko.resets_in(inputs)
 	if (locale === "es") return __es.resets_in(inputs)
 	return __en.resets_in(inputs)
+});
+/**
+* | output |
+* | --- |
+* | "Restore original width" |
+*
+* @param {Restore_Popover_WidthInputs} inputs
+* @param {{ locale?: "en" | "pt-BR" | "ko" | "es" }} options
+* @returns {LocalizedString}
+*/
+export const restore_popover_width = /** @type {((inputs?: Restore_Popover_WidthInputs, options?: { locale?: "en" | "pt-BR" | "ko" | "es" }) => LocalizedString) & import('../runtime.js').MessageMetadata<Restore_Popover_WidthInputs, { locale?: "en" | "pt-BR" | "ko" | "es" }, {}>} */ ((inputs = {}, options = {}) => {
+	const locale = experimentalStaticLocale ?? options.locale ?? getLocale()
+	if (locale === "pt-BR") return __pt_br2.restore_popover_width(inputs)
+	if (locale === "ko") return __ko.restore_popover_width(inputs)
+	if (locale === "es") return __es.restore_popover_width(inputs)
+	return __en.restore_popover_width(inputs)
 });
 /**
 * | output |

@@ -48,6 +48,15 @@
   when two or more Claude accounts share a currency a `Claude extra` summary
   row totals their spend (and cap when every account has one) (#605).
 
+- **Popover Width in the tray's Settings.** Settings → Appearance → Popover
+  Width sets how wide the Windows and macOS popover is, in logical points, in
+  Classic and in Native. Type a number or use the step arrows: a click moves one
+  point, holding an arrow repeats and reaches five points per step after three
+  seconds, and the reset arrow returns to the style's own width. The range is
+  three quarters to three times that width, and the popover never grows past
+  the screen. The value is stored as `[tray] width` and applies at once.
+  Optional: with the key unset each style keeps the width it has today.
+
 ### Fixed
 
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The

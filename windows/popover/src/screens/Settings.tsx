@@ -6,6 +6,7 @@ import MdiTune from "~icons/mdi/tune-variant";
 import { ScreenCrossLinkRow } from "@/components/Chrome";
 import { IconButton } from "@/components/IconButton";
 import { ProviderList } from "@/components/ProviderList";
+import { PopoverWidthControl } from "@/components/PopoverWidthControl";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -191,11 +192,7 @@ export function Settings({
             onChange={(value) => sendCommand("set-shortcut", { value })}
           />
         </SettingRow>
-        {payload.shortcutError ? (
-          <div className="-mt-[var(--gap-stack)] px-[var(--card-pad)] pb-[var(--pad-control)] text-[length:var(--sz-badge)] text-meter-red">
-            {payload.shortcutError}
-          </div>
-        ) : null}
+        <SettingError text={payload.shortcutError} />
       </Section>
       </div>
       ) : null}
@@ -280,6 +277,15 @@ export function Settings({
             onChange={onPopoverStyle}
           />
         </SettingRow>
+        <SettingRow hint={m.popover_width_hint()} label={m.popover_width()}>
+          <PopoverWidthControl
+            value={payload.popoverWidth}
+            original={payload.popoverWidthDefaults[layout.popoverStyle]}
+            error={payload.popoverWidthError}
+            onChange={(width) => sendCommand("set-popover-width", { width })}
+          />
+        </SettingRow>
+        <SettingError text={payload.popoverWidthError} />
         <SettingRow hint={m.time_format_hint()} label={m.time_format()}>
           <Picker
             options={[
@@ -396,6 +402,16 @@ function SettingRow({ children, hint, label }: SettingRowProps) {
       </span>
       <span className="min-w-[var(--gap-controls)] flex-1" />
       {children}
+    </div>
+  );
+}
+
+/** Why the host refused the setting in the row above; nothing when it did not. */
+function SettingError({ text }: { text: string }) {
+  if (!text) return null;
+  return (
+    <div className="-mt-[var(--gap-stack)] px-[var(--card-pad)] pb-[var(--pad-control)] text-[length:var(--sz-badge)] text-meter-red">
+      {text}
     </div>
   );
 }

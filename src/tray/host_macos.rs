@@ -169,6 +169,8 @@ struct TrayState {
     /// Last CSS/logical height from the `resize` IPC; not derived from
     /// `inner_size / scale_factor`, which is wrong after a scale-factor change.
     popover_height: f64,
+    /// `[tray] width`; `None` is each style's own width.
+    popover_width: Option<u16>,
     theme: Theme,
     /// Last style the page reported; the AppKit material view shows only for `Native`.
     style: PopoverStyle,
@@ -293,6 +295,7 @@ fn run_loop() -> Result<(), String> {
         outside_clicks: None,
         last_anchor: None,
         popover_height: WINDOW_HEIGHT,
+        popover_width: config.tray.width,
         theme,
         style: PopoverStyle::Classic,
         native_background,
@@ -437,6 +440,11 @@ fn host_facts(config: &Config) -> HostFacts {
     let mut facts = HostFacts::new(env!("CARGO_PKG_VERSION"), startup::is_enabled());
     facts.updates = config.tray.updates().as_str().into();
     facts.refresh_secs = config.tray.refresh_minutes() * 60;
+    facts.popover_width = config.tray.width;
+    facts.popover_width_defaults = [
+        WINDOW_WIDTH as u16,
+        super::style::NATIVE_WINDOW_WIDTH as u16,
+    ];
     facts.accounts = account_facts(config);
     facts
 }
@@ -793,6 +801,25 @@ fn set_refresh(state: &mut TrayState, minutes: u64) {
     with_facts(&state.facts, |f| f.refresh_secs = minutes * 60);
     apply_facts(state);
     let _ = state.worker.send(WorkerCmd::Refresh);
+}
+
+/// `set-popover-width {width}`: persist `[tray] width` (`null` removes it) and resize at once.
+/// A value outside the active style's limits, or a config file that cannot be written, changes
+/// nothing, and the reason is shown under the control the way a refused shortcut is.
+fn set_popover_width(state: &mut TrayState, requested: &Value) {
+    let original = state.style.window_width(WINDOW_WIDTH);
+    match super::style::save_width(config_path().as_deref(), requested, original) {
+        Ok(width) => {
+            state.popover_width = width;
+            with_facts(&state.facts, |f| {
+                f.popover_width = width;
+                f.popover_width_error.clear();
+            });
+            resize_popover(state);
+        }
+        Err(reason) => with_facts(&state.facts, |f| f.popover_width_error = reason),
+    }
+    apply_facts(state);
 }
 
 fn push_to_webview(state: &TrayState) {
@@ -1156,6 +1183,11 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             let text = value.get("value").and_then(Value::as_str).unwrap_or("");
             set_shortcut(state, text);
         }
+        "set-popover-width" => {
+            if let Some(requested) = value.get("width") {
+                set_popover_width(state, requested);
+            }
+        }
         "set-refresh" => {
             if let Some(minutes) = value.get("minutes").and_then(Value::as_u64) {
                 set_refresh(state, minutes);
@@ -1285,13 +1317,23 @@ fn handle_resize(state: &mut TrayState, value: &Value) {
         resize = true;
     }
     if resize {
-        state.window.set_inner_size(LogicalSize::new(
-            state.style.window_width(WINDOW_WIDTH),
-            state.popover_height,
-        ));
-        if state.popover_open {
-            position_popover(state);
-        }
+        resize_popover(state);
+    }
+}
+
+/// Size the window for the current style, `[tray] width` and last reported height, and keep
+/// an open popover anchored to the status item.
+fn resize_popover(state: &TrayState) {
+    let width = state.style.configured_width(
+        WINDOW_WIDTH,
+        state.popover_width,
+        anchor_visible_width(state.last_anchor),
+    );
+    state
+        .window
+        .set_inner_size(LogicalSize::new(width, state.popover_height));
+    if state.popover_open {
+        position_popover(state);
     }
 }
 
@@ -1311,6 +1353,12 @@ fn apply_theme(state: &mut TrayState, theme: Theme) {
             window.setAppearance(Some(&appearance));
         }
     }
+}
+
+/// Visible width of the screen under the status item; `None` when no screen contains it.
+fn anchor_visible_width(anchor: Option<(f64, f64)>) -> Option<f64> {
+    let (x, y) = anchor.unwrap_or((0.0, 0.0));
+    screen_visible_containing(x, y).map(|visible| visible.w)
 }
 
 fn anchor_visible_height(anchor: Option<(f64, f64)>) -> f64 {
@@ -1483,7 +1531,9 @@ fn position_popover(state: &TrayState) {
         visible,
         below_y,
         icon_x,
-        popover_w: state.style.window_width(WINDOW_WIDTH),
+        popover_w: state
+            .style
+            .configured_width(WINDOW_WIDTH, state.popover_width, Some(visible.w)),
         popover_h: height,
     });
     apply_cocoa_frame(&state.window, frame);

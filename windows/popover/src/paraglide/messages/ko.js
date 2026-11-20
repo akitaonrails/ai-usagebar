@@ -90,6 +90,7 @@
 /** @typedef {{}} Date_UnavailableInputs */
 /** @typedef {{ day: NonNullable<unknown>, time: NonNullable<unknown> }} Day_AtInputs */
 /** @typedef {{ days: NonNullable<unknown> }} Days_AgoInputs */
+/** @typedef {{}} Decrease_Popover_WidthInputs */
 /** @typedef {{}} Default_AccountInputs */
 /** @typedef {{}} Detect_ProvidersInputs */
 /** @typedef {{}} Development_BuildInputs */
@@ -114,6 +115,7 @@
 /** @typedef {{}} HighestInputs */
 /** @typedef {{ hours: NonNullable<unknown> }} Hours_AgoInputs */
 /** @typedef {{ title: NonNullable<unknown> }} Incident_ActiveInputs */
+/** @typedef {{}} Increase_Popover_WidthInputs */
 /** @typedef {{}} InstallInputs */
 /** @typedef {{}} Install_UpdateInputs */
 /** @typedef {{}} InstallingInputs */
@@ -186,6 +188,8 @@
 /** @typedef {{ percent: NonNullable<unknown> }} Percent_UsedInputs */
 /** @typedef {{}} Popover_StyleInputs */
 /** @typedef {{}} Popover_Style_HintInputs */
+/** @typedef {{}} Popover_WidthInputs */
+/** @typedef {{}} Popover_Width_HintInputs */
 /** @typedef {{}} PreferencesInputs */
 /** @typedef {{}} Press_KeysInputs */
 /** @typedef {{}} Press_Keys_EllipsisInputs */
@@ -224,6 +228,7 @@
 /** @typedef {{}} ResetsInputs */
 /** @typedef {{ exact: NonNullable<unknown> }} Resets_AtInputs */
 /** @typedef {{ duration: NonNullable<unknown> }} Resets_InInputs */
+/** @typedef {{}} Restore_Popover_WidthInputs */
 /** @typedef {{ duration: NonNullable<unknown> }} Retrying_Automatically_InInputs */
 /** @typedef {{}} Same_Readings_PowerInputs */
 /** @typedef {{}} SessionInputs */
@@ -684,6 +689,10 @@ export const days_ago = /** @type {(inputs: Days_AgoInputs) => LocalizedString} 
 	return /** @type {LocalizedString} */ (`${i?.days}일 전`)
 };
 
+export const decrease_popover_width = /** @type {(inputs: Decrease_Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`너비 줄이기`)
+};
+
 export const default_account = /** @type {(inputs: Default_AccountInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`기본`)
 };
@@ -778,6 +787,10 @@ export const hours_ago = /** @type {(inputs: Hours_AgoInputs) => LocalizedString
 
 export const incident_active = /** @type {(inputs: Incident_ActiveInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`진행 중인 장애: ${i?.title}`)
+};
+
+export const increase_popover_width = /** @type {(inputs: Increase_Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`너비 늘리기`)
 };
 
 export const install = /** @type {(inputs: InstallInputs) => LocalizedString} */ () => {
@@ -1068,6 +1081,14 @@ export const popover_style_hint = /** @type {(inputs: Popover_Style_HintInputs) 
 	return /** @type {LocalizedString} */ (`클래식은 사용 속도와 초기화 정보를 담은 카드로 보여 줍니다. 네이티브는 시스템 모양을 따릅니다(macOS는 글래스, Windows는 Fluent).`)
 };
 
+export const popover_width = /** @type {(inputs: Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`팝오버 너비`)
+};
+
+export const popover_width_hint = /** @type {(inputs: Popover_Width_HintInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`이 스타일 기본 너비의 4분의 3에서 3배까지, 포인트 단위입니다. 화살표를 누르고 있으면 더 빨리 바뀌고, 복원 화살표는 기본 너비로 되돌립니다.`)
+};
+
 export const preferences = /** @type {(inputs: PreferencesInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`환경설정`)
 };
@@ -1218,6 +1239,10 @@ export const resets_at = /** @type {(inputs: Resets_AtInputs) => LocalizedString
 
 export const resets_in = /** @type {(inputs: Resets_InInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`${i?.duration} 후 초기화`)
+};
+
+export const restore_popover_width = /** @type {(inputs: Restore_Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`기본 너비 복원`)
 };
 
 export const retrying_automatically_in = /** @type {(inputs: Retrying_Automatically_InInputs) => LocalizedString} */ (i) => {
