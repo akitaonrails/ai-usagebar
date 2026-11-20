@@ -1214,7 +1214,10 @@ ai-usagebar antigravity remove-statusline
 This multi-account integration supports macOS and Linux (including WSL). On
 Linux, sessions launched with isolated `HOME` directories need a shared
 `XDG_CACHE_HOME` so snapshots land in the same cache directory, and a Windows
-monitor does not automatically read snapshots written inside WSL.
+monitor does not automatically read snapshots written inside WSL. To show
+those accounts in the Windows tray, publish the WSL report and map it with
+`[[custom]]` sources: see "Accounts signed in inside WSL" in
+[`windows/README.md`](windows/README.md).
 
 ### Multiple OpenRouter accounts
 

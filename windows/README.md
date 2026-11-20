@@ -227,6 +227,102 @@ It has no hover tip; the popover is the readout.
 
 ![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](../screenshots/windows-tray-icon.png)
 
+## Accounts signed in inside WSL
+
+The tray reads logins on the Windows side. Two kinds of account that live
+inside WSL are out of its reach by design: a login file on a
+`\\wsl.localhost\` path can be readable while the mount does not support the
+lock a refresh needs (see "Credentials on WSL UNC paths" in
+[`docs/windows-build.md`](../docs/windows-build.md)), and
+`agy` status-line snapshots written inside WSL stay in the Linux cache
+directory.
+
+What can cross is the report. The Linux `ai-usagebar` inside WSL reads those
+logins itself; publish its `usage --json` on loopback and map it in the
+Windows `config.toml` with `[[custom]]` sources (root README, "Custom
+providers"). Only the published figures cross; no credential leaves WSL.
+
+1. Inside WSL, save this filter as `~/aiub-wsl-rekey.py`, outside the
+   directory step 2 serves. `usage --json` lists entries and metrics as
+   arrays, and a pointer into an array follows position: when an account
+   drops out of the report, the next one would be read under its name. The
+   filter keys entries by `id` and metrics by `label`, so a missing account
+   or window fails its card instead. A label that repeats inside one entry
+   (Antigravity uses the same pool name under Session and Weekly) becomes
+   `<label> #1`, `<label> #2`, in report order.
+
+   ```python
+   import collections, json, sys, time
+
+   report = json.load(sys.stdin)
+   entries = {}
+   for entry in report["entries"]:
+       labels = [metric["label"] for metric in entry["metrics"]]
+       seen = collections.Counter()
+       metrics = {}
+       for metric in entry["metrics"]:
+           label = metric["label"]
+           seen[label] += 1
+           key = label if labels.count(label) == 1 else f"{label} #{seen[label]}"
+           metrics[key] = metric
+       entries[entry["id"]] = {
+           "plan": entry["plan"],
+           "stale": entry["stale"],
+           "metrics": metrics,
+       }
+   published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+   json.dump({"published_at": published_at, "entries": entries}, sys.stdout)
+   ```
+
+2. Still inside WSL, publish into a directory that holds nothing else, on a
+   timer (a systemd user timer, cron, or a loop), and serve that directory on
+   loopback:
+
+   ```sh
+   mkdir -p ~/aiub-wsl
+   # on the timer:
+   ai-usagebar usage --json | python3 ~/aiub-wsl-rekey.py \
+     > ~/aiub-wsl/usage.json.tmp \
+     && mv ~/aiub-wsl/usage.json.tmp ~/aiub-wsl/usage.json
+   # once, kept running:
+   python3 -m http.server 8765 --bind 127.0.0.1 --directory ~/aiub-wsl
+   ```
+
+   A timer can run with a shorter `PATH` than your shell: give it the full
+   path to `ai-usagebar` (`command -v ai-usagebar` prints it) when the binary
+   is not installed system-wide.
+
+   WSL 2 makes a port bound to localhost inside the VM reachable from Windows
+   as `localhost:<port>` by default
+   ([`localhostForwarding`](https://learn.microsoft.com/windows/wsl/wsl-config#wslconfig)).
+
+3. In the Windows `config.toml`, add one `[[custom]]` per account. The
+   commented "accounts signed in inside WSL" recipe in `config.example.toml`
+   is the starting point; the entry ids and metric labels to point at are the
+   keys of the published file. Entries that share `group` and `name` become
+   account tabs. A `/` in an id or label is written `~1` in a pointer, and a
+   `~` is written `~0`.
+
+Limits:
+
+- Figures update only while the distribution is running; the tray never
+  starts WSL. While the port does not answer, the card keeps its last values,
+  marked stale.
+- A static file server keeps answering with the last file after the publisher
+  has stopped, and a custom source cannot tell. The recipe maps `published_at`
+  and the entry's own `stale` flag as text rows for that reason.
+- A pointer whose target is missing or `null` fails the whole card, which
+  then keeps its last values with the error: an account that is not in the
+  report (an `agy` account with no live process), a window the provider did
+  not report, or a `reset_at` that is `null`. Leave `resets_at` out for a
+  window that can be without a reset time. The card names the pointer; run
+  `ai-usagebar usage` inside WSL for the cause.
+- `[[custom]]` requires a token and a static file server does not check it,
+  so any local process can read the published file. It holds plan names,
+  account ids and usage figures.
+- These are custom cards: meters and text rows. Reset credits, session rows
+  and status-page marks stay with the Linux binary's own frontends.
+
 ## Tray icon rasters
 
 `src/tray/icon.rs` embeds `windows/tray-icon-{16,20,24,32,40,48}.rgba`
