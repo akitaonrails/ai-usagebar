@@ -189,7 +189,8 @@ What each probe looks at: Claude `~/.claude/.credentials.json`; Codex
 Kiro `data.sqlite3`; Kimi `~/.kimi-code/credentials`; SuperGrok
 `~/.grok/auth.json`; Command Code `~/.commandcode/auth.json`; GitHub Copilot
 `GITHUB_COPILOT_TOKEN` or the `gh` CLI `hosts.yml`; Antigravity a running
-local product; Nous Research the saved OAuth credential; and every API-key
+local product, or the Google session token an earlier fetch cached; Nous
+Research the saved OAuth credential; and every API-key
 vendor (Z.AI, OpenRouter, DeepSeek, Grok, Kilo, Novita, Moonshot, MiniMax,
 OpenCode Go, Anthropic API, Mistral) its env var or the `api_key` in
 `config.toml`.

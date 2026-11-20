@@ -137,7 +137,12 @@ Antigravity has no credential file to check, so the Vendors pane treats it as
 directories (`~/.gemini/{antigravity,antigravity-cli,antigravity-ide}`) — the
 binary itself discovers whichever local server is actually reachable
 (Antigravity 2.0, the IDE, or an interactive `agy` session) via `lsof` at fetch
-time, so one of those must be running for quota to load.
+time. When none is found, or a running `agy` cannot be queried, it falls back
+to the Google session Antigravity saved at sign-in (the login Keychain, or the
+`agy` CLI's token file): it asks `agy -p "/quota"` first when `agy` is
+installed, keeps `agy`'s last reading (marked stale) when `agy` does not
+answer, and asks the Cloud Code API only when there is no `agy` reading to
+keep.
 
 ## Requirements
 

@@ -83,6 +83,10 @@
   `docs/configuration.md` and the troubleshooting probe in
   `docs/windows-build.md` still named Ollama's `/api/usage`, which now returns
   usage history; they name `/api/balance`, the endpoint the provider requests.
+  The GNOME, KDE and macOS READMEs said Antigravity quota exists only while a
+  product is running; they now describe the saved-session fallback (`agy`,
+  then the Cloud Code API), and the GNOME and KDE ones say that per-account
+  status-line entries never take quota from the Cloud Code API.
 
 ## [1.52.3] — 2026-11-18
 
