@@ -1487,3 +1487,96 @@ button.desktop-account-control:focus-visible {
   background-image: linear-gradient(var(--hover-fill), var(--hover-fill));
 }
 
+/* Native on Linux with Omarchy: only colours and the compositor's corner radius change.
+   Type, spacing, control sizes and states stay exactly as the shared Native style. There is
+   no glass material and no CSS window edge: Hyprland already paints the window border. */
+html:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
+  --window-radius: var(--om-rounding, 0px);
+}
+
+.native-panel[data-os="linux"][data-desktop="omarchy"] {
+  box-shadow: none;
+}
+
+body:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
+  --surface: var(--om-background, var(--export-surface));
+  --card: var(--om-lighter-background, var(--om-background, var(--export-card)));
+  --menu: var(--om-background, var(--export-surface));
+  --separator: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.1)) 25%, var(--om-background, var(--export-surface)));
+  --label-1: var(--om-foreground, rgba(0, 0, 0, 0.85));
+  --label-2: var(--om-foreground, rgba(0, 0, 0, 0.5));
+  --label-3: var(--om-muted, rgba(0, 0, 0, 0.26));
+  --control-fill: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.06)) 4%, var(--om-background, var(--export-surface)));
+  --control-fill-hover: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.1)) 8%, var(--om-background, var(--export-surface)));
+  --hover-fill: var(--control-fill-hover);
+  --menu-hover: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.06)) 8%, var(--om-background, var(--export-surface)));
+  --fill-quaternary: var(--control-fill);
+  --fill-tertiary: var(--control-fill-hover);
+  --bar-glass: var(--om-background, var(--export-surface));
+  --accent: var(--om-accent, #007aff);
+  --blue: var(--om-blue, var(--om-accent, #007aff));
+  --yellow: var(--om-yellow, #ffcc00);
+  --red: var(--om-red, var(--om-accent, #ff3b30));
+  --orange: var(--om-orange, var(--om-yellow, #ff9500));
+  --green: var(--om-green, var(--om-accent, #34c759));
+  --incident-yellow: var(--om-yellow, #8a5a00);
+  --incident-orange: var(--om-orange, #b84a00);
+  --switch-off: var(--om-muted, var(--om-selection, #d9d9d9));
+  --native-blur: 0px;
+
+  --card-radius: var(--om-rounding, 0px);
+  --menu-radius: var(--om-rounding, 0px);
+  --radius-full: var(--om-rounding, 0px);
+  --radius-sm: var(--om-rounding, 0px);
+  --radius-md: var(--om-rounding, 0px);
+  --radius-lg: var(--om-rounding, 0px);
+  --radius-xl: var(--om-rounding, 0px);
+  --radius-xs: var(--om-rounding, 0px);
+  --icon-btn-radius: var(--om-rounding, 0px);
+  --hint-radius: var(--om-rounding, 0px);
+  --hover-row-radius: var(--om-rounding, 0px);
+  --switch-radius: var(--om-rounding, 0px);
+  --switch-knob-radius: var(--om-rounding, 0px);
+
+  background: var(--surface);
+
+  .dark & {
+    --menu: var(--om-background, #2b2b2b);
+    --separator: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.1)) 25%, var(--om-background, var(--export-surface)));
+    --label-1: var(--om-foreground, rgba(255, 255, 255, 0.85));
+    --label-2: var(--om-foreground, rgba(255, 255, 255, 0.55));
+    --label-3: var(--om-muted, rgba(255, 255, 255, 0.25));
+    --control-fill: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.08)) 4%, var(--om-background, var(--export-surface)));
+    --control-fill-hover: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.14)) 8%, var(--om-background, var(--export-surface)));
+    --hover-fill: var(--control-fill-hover);
+    --menu-hover: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.1)) 8%, var(--om-background, var(--export-surface)));
+    --accent: var(--om-accent, #0a84ff);
+    --blue: var(--om-blue, var(--om-accent, #0a84ff));
+    --yellow: var(--om-yellow, #ffd60a);
+    --red: var(--om-red, var(--om-accent, #ff453a));
+    --orange: var(--om-orange, var(--om-yellow, #ff9f0a));
+    --green: var(--om-green, var(--om-accent, #30d158));
+    --incident-yellow: var(--om-yellow, #ffd60a);
+    --incident-orange: var(--om-orange, #ff9f0a);
+    --switch-off: var(--om-muted, var(--om-selection, #454545));
+  }
+
+  & [data-slot="tooltip-content"] {
+    background-color: var(--om-hint-bg, var(--hint-bg));
+    color: var(--om-hint-fg, var(--hint-fg));
+  }
+
+  & :is(
+    [data-slot="dropdown-menu-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="dialog-content"],
+    [data-slot="tooltip-content"],
+    .bar-glass,
+    .native-tab
+  ) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+

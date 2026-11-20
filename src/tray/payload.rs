@@ -20,6 +20,8 @@ pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30
 pub struct HostFacts {
     /// Windows system accent colors for the Fluent popover; absent on other hosts.
     pub accent: Option<super::accent::Accent>,
+    /// Active appearance supplied by the Linux tray when running on Omarchy.
+    pub omarchy: Option<crate::theme::OmarchyAppearance>,
     /// Seconds between full reports; `[tray] refresh_minutes` × 60.
     pub refresh_secs: u64,
     /// Canonical "Ctrl+Shift+U" spelling of the registered shortcut, or empty.
@@ -239,6 +241,7 @@ impl Default for HostFacts {
     fn default() -> Self {
         Self {
             accent: None,
+            omarchy: None,
             refresh_secs: POLL_INTERVAL.as_secs(),
             shortcut: String::new(),
             shortcut_error: String::new(),
@@ -376,6 +379,7 @@ pub fn wrap_report(
         "primary": Value::Null,
         "entries": [],
     });
+    stamp_appearance(&mut payload, facts);
     if host_error.is_some() {
         return payload;
     }
@@ -398,6 +402,16 @@ pub fn wrap_report(
             payload
         }
     }
+}
+
+/// Update appearance independently of the report and its refresh timestamp.
+pub(super) fn stamp_appearance(payload: &mut Value, facts: &HostFacts) {
+    payload["desktop"] = json!(if facts.omarchy.is_some() {
+        "omarchy"
+    } else {
+        ""
+    });
+    payload["omarchy"] = json!(facts.omarchy);
 }
 
 /// Attach each entry's sign-in sentence from [`VendorId::sign_in_hint`].
@@ -692,6 +706,39 @@ mod tests {
         // ASSERT: both validated host colors reach the JSON root unchanged.
         assert_eq!(payload["accent"]["light"], "#123456");
         assert_eq!(payload["accent"]["dark"], "#abcdef");
+    }
+
+    #[test]
+    fn wrap_carries_only_host_omarchy_appearance_and_can_replace_a_stale_report() {
+        let mut host = facts("1.10.0", false);
+        let report = r#"{"desktop":"omarchy","omarchy":{"mode":"light"}}"#;
+        let mut payload = wrap_report(report, &host, 0, None);
+        assert_eq!(payload["desktop"], "");
+        assert_eq!(payload["omarchy"], Value::Null);
+        assert!(!STAMPED_FACTS.contains(&"desktop"));
+        assert!(!STAMPED_FACTS.contains(&"omarchy"));
+
+        host.omarchy = Some(crate::theme::OmarchyAppearance {
+            mode: "light",
+            rounding: 6,
+            colors: [("background", "#abcdef".into())].into(),
+        });
+        let expected = json!({
+            "mode": "light",
+            "rounding": 6,
+            "colors": { "background": "#abcdef" },
+        });
+        let current = wrap_report(report, &host, 0, Some("offline"));
+        assert_eq!(current["desktop"], "omarchy");
+        assert_eq!(current["omarchy"], expected);
+
+        stamp_appearance(&mut payload, &host);
+        assert_eq!(payload["desktop"], "omarchy");
+        assert_eq!(payload["omarchy"], expected);
+        assert_eq!(payload["generated_at"], 0);
+        stamp_appearance(&mut payload, &HostFacts::default());
+        assert_eq!(payload["desktop"], "");
+        assert_eq!(payload["omarchy"], Value::Null);
     }
 
     #[test]

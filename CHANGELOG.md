@@ -18,6 +18,8 @@
   Login writes `ai-usagebar-tray.desktop` to `$XDG_CONFIG_HOME/autostart`
   (default `~/.config/autostart`) and refuses an executable path containing
   `%`; links open with `xdg-open`.
+  On Omarchy, the Native popover follows the active theme's palette, uses
+  Hyprland's corner radius, and updates when the theme changes.
   Not in this first version: a global shortcut, Open TUI, and self-update.
   The feature is off by default, so the default build, the AUR packages, Nix
   and CI need no GTK or WebKit.

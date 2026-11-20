@@ -8,7 +8,8 @@
 //! - the icon is a StatusNotifierItem (`tray-icon`'s `ksni` backend). The host
 //!   gives a click *position*, never the icon's rectangle, and draws the
 //!   right-click menu itself from the snapshot of the `muda` menu;
-//! - there is no blur/glass material, so the `Native` style renders as `Classic`;
+//! - the WebView is opaque; on Omarchy the Native popover follows the active
+//!   palette and compositor rounding;
 //! - a Wayland compositor ignores `set_outer_position` and may ignore
 //!   `always_on_top`. On Hyprland the popover is placed through `hyprctl`
 //!   (`hypr_linux`: the cursor at the click, a window rule, the monitor's bar);
@@ -27,8 +28,9 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use fs2::FileExt;
@@ -54,7 +56,8 @@ use super::ipc_origin::{self, Navigation, Os};
 use super::options_menu::{self, OptionsAction, OptionsLabels};
 use super::panel;
 use super::payload::{
-    HostFacts, SharedFacts, facts_snapshot, host_payload, with_facts, worst_severity, wrap_report,
+    HostFacts, SharedFacts, facts_snapshot, host_payload, stamp_appearance, with_facts,
+    worst_severity, wrap_report,
 };
 use super::placement::{self, Area, Insets};
 use super::strip::{Stars, UsageReading, content_from_payload, parse_strip_ipc, tooltip};
@@ -62,6 +65,7 @@ use super::style::PopoverStyle;
 use super::updates::Updates;
 use super::{RELAUNCH_ENV, now_ms, profile, startup};
 use crate::config::{Config, UpdateMode};
+use crate::theme::{OmarchyAppearance, read_omarchy_text};
 
 // Emitted by `windows/popover` (`npm run build` / `build.rs` with `linux-tray`).
 const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/popover/index.html"));
@@ -139,6 +143,7 @@ enum UserEvent {
     Menu(MenuEvent),
     Ipc(String),
     Report(Value),
+    OmarchyAppearance(Option<OmarchyAppearance>),
     /// The shared facts changed (shortcut, update state); re-stamp the payload.
     Facts,
     /// An update asked for a restart. Linux never self-updates (`installable`
@@ -200,6 +205,7 @@ struct TrayState {
     /// Hyprland only: asks `hyprctl`, off this thread, where the popover goes.
     /// `None` on any other compositor, which keeps the previous behavior.
     positioner: Option<hypr::Positioner>,
+    theme_worker: Option<ThemeWorker>,
     /// The newest placement request; every open, close and resize advances it.
     generation: Arc<hypr::Generation>,
     /// Generation of the opening in progress, so a resize reuses its anchor.
@@ -344,6 +350,13 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         std::env::var_os("OMARCHY_PATH").as_deref().map(Path::new),
         Path::new("/usr/share/omarchy"),
     );
+    let theme_worker = if omarchy {
+        std::env::var_os("HOME").and_then(|home| {
+            spawn_theme_worker(proxy.clone(), PathBuf::from(home), hyprctl.clone())
+        })
+    } else {
+        None
+    };
     let positioner = {
         let proxy = proxy.clone();
         hypr::Positioner::start(
@@ -381,6 +394,7 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         last_blur_hide: None,
         last_anchor: None,
         positioner,
+        theme_worker,
         generation,
         opening: 0,
         hypr_anchor: None,
@@ -424,6 +438,13 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
             }
             Event::UserEvent(UserEvent::Ipc(body)) => handle_ipc(&mut state, &body, control_flow),
             Event::UserEvent(UserEvent::Report(payload)) => apply_payload(&mut state, payload),
+            Event::UserEvent(UserEvent::OmarchyAppearance(appearance)) => {
+                with_facts(&state.facts, |facts| facts.omarchy = appearance);
+                stamp_appearance(&mut state.payload, &facts_snapshot(&state.facts));
+                if state.js_ready {
+                    push_to_webview(&state);
+                }
+            }
             Event::UserEvent(UserEvent::Facts) => apply_facts(&mut state),
             Event::UserEvent(UserEvent::Restart(exe)) => {
                 if let Some(exe) = exe {
@@ -446,6 +467,9 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
                 ..
             } => hide_popover(&mut state),
             Event::LoopDestroyed => {
+                if let Some(worker) = state.theme_worker.take() {
+                    worker.shutdown();
+                }
                 let _ = state.worker.send(WorkerCmd::Shutdown);
                 // A sign-in CLI would otherwise outlive the tray, polling.
                 super::device_login::stop_all();
@@ -821,6 +845,132 @@ fn host_facts(config: &Config) -> HostFacts {
     facts
 }
 
+#[derive(Default)]
+struct OmarchyWatch {
+    generation: Option<String>,
+    appearance: Option<OmarchyAppearance>,
+    missing_marker_polls: u8,
+}
+
+impl OmarchyWatch {
+    fn poll(&mut self, home: &Path, read_rounding: impl FnOnce() -> u32) -> bool {
+        let generation =
+            read_omarchy_text(&home.join(".local/state/omarchy/current/theme.generation"))
+                .filter(|value| !value.trim().is_empty());
+        if generation.is_some() {
+            self.missing_marker_polls = 0;
+            // Retry a failed theme read even if the marker stays stable.
+            if self.appearance.is_some() && generation == self.generation {
+                return false;
+            }
+        } else {
+            self.missing_marker_polls = self.missing_marker_polls.saturating_add(1);
+            // A rewrite can briefly truncate the marker. If it stays unavailable,
+            // read the palette directly on each poll until the marker comes back.
+            if self.missing_marker_polls <= 3 {
+                return false;
+            }
+        }
+        self.generation = generation;
+        let appearance = OmarchyAppearance::active_in(home).map(|mut appearance| {
+            appearance.rounding = read_rounding();
+            appearance
+        });
+        if self.appearance == appearance {
+            return false;
+        }
+        self.appearance = appearance;
+        true
+    }
+
+    fn refresh_rounding(&mut self, read_rounding: impl FnOnce() -> u32) -> bool {
+        let Some(appearance) = self.appearance.as_mut() else {
+            return false;
+        };
+        let rounding = read_rounding();
+        std::mem::replace(&mut appearance.rounding, rounding) != rounding
+    }
+}
+
+struct ThemeWorker {
+    refresh: mpsc::SyncSender<()>,
+    cancelled: Arc<AtomicBool>,
+    thread: JoinHandle<()>,
+}
+
+impl ThemeWorker {
+    fn shutdown(self) {
+        let deadline = Instant::now() + hypr::TIMEOUT;
+        self.cancelled.store(true, Ordering::Relaxed);
+        drop(self.refresh); // Wake the worker if it is waiting for a request.
+
+        // Join only once it is finished so shutdown stays bounded on GTK.
+        while !self.thread.is_finished() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                eprintln!("ai-usagebar-tray: timed out waiting for the theme worker to stop");
+                return;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
+        }
+        if self.thread.join().is_err() {
+            eprintln!("ai-usagebar-tray: the theme worker panicked");
+        }
+    }
+}
+
+fn spawn_theme_worker(
+    proxy: EventLoopProxy<UserEvent>,
+    home: PathBuf,
+    hyprctl: PathBuf,
+) -> Option<ThemeWorker> {
+    const POLL_INTERVAL: Duration = Duration::from_secs(2);
+    let (refresh, requests) = mpsc::sync_channel(1);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let worker_cancelled = Arc::clone(&cancelled);
+    let worker = std::thread::Builder::new()
+        .name("ai-usagebar-tray-theme".into())
+        .spawn(move || {
+            let is_cancelled = || worker_cancelled.load(Ordering::Relaxed);
+            let read_rounding = || hypr::rounding_at(&hyprctl, is_cancelled);
+            let mut watch = OmarchyWatch::default();
+            let mut next_poll = Instant::now();
+            while !is_cancelled() {
+                let now = Instant::now();
+                let changed = if now >= next_poll {
+                    let changed = watch.poll(&home, read_rounding);
+                    next_poll = Instant::now() + POLL_INTERVAL;
+                    changed
+                } else {
+                    match requests.recv_timeout(next_poll - now) {
+                        Ok(()) => watch.refresh_rounding(read_rounding),
+                        Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                };
+                if changed
+                    && !is_cancelled()
+                    && proxy
+                        .send_event(UserEvent::OmarchyAppearance(watch.appearance.clone()))
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        });
+    match worker {
+        Ok(thread) => Some(ThemeWorker {
+            refresh,
+            cancelled,
+            thread,
+        }),
+        Err(error) => {
+            eprintln!("ai-usagebar-tray: could not start the theme worker: {error}");
+            None
+        }
+    }
+}
+
 async fn push_report(proxy: &EventLoopProxy<UserEvent>, facts: &SharedFacts) {
     super::providers::refresh_due(facts);
     let mut snapshot = facts_snapshot(facts);
@@ -845,7 +995,9 @@ fn relaunch(exe: &Path) {
 // State updates
 // ---------------------------------------------------------------------------
 
-fn apply_payload(state: &mut TrayState, payload: Value) {
+fn apply_payload(state: &mut TrayState, mut payload: Value) {
+    // A report can finish after the event loop published a newer theme.
+    stamp_appearance(&mut payload, &facts_snapshot(&state.facts));
     state.payload = payload;
     refresh_icon(state);
     refresh_tooltip(state);
@@ -1216,8 +1368,7 @@ fn handle_resize(state: &mut TrayState, value: &Value) {
         .and_then(PopoverStyle::parse)
         && state.style != style
     {
-        // No material on Linux: `Native` is tracked (it sets the page's layout
-        // width and drops Customize from the menu) but never painted differently.
+        // The page paints the style. The host tracks it for sizing and menu entries.
         state.style = style;
         refresh_menu(state);
         resize = true;
@@ -1332,6 +1483,9 @@ fn open_popover_action(state: &mut TrayState, action: OptionsAction) {
 /// registered where it goes (or [`PLACEMENT_WAIT`] runs out); elsewhere it is
 /// positioned by `set_outer_position` and shown at once.
 fn show_popover(state: &mut TrayState, anchor: Option<(i32, i32)>, cursor: Option<hypr::Anchor>) {
+    if let Some(worker) = &state.theme_worker {
+        let _ = worker.refresh.try_send(());
+    }
     if anchor.is_some() {
         state.last_anchor = anchor;
     }
@@ -1906,6 +2060,103 @@ fn lock_path() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn omarchy_watch_reads_generation_and_refreshes_only_rounding_on_open() {
+        let home = tempfile::tempdir().unwrap();
+        let current = home.path().join(".local/state/omarchy/current");
+        let theme = current.join("theme");
+        let generation = current.join("theme.generation");
+        let colors = theme.join("colors.toml");
+        std::fs::create_dir_all(&theme).unwrap();
+        std::fs::write(&generation, "generation-1\n").unwrap();
+        std::fs::write(&colors, r##"blue = "#112233""##).unwrap();
+        let mut watch = OmarchyWatch::default();
+        assert!(watch.poll(home.path(), || 6));
+        assert_eq!(watch.appearance.as_ref().unwrap().colors["blue"], "#112233");
+
+        std::fs::write(&colors, r##"blue = "#aabbcc""##).unwrap();
+        assert!(!watch.poll(home.path(), || panic!("unchanged generation")));
+        assert!(watch.refresh_rounding(|| 0));
+        let appearance = watch.appearance.as_ref().unwrap();
+        assert_eq!(appearance.rounding, 0);
+        assert_eq!(appearance.colors["blue"], "#112233");
+        assert!(!watch.refresh_rounding(|| 0));
+
+        std::fs::write(&generation, "").unwrap();
+        assert!(!watch.poll(home.path(), || panic!("marker is being rewritten")));
+        std::fs::write(&generation, "generation-2\n").unwrap();
+        assert!(watch.poll(home.path(), || 4));
+        let appearance = watch.appearance.as_ref().unwrap();
+        assert_eq!(appearance.colors["blue"], "#aabbcc");
+        assert_eq!(appearance.rounding, 4);
+
+        std::fs::write(&generation, "generation-3\n").unwrap();
+        std::fs::write(&colors, "[").unwrap();
+        assert!(watch.poll(home.path(), || panic!("no theme")));
+        assert!(watch.appearance.is_none());
+        std::fs::write(&colors, r##"blue = "#445566""##).unwrap();
+        assert!(watch.poll(home.path(), || 2));
+        assert_eq!(watch.appearance.as_ref().unwrap().colors["blue"], "#445566");
+    }
+
+    #[test]
+    fn omarchy_watch_rereads_after_three_unavailable_marker_polls() {
+        let home = tempfile::tempdir().unwrap();
+        let current = home.path().join(".local/state/omarchy/current");
+        let theme = current.join("theme");
+        let generation = current.join("theme.generation");
+        let colors = theme.join("colors.toml");
+        std::fs::create_dir_all(&theme).unwrap();
+        std::fs::write(&generation, "generation-1\n").unwrap();
+        std::fs::write(&colors, r##"blue = "#112233""##).unwrap();
+        let mut watch = OmarchyWatch::default();
+        assert!(watch.poll(home.path(), || 6));
+
+        std::fs::write(&colors, r##"blue = "#aabbcc""##).unwrap();
+        for marker in [None, Some(vec![b'x'; 65_537]), Some(vec![0xff])] {
+            match marker {
+                None => std::fs::remove_file(&generation).unwrap(),
+                Some(contents) => std::fs::write(&generation, contents).unwrap(),
+            }
+            assert!(!watch.poll(home.path(), || panic!(
+                "keep the last appearance during the rewrite"
+            )));
+            assert_eq!(watch.appearance.as_ref().unwrap().colors["blue"], "#112233");
+        }
+        assert!(
+            watch.poll(home.path(), || 4),
+            "the fourth poll must read the theme directly"
+        );
+        let appearance = watch.appearance.as_ref().unwrap();
+        assert_eq!(appearance.colors["blue"], "#aabbcc");
+        assert_eq!(appearance.rounding, 4);
+
+        std::fs::write(&colors, "[").unwrap();
+        assert!(watch.poll(home.path(), || panic!("an unreadable theme has no radius")));
+        assert!(
+            watch.appearance.is_none(),
+            "fall back to the generic Native look"
+        );
+        assert!(!watch.poll(home.path(), || panic!("the theme is still unreadable")));
+
+        std::fs::write(&generation, "generation-2\n").unwrap();
+        std::fs::write(&colors, r##"blue = "#445566""##).unwrap();
+        assert!(watch.poll(home.path(), || 2));
+        assert_eq!(watch.appearance.as_ref().unwrap().colors["blue"], "#445566");
+
+        std::fs::write(&generation, "").unwrap();
+        std::fs::write(&colors, "[").unwrap();
+        for _ in 0..3 {
+            assert!(!watch.poll(home.path(), || panic!(
+                "a restored marker resets the grace period"
+            )));
+            assert!(watch.appearance.is_some());
+        }
+        std::fs::write(&generation, "generation-2\n").unwrap();
+        assert!(!watch.poll(home.path(), || panic!("the marker came back unchanged")));
+        assert!(watch.appearance.is_some());
+    }
 
     const MONITOR: Screen = Screen {
         full: Area {

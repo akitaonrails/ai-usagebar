@@ -12,10 +12,9 @@
 //!    the compositor maps the window already in place; a window that is already
 //!    mapped (a resize while open) is moved and resized through its address.
 //!
-//! Every `hyprctl` runs on the worker thread started by [`Positioner::start`],
-//! by the absolute path the host passes from `[tray] hyprctl_binary`, without a
-//! shell and under a deadline, never on the GTK thread. The cursor is read on
-//! the tray thread, where the click arrives, through the same configured path.
+//! Placement, click capture and appearance read `hyprctl` on workers, never
+//! on the GTK thread. Each uses the absolute path set by `[tray] hyprctl_binary`,
+//! without a shell and under a deadline.
 //! Each request carries a [`Generation`]; a result for an opening that has since
 //! been closed or replaced is dropped, and a dispatch is skipped when the
 //! generation moved between the check and the effect (the window between those
@@ -49,7 +48,10 @@ pub(super) const TITLE: &str = "AI Usage";
 /// Name of the window rule, so a re-registration replaces the previous one.
 const RULE_NAME: &str = "ai-usagebar-tray";
 
-const TIMEOUT: Duration = Duration::from_secs(2);
+pub(super) const TIMEOUT: Duration = Duration::from_secs(2);
+const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const COMMAND_CANCELLED: &str = "hyprctl cancelled";
+const COMMAND_TIMED_OUT: &str = "hyprctl timed out after 2s";
 /// Cap on what a `hyprctl` call may print before the call is an error.
 const MAX_OUTPUT: u64 = 8 * 1024 * 1024;
 /// Space the popover keeps clear of a monitor edge when no gap is known.
@@ -202,6 +204,17 @@ fn read_capped(reader: impl Read) -> Result<Vec<u8>, String> {
 /// Runs `path` with `args`: no shell, both pipes drained while it runs (a full
 /// pipe cannot defeat the deadline), killed and reaped at the deadline.
 pub(super) fn command_at(path: &Path, args: &[&str]) -> Result<String, String> {
+    command_at_with_cancel(path, args, || false)
+}
+
+fn command_at_with_cancel(
+    path: &Path,
+    args: &[&str],
+    cancelled: impl Fn() -> bool,
+) -> Result<String, String> {
+    if cancelled() {
+        return Err(COMMAND_CANCELLED.into());
+    }
     let deadline = Instant::now() + TIMEOUT;
     let mut child = Command::new(path)
         .args(args)
@@ -221,28 +234,38 @@ pub(super) fn command_at(path: &Path, args: &[&str]) -> Result<String, String> {
         let _ = tx.send((false, read_capped(stderr)));
     });
     let status = loop {
-        match child.try_wait() {
+        let cause: String = match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("hyprctl timed out after 2s".into());
+            Ok(None) if cancelled() => COMMAND_CANCELLED.into(),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(COMMAND_POLL_INTERVAL);
+                continue;
             }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error.to_string());
-            }
-        }
+            Ok(None) => COMMAND_TIMED_OUT.into(),
+            Err(error) => error.to_string(),
+        };
+        let killed = child.kill();
+        let reaped = child.wait();
+        return Err(match (killed, reaped) {
+            (_, Err(error)) => format!("{cause}; could not reap hyprctl: {error}"),
+            (Err(error), Ok(_)) => format!("{cause}; could not kill hyprctl: {error}"),
+            (Ok(()), Ok(_)) => cause,
+        });
     };
     let mut out = None;
     let mut err = None;
     for _ in 0..2 {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let (is_stdout, bytes) = rx
-            .recv_timeout(remaining)
-            .map_err(|_| "hyprctl timed out after 2s")?;
+        let (is_stdout, bytes) = loop {
+            if cancelled() {
+                return Err(COMMAND_CANCELLED.into());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(remaining.min(COMMAND_POLL_INTERVAL)) {
+                Ok(output) => break output,
+                Err(mpsc::RecvTimeoutError::Timeout) if !remaining.is_zero() => {}
+                Err(_) => return Err(COMMAND_TIMED_OUT.into()),
+            }
+        };
         let bytes = bytes?;
         if is_stdout {
             out = Some(bytes);
@@ -348,6 +371,27 @@ fn gap(compositor: &impl Compositor) -> u32 {
         .command(&["getoption", "general:border_size", "-j"])
         .ok();
     outer_gap(gaps_out.as_deref(), border_size.as_deref())
+}
+
+/// Hyprland corner radius, restricted to the popover's accepted pixel range.
+pub(super) fn rounding_at(path: &Path, cancelled: impl Fn() -> bool) -> u32 {
+    if !path.is_absolute() {
+        return 0;
+    }
+    let result =
+        command_at_with_cancel(path, &["getoption", "decoration:rounding", "-j"], cancelled);
+    match result {
+        Ok(json) => serde_json::from_str::<serde_json::Value>(&json)
+            .ok()
+            .and_then(|value| value.get("int")?.as_u64())
+            .filter(|value| *value <= 40)
+            .map_or(0, |value| value as u32),
+        Err(error) if error == COMMAND_CANCELLED => 0,
+        Err(error) => {
+            warn("could not read decoration:rounding", &error);
+            0
+        }
+    }
 }
 
 pub(super) fn parse_anchor(json: &str) -> Result<Anchor, String> {
@@ -1910,6 +1954,37 @@ mod tests {
         path
     }
 
+    #[test]
+    fn rounding_uses_the_configured_hyprctl_and_rejects_invalid_results() {
+        let dir = tempfile::tempdir().unwrap();
+        for (json, status, expected) in [
+            (r#"{"int":6}"#, 0, 6),
+            (r#"{"int":40}"#, 0, 40),
+            (r#"{"int":41}"#, 0, 0),
+            (r#"{"int":-1}"#, 0, 0),
+            (r#"{"int":1.5}"#, 0, 0),
+            (r#"{"int":"6"}"#, 0, 0),
+            (r#"{"int":6}"#, 1, 0),
+            ("malformed", 0, 0),
+        ] {
+            let fake = script(
+                &dir,
+                &format!(
+                    "#!/bin/sh\n[ \"$#\" -eq 3 ] && [ \"$1\" = getoption ] && [ \"$2\" = decoration:rounding ] && [ \"$3\" = -j ] || exit 2\nprintf '%s' '{json}'\nexit {status}\n"
+                ),
+            );
+            assert_eq!(
+                rounding_at(&fake, || false),
+                expected,
+                "{json}, exit {status}"
+            );
+        }
+        assert_eq!(
+            rounding_at(&dir.path().join("missing hyprctl"), || false),
+            0
+        );
+    }
+
     /// The path is data handed to `Command`, not a name resolved on `PATH`:
     /// a fake binary at the supplied path (with a space in its filename) is
     /// the one that runs. The marker records `$0` as proof of which file it was.
@@ -1930,6 +2005,43 @@ mod tests {
             std::fs::read_to_string(&marker).unwrap(),
             fake.to_str().unwrap()
         );
+    }
+
+    #[test]
+    fn cancelling_a_stopped_hyprctl_kills_and_reaps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("child pid");
+        let fake = script(
+            &dir,
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$1\"\nkill -STOP \"$$\"\nexit 99\n",
+        );
+
+        let cancelled_pid = std::cell::Cell::new(None);
+        let result = command_at_with_cancel(&fake, &[pid_file.to_str().unwrap()], || {
+            // Wait for the real child to stop before signalling cancellation.
+            // The script itself starts no descendants and uses no PATH commands.
+            let Ok(pid) = std::fs::read_to_string(&pid_file) else {
+                return false;
+            };
+            let Ok(pid) = pid.parse::<u32>() else {
+                return false;
+            };
+            let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+                return false;
+            };
+            if status.lines().any(|line| line.starts_with("State:\tT")) {
+                cancelled_pid.set(Some(pid));
+            }
+            cancelled_pid.get().is_some()
+        });
+
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        assert!(
+            !Path::new("/proc").join(&pid).exists(),
+            "child {pid} was not reaped: {result:?}"
+        );
+        assert_eq!(result.unwrap_err(), "hyprctl cancelled");
+        assert_eq!(cancelled_pid.get(), Some(pid.parse().unwrap()));
     }
 
     #[test]
