@@ -362,7 +362,10 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         const entries = !report?.ok
             ? []
             : (this._configuredVendors
-                ? report.entries.filter(e => this._configuredVendors.has(e.id))
+                // `vendors --json` does not list `[[custom]]` sources; they
+                // only reach `usage --json` when enabled, so keep them.
+                ? report.entries.filter(e => e.id.startsWith('custom:') ||
+                    this._configuredVendors.has(e.id))
                 : report.entries);
         if (!report?.ok || entries.length === 0) {
             panel.add_child(wrappedLabel(!report ? 'Loading…' : report.ok ? 'No providers enabled' : report.error,
