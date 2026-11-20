@@ -57,6 +57,16 @@
   the screen. The value is stored as `[tray] width` and applies at once.
   Optional: with the key unset each style keeps the width it has today.
 
+### Changed
+
+- **Windows tray: the popover's window is the size of its panel.** The window
+  kept the non-client frame that tao reserves for an undecorated window's
+  shadow, so it was larger than the panel drawn in it. With Popover Width at
+  500, that band showed in Classic as a second rim outside the panel's own
+  border. The window is now created without tao's undecorated shadow, which
+  removes the frame. The gap the frame left between the panel and the taskbar
+  and the screen edges is kept.
+
 ### Fixed
 
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
