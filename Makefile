@@ -113,6 +113,7 @@ desktop-test:
 	node gnome-extension/report-model.test.mjs
 	node gnome-extension/prefs.test.mjs
 	node gnome-extension/terminal.test.mjs
+	node gnome-extension-legacy/legacy-parity.test.mjs
 	node kde-plasmoid/plasmoid-logic.test.mjs
 	node windows/popover/popover.test.mjs
 
