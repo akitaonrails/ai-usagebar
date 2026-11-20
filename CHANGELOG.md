@@ -71,6 +71,9 @@
   icon and the Linux tray icon now draw the same `mdi:gauge` mark as the macOS
   menu bar's app-icon mode and the popover's About screen, instead of three
   bars in a ring.
+- **Tray popover: a squarer switch in the Classic look.** On every host the
+  Classic switch track and knob now have small rounded corners instead of a
+  pill and a circle. The Native look keeps its capsule switch.
 
 ### Fixed
 

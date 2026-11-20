@@ -174,6 +174,9 @@
   --switch-knob: 12px;
   --switch-knob-w: var(--switch-knob);
   --switch-knob-inset: var(--space-px);
+  /* Classic draws a squarer switch: small radii on the track and the knob. */
+  --switch-radius: 4px;
+  --switch-knob-radius: 3px;
   --hairline: 1px;
   --focus-ring: 2px;
   --native-blur: 20px;
@@ -310,6 +313,8 @@ body:has(.native-panel) {
   --switch-h: 20px;
   --switch-knob: 16px;
   --switch-knob-w: 24px;
+  --switch-radius: var(--radius-full);
+  --switch-knob-radius: var(--radius-full);
   --knob-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
   --menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
   background: transparent;
@@ -1481,3 +1486,4 @@ button.desktop-account-control:focus-visible {
 .hover-card:hover {
   background-image: linear-gradient(var(--hover-fill), var(--hover-fill));
 }
+
