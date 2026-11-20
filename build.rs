@@ -4,6 +4,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if os != "windows" && os != "macos" {
+        println!("cargo:rerun-if-changed=build.rs");
+        return;
+    }
+
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let popover = manifest.join("windows").join("popover");
     println!("cargo:rerun-if-changed={}", popover.join("src").display());
@@ -39,11 +45,6 @@ fn main() {
         "cargo:rerun-if-changed={}",
         popover.join("dist").join("popover.css").display()
     );
-
-    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if os != "windows" && os != "macos" {
-        return;
-    }
 
     if npm_available() {
         ensure_deps(&popover);
