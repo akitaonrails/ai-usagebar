@@ -10,8 +10,11 @@
   UI, unless `windows/popover/dist` is already built). On Hyprland the popover
   opens next to the bar on the monitor that was clicked, placed through
   `hyprctl` with a runtime window rule (other compositors place it
-  themselves). The tray item has the stable id `ai-usagebar-tray`, so a bar
-  that pins icons by id (Omarchy) keeps the pin across restarts. Start at
+  themselves); `[tray] hyprctl_binary` sets that executable's absolute path
+  (default `/usr/bin/hyprctl`, `~` expanded, never searched on `PATH`) for
+  NixOS and other installs outside `/usr/bin`. The tray item has the stable id
+  `ai-usagebar-tray`, so a bar that pins icons by id (Omarchy) keeps the pin
+  across restarts. Start at
   Login writes `ai-usagebar-tray.desktop` to `$XDG_CONFIG_HOME/autostart`
   (default `~/.config/autostart`) and refuses an executable path containing
   `%`; links open with `xdg-open`.

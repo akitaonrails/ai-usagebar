@@ -50,6 +50,16 @@ you make while the check is running.
 # vendor-endpoints.md, "Service status".
 # provider_status = true
 
+[tray]
+# The opt-in Linux tray (`--features linux-tray`) places the popover on
+# Hyprland through `hyprctl`, including the cursor read at a click. This is
+# that executable's absolute path; `~` is expanded, and it is never searched
+# on PATH. With no key it is `/usr/bin/hyprctl`, as before. A path that does
+# not exist simply leaves placement to the compositor; an empty or relative
+# value is refused at load, like any invalid key, and the tray falls back to
+# its defaults (the reason goes to its stderr).
+# hyprctl_binary = "/usr/bin/hyprctl"
+
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui
 # projects_path = "~/.claude/projects"

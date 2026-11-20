@@ -254,9 +254,23 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
+    // Loaded before the ksni handler is installed: the cursor read on a click
+    // and the placement worker must both use the same configured `hyprctl`.
+    // An invalid config (an empty or relative `hyprctl_binary`, say) falls back to
+    // the defaults; say why on stderr instead of dropping the preferences silently.
+    let config = Config::load().unwrap_or_else(|error| {
+        eprintln!(
+            "ai-usagebar-tray: config not loaded, using defaults: {}",
+            crate::display::sanitize_untrusted_line(&error.to_string())
+        );
+        Config::default()
+    });
+    let hyprctl = config.tray.hyprctl_binary();
+
     // These run on the ksni thread: they only forward.
     {
         let proxy = proxy.clone();
+        let click_hyprctl = hyprctl.clone();
         let clicks = AtomicU64::new(0);
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             // Runs inside the SNI service's lock: it only forwards, and never waits
@@ -268,7 +282,7 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
             }
             // Numbered here, on the one thread that sees the clicks in order.
             let seq = clicks.fetch_add(1, Ordering::SeqCst);
-            forward_click(&proxy, event, seq);
+            forward_click(&proxy, event, seq, click_hyprctl.clone());
         }));
     }
     {
@@ -291,7 +305,6 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         .build(&event_loop)
         .map_err(|error| error.to_string())?;
 
-    let config = Config::load().unwrap_or_default();
     let facts: SharedFacts = Arc::new(Mutex::new(host_facts(&config)));
     // No global shortcut on this host: a configured one is reported as unavailable
     // instead of being silently dropped, the way a failed registration is.
@@ -336,6 +349,7 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         hypr::Positioner::start(
             Arc::clone(&generation),
             omarchy,
+            hyprctl,
             move |generation, height, anchor, opening| {
                 let _ = proxy.send_event(UserEvent::Placed {
                     generation,
@@ -498,13 +512,18 @@ fn is_left_click_up(event: &TrayIconEvent) -> bool {
 /// deadline sends `None`: the host then uses the position the protocol reported.
 /// Where no thread can be had the click goes without a cursor, in its place in
 /// the order, because a click that never arrives would hold every later one.
-fn forward_click(proxy: &EventLoopProxy<UserEvent>, event: TrayIconEvent, seq: u64) {
+fn forward_click(
+    proxy: &EventLoopProxy<UserEvent>,
+    event: TrayIconEvent,
+    seq: u64,
+    hyprctl: PathBuf,
+) {
     let (thread_proxy, thread_event) = (proxy.clone(), event.clone());
     let spawned = std::thread::Builder::new()
         .name("ai-usagebar-tray-cursor".into())
         .spawn(move || {
             // A panic must not lose the click either: it would block the ones behind.
-            let cursor = std::panic::catch_unwind(hypr::capture).unwrap_or(None);
+            let cursor = std::panic::catch_unwind(|| hypr::capture(&hyprctl)).unwrap_or(None);
             let _ = thread_proxy.send_event(UserEvent::Tray(thread_event, cursor, Some(seq)));
         });
     if spawned.is_err() {

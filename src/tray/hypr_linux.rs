@@ -13,9 +13,10 @@
 //!    mapped (a resize while open) is moved and resized through its address.
 //!
 //! Every `hyprctl` runs on the worker thread started by [`Positioner::start`],
-//! by absolute path, without a shell and under a deadline, never on the GTK
-//! thread. The cursor is read on the tray thread, where the click arrives. Each
-//! request carries a [`Generation`]; a result for an opening that has since
+//! by the absolute path the host passes from `[tray] hyprctl_binary`, without a
+//! shell and under a deadline, never on the GTK thread. The cursor is read on
+//! the tray thread, where the click arrives, through the same configured path.
+//! Each request carries a [`Generation`]; a result for an opening that has since
 //! been closed or replaced is dropped, and a dispatch is skipped when the
 //! generation moved between the check and the effect (the window between those
 //! two is as wide as one `hyprctl` call and is not closed: the next
@@ -30,7 +31,7 @@
 //! positioner and keep the previous behavior.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,7 +49,6 @@ pub(super) const TITLE: &str = "AI Usage";
 /// Name of the window rule, so a re-registration replaces the previous one.
 const RULE_NAME: &str = "ai-usagebar-tray";
 
-const HYPRCTL: &str = "/usr/bin/hyprctl";
 const TIMEOUT: Duration = Duration::from_secs(2);
 /// Cap on what a `hyprctl` call may print before the call is an error.
 const MAX_OUTPUT: u64 = 8 * 1024 * 1024;
@@ -260,10 +260,6 @@ pub(super) fn command_at(path: &Path, args: &[&str]) -> Result<String, String> {
     String::from_utf8(stdout).map_err(|error| error.to_string())
 }
 
-fn command(args: &[&str]) -> Result<String, String> {
-    command_at(Path::new(HYPRCTL), args)
-}
-
 /// What placement asks of the compositor, so the sequence of calls can be tested
 /// against a stand-in that behaves like Hyprland's window handling.
 pub(super) trait Compositor {
@@ -273,11 +269,19 @@ pub(super) trait Compositor {
     fn pause(&self, duration: Duration);
 }
 
-struct Hyprctl;
+/// The configured `hyprctl`, owned so the worker thread can use it without
+/// any global state. The host supplies the path; nothing here searches `PATH`.
+struct Hyprctl(PathBuf);
+
+impl Hyprctl {
+    fn new(path: &Path) -> Self {
+        Self(path.to_path_buf())
+    }
+}
 
 impl Compositor for Hyprctl {
     fn command(&self, args: &[&str]) -> Result<String, String> {
-        command(args)
+        command_at(&self.0, args)
     }
 
     fn pause(&self, duration: Duration) {
@@ -336,9 +340,13 @@ pub(super) fn outer_gap(gaps_out: Option<&str>, border_size: Option<&str>) -> u3
     )
 }
 
-fn gap() -> u32 {
-    let gaps_out = command(&["getoption", "general:gaps_out", "-j"]).ok();
-    let border_size = command(&["getoption", "general:border_size", "-j"]).ok();
+fn gap(compositor: &impl Compositor) -> u32 {
+    let gaps_out = compositor
+        .command(&["getoption", "general:gaps_out", "-j"])
+        .ok();
+    let border_size = compositor
+        .command(&["getoption", "general:border_size", "-j"])
+        .ok();
     outer_gap(gaps_out.as_deref(), border_size.as_deref())
 }
 
@@ -397,20 +405,33 @@ pub(super) fn parse_clients(json: &str) -> Result<Vec<Client>, String> {
     serde_json::from_str(json).map_err(|error| error.to_string())
 }
 
-/// The cursor now, for a click that just arrived. `None` off Hyprland and when
-/// `hyprctl` fails (with a warning): the caller falls back to the position the
-/// tray protocol reported.
-pub(super) fn capture() -> Option<Anchor> {
-    if !hyprland() {
-        return None;
-    }
-    match command(&["cursorpos", "-j"]).and_then(|json| parse_anchor(&json)) {
+/// Reads the cursor through `path`, without the environment check, so a fake
+/// `hyprctl` can prove that the configured path is the one executed.
+pub(super) fn capture_at(path: &Path) -> Option<Anchor> {
+    capture_with(&Hyprctl::new(path))
+}
+
+fn capture_with(compositor: &impl Compositor) -> Option<Anchor> {
+    match compositor
+        .command(&["cursorpos", "-j"])
+        .and_then(|json| parse_anchor(&json))
+    {
         Ok(anchor) => Some(anchor),
         Err(error) => {
             warn("could not read the cursor position", &error);
             None
         }
     }
+}
+
+/// The cursor now, for a click that just arrived. `None` off Hyprland and when
+/// `hyprctl` fails (with a warning): the caller falls back to the position the
+/// tray protocol reported.
+pub(super) fn capture(path: &Path) -> Option<Anchor> {
+    if !hyprland() {
+        return None;
+    }
+    capture_at(path)
 }
 
 /// `value` rounded to an `i32`, or `None` when it is not finite or does not fit:
@@ -552,8 +573,8 @@ pub(super) fn prepare_rule() -> String {
     )
 }
 
-fn prepare() -> Result<(), String> {
-    eval(&Hyprctl, &prepare_rule())
+fn prepare(compositor: &impl Compositor) -> Result<(), String> {
+    eval(compositor, &prepare_rule())
 }
 
 /// The monitor name is put in the Lua, so it must be a plain identifier.
@@ -648,23 +669,25 @@ pub(super) struct Positioner {
 }
 
 impl Positioner {
-    /// Starts the worker when this is Hyprland and `hyprctl` is where it is
-    /// expected; `None` otherwise, and the host keeps its previous behavior.
+    /// Starts the worker when this is Hyprland and the configured `hyprctl`
+    /// exists; `None` otherwise, and the host keeps its previous behavior.
     /// `reply(generation, height, anchor, opening)` runs on the worker thread;
     /// `height` is `None` when the popover could not be placed.
     pub(super) fn start(
         generation: Arc<Generation>,
         omarchy: bool,
+        hyprctl: PathBuf,
         reply: impl Fn(u64, Option<u32>, Option<Anchor>, bool) + Send + 'static,
     ) -> Option<Self> {
-        if !hyprland() || !Path::new(HYPRCTL).is_file() {
+        if !hyprland() || !hyprctl.is_file() {
             return None;
         }
         let (input, requests) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("ai-usagebar-tray-hypr".into())
             .spawn(move || {
-                let ready = match prepare() {
+                let compositor = Hyprctl::new(&hyprctl);
+                let ready = match prepare(&compositor) {
                     Ok(()) => true,
                     Err(error) => {
                         warn("could not register the popover rule", &error);
@@ -675,15 +698,21 @@ impl Positioner {
                 worker_loop(
                     requests,
                     &generation,
-                    || if ready { capture() } else { None },
+                    || {
+                        if ready {
+                            capture_with(&compositor)
+                        } else {
+                            None
+                        }
+                    },
                     |request| {
                         if !ready {
                             return Ok(None);
                         }
                         if request.is_opening && omarchy {
-                            current_gap = Some(gap());
+                            current_gap = Some(gap(&compositor));
                         }
-                        apply(&Hyprctl, request, &generation, current_gap)
+                        apply(&compositor, request, &generation, current_gap)
                     },
                     reply,
                 );
@@ -1879,6 +1908,28 @@ mod tests {
         std::fs::write(&path, body).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         path
+    }
+
+    /// The path is data handed to `Command`, not a name resolved on `PATH`:
+    /// a fake binary at the supplied path (with a space in its filename) is
+    /// the one that runs. The marker records `$0` as proof of which file it was.
+    #[test]
+    fn the_configured_path_is_the_one_executed() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("executed");
+        let fake = script(
+            &dir,
+            &format!(
+                "#!/bin/sh\nprintf '%s' \"$0\" > '{}'\nprintf '%s' '{{\"x\":12,\"y\":34}}'\n",
+                marker.display()
+            ),
+        );
+        let anchor = capture_at(&fake).expect("the fake hyprctl prints a cursor position");
+        assert_eq!(anchor, at(12.0, 34.0));
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            fake.to_str().unwrap()
+        );
     }
 
     #[test]

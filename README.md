@@ -1021,6 +1021,9 @@ popover and a right click opens the options menu. Start at Login writes
 autostart cannot launch it.
 On Hyprland the popover opens next to the bar on the monitor you clicked
 (placed through `hyprctl`); other Wayland compositors decide where it opens.
+`[tray] hyprctl_binary` sets that executable's absolute path (default
+`/usr/bin/hyprctl`, `~` expanded, never searched on `PATH`) for NixOS or other
+installs outside `/usr/bin`.
 The tray item's id is `ai-usagebar-tray`, which is what Omarchy's tray uses to
 remember a pinned icon. Not available yet on Linux: a global shortcut, Open TUI, and
 self-update (install new releases the way you installed this one).
