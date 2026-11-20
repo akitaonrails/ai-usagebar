@@ -2,6 +2,15 @@
 
 ### Added
 
+- **GNOME Shell 42–44 support through a legacy frontend.** GNOME 42–44 load
+  extensions through the legacy importer, so they cannot run the ES-module
+  extension used by 45–51. `gnome-extension-legacy/` provides the same top-panel
+  indicator, menu and preferences for those shells, with libadwaita 1.1 /
+  GTK 4.6 fallbacks. Its click menu lists only providers that are both
+  configured and enabled, and the menu repaint avoids the GNOME 42
+  `St.ScrollView` child-registration bug that aborts the shell. A parity test
+  keeps the legacy helpers behaviourally equivalent to the ESM frontend.
+
 - **Grouped `[[custom]]` sources as account tabs.** Setting `group` and
   `account` together on `[[custom]]` entries with the same display `name`
   groups them under one category (`custom:<group>@<account>`) with account tabs

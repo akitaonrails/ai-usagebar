@@ -1,0 +1,560 @@
+// Preferences (libadwaita) for AI Usage Bar.
+
+const {Adw, Gtk, Gdk, Gio, GLib, GObject} = imports.gi;
+
+const ExtensionUtils = imports.misc.extensionUtils;
+const _ = ExtensionUtils.gettext;
+const Me = ExtensionUtils.getCurrentExtension();
+const {terminalCandidates} = Me.imports.terminal.exports;
+
+const SwitchRow = Adw.SwitchRow ?? GObject.registerClass({
+    Properties: {
+        active: GObject.ParamSpec.boolean(
+            'active', 'active', 'active',
+            GObject.ParamFlags.READWRITE, false),
+    },
+}, class AiubSwitchRow extends Adw.ActionRow {
+    _init({active = false, ...props} = {}) {
+        super._init(props);
+        const sw = new Gtk.Switch({active, valign: Gtk.Align.CENTER});
+        this.active = active;
+        this.bind_property('active', sw, 'active',
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE);
+        this.add_suffix(sw);
+        this.activatable_widget = sw;
+    }
+});
+
+const SpinRow = Adw.SpinRow ?? GObject.registerClass({
+    Properties: {
+        value: GObject.ParamSpec.double(
+            'value', 'value', 'value',
+            GObject.ParamFlags.READWRITE, -Number.MAX_VALUE, Number.MAX_VALUE, 0),
+    },
+}, class AiubSpinRow extends Adw.ActionRow {
+    _init({adjustment, ...props} = {}) {
+        super._init(props);
+        const spin = new Gtk.SpinButton({adjustment, valign: Gtk.Align.CENTER});
+        this.value = spin.get_value();
+        this.bind_property('value', spin, 'value',
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE);
+        this.add_suffix(spin);
+        this.activatable_widget = spin;
+    }
+});
+
+const EntryRow = Adw.EntryRow ?? GObject.registerClass({
+    Properties: {
+        text: GObject.ParamSpec.string(
+            'text', 'text', 'text',
+            GObject.ParamFlags.READWRITE, ''),
+    },
+}, class AiubEntryRow extends Adw.ActionRow {
+    _init({text = '', ...props} = {}) {
+        super._init(props);
+        const entry = new Gtk.Entry({text, valign: Gtk.Align.CENTER, hexpand: true});
+        this.text = text;
+        this.bind_property('text', entry, 'text',
+            GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE);
+        this.add_suffix(entry);
+        this.activatable_widget = entry;
+    }
+});
+
+// ── Vendor login / config ────────────────────────────────────────────────
+const VENDOR_AUTH = [
+    {id: 'anthropic', name: 'Claude', kind: 'oauth', cli: 'claude', login: 'claude', pkg: '@anthropic-ai/claude-code'},
+    {id: 'openai', name: 'Codex', kind: 'oauth', cli: 'codex', login: 'codex login', pkg: '@openai/codex'},
+    // OpenCode 2 keeps its credential in the CLI's own SQLite database. The
+    // binary reads that store directly; this row only opens the CLI login.
+    {id: 'opencode-go', name: 'OpenCode Go', kind: 'oauth', cli: 'opencode', login: 'opencode auth login', pkg: 'opencode-ai'},
+    // Local-server vendor: there is no separate credential or npm-installable
+    // login helper. If `agy` exists we can open it; the app and IDE are equally
+    // valid sources and are managed outside this extension.
+    {id: 'antigravity', name: 'Google Antigravity', kind: 'local', cli: 'agy'},
+    {id: 'zai', name: 'Z.AI (GLM)', kind: 'apikey', env: 'ZAI_API_KEY'},
+    {id: 'openrouter', name: 'OpenRouter', kind: 'apikey', env: 'OPENROUTER_API_KEY'},
+    {id: 'deepseek', name: 'DeepSeek', kind: 'apikey', env: 'DEEPSEEK_API_KEY'},
+];
+
+// The config file the Rust binary would actually read. It resolves the
+// platform config dir, which honors $XDG_CONFIG_HOME — hard-coding
+// ~/.config meant a user with XDG_CONFIG_HOME set saw "no key configured"
+// for keys that were configured. Falls back to the legacy path so a config
+// written before this is still found.
+function configPath() {
+    const xdg = `${GLib.get_user_config_dir()}/ai-usagebar/config.toml`;
+    if (GLib.file_test(xdg, GLib.FileTest.EXISTS))
+        return xdg;
+    return `${GLib.get_home_dir()}/.config/ai-usagebar/config.toml`;
+}
+
+// Does the config have an uncommented api_key in [section]?
+function configHasApiKey(section) {
+    const path = configPath();
+    if (!GLib.file_test(path, GLib.FileTest.EXISTS))
+        return false;
+    try {
+        const [ok, bytes] = GLib.file_get_contents(path);
+        if (!ok)
+            return false;
+        let inSection = false;
+        for (const raw of new TextDecoder().decode(bytes).split('\n')) {
+            const t = raw.trim();
+            if (t.startsWith('['))
+                inSection = t === `[${section}]`;
+            else if (inSection && !t.startsWith('#') && /^api_key\s*=\s*["']\S/.test(t))
+                return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
+// OpenCode 2 stores its credential in the CLI's SQLite database, which GJS
+// cannot query. Ask the same binary the indicator uses; fall back to the
+// legacy JSON store and the explicit env/config key when it is unavailable.
+function openCodeGoConfigured() {
+    if ((GLib.getenv('OPENCODE_GO_API_KEY') || '').length > 0 || configHasApiKey('opencode-go'))
+        return true;
+    const bin = GLib.find_program_in_path('ai-usagebar') ||
+        `${GLib.get_home_dir()}/.local/bin/ai-usagebar`;
+    if (bin && GLib.file_test(bin, GLib.FileTest.IS_EXECUTABLE)) {
+        try {
+            const proc = Gio.Subprocess.new([bin, 'vendors', '--json'],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+            const [, stdout] = proc.communicate_utf8(null, null);
+            const row = JSON.parse(stdout).vendors?.find(v => v.id === 'opencode-go');
+            if (row)
+                return row.configured === true;
+        } catch (e) {}
+    }
+    const auth = `${GLib.get_user_data_dir()}/opencode/auth.json`;
+    if (!GLib.file_test(auth, GLib.FileTest.EXISTS))
+        return false;
+    try {
+        const [ok, bytes] = GLib.file_get_contents(auth);
+        if (!ok)
+            return false;
+        const value = JSON.parse(new TextDecoder().decode(bytes));
+        return ['opencode-go', 'opencode'].some(id => {
+            const entry = value?.[id];
+            return entry && ['api', 'key', 'zen'].includes(entry.type) &&
+                String(entry.key || '').trim().length > 0;
+        });
+    } catch (e) {
+        return false;
+    }
+}
+
+function vendorConfigured(v) {
+    const home = GLib.get_home_dir();
+    if (v.id === 'anthropic')
+        return GLib.file_test(`${home}/.claude/.credentials.json`, GLib.FileTest.EXISTS);
+    if (v.id === 'openai')
+        return GLib.file_test(`${home}/.codex/auth.json`, GLib.FileTest.EXISTS);
+    if (v.id === 'opencode-go')
+        return openCodeGoConfigured();
+    // Antigravity 2.0, the `agy` CLI and the IDE are separate products sharing
+    // one quota, and any combination may be installed. Having any of their
+    // state directories is enough — the binary reads usage from whichever
+    // local server is running, so there is no credential file to look for.
+    if (v.id === 'antigravity') {
+        return ['antigravity', 'antigravity-cli', 'antigravity-ide']
+            .some(d => GLib.file_test(`${home}/.gemini/${d}`, GLib.FileTest.IS_DIR));
+    }
+    return (GLib.getenv(v.env) || '').length > 0 || configHasApiKey(v.id);
+}
+
+// Open the user's terminal running `command` (login shell, so claude/codex are on PATH).
+function spawnInTerminal(command) {
+    for (const argv of terminalCandidates(command)) {
+        if (!GLib.find_program_in_path(argv[0]))
+            continue;
+        try {
+            Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+            return true;
+        } catch (e) {}
+    }
+    return false;
+}
+
+function spawnArgvInTerminal(commandArgv) {
+    // The prefs/GNOME process PATH is minimal, so run through a login shell
+    // and put ~/.local/bin (agy, ai-usagebar-tui) first, like spawnInTerminal.
+    const quoted = commandArgv.map(a => GLib.shell_quote(a)).join(' ');
+    const line = `export PATH="$HOME/.local/bin:$PATH" && ${quoted}`;
+    for (const argv of terminalCandidates(line)) {
+        if (!GLib.find_program_in_path(argv[0]))
+            continue;
+        try {
+            Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE);
+            return true;
+        } catch (e) {}
+    }
+    return false;
+}
+
+// Is `cli` on the login-shell PATH? (npm-global / nvm bins often aren't on the
+// prefs process PATH, so we ask a login shell.)
+function checkCliInstalled(cli, callback) {
+    try {
+        const p = Gio.Subprocess.new(
+            ['bash', '-lc', `command -v ${cli}`],
+            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+        p.communicate_utf8_async(null, null, (proc, res) => {
+            try {
+                const [, out] = proc.communicate_utf8_finish(res);
+                callback((out || '').trim().length > 0);
+            } catch (e) {
+                callback(false);
+            }
+        });
+    } catch (e) {
+        callback(false);
+    }
+}
+
+// Terminal script: if the CLI is missing, offer to npm-install it (with
+// consent), then run the login. Runs in a login shell so PATH is complete.
+function oauthCommand(v) {
+    // Installs to ~/.local (already on PATH) so no sudo is needed even when the
+    // system npm prefix is root-owned (/usr/lib/node_modules).
+    return [
+        `export PATH="$HOME/.local/bin:$PATH";`,
+        `if command -v ${v.cli} >/dev/null 2>&1; then ${v.login};`,
+        `else echo "⚠ ${v.cli} not found.";`,
+        `echo "I can install it under ~/.local without sudo (npm --prefix). Package: ${v.pkg}"; echo;`,
+        `read -p "Install now? [y/N] " a;`,
+        `if [ "$a" = y ] || [ "$a" = Y ]; then npm i -g --prefix "$HOME/.local" ${v.pkg} && hash -r && ${v.login}; fi;`,
+        `fi;`,
+        `echo; read -p "Press Enter to close..."`,
+    ].join(' ');
+}
+
+// Bind an Adw.ComboRow (index-based) to a string GSetting via a value table.
+function bindCombo(settings, key, comboRow, values) {
+    const sync = () => {
+        const idx = values.indexOf(settings.get_string(key));
+        comboRow.selected = idx < 0 ? 0 : idx;
+    };
+    sync();
+    comboRow.connect('notify::selected', () => {
+        const v = values[comboRow.selected];
+        if (v !== undefined && v !== settings.get_string(key))
+            settings.set_string(key, v);
+    });
+    settings.connect(`changed::${key}`, sync);
+}
+
+function rgbaToHex(rgba) {
+    const h = v => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
+    return `#${h(rgba.red)}${h(rgba.green)}${h(rgba.blue)}`;
+}
+
+const HAS_USE_MARKUP = !!GObject.Object.find_property.call(Adw.ActionRow, 'use-markup');
+
+// A row with a GTK color picker bound to a hex-string GSetting.
+function colorRow(settings, key, title) {
+    const row = new Adw.ActionRow(HAS_USE_MARKUP
+        ? {title, use_markup: false}
+        : {title: GLib.markup_escape_text(title, -1)});
+    const btn = Gtk.ColorDialogButton
+        ? new Gtk.ColorDialogButton({
+            dialog: new Gtk.ColorDialog({with_alpha: false}),
+            valign: Gtk.Align.CENTER,
+        })
+        : new Gtk.ColorButton({
+            use_alpha: false,
+            valign: Gtk.Align.CENTER,
+        });
+    let updating = false;
+    const load = () => {
+        const rgba = new Gdk.RGBA();
+        if (rgba.parse(settings.get_string(key))) {
+            updating = true;
+            btn.set_rgba(rgba);
+            updating = false;
+        }
+    };
+    load();
+    const save = () => {
+        if (!updating)
+            settings.set_string(key, rgbaToHex(btn.get_rgba()));
+    };
+    btn.connect('notify::rgba', save);
+    if (!Gtk.ColorDialogButton)
+        btn.connect('color-set', save);
+    settings.connect(`changed::${key}`, load);
+    row.add_suffix(btn);
+    row.activatable_widget = btn;
+    return row;
+}
+
+class AiUsageBarPrefs {
+    fillPreferencesWindow(window) {
+        const settings = ExtensionUtils.getSettings();
+        const page = new Adw.PreferencesPage({
+            title: _('General'),
+            icon_name: 'preferences-system-symbolic',
+        });
+        window.add(page);
+
+        // ── Display ──────────────────────────────────────────────────────
+        const display = new Adw.PreferencesGroup({title: _('Top bar appearance')});
+        page.add(display);
+
+        const showSession = new SwitchRow({title: _('Show 5h (session) bar')});
+        settings.bind('show-session', showSession, 'active', Gio.SettingsBindFlags.DEFAULT);
+        display.add(showSession);
+
+        const showWeekly = new SwitchRow({title: _('Show weekly bar')});
+        settings.bind('show-weekly', showWeekly, 'active', Gio.SettingsBindFlags.DEFAULT);
+        display.add(showWeekly);
+
+        const showExtra = new SwitchRow({
+            title: _('Show extra usage bar (3rd)'),
+            subtitle: _('the extra spend ($) as a third bar'),
+        });
+        settings.bind('show-extra', showExtra, 'active', Gio.SettingsBindFlags.DEFAULT);
+        display.add(showExtra);
+
+        // Only Antigravity reports two independent pools today; for every other
+        // vendor these rows are inert, which the subtitle spells out.
+        const poolLabels = [_('Both'), _('First only'), _('Second only'), _('Automatic')];
+        const poolValues = ['both', 'primary', 'secondary', 'auto'];
+        const poolSubtitle = _('for providers with two independent pools (e.g. Antigravity: Gemini and Claude & GPT OSS)');
+        const pools = new Adw.ComboRow({
+            title: _('Panel pools'),
+            subtitle: HAS_USE_MARKUP ? poolSubtitle : GLib.markup_escape_text(poolSubtitle, -1),
+            model: Gtk.StringList.new(poolLabels),
+        });
+        bindCombo(settings, 'panel-pools', pools, poolValues);
+        display.add(pools);
+
+        const autoThreshold = new SpinRow({
+            title: _('Automatic mode threshold (%)'),
+            subtitle: _('switches to the other pool when the first passes this usage'),
+            adjustment: new Gtk.Adjustment({lower: 50, upper: 100, step_increment: 1, page_increment: 5}),
+        });
+        settings.bind('panel-auto-threshold', autoThreshold, 'value', Gio.SettingsBindFlags.DEFAULT);
+        display.add(autoThreshold);
+
+        const syncThreshold = () =>
+            autoThreshold.set_sensitive(settings.get_string('panel-pools') === 'auto');
+        syncThreshold();
+        settings.connect('changed::panel-pools', syncThreshold);
+
+        const showPercent = new SwitchRow({title: _('Show percentage/value')});
+        settings.bind('show-percent', showPercent, 'active', Gio.SettingsBindFlags.DEFAULT);
+        display.add(showPercent);
+
+        const showBars = new SwitchRow({
+            title: _('Show bars'),
+            subtitle: _('off = numbers only, no bars'),
+        });
+        settings.bind('show-bars', showBars, 'active', Gio.SettingsBindFlags.DEFAULT);
+        display.add(showBars);
+
+        const showPace = new SwitchRow({
+            title: _('Pace arrows'),
+            subtitle: _('With bars off: color each value by pace and add ↓ under, → on, ↑ ahead'),
+        });
+        settings.bind('show-pace', showPace, 'active', Gio.SettingsBindFlags.DEFAULT);
+        settings.bind('show-bars', showPace, 'sensitive', Gio.SettingsBindFlags.GET |
+            Gio.SettingsBindFlags.INVERT_BOOLEAN);
+        display.add(showPace);
+
+        const barWidth = new SpinRow({
+            title: _('Width of each bar (cells)'),
+            adjustment: new Gtk.Adjustment({lower: 4, upper: 20, step_increment: 1, page_increment: 2}),
+        });
+        settings.bind('bar-width', barWidth, 'value', Gio.SettingsBindFlags.DEFAULT);
+        display.add(barWidth);
+
+        const menu = new Adw.PreferencesGroup({
+            title: _('Menu appearance'),
+            description: _('Provider summaries remain visible. Changes apply immediately; the menu follows the Shell theme.'),
+        });
+        page.add(menu);
+        const summaryStyle = new Adw.ComboRow({
+            title: _('Provider summary'),
+            model: Gtk.StringList.new([_('Bars and values'), _('Values only')]),
+        });
+        bindCombo(settings, 'menu-summary-style', summaryStyle, ['bars', 'values']);
+        menu.add(summaryStyle);
+        const menuIcons = new SwitchRow({title: _('Show provider icons')});
+        settings.bind('menu-show-icons', menuIcons, 'active', Gio.SettingsBindFlags.DEFAULT);
+        menu.add(menuIcons);
+        const compactMenu = new SwitchRow({title: _('Compact spacing')});
+        settings.bind('menu-compact', compactMenu, 'active', Gio.SettingsBindFlags.DEFAULT);
+        menu.add(compactMenu);
+
+        // ── Colours ────────────────────────────────────────────────────────
+        const colors = new Adw.PreferencesGroup({
+            title: _('Colours'),
+            description: _('Shared bar colours for the top bar and menu (One Dark by default). Menu severity comes from the usage report.'),
+        });
+        page.add(colors);
+        colors.add(colorRow(settings, 'color-low', _('Low (<50%)')));
+        colors.add(colorRow(settings, 'color-mid', _('Medium (50–74%)')));
+        colors.add(colorRow(settings, 'color-high', _('High (75–89%)')));
+        colors.add(colorRow(settings, 'color-critical', _('Critical (≥90%)')));
+        colors.add(colorRow(settings, 'color-empty', _('Empty (bar background)')));
+
+        // ── Data ────────────────────────────────────────────────────────
+        const data = new Adw.PreferencesGroup({title: _('Data')});
+        page.add(data);
+
+        const interval = new SpinRow({
+            title: _('Refresh interval (s)'),
+            adjustment: new Gtk.Adjustment({lower: 5, upper: 3600, step_increment: 5, page_increment: 30}),
+        });
+        settings.bind('refresh-interval', interval, 'value', Gio.SettingsBindFlags.DEFAULT);
+        data.add(interval);
+
+        // One switch per provider; each one switched on gets its own top bar
+        // indicator, in this order. Stored as the comma-separated `vendor` list.
+        const vendorList = ['anthropic', 'openai', 'opencode-go', 'zai', 'openrouter', 'deepseek', 'antigravity', 'supergrok'];
+        const vendors = new Adw.ExpanderRow({
+            title: _('Top bar vendors'),
+            subtitle: _('One indicator per provider switched on. The menu lists every enabled provider.'),
+        });
+        const enabledVendors = () => settings.get_string('vendor').split(',').map(v => v.trim());
+        const vendorRows = vendorList.map(v => {
+            const row = new SwitchRow({title: v, active: enabledVendors().includes(v)});
+            row.connect('notify::active', () => {
+                const chosen = vendorList.filter((x, i) => vendorRows[i].active);
+                if (chosen.join(',') !== settings.get_string('vendor'))
+                    settings.set_string('vendor', chosen.join(','));
+            });
+            vendors.add_row(row);
+            return row;
+        });
+        data.add(vendors);
+
+        const binPath = new EntryRow({title: _('Binary path (empty = auto)')});
+        settings.bind('binary-path', binPath, 'text', Gio.SettingsBindFlags.DEFAULT);
+        data.add(binPath);
+
+        // ── Position ─────────────────────────────────────────────────────
+        const pos = new Adw.PreferencesGroup({
+            title: _('Panel position'),
+            description: _('Changes apply immediately.'),
+        });
+        page.add(pos);
+
+        const box = new Adw.ComboRow({
+            title: _('Area'),
+            subtitle: _('right = next to the network/clock'),
+            model: Gtk.StringList.new(['left', 'center', 'right']),
+        });
+        bindCombo(settings, 'panel-box', box, ['left', 'center', 'right']);
+        pos.add(box);
+
+        const index = new SpinRow({
+            title: _('Index within the area'),
+            subtitle: _('0 = leftmost in the chosen area'),
+            adjustment: new Gtk.Adjustment({lower: 0, upper: 20, step_increment: 1, page_increment: 1}),
+        });
+        settings.bind('panel-index', index, 'value', Gio.SettingsBindFlags.DEFAULT);
+        pos.add(index);
+
+        this._buildVendorsPage(window);
+    }
+
+    // A "Vendors" tab: per-vendor credential status + a login/config button.
+    _buildVendorsPage(window) {
+        const page = new Adw.PreferencesPage({
+            title: _('Vendors'),
+            icon_name: 'dialog-password-symbolic',
+        });
+        window.add(page);
+
+        const group = new Adw.PreferencesGroup({
+            title: _('Per-provider login / setup'),
+            description: _('OAuth opens a terminal with the login command; API-key providers are configured in the TUI. Reopen this window to re-check status.'),
+        });
+        page.add(group);
+
+        const updates = [];
+        for (const v of VENDOR_AUTH) {
+            const row = new Adw.ActionRow({title: v.name});
+            const btn = new Gtk.Button({valign: Gtk.Align.CENTER});
+            btn.add_css_class('flat');
+            row.add_suffix(btn);
+
+            const update = () => {
+                if (v.kind === 'local') {
+                    const productDetected = vendorConfigured(v);
+                    row.subtitle = _('checking…');
+                    checkCliInstalled(v.cli, (installed) => {
+                        if (productDetected) {
+                            row.subtitle = _('✓ Antigravity detected — keep the app, IDE or agy open');
+                        } else if (installed) {
+                            row.subtitle = _('agy installed — open a session to make the quota available');
+                        } else {
+                            row.subtitle = _('open or install the app, the IDE or agy; there is no separate login');
+                        }
+                        btn.label = installed ? _('Open agy') : _('No separate login');
+                        btn.sensitive = installed;
+                    });
+                    return;
+                }
+                btn.sensitive = true;
+                if (v.kind !== 'oauth') {
+                    const ok = vendorConfigured(v);
+                    row.subtitle = ok ? _('✓ Configured') : `⚠ ${_('No API key')} — ${v.env}`;
+                    btn.label = _('Configure (TUI)');
+                    return;
+                }
+                if (vendorConfigured(v)) {
+                    row.subtitle = _('✓ Configured');
+                    btn.label = _('Sign in again');
+                    return;
+                }
+                row.subtitle = _('checking…');
+                checkCliInstalled(v.cli, (installed) => {
+                    row.subtitle = installed
+                        ? `⚠ ${_('Not signed in')} — \`${v.login}\``
+                        : `⚠ ${v.cli} ${_('not installed')} (installs under ~/.local, no sudo)`;
+                    btn.label = installed ? _('Sign in') : _('Install + sign in');
+                });
+            };
+            update();
+            updates.push(update);
+
+            btn.connect('clicked', () => {
+                if (v.kind === 'oauth') {
+                    spawnInTerminal(oauthCommand(v));
+                } else if (v.kind === 'local') {
+                    spawnArgvInTerminal([v.cli]);
+                } else {
+                    const tui = GLib.find_program_in_path('ai-usagebar-tui') ||
+                        `${GLib.get_home_dir()}/.cargo/bin/ai-usagebar-tui`;
+                    spawnArgvInTerminal([tui]);
+                }
+                GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 4, () => {
+                    update();
+                    return GLib.SOURCE_REMOVE;
+                });
+            });
+
+            group.add(row);
+        }
+
+        // Re-check when the window regains focus (e.g., after logging in via
+        // the terminal) — fixes the "still shows not signed in" loop.
+        window.connect('notify::is-active', () => {
+            if (window.is_active)
+                updates.forEach(u => u());
+        });
+    }
+}
+
+function init() {
+    ExtensionUtils.initTranslations();
+}
+
+function fillPreferencesWindow(window) {
+    new AiUsageBarPrefs().fillPreferencesWindow(window);
+}
