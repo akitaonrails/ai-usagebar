@@ -1887,7 +1887,7 @@ mod tests {
         let pid_file = dir.path().join("pid file");
         let fake = script(
             &dir,
-            "#!/bin/sh\nprintf '%s' \"$$\" > \"$1\"\nexec /usr/bin/sleep 5\n",
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$1\"\nexec sleep 5\n",
         );
         let start = Instant::now();
         let result = command_at(&fake, &[pid_file.to_str().unwrap()]);
