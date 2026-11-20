@@ -51,7 +51,7 @@ cargo build --release --bin ai-usagebar-tray
 ./target/release/ai-usagebar-tray
 ```
 
-Needs Node.js 20+ on PATH for the first build (`windows/popover/` Vite bundle).
+Needs Node.js 20.19+ or 22.12+ on PATH for the first build (`windows/popover/` Vite bundle).
 Left-click the status item to toggle the popover. Right-click it for the
 footer's Options menu as a native menu, in the popover's language: Customize
 (Classic only), Settings, Refresh, Detect Providers, Open TUI, Start at Login,
@@ -146,7 +146,7 @@ keep.
 
 ## Requirements
 
-- Rust (`rustc` 1.90+) and **Node.js 20+** (the tray embeds the Vite popover).
+- Rust (`rustc` 1.90+) and **Node.js 20.19+ or 22.12+** (the tray embeds the Vite popover).
 - Run `claude` once on the Mac so its OAuth creds are in the login **Keychain**;
   ai-usagebar reads them there automatically (no env vars).
 

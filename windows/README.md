@@ -36,7 +36,8 @@ replaces the files of a standalone ZIP install.
 - Windows 10 (recent) or Windows 11, with the **WebView2 Evergreen** runtime
   (preinstalled on Windows 11).
 - A Rust toolchain (`rustc` 1.90+).
-- **Node.js 20+** on PATH — `cargo build --bin ai-usagebar-tray` runs
+- **Node.js 20.19+ or 22.12+** on PATH (the range the locked Vite
+  declares) — `cargo build --bin ai-usagebar-tray` runs
   `npm ci` / `npm run build` in `windows/popover/` (Vite emits
   `dist/popover.js` + `dist/popover.css`; `build.rs` stages them into
   `OUT_DIR`, which the host `include_str!`s — without Node it stages a
@@ -264,6 +265,20 @@ node windows/popover/popover.test.mjs
 cargo test --lib tray
 ```
 
-Linux CI runs the Node test via `make desktop-test`. The Windows CI job
-also compiles the host with `cargo clippy --all-targets` and
-`cargo test --all-targets`.
+`popover.test.mjs` covers the view-model and needs no `npm install`. It
+imports `src/lib/cardImage.ts`, and Node loads a TypeScript file without a
+flag from 22.18, so the test needs Node 22.18+ even though the build accepts
+older versions. The rendered-screen and translation tests
+(`native-dashboard.test.mjs`, `i18n.test.mjs`) load Vite, React and Paraglide,
+so they need the popover's dependencies; `npm test` runs all three:
+
+```powershell
+cd windows/popover
+npm ci --no-fund --no-audit
+npm test
+cd ../..
+```
+
+Linux CI runs the Node test via `make desktop-test` and `npm test` via
+`make popover-ssr-test`. The Windows CI job also compiles the host with
+`cargo clippy --all-targets` and `cargo test --all-targets`.

@@ -86,7 +86,13 @@
   The GNOME, KDE and macOS READMEs said Antigravity quota exists only while a
   product is running; they now describe the saved-session fallback (`agy`,
   then the Cloud Code API), and the GNOME and KDE ones say that per-account
-  status-line entries never take quota from the Cloud Code API.
+  status-line entries never take quota from the Cloud Code API. The Windows
+  build page lists every bare-Node contract test `make desktop-test` and
+  `make plugin-test` run and says which popover tests need `npm ci`. Node
+  requirements are given per task instead of "18+" and "20+": 22.18+ for
+  `make test`, because `windows/popover/popover.test.mjs` imports a TypeScript
+  file, and 20.19+ or 22.12+ (the range the locked Vite declares) for the tray
+  build alone.
 
 ## [1.52.3] — 2026-11-18
 

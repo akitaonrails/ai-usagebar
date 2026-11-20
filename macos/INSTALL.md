@@ -31,7 +31,7 @@ expand Hidden Bar, place AI Usage on the desired side, and collapse again.
 | Need | How |
 |---|---|
 | **Rust** (`rustc` 1.90+) | `rustup` |
-| **Node.js 20+** | first tray build runs `npm ci` in `windows/popover/` |
+| **Node.js 20.19+ or 22.12+** | first tray build runs `npm ci` in `windows/popover/` |
 | **Python 3** | creates the application bundle |
 | **Claude logged in once** | run `claude` once — its OAuth creds go to the login **Keychain**, which ai-usagebar reads automatically |
 
@@ -123,7 +123,7 @@ system notifications.
 
 | Symptom | Fix |
 |---|---|
-| `npm` missing during `cargo build` | install Node.js 20+ |
+| `npm` missing during `cargo build` | install Node.js 20.19+ or 22.12+ |
 | Popover is empty / stub page | `npm ci && npm run build` in `windows/popover/`, then rebuild the tray |
 | Clicking the icon opens a menu instead of the popover | the WKWebView could not be built, so the status item falls back to a bare Refresh / Quit menu (#249). Quit it from that menu, rebuild, and check the error printed at launch |
 | Two status items | quit `ai-usagebar-menubar` (legacy Swift dropdown) |
