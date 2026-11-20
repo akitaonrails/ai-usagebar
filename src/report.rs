@@ -23,7 +23,7 @@ use serde_json::json;
 use crate::config::{Config, CredentialProbes};
 use crate::context::activity::{ProcessProbe, SessionActivity, SystemProbe};
 use crate::context::{ContextScan, ContextSession, ContextUsage};
-use crate::tui::app::{Freshness, TabId, TabSource, TabState, refresh_one, tabs_with_desktop};
+use crate::tui::app::{Freshness, TabId, TabSource, TabState, all_tabs_with_desktop, refresh_one};
 use crate::tui::context::format_tokens;
 use crate::tui::panels::{Section, sections_with_metadata_for};
 
@@ -158,6 +158,121 @@ fn report_targets_for_filter_with_config(
         })
         .cloned()
         .collect()
+}
+
+/// Drop the targets `[ui] hidden_accounts` names, before anything is fetched:
+/// an account that is off costs no usage request and no status-page lookup,
+/// because it never becomes an entry.
+///
+/// A status-line session answers to its own id and to the `antigravity` tab
+/// it was expanded from, so hiding the tab hides its sessions here as it
+/// hides the tab in the TUI.
+///
+/// A wire-only read keeps every target. Its one caller is the tray's key
+/// check (`tray::providers::fetch_filtered_report`), which must get a verdict
+/// for the key just typed whether or not that account is on show.
+fn without_hidden_targets(
+    config: &Config,
+    targets: Vec<ReportTarget>,
+    freshness: Freshness,
+) -> Vec<ReportTarget> {
+    if freshness == Freshness::Wire || config.ui.hidden_accounts.is_empty() {
+        return targets;
+    }
+    let hidden = |id: String| config.ui.is_account_hidden(&id);
+    targets
+        .into_iter()
+        .filter(|target| {
+            let tab_hidden = matches!(
+                target,
+                ReportTarget::AntigravityAccount(tab, _) if hidden(tab_report_id(config, tab))
+            );
+            !tab_hidden && !hidden(report_target_id_with_config(config, target))
+        })
+        .collect()
+}
+
+/// What a whole report reads: every tab, the Antigravity one expanded into
+/// its status-line `sessions`, minus the accounts `[ui] hidden_accounts`
+/// names. The fetches are made for this list and nothing else, so it is where
+/// "a hidden account is not fetched" is decided for `usage` and `usage --json`.
+fn whole_report_targets(
+    config: &Config,
+    tabs: &[TabId],
+    sessions: &[crate::antigravity::statusline::AccountSession],
+    freshness: Freshness,
+) -> Vec<ReportTarget> {
+    without_hidden_targets(config, expand_antigravity_tabs(tabs, sessions), freshness)
+}
+
+/// What a report narrowed to one provider (and optionally one account) reads,
+/// or why it reads nothing: the MCP `get_usage` filter and the tray's key
+/// check. `tabs` and `sessions` are the ones before `[ui] hidden_accounts`
+/// applies, which is how the error can tell an account that is off from one
+/// that does not exist.
+fn provider_report_targets(
+    config: &Config,
+    tabs: &[TabId],
+    sessions: &[crate::antigravity::statusline::AccountSession],
+    provider: &str,
+    account: Option<&str>,
+    freshness: Freshness,
+) -> std::result::Result<Vec<ReportTarget>, String> {
+    let expanded = expand_antigravity_tabs(tabs, sessions);
+    let matching = report_targets_for_filter_with_config(config, &expanded, provider, account);
+    let suffix = account.map_or(String::new(), |label| format!(" account {label}"));
+    visible_targets_or_reason(config, matching, &format!("{provider}{suffix}"), freshness)
+}
+
+/// What a one-entry refresh reads (a frontend's per-provider "Refresh"), or
+/// why it reads nothing. `tabs` and `sessions` as in
+/// [`provider_report_targets`].
+fn entry_report_targets(
+    config: &Config,
+    tabs: &[TabId],
+    sessions: &[crate::antigravity::statusline::AccountSession],
+    entry_id: &str,
+) -> std::result::Result<Vec<ReportTarget>, String> {
+    let expanded = expand_antigravity_tabs(tabs, sessions);
+    let matching = report_targets_matching_with_config(config, &expanded, entry_id);
+    visible_targets_or_reason(config, matching, entry_id, Freshness::Cached)
+}
+
+/// `matching` without the hidden accounts, or the reason nothing is left.
+/// The two reasons name different keys to fix: nothing enabled matches
+/// `wanted`, or everything that matches is in `[ui] hidden_accounts`.
+fn visible_targets_or_reason(
+    config: &Config,
+    matching: Vec<ReportTarget>,
+    wanted: &str,
+    freshness: Freshness,
+) -> std::result::Result<Vec<ReportTarget>, String> {
+    if matching.is_empty() {
+        return Err(format!("no enabled provider matches {wanted}"));
+    }
+    let visible = without_hidden_targets(config, matching, freshness);
+    if visible.is_empty() {
+        return Err(format!("{wanted} is listed in [ui] hidden_accounts"));
+    }
+    Ok(visible)
+}
+
+/// A whole report's entries, or the error for a report that has none. Every
+/// visible target becomes an entry, so none means `[ui] hidden_accounts`
+/// names them all. That is an error and not an empty document, which would
+/// read as a report with nothing wrong in it; and it is not "no vendors
+/// enabled", because the key to fix is a different one. `config_path` is the
+/// file the message points at ([`crate::config::config_path_hint`]).
+fn visible_entries_or_all_hidden(
+    entries: Vec<Entry>,
+    config_path: &str,
+) -> std::result::Result<Vec<Entry>, String> {
+    if entries.is_empty() {
+        return Err(format!(
+            "every enabled account is listed in [ui] hidden_accounts in {config_path}"
+        ));
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -338,7 +453,7 @@ async fn collect_filtered_json_with(
 
     let config = Config::load().map_err(|error| error.user_message())?;
     let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
-    let tabs: Vec<TabId> = tabs_with_desktop(&config)
+    let tabs: Vec<TabId> = all_tabs_with_desktop(&config)
         .into_iter()
         .filter(|tab| tab_provider_id(tab) == provider)
         .collect();
@@ -350,16 +465,7 @@ async fn collect_filtered_json_with(
     } else {
         Vec::new()
     };
-    let targets = report_targets_for_filter_with_config(
-        &config,
-        &expand_antigravity_tabs(&tabs, &accounts),
-        provider,
-        account,
-    );
-    if targets.is_empty() {
-        let suffix = account.map_or(String::new(), |label| format!(" account {label}"));
-        return Err(format!("no enabled provider matches {provider}{suffix}"));
-    }
+    let targets = provider_report_targets(&config, &tabs, &accounts, provider, account, freshness)?;
     let entries = collect_report_targets_for(&client, &config, &targets, freshness).await;
     let overview = config.ui.overview_vendors.as_ref().map(|vendors| {
         vendors
@@ -390,7 +496,7 @@ fn tab_provider_id(tab: &TabId) -> String {
 pub async fn collect_entry_json(entry_id: &str) -> std::result::Result<String, String> {
     let config = Config::load().map_err(|error| error.user_message())?;
     let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
-    let tabs = tabs_with_desktop(&config);
+    let tabs = all_tabs_with_desktop(&config);
     let accounts = if tabs
         .iter()
         .any(|tab| tab.vendor_id() == Some(crate::vendor::VendorId::Antigravity))
@@ -399,14 +505,7 @@ pub async fn collect_entry_json(entry_id: &str) -> std::result::Result<String, S
     } else {
         Vec::new()
     };
-    let targets = report_targets_matching_with_config(
-        &config,
-        &expand_antigravity_tabs(&tabs, &accounts),
-        entry_id,
-    );
-    if targets.is_empty() {
-        return Err(format!("no enabled provider matches {entry_id}"));
-    }
+    let targets = entry_report_targets(&config, &tabs, &accounts, entry_id)?;
     let entries = collect_report_targets_for(&client, &config, &targets, Freshness::Cached).await;
     Ok(render_json_entries(&entries))
 }
@@ -426,14 +525,17 @@ async fn collect_entries()
 -> std::result::Result<(Vec<Entry>, Option<&'static str>, Option<Vec<&'static str>>), String> {
     let config = Config::load().map_err(|error| error.user_message())?;
     let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
-    let tabs = tabs_with_desktop(&config);
+    let tabs = all_tabs_with_desktop(&config);
     if tabs.is_empty() {
         return Err(format!(
             "no vendors enabled in {}",
             crate::config::config_path_hint()
         ));
     }
-    let entries = collect_entries_for(&client, &config, &tabs, Freshness::Cached).await;
+    let entries = visible_entries_or_all_hidden(
+        collect_entries_for(&client, &config, &tabs, Freshness::Cached).await,
+        &crate::config::config_path_hint(),
+    )?;
     let overview = config
         .ui
         .overview_vendors
@@ -460,7 +562,7 @@ async fn collect_entries_for(
     } else {
         Vec::new()
     };
-    let targets = expand_antigravity_tabs(tabs, &accounts);
+    let targets = whole_report_targets(config, tabs, &accounts, freshness);
     collect_report_targets_for(client, config, &targets, freshness).await
 }
 
@@ -1115,13 +1217,48 @@ pub(crate) fn tab_id(tab: &TabId) -> String {
     }
 }
 
-fn tab_report_id(config: &Config, tab: &TabId) -> String {
+/// The id a tab's report entry carries: `custom:<group>@<account>` for a
+/// grouped `[[custom]]` source, [`tab_id`] otherwise. `[ui] hidden_accounts`
+/// stores this one.
+pub(crate) fn tab_report_id(config: &Config, tab: &TabId) -> String {
     if let TabSource::Custom { id, .. } = &tab.source
         && let Some(provider) = config.custom_by_id(id)
     {
         return provider.report_id();
     }
     tab_id(tab)
+}
+
+/// The accounts the TUI Settings overlay offers an on/off row for, as
+/// `(report id, label)` in tab order. `tabs` is the list before
+/// `[ui] hidden_accounts` applies.
+///
+/// A named account gets a row, and so does the default account of a provider
+/// that has named ones. A provider with only its default account gets none:
+/// its own `enabled` switch already is that control. Whatever the list names
+/// gets a row regardless, so an entry can always be turned on again — by its
+/// bare id when no tab stands behind it (its provider is off, a status-line
+/// session, a leftover).
+pub(crate) fn account_switch_rows(config: &Config, tabs: &[TabId]) -> Vec<(String, String)> {
+    let has_named_accounts = |tab: &TabId| {
+        tab.account.is_some()
+            || tab.vendor_id().is_some_and(|vendor| {
+                tabs.iter()
+                    .any(|other| other.account.is_some() && other.vendor_id() == Some(vendor))
+            })
+    };
+    let mut rows: Vec<(String, String)> = tabs
+        .iter()
+        .map(|tab| (tab, tab_report_id(config, tab)))
+        .filter(|(tab, id)| has_named_accounts(tab) || config.ui.is_account_hidden(id))
+        .map(|(tab, id)| (id, tab_display_name(tab)))
+        .collect();
+    for id in &config.ui.hidden_accounts {
+        if !rows.iter().any(|(listed, _)| listed == id) {
+            rows.push((id.clone(), crate::display::sanitize_untrusted_field(id)));
+        }
+    }
+    rows
 }
 
 fn tab_name(tab: &TabId) -> String {
@@ -4428,5 +4565,324 @@ mod default_label_report_tests {
             Some("personal"),
         );
         assert_eq!(one.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod hidden_account_tests {
+    use super::*;
+    use crate::config::CustomProviderConfig;
+    use crate::vendor::VendorId;
+
+    fn config_hiding(ids: &[&str]) -> Config {
+        let mut config = Config::default();
+        config.ui.hidden_accounts = ids.iter().map(|id| (*id).to_string()).collect();
+        config
+    }
+
+    fn custom_source(
+        id: &str,
+        short_name: &str,
+        account: Option<&str>,
+        url: &str,
+    ) -> CustomProviderConfig {
+        CustomProviderConfig {
+            id: id.into(),
+            name: if account.is_some() { "Example" } else { "Solo" }.into(),
+            short_name: short_name.into(),
+            group: account.map(|_| "example".into()),
+            account: account.map(str::to_owned),
+            enabled: true,
+            url: url.into(),
+            api_key: Some("test-key".into()),
+            metrics: vec![crate::config::CustomMetricSpec {
+                label: "Quota".into(),
+                percent: Some("/pct".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn status_line_session(suffix: &str) -> crate::antigravity::statusline::AccountSession {
+        crate::antigravity::statusline::AccountSession {
+            id_suffix: suffix.into(),
+            masked_email: "a***@example.com".into(),
+            updated_at: Utc::now(),
+            snapshot: crate::usage::AntigravitySnapshot {
+                plan: "Pro".into(),
+                account: suffix.into(),
+                source: crate::usage::AntigravitySource::Statusline,
+                session: None,
+                weekly: None,
+                third_party_session: None,
+                third_party_weekly: None,
+                model_pools: Vec::new(),
+            },
+        }
+    }
+
+    fn openai_tabs() -> Vec<TabId> {
+        vec![
+            TabId::vendor(VendorId::Openai),
+            TabId::account_for(VendorId::Openai, "work"),
+            TabId::account_for(VendorId::Openai, "personal"),
+        ]
+    }
+
+    fn target_ids(config: &Config, targets: &[ReportTarget]) -> Vec<String> {
+        targets
+            .iter()
+            .map(|target| report_target_id_with_config(config, target))
+            .collect()
+    }
+
+    fn visible_ids(config: &Config, tabs: &[TabId], freshness: Freshness) -> Vec<String> {
+        target_ids(config, &whole_report_targets(config, tabs, &[], freshness))
+    }
+
+    /// The claim the switch rests on: a hidden account is not asked for
+    /// anything. A report makes its requests per target (`usage_entries_for`,
+    /// `provider_statuses_for`), so an account that is not a target is not
+    /// fetched. Asserted on the functions the three collectors take their
+    /// target list from (`whole_report_targets`, `provider_report_targets`,
+    /// `entry_report_targets`) rather than against a mock endpoint: the
+    /// collectors themselves load the real config and resolve the real cache
+    /// directory, which a test must not touch.
+    #[test]
+    fn a_hidden_account_is_dropped_and_its_siblings_stay() {
+        let config = config_hiding(&["openai@personal"]);
+        assert_eq!(
+            visible_ids(&config, &openai_tabs(), Freshness::Cached),
+            ["openai", "openai@work"]
+        );
+    }
+
+    #[test]
+    fn an_absent_list_keeps_every_target() {
+        let config = Config::default();
+        assert_eq!(
+            visible_ids(&config, &openai_tabs(), Freshness::Cached),
+            ["openai", "openai@work", "openai@personal"]
+        );
+    }
+
+    #[test]
+    fn an_id_that_names_no_account_changes_nothing() {
+        // A removed account, a typo, a provider that is off, and a provider
+        // slug standing where an account id belongs: none of them is an error
+        // and none hides a neighbour.
+        let config = config_hiding(&["openai@gone", "opnai@work", " openai@work", "open"]);
+        assert_eq!(
+            visible_ids(&config, &openai_tabs(), Freshness::Cached),
+            ["openai", "openai@work", "openai@personal"]
+        );
+    }
+
+    #[test]
+    fn the_key_check_reads_a_hidden_account_off_the_wire() {
+        // `collect_filtered_json_from_wire` is the tray's key check: the user
+        // just typed a key for this provider and waits for a verdict on it.
+        let config = config_hiding(&["openai", "openai@work", "openai@personal"]);
+        assert!(visible_ids(&config, &openai_tabs(), Freshness::Cached).is_empty());
+        assert_eq!(
+            visible_ids(&config, &openai_tabs(), Freshness::Wire),
+            ["openai", "openai@work", "openai@personal"]
+        );
+    }
+
+    #[test]
+    fn a_grouped_custom_account_is_hidden_by_its_report_id() {
+        let mut config = config_hiding(&["custom:example@work"]);
+        config.custom = vec![
+            custom_source(
+                "example_personal",
+                "exp",
+                Some("personal"),
+                "https://example.com/p",
+            ),
+            custom_source("example_work", "exw", Some("work"), "https://example.com/w"),
+            custom_source("solo", "sol", None, "https://example.com/s"),
+        ];
+        config.validate().unwrap();
+        let tabs: Vec<TabId> = config.custom.iter().map(TabId::custom).collect();
+        assert_eq!(
+            visible_ids(&config, &tabs, Freshness::Cached),
+            ["custom:example@personal", "custom:solo"]
+        );
+
+        // The source's own `id` is not the report id of a grouped account, so
+        // listing it hides nothing.
+        config.ui.hidden_accounts = vec!["custom:example_work".into()];
+        assert_eq!(visible_ids(&config, &tabs, Freshness::Cached).len(), 3);
+    }
+
+    #[test]
+    fn a_status_line_session_is_hidden_by_its_own_id_or_by_its_tab() {
+        let tabs = [TabId::vendor(VendorId::Antigravity)];
+        let sessions = [
+            status_line_session("000000000001"),
+            status_line_session("000000000002"),
+        ];
+        let ids = |config: &Config| -> Vec<String> {
+            let targets = whole_report_targets(config, &tabs, &sessions, Freshness::Cached);
+            target_ids(config, &targets)
+        };
+        assert_eq!(
+            ids(&config_hiding(&["antigravity@000000000001"])),
+            ["antigravity@000000000002"]
+        );
+        // The TUI has one Antigravity tab; hiding it hides what the report
+        // expands it into.
+        assert!(ids(&config_hiding(&["antigravity"])).is_empty());
+    }
+
+    #[test]
+    fn a_report_with_every_account_hidden_says_which_key_did_it() {
+        let Err(error) = visible_entries_or_all_hidden(Vec::new(), "/example/config.toml") else {
+            panic!("a report without entries is an error, not an empty document");
+        };
+        assert_eq!(
+            error,
+            "every enabled account is listed in [ui] hidden_accounts in /example/config.toml"
+        );
+    }
+
+    /// The provider filter behind MCP `get_usage` and the tray's key check.
+    #[test]
+    fn a_provider_report_leaves_hidden_accounts_out_and_says_so_when_none_is_left() {
+        let tabs = openai_tabs();
+        let ids = |config: &Config, account: Option<&str>, freshness: Freshness| {
+            provider_report_targets(config, &tabs, &[], "openai", account, freshness)
+                .map(|targets| target_ids(config, &targets))
+        };
+
+        let one_hidden = config_hiding(&["openai@personal"]);
+        assert_eq!(
+            ids(&one_hidden, None, Freshness::Cached).unwrap(),
+            ["openai", "openai@work"]
+        );
+        assert_eq!(
+            ids(&one_hidden, Some("work"), Freshness::Cached).unwrap(),
+            ["openai@work"]
+        );
+        // Asked for by name, the hidden account is an error that names the
+        // key, not a reading and not "no such provider".
+        assert_eq!(
+            ids(&one_hidden, Some("personal"), Freshness::Cached).unwrap_err(),
+            "openai account personal is listed in [ui] hidden_accounts"
+        );
+        // An account that does not exist keeps the message it always had.
+        assert_eq!(
+            ids(&one_hidden, Some("gone"), Freshness::Cached).unwrap_err(),
+            "no enabled provider matches openai account gone"
+        );
+
+        let all_hidden = config_hiding(&["openai", "openai@work", "openai@personal"]);
+        assert_eq!(
+            ids(&all_hidden, None, Freshness::Cached).unwrap_err(),
+            "openai is listed in [ui] hidden_accounts"
+        );
+        // The key check reads off the wire and is not filtered.
+        assert_eq!(
+            ids(&all_hidden, None, Freshness::Wire).unwrap(),
+            ["openai", "openai@work", "openai@personal"]
+        );
+    }
+
+    /// The one-entry refresh behind a frontend's per-provider "Refresh".
+    #[test]
+    fn an_entry_report_refuses_a_hidden_account_and_names_the_key() {
+        let config = config_hiding(&["openai@personal", "antigravity@000000000001"]);
+        let mut tabs = openai_tabs();
+        tabs.push(TabId::vendor(VendorId::Antigravity));
+        let sessions = [
+            status_line_session("000000000001"),
+            status_line_session("000000000002"),
+        ];
+        let ids = |entry_id: &str| {
+            entry_report_targets(&config, &tabs, &sessions, entry_id)
+                .map(|targets| target_ids(&config, &targets))
+        };
+
+        assert_eq!(ids("openai@work").unwrap(), ["openai@work"]);
+        assert_eq!(
+            ids("antigravity@000000000002").unwrap(),
+            ["antigravity@000000000002"]
+        );
+        assert_eq!(
+            ids("openai@personal").unwrap_err(),
+            "openai@personal is listed in [ui] hidden_accounts"
+        );
+        assert_eq!(
+            ids("antigravity@000000000001").unwrap_err(),
+            "antigravity@000000000001 is listed in [ui] hidden_accounts"
+        );
+        assert_eq!(
+            ids("openai@gone").unwrap_err(),
+            "no enabled provider matches openai@gone"
+        );
+    }
+
+    #[test]
+    fn settings_rows_cover_named_accounts_and_the_default_beside_them() {
+        let mut config = config_hiding(&[]);
+        config.custom = vec![
+            custom_source(
+                "example_personal",
+                "exp",
+                Some("personal"),
+                "https://example.com/p",
+            ),
+            custom_source("example_work", "exw", Some("work"), "https://example.com/w"),
+            custom_source("solo", "sol", None, "https://example.com/s"),
+        ];
+        let mut tabs = vec![TabId::vendor(VendorId::Cursor)];
+        tabs.extend(openai_tabs());
+        tabs.push(TabId::account("work"));
+        tabs.push(TabId::desktop_account("personal"));
+        // A provider's only account still gets a row when it is a named one.
+        tabs.push(TabId::account_for(VendorId::Copilot, "work"));
+        tabs.extend(config.custom.iter().map(TabId::custom));
+
+        let rows = account_switch_rows(&config, &tabs);
+        let ids: Vec<&str> = rows.iter().map(|(id, _)| id.as_str()).collect();
+        // Cursor and the ungrouped custom source are a default account with
+        // no named one beside it: the provider's own switch is the control,
+        // so they get no account row.
+        assert_eq!(
+            ids,
+            [
+                "openai",
+                "openai@work",
+                "openai@personal",
+                "anthropic@work",
+                "anthropic@personal",
+                "copilot@work",
+                "custom:example@personal",
+                "custom:example@work",
+            ]
+        );
+        let label = |id: &str| rows.iter().find(|(row, _)| row == id).unwrap().1.clone();
+        assert_eq!(label("openai"), "Codex");
+        assert_eq!(label("openai@work"), "Codex · work");
+        assert_eq!(label("anthropic@personal"), "Claude · personal (desktop)");
+        assert_eq!(label("custom:example@work"), "Example · work");
+    }
+
+    #[test]
+    fn settings_rows_always_include_what_the_list_names() {
+        // A single-account provider hidden by hand, and an id with no tab
+        // behind it: both must be reachable, or they could never be shown
+        // again from the overlay.
+        let config = config_hiding(&["cursor", "openai@gone"]);
+        let rows = account_switch_rows(&config, &[TabId::vendor(VendorId::Cursor)]);
+        assert_eq!(
+            rows,
+            [
+                ("cursor".to_string(), "Cursor".to_string()),
+                ("openai@gone".to_string(), "openai@gone".to_string()),
+            ]
+        );
     }
 }

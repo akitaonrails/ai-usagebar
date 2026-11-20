@@ -47,6 +47,14 @@
 # is one unauthenticated GET per status page every 5 minutes; false turns it
 # off, and no status page is contacted. Default true.
 # provider_status = true
+# Accounts to turn off one by one, by the id `ai-usagebar usage --json` gives
+# each entry: "<vendor>" for a default account, "<vendor>@<label>" for a named
+# one, "custom:<group>@<account>" for a grouped [[custom]] source. A listed
+# account is left out of the TUI and the report and is not fetched; its config
+# block, credentials and cache stay untouched. An id that matches no account
+# does nothing. The TUI Settings overlay edits this list (Accounts section).
+# For a provider with only its default account, use its own `enabled` switch.
+# hidden_accounts = ["openai@personal", "custom:example@work"]
 
 # Custom providers: any HTTP endpoint that answers a GET with a JSON document,
 # authenticated with a static token. One [[custom]] table per provider; each

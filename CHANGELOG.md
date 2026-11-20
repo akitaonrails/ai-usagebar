@@ -48,6 +48,30 @@
   when two or more Claude accounts share a currency a `Claude extra` summary
   row totals their spend (and cap when every account has one) (#605).
 
+- **Turn one account off without removing it.** `[ui] hidden_accounts` takes
+  the ids `usage --json` gives each entry (`openai@personal`, `anthropic`,
+  `custom:example@work`). A listed account is left out of the TUI, `usage`,
+  `usage --json` and the frontends that read it (the tray popovers, GNOME,
+  KDE, Omarchy, Linux Mint, the MCP server), and it is not fetched: no usage
+  request, no status-page lookup. Its config block, credentials and cache stay
+  as they are, and removing the id brings it back. The TUI Settings overlay
+  has an **Accounts** section with one on/off row per named account and for
+  the default account beside them; a provider with only its default account
+  keeps using its own `enabled` switch. A save that toggles no account row
+  leaves the list as it is written, and a toggle keeps the other ids on
+  their lines with their comments. The list is literal: hiding every account
+  of a provider leaves that provider on with no entry, and with every account
+  hidden `usage` fails with a message that names the key while the TUI opens
+  on a line that points at Settings. The bar widget
+  (`--vendor <v> [--account <label>]`, as a Waybar module or the GNOME top-bar
+  text runs it) is a direct request and still answers, as it does under
+  `show_default_account = false`, and the standalone macOS menu bar (`macos/`)
+  does not apply the list yet. Without the key one line changes: a TUI left
+  with no tab at all (a config edited while it runs turns every provider off)
+  now reads `Nothing to show. Press s to turn a provider or account on in
+  Settings.` where it read `No vendors to summarize.` or drew an empty panel.
+  See [docs/configuration.md](docs/configuration.md#turning-one-account-off).
+
 ### Fixed
 
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
