@@ -543,6 +543,30 @@ Create the second login with `CODEX_HOME=~/.codex-work codex login` and point
 account caches separately under `~/.cache/ai-usagebar/openai/<label>`. The
 singular `codex_auth_path` remains the default account and needs no migration.
 
+ai-usagebar never searches for Codex logins. `[openai]` alone reads one file —
+`codex_auth_path`, or `.codex/auth.json` in the home directory of the user
+running ai-usagebar — and does not consult the `CODEX_HOME` environment
+variable, so a detected Codex provider can still be missing logins: each
+additional `CODEX_HOME` needs its own entry. With Windows and WSL on one
+machine, each side has its own home. A Windows monitor does not see a login
+made inside WSL, and a `\\wsl.localhost\...` path is not a dependable way
+around that: the file can be readable while the fetch fails, because the mount
+may not support the lock every fetch takes beside the credential file (see
+[Credentials on WSL UNC paths](windows-build.md#credentials-on-wsl-unc-paths)).
+Declare each login in the configuration of the ai-usagebar that runs on the
+same side:
+
+```toml
+# One entry per additional CODEX_HOME on this side (Windows or WSL).
+[[openai.accounts]]
+label = "personal"
+codex_auth_path = "~/.codex-personal/auth.json"
+
+[[openai.accounts]]
+label = "client"
+codex_auth_path = "~/.codex-client/auth.json"
+```
+
 For more than one GitHub Copilot plan — a personal and a work account, say —
 add `[[copilot.accounts]]`. ai-usagebar stores no token of its own here: `gh`
 already keeps several logins per host, so an entry only needs that login's
