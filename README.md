@@ -828,8 +828,8 @@ status page flags one of the provider's own components also carries `incident`:
 `{"severity": "degraded_performance", "title": "…", "url": "https://…"}`.
 `severity` is the status the page shows — `degraded_performance`,
 `partial_outage`, `major_outage` or `under_maintenance` — and `url` is the
-status page's address. The TUI and the Windows/macOS popover give the provider's name the
-page's colour for that status (yellow, orange, red, blue) and put a `▲` / alert
+status page's address. The TUI and the tray popover (Windows, macOS and the
+opt-in Linux tray) give the provider's name the page's colour for that status (yellow, orange, red, blue) and put a `▲` / alert
 mark beside it, so the name's colour is not the only signal. The field is
 omitted when the page flags nothing or could not be reached, so its absence is
 not a health claim. `[ui] provider_status = false` turns the check off.

@@ -490,9 +490,9 @@ credits still usable on the bar — the Portal's total usable credits, falling
 back to top-up credits and then to subscription credits — and leaves the
 consumed percentage in the meter, the severity colour and the detail line.
 
-The Omarchy panel, the KDE plasmoid and the tray popover (Windows and macOS)
-read the metric's own `headline` field out of `usage --json` rather than
-guessing from the row's label. In the popover, `"amount"` puts the money figure
+The Omarchy panel, the KDE plasmoid and the tray popover (Windows, macOS and
+the opt-in Linux tray) read the metric's own `headline` field out of
+`usage --json` rather than guessing from the row's label. In the popover, `"amount"` puts the money figure
 under the meter and moves the percentage and the detail line to its hover text;
 `"percent"` keeps the popover's used/left toggle. Waybar and GNOME build their
 bar text from the per-vendor formats, so `headline` does not reach them.

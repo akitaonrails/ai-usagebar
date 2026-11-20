@@ -93,8 +93,10 @@
 # below and docs/muse-code.md. Legacy custom counters may retain id = "muse"
 # and short_name = "mus"; the native provider uses "muse-code" / "msc".
 
-# Windows/macOS tray. The macOS menu bar also writes its options here from the
-# popover Settings → Menu Bar.
+# Windows/macOS tray, and the opt-in Linux tray (`--features linux-tray`). The
+# macOS menu bar also writes its options here from the popover Settings → Menu Bar.
+# The Linux tray reads refresh_minutes; it has no global shortcut and no
+# self-update yet.
 # [tray]
 # Global shortcut that opens and closes the popover from any window.
 # Ctrl / Alt / Win plus a key; Shift may be added. Omit for none. On macOS the
