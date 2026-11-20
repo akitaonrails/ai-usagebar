@@ -70,7 +70,8 @@
 - **Tray icon: the gauge from the About screen.** The Windows notification-area
   icon and the Linux tray icon now draw the same `mdi:gauge` mark as the macOS
   menu bar's app-icon mode and the popover's About screen, instead of three
-  bars in a ring.
+  bars in a ring. The macOS app's Finder icon, drawn from the same artwork,
+  follows.
 - **Tray popover: a squarer switch in the Classic look.** On every host the
   Classic switch track and knob now have small rounded corners instead of a
   pill and a circle. The Native look keeps its capsule switch.
