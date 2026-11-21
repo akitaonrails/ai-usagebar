@@ -2,6 +2,14 @@
 
 ### Added
 
+- **`get_usage` can answer in CSV.** The MCP tool takes an optional
+  `format`: `json` (the default, unchanged) or `csv`, which returns
+  `id,label,percent,reset_at,severity,note` text with one row per gauge,
+  resets in UTC to the minute, and a short note for stale readings,
+  unavailable models and banked reset credits, leaving out error bodies. An
+  agent that checks quota every turn reads a fraction of the tokens; failures
+  still return the usual tool error.
+
 - **Grouped `[[custom]]` sources as account tabs.** Setting `group` and
   `account` together on `[[custom]]` entries with the same display `name`
   groups them under one category (`custom:<group>@<account>`) with account tabs
