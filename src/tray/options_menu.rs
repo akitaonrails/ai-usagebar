@@ -221,7 +221,11 @@ pub(crate) fn options_entries(
 /// Materialize the rows into a live muda `Menu`: everything it holds is
 /// removed first, so one object is refilled in place instead of replaced —
 /// the Windows host's subclass is attached to it and cannot be replaced.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(
+    windows,
+    target_os = "macos",
+    all(target_os = "linux", feature = "linux-tray")
+))]
 pub(crate) fn fill_menu(menu: &tray_icon::menu::Menu, entries: &[OptionsEntry]) {
     use tray_icon::menu::{CheckMenuItem, MenuItem, PredefinedMenuItem};
 

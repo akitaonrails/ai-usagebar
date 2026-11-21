@@ -2,6 +2,28 @@
 
 ### Added
 
+- **Linux system-tray popover (opt-in).** `ai-usagebar-tray` builds on Linux
+  with `cargo build --release --features linux-tray --bin ai-usagebar-tray`.
+  The icon goes to any StatusNotifierItem tray (Waybar, KDE, GNOME with
+  AppIndicator) and a left click toggles the same popover as on macOS and
+  Windows, rendered by WebKitGTK (the build needs npm to generate the popover
+  UI, unless `windows/popover/dist` is already built). On Hyprland the popover
+  opens next to the bar on the monitor that was clicked, placed through
+  `hyprctl` with a runtime window rule (other compositors place it
+  themselves); `[tray] hyprctl_binary` sets that executable's absolute path
+  (default `/usr/bin/hyprctl`, `~` expanded, never searched on `PATH`) for
+  NixOS and other installs outside `/usr/bin`. The tray item has the stable id
+  `ai-usagebar-tray`, so a bar that pins icons by id (Omarchy) keeps the pin
+  across restarts. Start at
+  Login writes `ai-usagebar-tray.desktop` to `$XDG_CONFIG_HOME/autostart`
+  (default `~/.config/autostart`) and refuses an executable path containing
+  `%`; links open with `xdg-open`.
+  On Omarchy, the Native popover follows the active theme's palette, uses
+  Hyprland's corner radius, and updates when the theme changes.
+  Not in this first version: a global shortcut, Open TUI, and self-update.
+  The feature is off by default, so the default build, the AUR packages, Nix
+  and CI need no GTK or WebKit.
+
 - **Grouped `[[custom]]` sources as account tabs.** Setting `group` and
   `account` together on `[[custom]]` entries with the same display `name`
   groups them under one category (`custom:<group>@<account>`) with account tabs
@@ -47,6 +69,17 @@
   row in Overview now shows its extra-usage spend alongside percentages, and
   when two or more Claude accounts share a currency a `Claude extra` summary
   row totals their spend (and cap when every account has one) (#605).
+
+### Changed
+
+- **Tray icon: the gauge from the About screen.** The Windows notification-area
+  icon and the Linux tray icon now draw the same `mdi:gauge` mark as the macOS
+  menu bar's app-icon mode and the popover's About screen, instead of three
+  bars in a ring. The macOS app's Finder icon, drawn from the same artwork,
+  follows.
+- **Tray popover: a squarer switch in the Classic look.** On every host the
+  Classic switch track and knob now have small rounded corners instead of a
+  pill and a circle. The Native look keeps its capsule switch.
 
 ### Fixed
 

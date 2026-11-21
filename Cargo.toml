@@ -47,6 +47,18 @@ path = "src/bin/ai-usagebar-tui.rs"
 name = "ai-usagebar-tray"
 path = "src/bin/ai-usagebar-tray.rs"
 
+# The Linux system-tray host lands behind an opt-in feature: builds without it
+# (AUR, Nix, CI, Waybar/GNOME/KDE) must not pull GTK/WebKit at all.
+[features]
+linux-tray = [
+    "dep:tao",
+    "dep:wry",
+    "dep:tray-icon",
+    "dep:gtk",
+    "dep:gdk",
+    "dep:gdk-pixbuf",
+]
+
 [dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time", "fs", "process", "signal", "io-util"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "rustls-tls-native-roots"], default-features = false }
@@ -95,6 +107,18 @@ schemars = "1.2.3"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["process"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tao = { version = "0.37", optional = true }
+wry = { version = "0.57", optional = true }
+tray-icon = { version = "0.26.1", default-features = false, features = [
+    "ksni",
+], optional = true }
+# Clipboard (text and PNG) goes through GTK on the main thread. Same 0.18 line
+# tao/wry already lock, so no second GTK in the graph.
+gtk = { version = "0.18", optional = true }
+gdk = { version = "0.18", optional = true }
+gdk-pixbuf = { version = "0.18", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Same tray popover host as Windows: NSStatusItem + WKWebView.

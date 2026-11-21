@@ -220,12 +220,12 @@ Refresh Every**: 1, 5, 10, 15, 30 or 60; `[tray] refresh_minutes`). The cache TT
 60 s, so the footer's Refresh is always allowed to fetch. A stale or failed vendor is
 shown on its card. The global shortcut, the poll interval and the update mode
 are the keys of the `[tray]` section in `config.toml`; the popover's Settings
-screen writes them. The NotifyIcon is a bar-chart-in-circle mark, three bars inside a ring
-(source in `windows/tray-icon.svg`), shipped as anti-aliased rasters
+screen writes them. The NotifyIcon is the gauge mark from the popover's About screen
+(`mdi:gauge`, source in `windows/tray-icon.svg`), shipped as anti-aliased rasters
 at 16/20/24/32/40/48 px so the shell gets the exact size for the current DPI.
 It has no hover tip; the popover is the readout.
 
-![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](../screenshots/windows-tray-icon.png)
+![Windows tray icon in the notification area, beside the overflow chevron (this screenshot predates the gauge icon)](../screenshots/windows-tray-icon.png)
 
 ## Tray icon rasters
 

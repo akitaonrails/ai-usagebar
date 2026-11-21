@@ -250,6 +250,39 @@ export default function App() {
   }, [payload.accent]);
 
   useEffect(() => {
+    const appearance = payload.omarchy;
+    if (payload.desktop !== "omarchy" || !appearance) return;
+
+    const style = document.documentElement.style;
+    const palette = Object.entries(appearance.colors).map(
+      ([key, color]) => [`--om-${key.replaceAll("_", "-")}`, color] as const,
+    );
+    // The hint's background and text must come from the same source: with only one of the
+    // two in a partial palette, each would fall back separately and could match its pair.
+    const { lighter_background: hintBg, foreground: hintFg } = appearance.colors;
+    if (hintBg && hintFg) {
+      palette.push(["--om-hint-bg", hintBg] as const, ["--om-hint-fg", hintFg] as const);
+    }
+    style.setProperty("--om-rounding", `${appearance.rounding}px`);
+
+    const applyPalette = () => {
+      const matches = resolvedTheme(layout.theme) === appearance.mode;
+      for (const [property, color] of palette) {
+        if (matches) style.setProperty(property, color);
+        else style.removeProperty(property);
+      }
+    };
+    applyPalette();
+    const media = layout.theme === "system" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    media?.addEventListener("change", applyPalette);
+    return () => {
+      media?.removeEventListener("change", applyPalette);
+      style.removeProperty("--om-rounding");
+      for (const [property] of palette) style.removeProperty(property);
+    };
+  }, [payload.desktop, payload.omarchy, layout.theme]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
@@ -564,6 +597,7 @@ export default function App() {
     <div
       ref={shellRef}
       data-os={payload.os}
+      data-desktop={payload.desktop || undefined}
       className={cn(
         "flex h-full flex-col overflow-hidden rounded-[var(--window-radius)] bg-background text-foreground",
         native && "native-panel",

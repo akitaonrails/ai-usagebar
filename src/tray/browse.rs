@@ -17,7 +17,14 @@ pub fn http_url(raw: &str) -> Option<&str> {
     }
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+// On Linux the host lands behind an opt-in feature; until it calls `open`
+// the only user is the future host, so silence its dead-code warning.
+#[cfg_attr(all(target_os = "linux", feature = "linux-tray"), allow(dead_code))]
+#[cfg(any(
+    windows,
+    target_os = "macos",
+    all(target_os = "linux", feature = "linux-tray")
+))]
 pub fn open(raw: &str) {
     let Some(url) = http_url(raw) else {
         return;
@@ -32,11 +39,51 @@ pub fn open(raw: &str) {
     {
         let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
     }
+    #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+    {
+        // PATH lookup is deliberate: NixOS has no /usr/bin. `arg` passes the
+        // URL as one argument; no shell ever interprets it.
+        let _ = spawn_reaped(std::process::Command::new("xdg-open").arg(url));
+    }
+}
+
+/// Spawns `command` and collects its exit status on a separate thread, so a
+/// finished `xdg-open` never lingers as a zombie for the life of the tray and
+/// the calling (GTK) thread never blocks. Returns the child's pid and the
+/// reaper's handle.
+#[cfg(all(target_os = "linux", feature = "linux-tray"))]
+fn spawn_reaped(
+    command: &mut std::process::Command,
+) -> std::io::Result<(u32, std::thread::JoinHandle<()>)> {
+    let mut child = command.spawn()?;
+    let pid = child.id();
+    // `Builder::spawn` reports a refused thread instead of panicking on the
+    // GTK thread. Without a reaper the child is left to finish on its own and
+    // lingers as a zombie, which is the lesser failure.
+    let reaper = std::thread::Builder::new()
+        .name("xdg-open-reaper".into())
+        .spawn(move || {
+            let _ = child.wait();
+        })?;
+    Ok((pid, reaper))
 }
 
 #[cfg(test)]
 mod tests {
     use super::http_url;
+
+    #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+    #[test]
+    fn a_finished_child_is_collected_not_left_as_a_zombie() {
+        let (pid, reaper) =
+            super::spawn_reaped(std::process::Command::new("true").arg("ignored")).unwrap();
+        reaper.join().unwrap();
+        // A reaped pid has no /proc entry; an uncollected child stays as `Z`.
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "pid {pid} was not collected"
+        );
+    }
 
     #[test]
     fn accepts_http_and_https() {

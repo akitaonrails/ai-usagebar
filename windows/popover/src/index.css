@@ -174,6 +174,9 @@
   --switch-knob: 12px;
   --switch-knob-w: var(--switch-knob);
   --switch-knob-inset: var(--space-px);
+  /* Classic draws a squarer switch: small radii on the track and the knob. */
+  --switch-radius: 4px;
+  --switch-knob-radius: 3px;
   --hairline: 1px;
   --focus-ring: 2px;
   --native-blur: 20px;
@@ -310,6 +313,8 @@ body:has(.native-panel) {
   --switch-h: 20px;
   --switch-knob: 16px;
   --switch-knob-w: 24px;
+  --switch-radius: var(--radius-full);
+  --switch-knob-radius: var(--radius-full);
   --knob-shadow: 0 1px 3px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
   --menu-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
   background: transparent;
@@ -1481,3 +1486,261 @@ button.desktop-account-control:focus-visible {
 .hover-card:hover {
   background-image: linear-gradient(var(--hover-fill), var(--hover-fill));
 }
+
+/* Native on Linux with Omarchy: the shell's Agents type scale, section dividers
+   and inline meters. Hyprland paints the window border. */
+html:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
+  --window-radius: var(--om-rounding, 0px);
+}
+
+.native-panel[data-os="linux"][data-desktop="omarchy"] {
+  box-shadow: none;
+}
+
+body:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
+  --surface: var(--om-background, var(--export-surface));
+  --card: var(--om-lighter-background, var(--om-background, var(--export-card)));
+  --card-border: transparent;
+  --menu: var(--om-background, var(--export-surface));
+  --om-control-ink: var(--om-foreground, #000000);
+  --separator: color-mix(in srgb, var(--om-control-ink, #000000) 12%, transparent);
+  --label-1: var(--om-foreground, rgba(0, 0, 0, 0.85));
+  --label-2: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.85)) 82%, var(--surface, #ffffff));
+  --label-3: color-mix(in srgb, var(--label-1, currentColor) 80%, var(--card, #f2f2f2));
+  /* Translucent ink lets each control tint its own panel or card underneath. */
+  --control-fill: color-mix(in srgb, var(--om-control-ink, #000000) 4%, transparent);
+  --control-fill-hover: color-mix(in srgb, var(--om-control-ink, #000000) 8%, transparent);
+  --hover-fill: var(--control-fill-hover, transparent);
+  --menu-hover: var(--control-fill-hover, transparent);
+  --fill-quaternary: var(--control-fill, transparent);
+  --fill-tertiary: var(--control-fill-hover, transparent);
+  --bar-glass: var(--surface, var(--export-surface));
+  --accent: var(--om-accent, #007aff);
+  --blue: var(--om-blue, var(--om-accent, #007aff));
+  --yellow: var(--om-yellow, #ffcc00);
+  --red: var(--om-red, var(--om-accent, #ff3b30));
+  --orange: var(--om-orange, var(--om-yellow, #ff9500));
+  --green: var(--om-green, var(--om-accent, #34c759));
+  --incident-yellow: var(--om-yellow, #8a5a00);
+  --incident-orange: var(--om-orange, #b84a00);
+  --switch-off: var(--om-muted, var(--om-selection, rgba(0, 0, 0, 0.1)));
+  --knob-shadow: none;
+  --native-blur: 0px;
+
+  --sz-badge: 12px;
+  --sz-support: 12px;
+  --sz-demand: 12px;
+  --sz-label: 14px;
+  --sz-header: 15px;
+  --sz-body: 14px;
+  --sz-control: 14px;
+  --panel-pad: 16px;
+  --native-page-inset: var(--panel-pad, 16px);
+  --card-pad: 0px;
+  --card-gutter: 0px;
+  --header-card-gap: 10px;
+  --section-gap: 20px;
+  --pad-bar-row: 6px;
+  --pad-control: 6px;
+  --pad-text-row: 8px;
+  --row-inner: 5px;
+  --gap-stack: 6px;
+  --row-gap: 10px;
+  --hover-bleed: 0px;
+  --control-h: 28px;
+  --picker-max: 134px;
+  --meter-h: 4px;
+
+  --card-radius: var(--om-rounding, 0px);
+  --menu-radius: var(--om-rounding, 0px);
+  --radius-full: var(--om-rounding, 0px);
+  --radius-sm: var(--om-rounding, 0px);
+  --radius-md: var(--om-rounding, 0px);
+  --radius-lg: var(--om-rounding, 0px);
+  --radius-xl: var(--om-rounding, 0px);
+  --radius-xs: var(--om-rounding, 0px);
+  --icon-btn-radius: var(--om-rounding, 0px);
+  --hint-radius: var(--om-rounding, 0px);
+  --hover-row-radius: var(--om-rounding, 0px);
+  --switch-radius: var(--om-rounding, 0px);
+  --switch-knob-radius: var(--om-rounding, 0px);
+  /* A square knob under half the track, not Native's 24px capsule. */
+  --switch-w: 34px;
+  --switch-knob: 14px;
+  --switch-knob-w: 14px;
+  --switch-knob-inset: 2px;
+
+  font-family: monospace;
+  background: var(--surface, var(--export-surface));
+
+  .dark & {
+    --om-control-ink: var(--om-foreground, #ffffff);
+    --menu: var(--om-background, #2b2b2b);
+    --label-1: var(--om-foreground, rgba(255, 255, 255, 0.85));
+    --label-2: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.85)) 82%, var(--surface, #1e1e1e));
+    --accent: var(--om-accent, #0a84ff);
+    --blue: var(--om-blue, var(--om-accent, #0a84ff));
+    --yellow: var(--om-yellow, #ffd60a);
+    --red: var(--om-red, var(--om-accent, #ff453a));
+    --orange: var(--om-orange, var(--om-yellow, #ff9f0a));
+    --green: var(--om-green, var(--om-accent, #30d158));
+    --incident-yellow: var(--om-yellow, #ffd60a);
+    --incident-orange: var(--om-orange, #ff9f0a);
+    --switch-off: var(--om-muted, var(--om-selection, rgba(255, 255, 255, 0.2)));
+  }
+
+  & .card-surface {
+    box-shadow: none;
+  }
+
+  & .card-surface:not(button) {
+    background: transparent;
+    padding-block: 0;
+  }
+
+  & .native-dashboard {
+    gap: var(--section-gap, 16px);
+    padding: 0;
+  }
+
+  & .native-dashboard-header {
+    gap: 8px;
+  }
+
+  & .native-dashboard-header h1 {
+    font-size: 16px;
+    letter-spacing: normal;
+  }
+
+  /* The base Native sets these in fixed pixels (10-12px), below this look's scale. */
+  & .native-dashboard-status {
+    font-size: var(--sz-support, 12px);
+    padding-bottom: 10px;
+  }
+
+  & .native-empty-state {
+    font-size: var(--sz-body, 14px);
+  }
+
+  & .native-dashboard-header p,
+  & .section-title {
+    font-size: var(--sz-badge, 11px);
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+  }
+
+  & :is(.native-dashboard [data-card-id], .section-title:not(.flex), footer.bar-glass) {
+    border-top: var(--hairline, 1px) solid var(--separator, transparent);
+    padding-top: 6px;
+  }
+
+  & .native-dashboard [data-card-id] > :first-child > .min-w-0 > :first-child {
+    font-weight: 700;
+  }
+
+  & .native-dashboard-actions {
+    gap: 6px;
+  }
+
+  & .native-panel .native-header-action {
+    --icon-btn: 34px;
+    background: var(--card, var(--export-card));
+  }
+
+  & .native-panel .native-header-action:hover {
+    background: color-mix(in srgb, var(--om-control-ink, currentColor) 8%, var(--card, var(--export-card)));
+  }
+
+  & footer.bar-glass {
+    padding-bottom: 8px;
+  }
+
+  & .native-tabs {
+    background: transparent;
+  }
+
+  & .native-tab {
+    min-height: var(--control-h, 28px);
+    padding-block: 4px;
+    font-size: var(--sz-control, 13px);
+  }
+
+  & .settings-tabs .native-tab {
+    flex: 1 1 0;
+    padding-inline: 4px;
+  }
+
+  & .settings-tabs .native-tab-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  & .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover,
+  & .account-tab[aria-selected="false"]:hover {
+    background: var(--control-fill-hover, transparent);
+    box-shadow: none;
+  }
+
+  & :is(.native-tab[aria-selected="true"], .native-tab[data-active="true"], .account-tab[aria-selected="true"]) {
+    background: var(--control-fill-hover, transparent);
+    color: var(--label-1, currentColor);
+    box-shadow: none;
+  }
+
+  & .native-tab[data-active="true"] .native-tab-value,
+  & .native-tab[data-active="true"] .text-label-2,
+  & .account-tab[aria-selected="true"] {
+    color: var(--om-accent, var(--label-1, currentColor));
+    font-weight: 700;
+  }
+
+  & [data-slot="switch"][data-state="checked"] {
+    background: var(--blue, #007aff);
+  }
+
+  & [data-slot="switch-thumb"] {
+    background: var(--om-dark-background, var(--om-background, #ffffff));
+  }
+
+  & .meter {
+    background: color-mix(in srgb, var(--om-accent, var(--om-control-ink, currentColor)) 18%, transparent);
+  }
+
+  & .meter-fill[data-color="blue"] {
+    background: var(--om-foreground, var(--blue, #007aff));
+  }
+
+  & .drop-zone {
+    border: 0;
+    background: var(--control-fill, transparent);
+  }
+
+  & :is(.native-retry-button, .desktop-account-control) {
+    border-radius: var(--om-rounding, 0px);
+  }
+
+  & :is(.native-retry-button, .action-btn[data-variant="primary"], .icon-btn[data-armed]) {
+    color: var(--om-dark-background, var(--om-background, #ffffff));
+  }
+
+  & [data-slot="tooltip-content"] {
+    background-color: var(--om-hint-bg, var(--hint-bg, #4a4a4a));
+    color: var(--om-hint-fg, var(--hint-fg, #ffffff));
+  }
+
+  & :is(
+    [data-slot="dropdown-menu-content"],
+    [data-slot="select-content"],
+    [data-slot="popover-content"],
+    [data-slot="dialog-content"],
+    [data-slot="tooltip-content"],
+    .bar-glass,
+    .native-tab
+  ) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
