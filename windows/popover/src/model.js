@@ -49,6 +49,9 @@ export function emptyPayload(hostError) {
     primary: "",
     entries: [],
     refreshMinutes: 5,
+    popoverWidth: null,
+    popoverWidthDefaults: { classic: 300, native: 390 },
+    popoverWidthError: "",
     shortcut: "",
     shortcutError: "",
     updates: "notify",
@@ -61,6 +64,24 @@ export function emptyPayload(hostError) {
     accent: null,
     keyCheck: null,
     signIn: null,
+  };
+}
+
+// `[tray] width` as the host read it: any u16, or null for the style's own width. It can
+// sit outside the active style's limits (a hand-edited file, 0 included, or a style change);
+// the control clamps it for display the way the host clamps it for the window.
+function normalizePopoverWidth(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 65535 ? value : null;
+}
+
+// Each style's own width on this host, sent as [classic, native]. The fallbacks are the
+// hosts' constants, for a payload that carries none (the empty one before the first report).
+// 21845 is the widest whose upper limit, three times it, still fits the u16 the host stores.
+function normalizePopoverWidthDefaults(value, os) {
+  const own = (width, fallback) => (Number.isInteger(width) && width > 0 && width <= 21845 ? width : fallback);
+  return {
+    classic: own(value?.[0], os === "macos" ? 320 : 300),
+    native: own(value?.[1], 390),
   };
 }
 
@@ -102,6 +123,9 @@ function normalizePayload(parsed) {
     primary: clean(parsed.primary, 180),
     entries,
     refreshMinutes: normalizeRefreshMinutes(parsed.refresh_minutes),
+    popoverWidth: normalizePopoverWidth(parsed.popover_width),
+    popoverWidthDefaults: normalizePopoverWidthDefaults(parsed.popover_width_defaults, normalizeOs(parsed.os)),
+    popoverWidthError: clean(parsed.popover_width_error, 300),
     shortcut: clean(parsed.shortcut, 64),
     shortcutError: clean(parsed.shortcut_error, 300),
     updates: normalizeUpdateMode(parsed.updates),

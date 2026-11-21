@@ -320,5 +320,10 @@
   "sign_in_denied": "O login foi recusado no navegador.",
   "sign_in_failed": "Não foi possível entrar.",
   "sign_in_try_again": "Tentar de novo",
-  "sign_in_no_answer": "O tray não respondeu. Feche e tente de novo."
+  "sign_in_no_answer": "O tray não respondeu. Feche e tente de novo.",
+  "popover_width": "Largura do popover",
+  "popover_width_hint": "De três quartos a três vezes a largura original deste estilo, em pontos. Segure uma seta para ir mais rápido; a seta de restaurar volta à original.",
+  "restore_popover_width": "Restaurar largura original",
+  "increase_popover_width": "Aumentar largura",
+  "decrease_popover_width": "Diminuir largura"
 }

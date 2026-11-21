@@ -78,6 +78,11 @@ const MIN_POPOVER_HEIGHT: f64 = 360.0;
 const WORK_AREA_MARGIN: f64 = 8.0;
 /// Used when no monitor can be resolved at all.
 const FALLBACK_WORK_AREA_HEIGHT: f64 = 800.0;
+/// Clear space kept on the popover's left, right and bottom, in logical px: where its shadow
+/// draws, and what holds the panel off the taskbar. The window carried it as an invisible frame
+/// (8 px at 96 DPI) until it was built with `with_undecorated_shadow(false)`; placement keeps
+/// the same room without the frame ([`placement::with_shadow_room`]).
+const SHADOW_ROOM: f64 = 8.0;
 /// Gap between the popover and the tray icon or a work-area edge, in physical pixels. The edge
 /// by the taskbar gets none (see [`Insets::by_taskbar`]).
 const POPOVER_MARGIN: i32 = 8;
@@ -208,6 +213,8 @@ struct TrayState {
     backdrop_refused: bool,
     /// Last valid CSS/logical height reported by the page.
     popover_height: f64,
+    /// `[tray] width`; `None` is each style's own width.
+    popover_width: Option<u16>,
     /// Tray glyph color for the current taskbar.
     ink: Ink,
     facts: SharedFacts,
@@ -258,6 +265,14 @@ fn run_loop() -> Result<(), String> {
         // The page's theme, never the system's: see `apply_theme`. Light until the page says.
         .with_theme(Some(Theme::Light.window_theme()))
         .with_decorations(false)
+        // tao turns the undecorated shadow on by default, and with it on keeps a frame's
+        // worth of non-client area around the client rectangle (`WM_NCCALCSIZE`). On this
+        // transparent window that band is not ours to paint. With `[tray] width` at 500 it
+        // showed in Classic as a second rim outside the panel's own border. Off, the window
+        // is exactly the WebView; the price is tao's drop shadow, which goes with the frame.
+        // The frame was also what kept the panel clear of the taskbar: `SHADOW_ROOM` keeps
+        // that gap now.
+        .with_undecorated_shadow(false)
         .with_always_on_top(true)
         .with_resizable(false)
         .with_focused(false)
@@ -345,6 +360,7 @@ fn run_loop() -> Result<(), String> {
         style: PopoverStyle::Classic,
         backdrop_refused: false,
         popover_height: WINDOW_HEIGHT,
+        popover_width: config.tray.width,
         ink,
         facts,
         hotkey: hotkey_binding,
@@ -527,6 +543,11 @@ fn host_facts(config: &Config) -> HostFacts {
     facts.accent = super::accent::read_accent();
     facts.updates = config.tray.updates().as_str().into();
     facts.refresh_secs = config.tray.refresh_minutes() * 60;
+    facts.popover_width = config.tray.width;
+    facts.popover_width_defaults = [
+        WINDOW_WIDTH as u16,
+        super::style::NATIVE_WINDOW_WIDTH as u16,
+    ];
     facts
 }
 
@@ -707,6 +728,25 @@ fn set_refresh(state: &mut TrayState, minutes: u64) {
     // Start a cycle now so the footer's countdown and the worker's deadline
     // follow the new cadence at once instead of after the old one expires.
     let _ = state.worker.send(WorkerCmd::Refresh);
+}
+
+/// `set-popover-width {width}`: persist `[tray] width` (`null` removes it) and resize at once.
+/// A value outside the active style's limits, or a config file that cannot be written, changes
+/// nothing, and the reason is shown under the control the way a refused shortcut is.
+fn set_popover_width(state: &mut TrayState, requested: &Value) {
+    let original = state.style.window_width(WINDOW_WIDTH);
+    match super::style::save_width(config_path().as_deref(), requested, original) {
+        Ok(width) => {
+            state.popover_width = width;
+            with_facts(&state.facts, |f| {
+                f.popover_width = width;
+                f.popover_width_error.clear();
+            });
+            resize_popover(state);
+        }
+        Err(reason) => with_facts(&state.facts, |f| f.popover_width_error = reason),
+    }
+    apply_facts(state);
 }
 
 fn push_to_webview(state: &TrayState) {
@@ -960,6 +1000,11 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             let mode = value.get("mode").and_then(Value::as_str).unwrap_or("");
             set_updates(state, mode);
         }
+        "set-popover-width" => {
+            if let Some(requested) = value.get("width") {
+                set_popover_width(state, requested);
+            }
+        }
         "set-refresh" => {
             if let Some(minutes) = value.get("minutes").and_then(Value::as_u64) {
                 set_refresh(state, minutes);
@@ -1030,13 +1075,23 @@ fn handle_resize(state: &mut TrayState, value: &Value) {
         resize = true;
     }
     if resize {
-        state.window.set_inner_size(LogicalSize::new(
-            state.style.window_width(WINDOW_WIDTH),
-            state.popover_height,
-        ));
-        if state.popover_open {
-            position_window(&state.window, state.last_tray_rect);
-        }
+        resize_popover(state);
+    }
+}
+
+/// Size the window for the current style, `[tray] width` and last reported height, and keep
+/// an open popover anchored to the tray icon.
+fn resize_popover(state: &TrayState) {
+    let width = state.style.configured_width(
+        WINDOW_WIDTH,
+        state.popover_width,
+        work_area_width(&state.window),
+    );
+    state
+        .window
+        .set_inner_size(LogicalSize::new(width, state.popover_height));
+    if state.popover_open {
+        position_window(&state.window, state.last_tray_rect);
     }
 }
 
@@ -1113,7 +1168,8 @@ pub(crate) fn clamp_popover_height(requested: f64, work_area_height: f64) -> f64
 }
 
 /// Logical inner height the popover may take on the monitor it sits on (primary as fallback):
-/// that monitor's work area, so it never runs under the taskbar, less the window frame.
+/// that monitor's work area, so it never runs under the taskbar, less the window frame and the
+/// shadow room kept under the window.
 fn work_area_height(window: &Window) -> f64 {
     let Some(monitor) = window
         .current_monitor()
@@ -1123,7 +1179,23 @@ fn work_area_height(window: &Window) -> f64 {
     };
     let (_, work) = monitor_areas(&monitor);
     let frame = window.outer_size().height as i32 - window.inner_size().height as i32;
-    placement::max_inner_height(work, frame, monitor.scale_factor())
+    placement::max_inner_height(work, frame + shadow_room(window), monitor.scale_factor())
+}
+
+/// [`SHADOW_ROOM`] in physical pixels at the window's scale.
+fn shadow_room(window: &Window) -> i32 {
+    (SHADOW_ROOM * window.scale_factor()).round() as i32
+}
+
+/// Logical inner width of the work area on the monitor the popover sits on (primary as
+/// fallback), less the window frame; `None` when no monitor answers.
+fn work_area_width(window: &Window) -> Option<f64> {
+    let monitor = window
+        .current_monitor()
+        .or_else(|| window.primary_monitor())?;
+    let (_, work) = monitor_areas(&monitor);
+    let frame = window.outer_size().width as i32 - window.inner_size().width as i32;
+    Some(f64::from(work.width - frame) / monitor.scale_factor())
 }
 
 /// A monitor's full rectangle and its work area (`rcWork`: less the taskbar and docked app
@@ -1430,8 +1502,24 @@ fn hide_popover(state: &mut TrayState) {
 
 fn position_window(window: &Window, tray_rect: Option<Rect>) {
     let size = window.outer_size();
-    let (width, height) = (size.width as i32, size.height as i32);
-    let (x, y) = if let Some(rect) = tray_rect {
+    let (x, y) = placement::with_shadow_room(
+        size.width as i32,
+        size.height as i32,
+        shadow_room(window),
+        |width, height| footprint_position(window, tray_rect, width, height),
+    );
+    window.set_outer_position(PhysicalPosition::new(x, y));
+}
+
+/// Top-left corner for the popover's `width`×`height` footprint (the window plus its shadow
+/// room), in physical pixels: by the tray icon when there is one, else the corner by the taskbar.
+fn footprint_position(
+    window: &Window,
+    tray_rect: Option<Rect>,
+    width: i32,
+    height: i32,
+) -> (i32, i32) {
+    if let Some(rect) = tray_rect {
         // Centered on the tray icon, on the side away from whichever edge the taskbar is on.
         let icon = icon_area(rect);
         let center_x = rect.position.x + f64::from(rect.size.width) / 2.0;
@@ -1456,8 +1544,7 @@ fn position_window(window: &Window, tray_rect: Option<Rect>) {
         placement::corner_near_taskbar(full, work, width, height, insets)
     } else {
         (80, 80)
-    };
-    window.set_outer_position(PhysicalPosition::new(x, y));
+    }
 }
 
 fn build_tray(payload: &Value, ink: Ink) -> Result<TrayIcon, String> {

@@ -379,6 +379,12 @@ export interface Payload {
   providersError: string;
   /** Host refresh interval; one of 1, 5, 10, 15, 30 or 60. */
   refreshMinutes: number;
+  /** `[tray] width` in logical points; null is the active style's own width. */
+  popoverWidth: number | null;
+  /** Each style's own width on this host; the width control's limits are three quarters and three times it. */
+  popoverWidthDefaults: Record<PopoverStyle, number>;
+  /** Why the host refused the last width change, or empty. */
+  popoverWidthError: string;
   shortcut: string;
   shortcutError: string;
   startupEnabled: boolean;

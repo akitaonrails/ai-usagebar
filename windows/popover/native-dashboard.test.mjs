@@ -412,6 +412,39 @@ try {
   assert.doesNotMatch(menuEnglish, /Usage Window|Focused Provider|Highest consumption/);
   const preferences = settingsTab('preferences');
   assert.match(preferences, /Aparência/);
+  // Popover Width sits under Appearance in both styles. With no `[tray] width` it shows the
+  // style's own width, and its limits are three quarters and three times that width.
+  assert.match(preferences, /Largura do popover/);
+  assert.match(preferences, /role="spinbutton"/);
+  assert.match(preferences, /aria-valuemin="293"/);
+  assert.match(preferences, /aria-valuemax="1170"/);
+  assert.match(preferences, /aria-valuenow="390"/);
+  assert.match(preferences, /Restaurar largura original/);
+  assert.match(preferences, /Aumentar largura/);
+  assert.match(preferences, /Diminuir largura/);
+  const widthPreferences = (payload, popoverStyle = 'native') => settingsTab('preferences', {
+    ...settingsProps,
+    layout: { ...emptyLayout(), popoverStyle },
+    payload: { ...settingsPayload, ...payload },
+  });
+  assert.match(widthPreferences({ popoverWidth: 337 }), /aria-valuenow="337"/);
+  // A stored width outside the active style's limits is shown at the limit, as the host draws it.
+  assert.match(widthPreferences({ popoverWidth: 100 }), /aria-valuenow="293"/);
+  // So is a hand-edited 0, and the reset arrow stays enabled: the key is set.
+  const zeroWidth = widthPreferences({ popoverWidth: 0 });
+  assert.match(zeroWidth, /aria-valuenow="293"/);
+  assert.doesNotMatch(zeroWidth, /class="popover-width-reset"[^>]*disabled/);
+  assert.match(preferences, /class="popover-width-reset"[^>]*disabled/);
+  const classicWidth = widthPreferences({}, 'classic');
+  assert.match(classicWidth, /Largura do popover/);
+  assert.match(classicWidth, /aria-valuemin="225"/);
+  assert.match(classicWidth, /aria-valuemax="900"/);
+  assert.match(classicWidth, /aria-valuenow="300"/);
+  // A refused save is said under the row, not only inside the hover hint.
+  assert.doesNotMatch(preferences, /aria-invalid/);
+  const refusedWidth = widthPreferences({ popoverWidthError: 'Could not save the popover width.' });
+  assert.match(refusedWidth, /Could not save the popover width\./);
+  assert.match(refusedWidth, /aria-invalid="true"/);
   assert.match(preferences, /Exibição do uso/);
   assert.match(preferences, /Meta de uso/);
   assert.doesNotMatch(preferences, /Barra de menus/);

@@ -320,5 +320,10 @@
   "sign_in_denied": "El inicio de sesión se rechazó en el navegador.",
   "sign_in_failed": "No se pudo iniciar sesión.",
   "sign_in_try_again": "Reintentar",
-  "sign_in_no_answer": "La bandeja no ha respondido. Cierra esto y vuelve a intentarlo."
+  "sign_in_no_answer": "La bandeja no ha respondido. Cierra esto y vuelve a intentarlo.",
+  "popover_width": "Ancho del panel",
+  "popover_width_hint": "De tres cuartos al triple del ancho original de este estilo, en puntos. Mantén pulsada una flecha para ir más rápido; la flecha de restaurar vuelve al original.",
+  "restore_popover_width": "Restaurar ancho original",
+  "increase_popover_width": "Aumentar ancho",
+  "decrease_popover_width": "Reducir ancho"
 }

@@ -104,6 +104,12 @@
 # How often the tray re-reads every provider: 1, 5, 10, 15, 30 or 60 minutes; the panel's
 # Refresh button is always immediate.
 # refresh_minutes = 5
+# Popover width in logical points, for whichever style is active. Omit it and
+# each style keeps its own width: Classic 300 on Windows and 320 on macOS,
+# Native 390. A set value is held to three quarters and three times that width,
+# and to the screen. Settings → Appearance → Popover Width writes it and applies at
+# once; its reset arrow removes the key. A hand edit applies on the next start.
+# width = 350
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"

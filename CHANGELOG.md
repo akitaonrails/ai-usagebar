@@ -48,6 +48,25 @@
   when two or more Claude accounts share a currency a `Claude extra` summary
   row totals their spend (and cap when every account has one) (#605).
 
+- **Popover Width in the tray's Settings.** Settings → Appearance → Popover
+  Width sets how wide the Windows and macOS popover is, in logical points, in
+  Classic and in Native. Type a number or use the step arrows: a click moves one
+  point, holding an arrow repeats and reaches five points per step after three
+  seconds, and the reset arrow returns to the style's own width. The range is
+  three quarters to three times that width, and the popover never grows past
+  the screen. The value is stored as `[tray] width` and applies at once.
+  Optional: with the key unset each style keeps the width it has today.
+
+### Changed
+
+- **Windows tray: the popover's window is the size of its panel.** The window
+  kept the non-client frame that tao reserves for an undecorated window's
+  shadow, so it was larger than the panel drawn in it. With Popover Width at
+  500, that band showed in Classic as a second rim outside the panel's own
+  border. The window is now created without tao's undecorated shadow, which
+  removes the frame. The gap the frame left between the panel and the taskbar
+  and the screen edges is kept.
+
 ### Fixed
 
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The

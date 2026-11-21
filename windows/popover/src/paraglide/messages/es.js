@@ -90,6 +90,7 @@
 /** @typedef {{}} Date_UnavailableInputs */
 /** @typedef {{ day: NonNullable<unknown>, time: NonNullable<unknown> }} Day_AtInputs */
 /** @typedef {{ days: NonNullable<unknown> }} Days_AgoInputs */
+/** @typedef {{}} Decrease_Popover_WidthInputs */
 /** @typedef {{}} Default_AccountInputs */
 /** @typedef {{}} Detect_ProvidersInputs */
 /** @typedef {{}} Development_BuildInputs */
@@ -114,6 +115,7 @@
 /** @typedef {{}} HighestInputs */
 /** @typedef {{ hours: NonNullable<unknown> }} Hours_AgoInputs */
 /** @typedef {{ title: NonNullable<unknown> }} Incident_ActiveInputs */
+/** @typedef {{}} Increase_Popover_WidthInputs */
 /** @typedef {{}} InstallInputs */
 /** @typedef {{}} Install_UpdateInputs */
 /** @typedef {{}} InstallingInputs */
@@ -186,6 +188,8 @@
 /** @typedef {{ percent: NonNullable<unknown> }} Percent_UsedInputs */
 /** @typedef {{}} Popover_StyleInputs */
 /** @typedef {{}} Popover_Style_HintInputs */
+/** @typedef {{}} Popover_WidthInputs */
+/** @typedef {{}} Popover_Width_HintInputs */
 /** @typedef {{}} PreferencesInputs */
 /** @typedef {{}} Press_KeysInputs */
 /** @typedef {{}} Press_Keys_EllipsisInputs */
@@ -224,6 +228,7 @@
 /** @typedef {{}} ResetsInputs */
 /** @typedef {{ exact: NonNullable<unknown> }} Resets_AtInputs */
 /** @typedef {{ duration: NonNullable<unknown> }} Resets_InInputs */
+/** @typedef {{}} Restore_Popover_WidthInputs */
 /** @typedef {{ duration: NonNullable<unknown> }} Retrying_Automatically_InInputs */
 /** @typedef {{}} Same_Readings_PowerInputs */
 /** @typedef {{}} SessionInputs */
@@ -684,6 +689,10 @@ export const days_ago = /** @type {(inputs: Days_AgoInputs) => LocalizedString} 
 	return /** @type {LocalizedString} */ (`hace ${i?.days} d`)
 };
 
+export const decrease_popover_width = /** @type {(inputs: Decrease_Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`Reducir ancho`)
+};
+
 export const default_account = /** @type {(inputs: Default_AccountInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`Predeterminada`)
 };
@@ -778,6 +787,10 @@ export const hours_ago = /** @type {(inputs: Hours_AgoInputs) => LocalizedString
 
 export const incident_active = /** @type {(inputs: Incident_ActiveInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`Incidente activo: ${i?.title}`)
+};
+
+export const increase_popover_width = /** @type {(inputs: Increase_Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`Aumentar ancho`)
 };
 
 export const install = /** @type {(inputs: InstallInputs) => LocalizedString} */ () => {
@@ -1068,6 +1081,14 @@ export const popover_style_hint = /** @type {(inputs: Popover_Style_HintInputs) 
 	return /** @type {LocalizedString} */ (`Clásico muestra tarjetas sólidas con detalles de ritmo y reinicio. Nativo sigue el aspecto de tu sistema: vidrio en macOS, Fluent en Windows.`)
 };
 
+export const popover_width = /** @type {(inputs: Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`Ancho del panel`)
+};
+
+export const popover_width_hint = /** @type {(inputs: Popover_Width_HintInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`De tres cuartos al triple del ancho original de este estilo, en puntos. Mantén pulsada una flecha para ir más rápido; la flecha de restaurar vuelve al original.`)
+};
+
 export const preferences = /** @type {(inputs: PreferencesInputs) => LocalizedString} */ () => {
 	return /** @type {LocalizedString} */ (`Preferencias`)
 };
@@ -1218,6 +1239,10 @@ export const resets_at = /** @type {(inputs: Resets_AtInputs) => LocalizedString
 
 export const resets_in = /** @type {(inputs: Resets_InInputs) => LocalizedString} */ (i) => {
 	return /** @type {LocalizedString} */ (`Se reinicia en ${i?.duration}`)
+};
+
+export const restore_popover_width = /** @type {(inputs: Restore_Popover_WidthInputs) => LocalizedString} */ () => {
+	return /** @type {LocalizedString} */ (`Restaurar ancho original`)
 };
 
 export const retrying_automatically_in = /** @type {(inputs: Retrying_Automatically_InInputs) => LocalizedString} */ (i) => {

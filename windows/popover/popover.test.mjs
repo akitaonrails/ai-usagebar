@@ -2972,3 +2972,23 @@ console.log('ok');
   );
   assert.equal(groupDisplayName(groups[1], payload.providers), 'Solo');
 }
+
+// --- [tray] width and each style's own width ---------------------------------
+{
+  assert.equal(parseHostPayload({}).popoverWidth, null);
+  assert.equal(parseHostPayload({ popover_width: 337 }).popoverWidth, 337);
+  // A hand-edited 0 is a set width like any other: the host draws it at the lower limit, so
+  // the control must not read it as "unset".
+  assert.equal(parseHostPayload({ popover_width: 0 }).popoverWidth, 0);
+  // Anything that is not a u16 is "unset", never a width to draw.
+  for (const width of [65536, -1, 350.5, '350', true, {}, null]) {
+    assert.equal(parseHostPayload({ popover_width: width }).popoverWidth, null);
+  }
+  // The host names both styles' own widths; without them the hosts' constants stand in.
+  assert.deepEqual(parseHostPayload({}).popoverWidthDefaults, { classic: 300, native: 390 });
+  assert.deepEqual(parseHostPayload({ os: 'macos' }).popoverWidthDefaults, { classic: 320, native: 390 });
+  assert.deepEqual(parseHostPayload({ popover_width_defaults: [350, 440] }).popoverWidthDefaults, { classic: 350, native: 440 });
+  assert.deepEqual(parseHostPayload({ popover_width_defaults: [0, 99999] }).popoverWidthDefaults, { classic: 300, native: 390 });
+  assert.equal(parseHostPayload({}).popoverWidthError, '');
+  assert.equal(parseHostPayload({ popover_width_error: 'Could not save' }).popoverWidthError, 'Could not save');
+}
