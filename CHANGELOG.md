@@ -79,6 +79,21 @@
   do not return `HTTP 401 {"error":"unauthorized"}` and block the `agy` CLI and
   saved-session fallback (#635).
 
+- **Setup guides match the code they describe.** `DEVELOPMENT.md`,
+  `docs/configuration.md` and the troubleshooting probe in
+  `docs/windows-build.md` still named Ollama's `/api/usage`, which now returns
+  usage history; they name `/api/balance`, the endpoint the provider requests.
+  The GNOME, KDE and macOS READMEs said Antigravity quota exists only while a
+  product is running; they now describe the saved-session fallback (`agy`,
+  then the Cloud Code API), and the GNOME and KDE ones say that per-account
+  status-line entries never take quota from the Cloud Code API. The Windows
+  build page lists every bare-Node contract test `make desktop-test` and
+  `make plugin-test` run and says which popover tests need `npm ci`. Node
+  requirements are given per task instead of "18+" and "20+": 22.18+ for
+  `make test`, because `windows/popover/popover.test.mjs` imports a TypeScript
+  file, and 20.19+ or 22.12+ (the range the locked Vite declares) for the tray
+  build alone.
+
 ## [1.52.3] — 2026-11-18
 
 ### Fixed

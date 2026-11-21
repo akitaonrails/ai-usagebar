@@ -28,8 +28,21 @@ and Claude & GPT OSS), each carrying its own 5-hour and weekly window. The menu
 shows the report's `Session` and `Weekly` headings with one row per pool, and
 the **top bar** draws one segment per pool per window — see [Two-pool vendors](#two-pool-vendors).
 Quota comes from whichever Antigravity product is running locally (the app, the
-IDE, or an interactive `agy` session); with all of them closed the extension
-shows the last cached figures, then an error once those age out.
+IDE, or an interactive `agy` session). When no local server is found, or a
+running `agy` cannot be queried, the binary falls back to the Google session
+Antigravity saved at sign-in: it asks `agy -p "/quota"` first when `agy` is
+installed, keeps `agy`'s last reading (marked stale) when `agy` does not
+answer, and asks the Cloud Code API only when there is no `agy` reading to
+keep. A product that is running but signed out reports its own sign-in error
+instead. With no source able to answer, the extension shows the last cached
+figures, then an error once those age out.
+
+The click menu can also list one Antigravity entry per account, from the
+[`agy` status-line integration](../README.md#multiple-antigravity-cli-accounts-macos-and-linux).
+Each of those entries is refreshed only by a local product or by `agy` signed
+in as that account; quota is never taken from the Cloud Code API on that path
+(only the plan name may be looked up there), and the status-line snapshot
+stands when neither answers.
 
 ## Requirements
 

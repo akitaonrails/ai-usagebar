@@ -51,7 +51,7 @@ cargo build --release --bin ai-usagebar-tray
 ./target/release/ai-usagebar-tray
 ```
 
-Needs Node.js 20+ on PATH for the first build (`windows/popover/` Vite bundle).
+Needs Node.js 20.19+ or 22.12+ on PATH for the first build (`windows/popover/` Vite bundle).
 Left-click the status item to toggle the popover. Right-click it for the
 footer's Options menu as a native menu, in the popover's language: Customize
 (Classic only), Settings, Refresh, Detect Providers, Open TUI, Start at Login,
@@ -137,11 +137,16 @@ Antigravity has no credential file to check, so the Vendors pane treats it as
 directories (`~/.gemini/{antigravity,antigravity-cli,antigravity-ide}`) — the
 binary itself discovers whichever local server is actually reachable
 (Antigravity 2.0, the IDE, or an interactive `agy` session) via `lsof` at fetch
-time, so one of those must be running for quota to load.
+time. When none is found, or a running `agy` cannot be queried, it falls back
+to the Google session Antigravity saved at sign-in (the login Keychain, or the
+`agy` CLI's token file): it asks `agy -p "/quota"` first when `agy` is
+installed, keeps `agy`'s last reading (marked stale) when `agy` does not
+answer, and asks the Cloud Code API only when there is no `agy` reading to
+keep.
 
 ## Requirements
 
-- Rust (`rustc` 1.90+) and **Node.js 20+** (the tray embeds the Vite popover).
+- Rust (`rustc` 1.90+) and **Node.js 20.19+ or 22.12+** (the tray embeds the Vite popover).
 - Run `claude` once on the Mac so its OAuth creds are in the login **Keychain**;
   ai-usagebar reads them there automatically (no env vars).
 
