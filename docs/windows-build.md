@@ -155,3 +155,5 @@ exclusive lock required to coordinate credential refresh. Such errors now report
 the original I/O failure and lock path immediately. Actual contention still waits
 for the normal deadline. This diagnostic does not add UNC locking support or bypass
 the credential lock; do not fix it by keeping independently rotating copies of a login.
+To show a WSL-side login in the Windows tray without moving it, see "Accounts
+signed in inside WSL" in [`windows/README.md`](../windows/README.md).

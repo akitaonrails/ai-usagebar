@@ -48,6 +48,17 @@
   when two or more Claude accounts share a currency a `Claude extra` summary
   row totals their spend (and cap when every account has one) (#605).
 
+- **Recipe: accounts signed in inside WSL, shown by the Windows tray.**
+  Documentation only. `windows/README.md` gains "Accounts signed in inside
+  WSL": the Linux binary inside WSL publishes its `usage --json` on loopback,
+  re-keyed by entry id and metric label, and the Windows tray reads it through
+  grouped `[[custom]]` sources, so no credential leaves WSL and the tray gains
+  no code. `config.example.toml` carries the matching commented recipe, and a
+  test projects a rendered report through it so the recipe cannot drift from
+  the report shape. The section states the limits: the publisher is the
+  user's to run, figures update only while the distribution runs, and a
+  missing account fails its card.
+
 ### Fixed
 
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
