@@ -1487,9 +1487,8 @@ button.desktop-account-control:focus-visible {
   background-image: linear-gradient(var(--hover-fill), var(--hover-fill));
 }
 
-/* Native on Linux with Omarchy: only colours and the compositor's corner radius change.
-   Type, spacing, control sizes and states stay exactly as the shared Native style. There is
-   no glass material and no CSS window edge: Hyprland already paints the window border. */
+/* Native on Linux with Omarchy: the shell's Agents type scale, section dividers
+   and inline meters. Hyprland paints the window border. */
 html:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
   --window-radius: var(--om-rounding, 0px);
 }
@@ -1501,18 +1500,21 @@ html:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
 body:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
   --surface: var(--om-background, var(--export-surface));
   --card: var(--om-lighter-background, var(--om-background, var(--export-card)));
+  --card-border: transparent;
   --menu: var(--om-background, var(--export-surface));
-  --separator: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.1)) 25%, var(--om-background, var(--export-surface)));
+  --om-control-ink: var(--om-foreground, #000000);
+  --separator: color-mix(in srgb, var(--om-control-ink, #000000) 12%, transparent);
   --label-1: var(--om-foreground, rgba(0, 0, 0, 0.85));
-  --label-2: var(--om-foreground, rgba(0, 0, 0, 0.5));
-  --label-3: var(--om-muted, rgba(0, 0, 0, 0.26));
-  --control-fill: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.06)) 4%, var(--om-background, var(--export-surface)));
-  --control-fill-hover: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.1)) 8%, var(--om-background, var(--export-surface)));
-  --hover-fill: var(--control-fill-hover);
-  --menu-hover: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.06)) 8%, var(--om-background, var(--export-surface)));
-  --fill-quaternary: var(--control-fill);
-  --fill-tertiary: var(--control-fill-hover);
-  --bar-glass: var(--om-background, var(--export-surface));
+  --label-2: color-mix(in srgb, var(--om-foreground, rgba(0, 0, 0, 0.85)) 82%, var(--surface, #ffffff));
+  --label-3: color-mix(in srgb, var(--label-1, currentColor) 80%, var(--card, #f2f2f2));
+  /* Translucent ink lets each control tint its own panel or card underneath. */
+  --control-fill: color-mix(in srgb, var(--om-control-ink, #000000) 4%, transparent);
+  --control-fill-hover: color-mix(in srgb, var(--om-control-ink, #000000) 8%, transparent);
+  --hover-fill: var(--control-fill-hover, transparent);
+  --menu-hover: var(--control-fill-hover, transparent);
+  --fill-quaternary: var(--control-fill, transparent);
+  --fill-tertiary: var(--control-fill-hover, transparent);
+  --bar-glass: var(--surface, var(--export-surface));
   --accent: var(--om-accent, #007aff);
   --blue: var(--om-blue, var(--om-accent, #007aff));
   --yellow: var(--om-yellow, #ffcc00);
@@ -1521,8 +1523,33 @@ body:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
   --green: var(--om-green, var(--om-accent, #34c759));
   --incident-yellow: var(--om-yellow, #8a5a00);
   --incident-orange: var(--om-orange, #b84a00);
-  --switch-off: var(--om-muted, var(--om-selection, #d9d9d9));
+  --switch-off: var(--om-muted, var(--om-selection, rgba(0, 0, 0, 0.1)));
+  --knob-shadow: none;
   --native-blur: 0px;
+
+  --sz-badge: 12px;
+  --sz-support: 12px;
+  --sz-demand: 12px;
+  --sz-label: 14px;
+  --sz-header: 15px;
+  --sz-body: 14px;
+  --sz-control: 14px;
+  --panel-pad: 16px;
+  --native-page-inset: var(--panel-pad, 16px);
+  --card-pad: 0px;
+  --card-gutter: 0px;
+  --header-card-gap: 10px;
+  --section-gap: 20px;
+  --pad-bar-row: 6px;
+  --pad-control: 6px;
+  --pad-text-row: 8px;
+  --row-inner: 5px;
+  --gap-stack: 6px;
+  --row-gap: 10px;
+  --hover-bleed: 0px;
+  --control-h: 28px;
+  --picker-max: 134px;
+  --meter-h: 4px;
 
   --card-radius: var(--om-rounding, 0px);
   --menu-radius: var(--om-rounding, 0px);
@@ -1537,19 +1564,20 @@ body:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
   --hover-row-radius: var(--om-rounding, 0px);
   --switch-radius: var(--om-rounding, 0px);
   --switch-knob-radius: var(--om-rounding, 0px);
+  /* A square knob under half the track, not Native's 24px capsule. */
+  --switch-w: 34px;
+  --switch-knob: 14px;
+  --switch-knob-w: 14px;
+  --switch-knob-inset: 2px;
 
-  background: var(--surface);
+  font-family: monospace;
+  background: var(--surface, var(--export-surface));
 
   .dark & {
+    --om-control-ink: var(--om-foreground, #ffffff);
     --menu: var(--om-background, #2b2b2b);
-    --separator: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.1)) 25%, var(--om-background, var(--export-surface)));
     --label-1: var(--om-foreground, rgba(255, 255, 255, 0.85));
-    --label-2: var(--om-foreground, rgba(255, 255, 255, 0.55));
-    --label-3: var(--om-muted, rgba(255, 255, 255, 0.25));
-    --control-fill: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.08)) 4%, var(--om-background, var(--export-surface)));
-    --control-fill-hover: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.14)) 8%, var(--om-background, var(--export-surface)));
-    --hover-fill: var(--control-fill-hover);
-    --menu-hover: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.1)) 8%, var(--om-background, var(--export-surface)));
+    --label-2: color-mix(in srgb, var(--om-foreground, rgba(255, 255, 255, 0.85)) 82%, var(--surface, #1e1e1e));
     --accent: var(--om-accent, #0a84ff);
     --blue: var(--om-blue, var(--om-accent, #0a84ff));
     --yellow: var(--om-yellow, #ffd60a);
@@ -1558,12 +1586,148 @@ body:has(.native-panel[data-os="linux"][data-desktop="omarchy"]) {
     --green: var(--om-green, var(--om-accent, #30d158));
     --incident-yellow: var(--om-yellow, #ffd60a);
     --incident-orange: var(--om-orange, #ff9f0a);
-    --switch-off: var(--om-muted, var(--om-selection, #454545));
+    --switch-off: var(--om-muted, var(--om-selection, rgba(255, 255, 255, 0.2)));
+  }
+
+  & .card-surface {
+    box-shadow: none;
+  }
+
+  & .card-surface:not(button) {
+    background: transparent;
+    padding-block: 0;
+  }
+
+  & .native-dashboard {
+    gap: var(--section-gap, 16px);
+    padding: 0;
+  }
+
+  & .native-dashboard-header {
+    gap: 8px;
+  }
+
+  & .native-dashboard-header h1 {
+    font-size: 16px;
+    letter-spacing: normal;
+  }
+
+  /* The base Native sets these in fixed pixels (10-12px), below this look's scale. */
+  & .native-dashboard-status {
+    font-size: var(--sz-support, 12px);
+    padding-bottom: 10px;
+  }
+
+  & .native-empty-state {
+    font-size: var(--sz-body, 14px);
+  }
+
+  & .native-dashboard-header p,
+  & .section-title {
+    font-size: var(--sz-badge, 11px);
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+  }
+
+  & :is(.native-dashboard [data-card-id], .section-title:not(.flex), footer.bar-glass) {
+    border-top: var(--hairline, 1px) solid var(--separator, transparent);
+    padding-top: 6px;
+  }
+
+  & .native-dashboard [data-card-id] > :first-child > .min-w-0 > :first-child {
+    font-weight: 700;
+  }
+
+  & .native-dashboard-actions {
+    gap: 6px;
+  }
+
+  & .native-panel .native-header-action {
+    --icon-btn: 34px;
+    background: var(--card, var(--export-card));
+  }
+
+  & .native-panel .native-header-action:hover {
+    background: color-mix(in srgb, var(--om-control-ink, currentColor) 8%, var(--card, var(--export-card)));
+  }
+
+  & footer.bar-glass {
+    padding-bottom: 8px;
+  }
+
+  & .native-tabs {
+    background: transparent;
+  }
+
+  & .native-tab {
+    min-height: var(--control-h, 28px);
+    padding-block: 4px;
+    font-size: var(--sz-control, 13px);
+  }
+
+  & .settings-tabs .native-tab {
+    flex: 1 1 0;
+    padding-inline: 4px;
+  }
+
+  & .settings-tabs .native-tab-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  & .native-tab:not([aria-selected="true"]):not([data-active="true"]):hover,
+  & .account-tab[aria-selected="false"]:hover {
+    background: var(--control-fill-hover, transparent);
+    box-shadow: none;
+  }
+
+  & :is(.native-tab[aria-selected="true"], .native-tab[data-active="true"], .account-tab[aria-selected="true"]) {
+    background: var(--control-fill-hover, transparent);
+    color: var(--label-1, currentColor);
+    box-shadow: none;
+  }
+
+  & .native-tab[data-active="true"] .native-tab-value,
+  & .native-tab[data-active="true"] .text-label-2,
+  & .account-tab[aria-selected="true"] {
+    color: var(--om-accent, var(--label-1, currentColor));
+    font-weight: 700;
+  }
+
+  & [data-slot="switch"][data-state="checked"] {
+    background: var(--blue, #007aff);
+  }
+
+  & [data-slot="switch-thumb"] {
+    background: var(--om-dark-background, var(--om-background, #ffffff));
+  }
+
+  & .meter {
+    background: color-mix(in srgb, var(--om-accent, var(--om-control-ink, currentColor)) 18%, transparent);
+  }
+
+  & .meter-fill[data-color="blue"] {
+    background: var(--om-foreground, var(--blue, #007aff));
+  }
+
+  & .drop-zone {
+    border: 0;
+    background: var(--control-fill, transparent);
+  }
+
+  & :is(.native-retry-button, .desktop-account-control) {
+    border-radius: var(--om-rounding, 0px);
+  }
+
+  & :is(.native-retry-button, .action-btn[data-variant="primary"], .icon-btn[data-armed]) {
+    color: var(--om-dark-background, var(--om-background, #ffffff));
   }
 
   & [data-slot="tooltip-content"] {
-    background-color: var(--om-hint-bg, var(--hint-bg));
-    color: var(--om-hint-fg, var(--hint-fg));
+    background-color: var(--om-hint-bg, var(--hint-bg, #4a4a4a));
+    color: var(--om-hint-fg, var(--hint-fg, #ffffff));
   }
 
   & :is(
