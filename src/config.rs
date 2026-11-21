@@ -113,6 +113,13 @@ pub struct UiConfig {
     /// Whether to ask each provider's official status page what it flags as
     /// abnormal and colour the provider's name with it. `None` → on.
     pub provider_status: Option<bool>,
+    /// Accounts turned off one by one, by the id `usage --json` gives their
+    /// entry (`openai@personal`, `anthropic`, `custom:example@work`). A listed
+    /// account is left out of the TUI and the report and is not fetched; its
+    /// config block, credentials and cache are untouched. An id that matches
+    /// no account does nothing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_accounts: Vec<String>,
 }
 
 impl UiConfig {
@@ -124,6 +131,11 @@ impl UiConfig {
 
     pub fn vendor_box(&self) -> VendorBoxStyle {
         self.vendor_box.unwrap_or_default()
+    }
+
+    /// Whether `[ui] hidden_accounts` lists this report entry id.
+    pub fn is_account_hidden(&self, id: &str) -> bool {
+        self.hidden_accounts.iter().any(|hidden| hidden == id)
     }
 }
 
@@ -910,6 +922,215 @@ pub fn set_vendor_enabled_in_doc(
         )));
     };
     set_bool(doc, vendor.config_section(), "enabled", enabled)
+}
+
+/// Turn individual accounts on or off in `[ui] hidden_accounts`, over an
+/// already-open document: `(id, false)` adds the id, `(id, true)` removes it.
+///
+/// The list is edited in place. An update that changes nothing (no updates,
+/// hiding an id already listed, showing one that is not) leaves the document
+/// as it was, so a save that touched no account row rewrites nothing. Every
+/// other id keeps its place, its line and the comment beside it. The key is
+/// removed only when this call takes the last id out; an empty list the user
+/// wrote stays.
+///
+/// ```
+/// use ai_usagebar::config::set_hidden_accounts_in_doc;
+///
+/// let mut doc: toml_edit::DocumentMut = "[ui]\n".parse().unwrap();
+/// let hide = [("openai@work".to_string(), false)];
+/// set_hidden_accounts_in_doc(&mut doc, &hide).unwrap();
+/// assert_eq!(doc.to_string(), "[ui]\nhidden_accounts = [\"openai@work\"]\n");
+/// ```
+pub fn set_hidden_accounts_in_doc(
+    doc: &mut toml_edit::DocumentMut,
+    updates: &[(String, bool)],
+) -> Result<()> {
+    for (id, visible) in updates {
+        if *visible {
+            show_account_in_doc(doc, id)?;
+        } else {
+            hide_account_in_doc(doc, id)?;
+        }
+    }
+    Ok(())
+}
+
+/// `[ui] hidden_accounts` as an editable array; `None` when the key is absent.
+fn hidden_accounts_array_mut(
+    doc: &mut toml_edit::DocumentMut,
+) -> Result<Option<&mut toml_edit::Array>> {
+    let Some(item) = doc
+        .get_mut("ui")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .and_then(|ui| ui.get_mut("hidden_accounts"))
+    else {
+        return Ok(None);
+    };
+    let found = item.type_name();
+    item.as_array_mut().map(Some).ok_or_else(|| {
+        AppError::Other(format!(
+            "config.toml: [ui] hidden_accounts is {found}, expected an array of account ids"
+        ))
+    })
+}
+
+/// Add `id` to `[ui] hidden_accounts`, creating the key when it is absent.
+fn hide_account_in_doc(doc: &mut toml_edit::DocumentMut, id: &str) -> Result<()> {
+    let Some(list) = hidden_accounts_array_mut(doc)? else {
+        let list: toml_edit::Array = std::iter::once(id).collect();
+        let list = toml_edit::Value::Array(list);
+        return set_value(doc, "ui", "hidden_accounts", Some(list));
+    };
+    if !list.iter().any(|listed| listed.as_str() == Some(id)) {
+        push_array_item_on_its_own_line(list, id);
+    }
+    Ok(())
+}
+
+/// Take `id` out of `[ui] hidden_accounts`, and the key with it when that was
+/// its last id.
+fn show_account_in_doc(doc: &mut toml_edit::DocumentMut, id: &str) -> Result<()> {
+    let Some(list) = hidden_accounts_array_mut(doc)? else {
+        return Ok(());
+    };
+    let listed_before = list.len();
+    let position = |list: &toml_edit::Array| {
+        let mut items = list.iter();
+        items.position(|listed| listed.as_str() == Some(id))
+    };
+    while let Some(index) = position(list) {
+        remove_array_item_with_its_comment(list, index);
+    }
+    let emptied = list.is_empty() && listed_before > 0;
+    // Not through `set_value`: the table is known to exist here, and nothing
+    // else in it changes.
+    if emptied
+        && let Some(ui) = doc
+            .get_mut("ui")
+            .and_then(toml_edit::Item::as_table_like_mut)
+    {
+        ui.remove("hidden_accounts");
+    }
+    Ok(())
+}
+
+/// Array decor split at its first line break. toml_edit keeps the comment
+/// that follows an item on the same line in the decor of whatever comes next
+/// (the next item's prefix, or the array's trailing text), so the first half
+/// belongs to the item before and the second half to what follows.
+fn array_decor_at_first_line_break(decor: &str) -> (&str, &str) {
+    decor
+        .find('\n')
+        .map_or((decor, ""), |at| decor.split_at(at))
+}
+
+/// The same-line comment at the head of a piece of array decor, or nothing.
+fn array_decor_same_line_comment(decor: &str) -> &str {
+    let (same_line, _) = array_decor_at_first_line_break(decor);
+    if same_line.contains('#') {
+        same_line
+    } else {
+        ""
+    }
+}
+
+fn array_item_prefix(item: &toml_edit::Value) -> String {
+    let prefix = item.decor().prefix().and_then(|raw| raw.as_str());
+    prefix.unwrap_or_default().to_owned()
+}
+
+/// The text between an array's last item and its closing bracket. With a
+/// trailing comma toml_edit keeps it as the array's trailing text; without
+/// one it is the last item's suffix. `last` is that item.
+fn array_closing_decor(list: &toml_edit::Array, last: &toml_edit::Value) -> String {
+    let suffix = last.decor().suffix().and_then(|raw| raw.as_str());
+    let trailing = list.trailing().as_str();
+    format!(
+        "{}{}",
+        suffix.unwrap_or_default(),
+        trailing.unwrap_or_default()
+    )
+}
+
+/// The prefix for the item that follows a removed one: the comment of the
+/// item before the gap, then the following item's own lines. `removed` and
+/// `following` are the two prefixes as they were.
+fn array_item_prefix_after_removal(removed: &str, following: &str) -> String {
+    if !following.contains('\n') {
+        // Same line as the removed item: it takes that item's position.
+        return removed.to_owned();
+    }
+    let own_lines = array_decor_at_first_line_break(following).1;
+    format!("{}{own_lines}", array_decor_same_line_comment(removed))
+}
+
+/// The text before the closing bracket after the last item was removed: the
+/// comment of the item that is last now, then the line break before the
+/// bracket. `removed` is the removed item's prefix, `closing` the text that
+/// stood between it and the bracket.
+fn array_closing_after_removal(removed: &str, closing: &str) -> String {
+    let comment = array_decor_same_line_comment(removed);
+    if closing.contains('\n') {
+        let line_break = array_decor_at_first_line_break(closing).1;
+        return format!("{comment}{line_break}");
+    }
+    if comment.is_empty() {
+        return closing.to_owned();
+    }
+    // A comment runs to the end of its line: the bracket needs its own.
+    format!("{comment}\n")
+}
+
+/// Remove `list[index]` together with the comment on its line. A plain
+/// `Array::remove` would hand that comment to the item before it and drop the
+/// comment that item had.
+fn remove_array_item_with_its_comment(list: &mut toml_edit::Array, index: usize) {
+    let removed = list.remove(index);
+    let prefix = array_item_prefix(&removed);
+    if let Some(following) = list.get_mut(index) {
+        let kept = array_item_prefix_after_removal(&prefix, &array_item_prefix(following));
+        following.decor_mut().set_prefix(kept);
+        return;
+    }
+    let closing = array_closing_decor(list, &removed);
+    list.set_trailing(array_closing_after_removal(&prefix, &closing));
+}
+
+/// The decor for an id appended to a list: `(its prefix, the text between it
+/// and the closing bracket)`. `last_prefix` is the prefix of the item that was
+/// last, `closing` the text that stood between that item and the bracket.
+fn array_decor_for_appended_item(last_prefix: &str, closing: &str) -> (String, String) {
+    if !closing.contains('\n') {
+        // A list on one line: the new id follows the last one.
+        return (" ".to_owned(), closing.to_owned());
+    }
+    let indent = last_prefix
+        .rfind('\n')
+        .map_or("\n", |at| &last_prefix[at..]);
+    let comment = array_decor_same_line_comment(closing);
+    let line_break = array_decor_at_first_line_break(closing).1;
+    (format!("{comment}{indent}"), line_break.to_owned())
+}
+
+/// Append `id` to `list`. In a list written over several lines the new id gets
+/// a line of its own, indented like the last one and placed after that item's
+/// comment; a plain `Array::push` would put it on the last item's line, ahead
+/// of the comment.
+fn push_array_item_on_its_own_line(list: &mut toml_edit::Array, id: &str) {
+    let Some(last) = list.iter().last() else {
+        return list.push(id);
+    };
+    let closing = array_closing_decor(list, last);
+    let (prefix, closing) = array_decor_for_appended_item(&array_item_prefix(last), &closing);
+    // The text that closed the list moves behind the new last item.
+    if let Some(last) = list.iter_mut().last() {
+        last.decor_mut().set_suffix("");
+    }
+    let mut item = toml_edit::Value::from(id);
+    item.decor_mut().set_prefix(prefix);
+    list.push_formatted(item);
+    list.set_trailing(closing);
 }
 
 /// A TOML error as `line L, column C: message`. `toml` and `toml_edit` both
@@ -8114,5 +8335,279 @@ enabled = true
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn hidden_accounts_default_to_none_and_stay_out_of_a_serialized_config() {
+        let cfg: Config = toml::from_str("[ui]\nprimary = \"openai\"\n").unwrap();
+        assert!(cfg.ui.hidden_accounts.is_empty());
+        assert!(!cfg.ui.is_account_hidden("openai"));
+        assert!(
+            !toml::to_string(&cfg).unwrap().contains("hidden_accounts"),
+            "an unset list must not appear in a serialized config"
+        );
+    }
+
+    #[test]
+    fn is_account_hidden_matches_whole_ids_only() {
+        let cfg: Config = toml::from_str(
+            "[ui]\nhidden_accounts = [\"openai@personal\", \"custom:example@work\", \"not an id\"]\n",
+        )
+        .unwrap();
+        cfg.validate()
+            .expect("an id that names no account is not a config error");
+        assert!(cfg.ui.is_account_hidden("openai@personal"));
+        assert!(cfg.ui.is_account_hidden("custom:example@work"));
+        // Neither the provider nor a sibling account is caught by a prefix.
+        assert!(!cfg.ui.is_account_hidden("openai"));
+        assert!(!cfg.ui.is_account_hidden("openai@personal-2"));
+        assert!(!cfg.ui.is_account_hidden("custom:example"));
+    }
+
+    #[test]
+    fn set_hidden_accounts_edits_only_its_own_key() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let original = "# keep comment\n[ui]\nprimary = \"openai\"\n\n[openai]\nenabled = true\n[[openai.accounts]]\nlabel = \"personal\"\ncodex_auth_path = \"/nonexistent/personal-auth.json\"\n";
+        std::fs::write(&path, original).unwrap();
+
+        edit_config_document(&path, |doc| {
+            set_hidden_accounts_in_doc(
+                doc,
+                &[
+                    ("openai@personal".to_string(), false),
+                    ("custom:example@work".to_string(), false),
+                    // Hiding twice lists the id once.
+                    ("openai@personal".to_string(), false),
+                ],
+            )
+        })
+        .unwrap();
+
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(
+            cfg.ui.hidden_accounts,
+            vec!["openai@personal", "custom:example@work"]
+        );
+        assert_eq!(cfg.openai.accounts.len(), 1, "the account block stays");
+
+        // Showing one keeps the other, in place.
+        edit_config_document(&path, |doc| {
+            set_hidden_accounts_in_doc(doc, &[("openai@personal".to_string(), true)])
+        })
+        .unwrap();
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(cfg.ui.hidden_accounts, vec!["custom:example@work"]);
+
+        // Showing the last one removes the key and nothing else.
+        edit_config_document(&path, |doc| {
+            set_hidden_accounts_in_doc(doc, &[("custom:example@work".to_string(), true)])
+        })
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn showing_an_account_in_a_config_without_ui_adds_no_section() {
+        let mut doc: toml_edit::DocumentMut = "[openai]\nenabled = true\n".parse().unwrap();
+        set_hidden_accounts_in_doc(&mut doc, &[("openai@personal".to_string(), true)]).unwrap();
+        assert_eq!(doc.to_string(), "[openai]\nenabled = true\n");
+    }
+    /// A list the user laid out by hand, one id per line with a note beside
+    /// each. A Settings save reaches the setter on every save, so "nothing to
+    /// change" has to mean "nothing written".
+    const HAND_FORMATTED_HIDDEN_ACCOUNTS: &str = "[ui]
+hidden_accounts = [
+    \"openai@personal\", # on holiday
+    # back next quarter
+    \"custom:example@work\", # until March
+] # reviewed monthly
+primary = \"openai\"
+";
+
+    fn hidden_accounts_after(source: &str, updates: &[(&str, bool)]) -> String {
+        let mut doc: toml_edit::DocumentMut = source.parse().unwrap();
+        let updates: Vec<(String, bool)> = updates
+            .iter()
+            .map(|(id, visible)| ((*id).to_string(), *visible))
+            .collect();
+        set_hidden_accounts_in_doc(&mut doc, &updates).unwrap();
+        doc.to_string()
+    }
+
+    #[test]
+    fn an_update_that_changes_nothing_leaves_the_document_as_it_was() {
+        let unchanged: [&[(&str, bool)]; 3] = [
+            // A save that touched no account row, and `settings apply`, which
+            // carries none.
+            &[],
+            // Hiding what is already hidden.
+            &[("openai@personal", false)],
+            // Showing what is not listed.
+            &[("openai@work", true)],
+        ];
+        for updates in unchanged {
+            assert_eq!(
+                hidden_accounts_after(HAND_FORMATTED_HIDDEN_ACCOUNTS, updates),
+                HAND_FORMATTED_HIDDEN_ACCOUNTS,
+                "{updates:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_list_the_user_wrote_is_not_removed() {
+        let explicit = "[ui]\nhidden_accounts = []\n";
+        assert_eq!(hidden_accounts_after(explicit, &[]), explicit);
+        assert_eq!(
+            hidden_accounts_after(explicit, &[("openai@work", true)]),
+            explicit
+        );
+        assert_eq!(
+            hidden_accounts_after(explicit, &[("openai@work", false)]),
+            "[ui]\nhidden_accounts = [\"openai@work\"]\n"
+        );
+    }
+
+    #[test]
+    fn hiding_one_more_account_keeps_the_layout_and_comments_of_the_others() {
+        assert_eq!(
+            hidden_accounts_after(HAND_FORMATTED_HIDDEN_ACCOUNTS, &[("openai@work", false)]),
+            "[ui]
+hidden_accounts = [
+    \"openai@personal\", # on holiday
+    # back next quarter
+    \"custom:example@work\", # until March
+    \"openai@work\",
+] # reviewed monthly
+primary = \"openai\"
+"
+        );
+        // A one-line list stays on one line.
+        assert_eq!(
+            hidden_accounts_after(
+                "[ui]\nhidden_accounts = [\"openai@personal\"] # note\n",
+                &[("openai@work", false)]
+            ),
+            "[ui]\nhidden_accounts = [\"openai@personal\", \"openai@work\"] # note\n"
+        );
+    }
+
+    #[test]
+    fn showing_an_account_takes_its_own_comment_and_leaves_its_neighbours() {
+        // The first of two: its note goes with it, the other keeps its own
+        // line, the comment above it and the note beside it.
+        assert_eq!(
+            hidden_accounts_after(HAND_FORMATTED_HIDDEN_ACCOUNTS, &[("openai@personal", true)]),
+            "[ui]
+hidden_accounts = [
+    # back next quarter
+    \"custom:example@work\", # until March
+] # reviewed monthly
+primary = \"openai\"
+"
+        );
+        // The last of two: the one before it keeps its note.
+        assert_eq!(
+            hidden_accounts_after(
+                HAND_FORMATTED_HIDDEN_ACCOUNTS,
+                &[("custom:example@work", true)]
+            ),
+            "[ui]
+hidden_accounts = [
+    \"openai@personal\", # on holiday
+] # reviewed monthly
+primary = \"openai\"
+"
+        );
+        // The middle of three on one line, and a repeated id.
+        assert_eq!(
+            hidden_accounts_after(
+                "[ui]\nhidden_accounts = [\"a@1\", \"b@2\", \"c@3\", \"b@2\"]\n",
+                &[("b@2", true)]
+            ),
+            "[ui]\nhidden_accounts = [\"a@1\", \"c@3\"]\n"
+        );
+        // Both: the key goes, the rest of the section stays.
+        assert_eq!(
+            hidden_accounts_after(
+                HAND_FORMATTED_HIDDEN_ACCOUNTS,
+                &[("openai@personal", true), ("custom:example@work", true)]
+            ),
+            "[ui]\nprimary = \"openai\"\n"
+        );
+    }
+
+    /// Without a comma after the last id, toml_edit keeps the text before the
+    /// closing bracket on that last item instead of on the array. The edits
+    /// have to find it there, or a new id lands after the line break and a
+    /// removal pulls the bracket up a line.
+    #[test]
+    fn a_list_without_a_trailing_comma_is_edited_in_place_too() {
+        let source = "[ui]
+hidden_accounts = [
+    \"openai@personal\", # on holiday
+    \"custom:example@work\" # until March
+]
+";
+        let one_more = "[ui]
+hidden_accounts = [
+    \"openai@personal\", # on holiday
+    \"custom:example@work\", # until March
+    \"openai@work\"
+]
+";
+        assert_eq!(
+            hidden_accounts_after(source, &[("openai@work", false)]),
+            one_more
+        );
+        assert_eq!(
+            hidden_accounts_after(one_more, &[("openai@work", true)]),
+            source
+        );
+        assert_eq!(
+            hidden_accounts_after(source, &[("custom:example@work", true)]),
+            "[ui]\nhidden_accounts = [\n    \"openai@personal\" # on holiday\n]\n"
+        );
+        assert_eq!(
+            hidden_accounts_after(source, &[("openai@personal", true)]),
+            "[ui]\nhidden_accounts = [\n    \"custom:example@work\" # until March\n]\n"
+        );
+        // No comments, and a one-line list padded with spaces.
+        assert_eq!(
+            hidden_accounts_after(
+                "[ui]\nhidden_accounts = [\n    \"a@1\",\n    \"b@2\"\n]\n",
+                &[("b@2", true)]
+            ),
+            "[ui]\nhidden_accounts = [\n    \"a@1\"\n]\n"
+        );
+        let padded = "[ui]\nhidden_accounts = [ \"a@1\", \"b@2\" ]\n";
+        assert_eq!(
+            hidden_accounts_after(padded, &[("c@3", false)]),
+            "[ui]\nhidden_accounts = [ \"a@1\", \"b@2\", \"c@3\" ]\n"
+        );
+        assert_eq!(
+            hidden_accounts_after(padded, &[("b@2", true)]),
+            "[ui]\nhidden_accounts = [ \"a@1\" ]\n"
+        );
+    }
+
+    #[test]
+    fn a_hidden_accounts_key_that_is_not_a_list_is_reported_not_overwritten() {
+        let source = "[ui]\nhidden_accounts = \"openai@personal\"\n";
+        let mut doc: toml_edit::DocumentMut = source.parse().unwrap();
+        // No update, no opinion: the config loader is what rejects the file.
+        set_hidden_accounts_in_doc(&mut doc, &[]).unwrap();
+        for visible in [false, true] {
+            let error =
+                set_hidden_accounts_in_doc(&mut doc, &[("openai@work".to_string(), visible)])
+                    .unwrap_err()
+                    .to_string();
+            assert!(
+                error.contains("[ui] hidden_accounts is string, expected an array"),
+                "{error}"
+            );
+        }
+        assert_eq!(doc.to_string(), source);
     }
 }

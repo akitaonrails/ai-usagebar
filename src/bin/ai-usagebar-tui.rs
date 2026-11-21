@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime};
 use ai_usagebar::config::Config;
 use ai_usagebar::tui::app::{
     ANTHROPIC_REFRESH_STAGGER, App, FooterAction, Freshness, REFRESH_INTERVAL, TabId, TabState,
-    refresh_one, refresh_stagger, tabs_with_desktop,
+    all_tabs_with_desktop, refresh_one, refresh_stagger, tabs_with_desktop,
 };
 use ai_usagebar::tui::view::draw;
 use ai_usagebar::vendor::HTTP_CLIENT_TIMEOUT;
@@ -111,14 +111,16 @@ async fn run() -> io::Result<()> {
             ai_usagebar::config::config_path_hint()
         ))
     })?;
-    let tabs = tabs_with_desktop(&config);
-    if tabs.is_empty() {
+    // Checked before `[ui] hidden_accounts` applies: with every account hidden
+    // the TUI still opens, because its Settings is where one is shown again.
+    if all_tabs_with_desktop(&config).is_empty() {
         eprintln!(
             "No vendors are enabled in {}. Exiting.",
             ai_usagebar::config::config_path_hint()
         );
         return Ok(());
     }
+    let tabs = tabs_with_desktop(&config);
 
     let client = Client::builder()
         .timeout(HTTP_CLIENT_TIMEOUT)
@@ -596,7 +598,12 @@ fn open_settings(app: &mut App, config: &Config) {
     // Prefer the file (it may have changed on disk), but fall back to the
     // config in memory rather than to defaults.
     let cfg = ai_usagebar::config::Config::load().unwrap_or_else(|_| config.clone());
-    app.settings = Some(ai_usagebar::tui::settings::SettingsState::from_config(&cfg));
+    // The account rows come from the list before `[ui] hidden_accounts`
+    // applies, so an account that is off can be turned on from here.
+    app.settings = Some(
+        ai_usagebar::tui::settings::SettingsState::from_config(&cfg)
+            .with_account_rows(&cfg, &all_tabs_with_desktop(&cfg)),
+    );
 }
 
 fn handle_key(app: &mut App, code: KeyCode, mods: KeyModifiers) -> bool {
@@ -799,6 +806,7 @@ mod tests {
                     dirty: false,
                 })
                 .collect(),
+            accounts: Vec::new(),
             notify_enabled: true,
             notify_enabled_dirty: false,
             notify_threshold: KeyInput::from_config(Some("97")),
@@ -1061,6 +1069,112 @@ mod tests {
         let state = app.settings.as_ref().unwrap();
         assert_eq!(state.focus, SFocus::Vendor(moon));
         assert!(state.vendors[moon].enabled, "own switch click toggles");
+    }
+
+    /// Settings state with three account rows (`[ui] hidden_accounts`), the
+    /// last one focused so the body scrolls the whole section into view.
+    fn settings_focused_on_last_account() -> App {
+        use ai_usagebar::tui::settings::{AccountSwitch, Focus as SFocus};
+
+        let mut app = settings_focused_on_provider(0);
+        let state = app.settings.as_mut().unwrap();
+        state.accounts = ["Codex", "Codex · work", "Codex · personal"]
+            .iter()
+            .map(|label| AccountSwitch {
+                id: format!("openai@{label}"),
+                label: (*label).to_string(),
+                enabled: true,
+                dirty: false,
+            })
+            .collect();
+        state.focus = SFocus::Account(2);
+        app
+    }
+
+    /// Rect of a recorded account row target: its on/off cell when `switch`,
+    /// the whole row (label included) otherwise.
+    fn account_rect_of(app: &App, i: usize, switch: bool) -> ratatui::layout::Rect {
+        use ai_usagebar::tui::settings::{Focus as SFocus, SettingsRow};
+
+        app.hit
+            .borrow()
+            .settings_rows
+            .iter()
+            .find_map(|(row, rect)| match row {
+                SettingsRow::Switch(SFocus::Account(a), _, _) if switch && *a == i => Some(*rect),
+                SettingsRow::Focus(SFocus::Account(a)) if !switch && *a == i => Some(*rect),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("account {i} has no hit target (switch = {switch})"))
+    }
+
+    /// The account rows take clicks the way the provider rows do: the label
+    /// focuses, the on/off cell toggles in place, and the focused row's own
+    /// cell toggles too.
+    #[test]
+    fn clicking_an_account_switch_cell_toggles_it_and_the_label_only_focuses() {
+        use ai_usagebar::tui::settings::Focus as SFocus;
+        use ai_usagebar::tui::view::draw as draw_view;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = settings_focused_on_last_account();
+        let mut terminal = Terminal::new(TestBackend::new(160, 70)).unwrap();
+        terminal.draw(|f| draw_view(f, &mut app)).unwrap();
+
+        // Clicking the LABEL of an unfocused account only focuses it.
+        let row = account_rect_of(&app, 0, false);
+        let _ = handle_mouse(&mut app, &click_at(row.x + 4, row.y));
+        let state = app.settings.as_ref().unwrap();
+        assert_eq!(state.focus, SFocus::Account(0));
+        assert!(state.accounts[0].enabled, "label click must not toggle");
+        assert!(!state.accounts[0].dirty);
+
+        terminal.draw(|f| draw_view(f, &mut app)).unwrap();
+
+        // Clicking the on/off cell of another row toggles that row in place.
+        let cell = account_rect_of(&app, 1, true);
+        let _ = handle_mouse(&mut app, &click_at(cell.x + 1, cell.y));
+        let state = app.settings.as_ref().unwrap();
+        assert_eq!(state.focus, SFocus::Account(1));
+        assert!(!state.accounts[1].enabled, "switch click toggles");
+        assert!(state.accounts[1].dirty);
+        assert!(state.accounts[0].enabled && state.accounts[2].enabled);
+
+        terminal.draw(|f| draw_view(f, &mut app)).unwrap();
+
+        // The focused row's own cell toggles it back.
+        let own = account_rect_of(&app, 1, true);
+        let _ = handle_mouse(&mut app, &click_at(own.x + 1, own.y));
+        let state = app.settings.as_ref().unwrap();
+        assert_eq!(state.focus, SFocus::Account(1));
+        assert!(state.accounts[1].enabled, "own switch click toggles");
+    }
+
+    /// On a terminal too short for the whole overlay the body scrolls, and a
+    /// click must land on the account row the user sees.
+    #[test]
+    fn clicking_an_account_selects_the_row_the_user_sees_while_scrolled() {
+        use ai_usagebar::tui::settings::Focus as SFocus;
+        use ai_usagebar::tui::view::draw as draw_view;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app = settings_focused_on_last_account();
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| draw_view(f, &mut app)).unwrap();
+        assert!(
+            app.settings.as_ref().unwrap().scroll > 0,
+            "body must scroll"
+        );
+
+        // Where the row is drawn is where its target must be.
+        let rows = provider_row_positions(&terminal, "Codex · work");
+        assert_eq!(rows.len(), 1, "the row must render exactly once");
+        let target = account_rect_of(&app, 1, false);
+        assert_eq!(target.y, rows[0]);
+        let _ = handle_mouse(&mut app, &click_at(target.x + 4, rows[0]));
+        assert_eq!(app.settings.as_ref().unwrap().focus, SFocus::Account(1));
     }
 
     /// A long provider name ("GitHub Copilot" is 14 columns) pushes the value

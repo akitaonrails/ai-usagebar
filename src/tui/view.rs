@@ -427,7 +427,9 @@ fn draw_detail(f: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if app.overview {
+    // With no tab at all there is no detail to draw either; the Overview is
+    // the view that says why and where to fix it.
+    if app.overview || app.tabs_meta.is_empty() {
         draw_overview(f, app, inner);
         return;
     }
@@ -469,10 +471,16 @@ fn draw_overview(f: &mut Frame, app: &App, area: Rect) {
     let theme = bubble_theme(&app.theme);
     let idxs = app.overview_tabs();
     if idxs.is_empty() {
-        f.render_widget(
-            Paragraph::new(Line::from(theme.muted("  No vendors to summarize."))),
-            area,
-        );
+        // No tab at all is every provider turned off (a config edited while
+        // the TUI runs) or every account named in `[ui] hidden_accounts`. The
+        // line holds for both, and Settings is where either is turned on
+        // again; no tab *listed* is `overview_vendors` naming none of them.
+        let message = if app.tabs_meta.is_empty() {
+            "  Nothing to show. Press s to turn a provider or account on in Settings."
+        } else {
+            "  No vendors to summarize."
+        };
+        f.render_widget(Paragraph::new(Line::from(theme.muted(message))), area);
         return;
     }
     const EXTRA_TOTALS_LABEL: &str = "Claude extra";
@@ -731,6 +739,7 @@ mod tests {
                     dirty: false,
                 })
                 .collect(),
+            accounts: Vec::new(),
             notify_enabled: true,
             notify_enabled_dirty: false,
             notify_threshold: KeyInput::from_config(Some("97")),
@@ -866,6 +875,37 @@ mod tests {
 
         let enabled = rendered(app_with(vec![TabState::Loading, TabState::Loading]), true);
         assert!(enabled.contains("context"));
+    }
+
+    /// With every account in `[ui] hidden_accounts`, or every provider
+    /// turned off while the TUI runs, there is no tab. The TUI must still
+    /// draw, and say where they are turned on again in words that hold for
+    /// both causes, whether it was on the Overview or on a vendor tab.
+    #[test]
+    fn an_empty_tab_list_points_at_settings_instead_of_drawing_nothing() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        for overview in [true, false] {
+            let mut app = App::with_theme(Vec::new(), Theme::default());
+            app.overview = overview;
+            let mut terminal = Terminal::new(TestBackend::new(160, 24)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let screen = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<Vec<_>>()
+                .concat();
+            assert!(
+                screen.contains(
+                    "Nothing to show. Press s to turn a provider or account on in Settings."
+                ),
+                "overview = {overview}: {screen}"
+            );
+        }
     }
 
     /// Renders `draw_main` alone (no header/footer) into `width x height` and
@@ -1165,6 +1205,59 @@ mod tests {
                 .any(|(row, _)| matches!(row, SettingsRow::Focus(SFocus::Save)))
         );
         // All recorded hit rects must stay within the terminal height
+        for (_, rect) in &hit.settings_rows {
+            assert!(rect.y + rect.height <= 12);
+        }
+    }
+
+    /// The account rows (`[ui] hidden_accounts`) sit below every provider
+    /// row. On a terminal too short to reach them none may be recorded as a
+    /// click target; scrolled into view by focus, they are, inside the frame.
+    #[test]
+    fn settings_draw_clamps_account_hit_rects_on_short_terminals() {
+        use crate::tui::settings::{AccountSwitch, Focus as SFocus, SettingsRow};
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let is_account = |row: &SettingsRow| {
+            matches!(
+                row,
+                SettingsRow::Focus(SFocus::Account(_))
+                    | SettingsRow::Switch(SFocus::Account(_), _, _)
+            )
+        };
+        let mut app = app_with(vec![TabState::Loading, TabState::Loading]);
+        let mut state = settings_state(); // focus: Primary, the first line
+        state.accounts = ["Codex · work", "Codex · personal"]
+            .iter()
+            .map(|label| AccountSwitch {
+                id: format!("openai@{label}"),
+                label: (*label).to_string(),
+                enabled: true,
+                dirty: false,
+            })
+            .collect();
+        app.settings = Some(state);
+        let mut terminal = Terminal::new(TestBackend::new(160, 12)).unwrap();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        assert!(
+            !app.hit
+                .borrow()
+                .settings_rows
+                .iter()
+                .any(|(row, _)| is_account(row)),
+            "an account row that is not on screen must not be clickable"
+        );
+
+        app.settings.as_mut().unwrap().focus = SFocus::Account(1);
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let hit = app.hit.borrow();
+        assert!(
+            hit.settings_rows
+                .iter()
+                .any(|(row, _)| matches!(row, SettingsRow::Switch(SFocus::Account(1), _, _))),
+            "the focused account row is scrolled into view and clickable"
+        );
         for (_, rect) in &hit.settings_rows {
             assert!(rect.y + rect.height <= 12);
         }
