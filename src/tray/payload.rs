@@ -22,6 +22,13 @@ pub struct HostFacts {
     pub accent: Option<super::accent::Accent>,
     /// Seconds between full reports; `[tray] refresh_minutes` × 60.
     pub refresh_secs: u64,
+    /// `[tray] width` in logical points; `None` is each style's own width.
+    pub popover_width: Option<u16>,
+    /// This host's own Classic and Native widths, in that order. The page derives the
+    /// width control's limits from the active one.
+    pub popover_width_defaults: [u16; 2],
+    /// Why the last `set-popover-width` was refused, or empty.
+    pub popover_width_error: String,
     /// Canonical "Ctrl+Shift+U" spelling of the registered shortcut, or empty.
     pub shortcut: String,
     /// Why the last `set-shortcut` was refused (already taken, unparsable), or empty.
@@ -116,6 +123,8 @@ pub const STAMPED_FACTS: &[&str] = &[
     "shortcut",
     "shortcut_error",
     "refresh_minutes",
+    "popover_width",
+    "popover_width_error",
     "updates",
     "update",
     "update_checked_at",
@@ -236,6 +245,10 @@ impl Default for HostFacts {
         Self {
             accent: None,
             refresh_secs: POLL_INTERVAL.as_secs(),
+            popover_width: None,
+            // Each host names its own in `host_facts`; zeros make the page fall back.
+            popover_width_defaults: [0, 0],
+            popover_width_error: String::new(),
             shortcut: String::new(),
             shortcut_error: String::new(),
             startup_enabled: false,
@@ -332,6 +345,9 @@ pub fn wrap_report(
         "generated_at": now_ms,
         "next_refresh_at": now_ms.saturating_add(poll_ms),
         "refresh_minutes": facts.refresh_secs / 60,
+        "popover_width": facts.popover_width,
+        "popover_width_defaults": facts.popover_width_defaults,
+        "popover_width_error": sanitize_untrusted_field(&facts.popover_width_error),
         "startup_enabled": facts.startup_enabled,
         "os": host_os(),
         "shortcut": facts.shortcut,
@@ -965,6 +981,27 @@ mod tests {
         let payload = wrap_report("{}", &HostFacts::default(), 0, None);
         for key in STAMPED_FACTS {
             assert!(payload.get(*key).is_some(), "{key} is not in the payload");
+        }
+    }
+
+    #[test]
+    fn the_popover_width_travels_in_reports_and_in_facts_only_pushes() {
+        let mut host = facts("1.52.3", false);
+        let payload = wrap_report(&sample_report(), &host, 0, None);
+        assert!(payload["popover_width"].is_null());
+        assert_eq!(payload["popover_width_error"], "");
+
+        host.popover_width = Some(337);
+        host.popover_width_defaults = [300, 390];
+        host.popover_width_error = "Could not save\u{1b}[31m".into();
+        let payload = wrap_report(&sample_report(), &host, 0, None);
+        assert_eq!(payload["popover_width"], 337);
+        assert_eq!(payload["popover_width_defaults"], json!([300, 390]));
+        assert_eq!(payload["popover_width_error"], "Could not save[31m");
+        // The control waits for the host's answer to each change, which arrives between
+        // reports: without these the number and a refusal would lag by a whole refresh.
+        for key in ["popover_width", "popover_width_error"] {
+            assert!(STAMPED_FACTS.contains(&key), "{key}");
         }
     }
 

@@ -320,5 +320,10 @@
   "sign_in_denied": "브라우저에서 로그인이 거부되었습니다.",
   "sign_in_failed": "로그인하지 못했습니다.",
   "sign_in_try_again": "다시 시도",
-  "sign_in_no_answer": "트레이가 응답하지 않습니다. 닫고 다시 시도하세요."
+  "sign_in_no_answer": "트레이가 응답하지 않습니다. 닫고 다시 시도하세요.",
+  "popover_width": "팝오버 너비",
+  "popover_width_hint": "이 스타일 기본 너비의 4분의 3에서 3배까지, 포인트 단위입니다. 화살표를 누르고 있으면 더 빨리 바뀌고, 복원 화살표는 기본 너비로 되돌립니다.",
+  "restore_popover_width": "기본 너비 복원",
+  "increase_popover_width": "너비 늘리기",
+  "decrease_popover_width": "너비 줄이기"
 }

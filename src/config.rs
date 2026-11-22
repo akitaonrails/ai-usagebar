@@ -152,6 +152,10 @@ pub struct TrayConfig {
     /// How often the tray re-reads every provider, in minutes: 1, 5, 10, 15, 30 or 60.
     /// The footer's Refresh is always immediate. `None` → 5.
     pub refresh_minutes: Option<u64>,
+    /// Popover width in logical points, for whichever style is active. `None` →
+    /// each style's own width. The tray holds a set value to three quarters
+    /// and three times that width and to the screen; see `tray::style`.
+    pub width: Option<u16>,
     /// What the tray does when a newer release is published.
     pub updates: Option<UpdateMode>,
     /// macOS menu-bar presentation: `icon`, `bars` (default), `provider`
@@ -7565,6 +7569,23 @@ enabled = true
     fn tray_section_rejects_a_misspelled_mode() {
         let file = write_toml("[tray]\nupdates = \"sometimes\"\n");
         assert!(Config::load_from(file.path()).is_err());
+    }
+
+    #[test]
+    fn tray_width_is_unset_by_default_and_loads_whatever_is_set() {
+        assert_eq!(Config::default().tray.width, None);
+        let unset = Config::load_from(write_toml("[tray]\nrefresh_minutes = 5\n").path()).unwrap();
+        assert_eq!(unset.tray.width, None);
+        // Every value loads, 0 included: the tray, which knows the style and
+        // the screen, is what holds it to the limits. A width outside them
+        // must not be what makes the whole config an error.
+        for width in [0, 1, 350, 65535] {
+            let file = write_toml(&format!("[tray]\nwidth = {width}\n"));
+            assert_eq!(
+                Config::load_from(file.path()).unwrap().tray.width,
+                Some(width)
+            );
+        }
     }
 
     #[test]

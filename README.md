@@ -267,7 +267,9 @@ and an update mode
 (Automatic / Notify me / Off) that installs new releases from GitHub after
 verifying their `.sha256`; all three live in the `[tray]` section of
 `config.toml` (`shortcut`, `refresh_minutes` = 1, 5, 10, 15, 30 or 60; default 5;
-`updates`). See [windows/README.md](windows/README.md).
+`updates`). **Settings → Appearance → Popover Width** optionally sets the
+popover's width (`[tray] width`, in logical points); left unset, each style
+keeps its own. See [windows/README.md](windows/README.md).
 
 ![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](screenshots/windows-tray-icon.png)
 

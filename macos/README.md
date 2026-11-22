@@ -63,6 +63,12 @@ The popover also toggles from anywhere with a configurable global shortcut,
 `config.toml`). On macOS the Command and Option keys are shown as `Cmd` and
 `Option`; the stored value keeps the canonical `Win`/`Alt` spelling.
 
+**Settings → Appearance → Popover Width** sets the popover's width in logical points, between three quarters and three times the active
+style's own width (Classic 320, Native 390) and never wider than the screen. It
+is stored as `[tray] width`; the reset arrow removes the key, and with the key
+absent the width is unchanged. The control is described in
+[windows/README.md](../windows/README.md).
+
 ![Right-click menu under the menu bar icon — Customize, Settings, Refresh, Detect Providers, Open TUI, Start at Login (checked), Check for Updates, About and Quit](../screenshots/macos-tray-right-click-menu.png)
 
 ![Chart mode in the macOS menu bar, next to the Cursor, Claude, Antigravity, Codex and Claude Code icons](../screenshots/macos-tray-icon.png)

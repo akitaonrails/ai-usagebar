@@ -93,6 +93,15 @@
   existing `[[custom]]` sources. The guide includes a matching configuration
   example and explains the limits of an unauthenticated local share.
 
+- **Popover Width in the tray's Settings.** Settings → Appearance → Popover
+  Width sets how wide the Windows and macOS popover is, in logical points, in
+  Classic and in Native. Type a number or use the step arrows: a click moves one
+  point, holding an arrow repeats and reaches five points per step after three
+  seconds, and the reset arrow returns to the style's own width. The range is
+  three quarters to three times that width, and the popover never grows past
+  the screen. The value is stored as `[tray] width` and applies at once.
+  Optional: with the key unset each style keeps its existing width (#672).
+
 ### Fixed
 
 - **SuperGrok reports expired Grok Build logins.** If the saved OIDC login

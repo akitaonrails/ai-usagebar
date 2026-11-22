@@ -220,9 +220,9 @@ providers from `config.toml` (see the root README, "Custom providers").
 The tray re-reads every provider every 5 minutes by default (**Settings →
 Refresh Every**: 1, 5, 10, 15, 30 or 60; `[tray] refresh_minutes`). The cache TTL stays
 60 s, so the footer's Refresh is always allowed to fetch. A stale or failed vendor is
-shown on its card. The global shortcut, the poll interval and the update mode
-are the keys of the `[tray]` section in `config.toml`; the popover's Settings
-screen writes them. The NotifyIcon is a bar-chart-in-circle mark, three bars inside a ring
+shown on its card. The global shortcut, the poll interval, the update mode and
+the optional popover width are the keys of the `[tray]` section in
+`config.toml`; the popover's Settings screen writes them. The NotifyIcon is a bar-chart-in-circle mark, three bars inside a ring
 (source in `windows/tray-icon.svg`), shipped as anti-aliased rasters
 at 16/20/24/32/40/48 px so the shell gets the exact size for the current DPI.
 It has no hover tip; the popover is the readout.
@@ -348,6 +348,19 @@ Limits:
   the served directory, and do not expose the port to another machine.
 - These are custom cards: meters and text rows. Reset credits, session rows
   and status-page marks stay with the Linux binary's own frontends.
+
+## Popover width
+
+**Settings → Appearance → Popover Width** sets the popover's width in logical
+points, in Classic and in Native. Type a number, or use the two arrows: a click
+moves one point, and holding an arrow repeats, reaching five points per step
+after three seconds. The range is three quarters to three times the active
+style's own width (Classic 300, Native 390), and the popover never grows past
+the monitor's work area less 16 points on each side. The change applies at once and is
+stored as `[tray] width`; the reset arrow removes the key and the style's own
+width returns. With the key absent nothing changes. A value edited by hand is
+read on the next start and held to the same limits. The macOS popover has the
+same control; its Classic width is 320.
 
 ## Tray icon rasters
 
