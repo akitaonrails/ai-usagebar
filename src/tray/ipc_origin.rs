@@ -8,7 +8,7 @@
 //! `http://aiub.localhost/index.html` — and wry hands each handler the URI to
 //! check:
 //!
-//! - the IPC handler receives a `Request` whose URI is the sending frame's
+//! - on macOS and Windows, the IPC handler receives a `Request` whose URI is the sending frame's
 //!   full absolute URL: `frameInfo.request().URL().absoluteString()` on macOS
 //!   (wry 0.57.0, `src/wkwebview/class/wry_web_view_delegate.rs:50-53,60-61`)
 //!   and `ICoreWebView2WebMessageReceivedEventArgs::Source`, "the source URL
@@ -25,6 +25,9 @@
 //! These are pure decisions over those URI strings, tested on every OS;
 //! `host_macos.rs`, `host.rs` and the opt-in `host_linux.rs` apply them in
 //! their WebView builders.
+//! WebKitGTK reports the top-level URI for IPC. The Linux host uses the
+//! exact embedded page and a frame-denying CSP instead of treating that
+//! URI as the sender's origin.
 
 /// The OS the running host is on. Each host constructs only its own variant,
 /// so the others are dead on that platform (Linux's variant only exists with

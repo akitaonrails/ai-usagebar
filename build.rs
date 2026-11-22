@@ -5,6 +5,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
+    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let linux_tray = std::env::var_os("CARGO_FEATURE_LINUX_TRAY").is_some();
+    if !(os == "windows" || os == "macos" || (os == "linux" && linux_tray)) {
+        println!("cargo:rerun-if-changed=build.rs");
+        return;
+    }
+
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let popover = manifest.join("windows").join("popover");
     println!("cargo:rerun-if-changed={}", popover.join("src").display());
@@ -40,14 +47,6 @@ fn main() {
         "cargo:rerun-if-changed={}",
         popover.join("dist").join("popover.css").display()
     );
-
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_LINUX_TRAY");
-
-    let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let linux_tray = std::env::var_os("CARGO_FEATURE_LINUX_TRAY").is_some();
-    if os != "windows" && os != "macos" && !(os == "linux" && linux_tray) {
-        return;
-    }
 
     if npm_available() {
         ensure_deps(&popover);

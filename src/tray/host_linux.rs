@@ -494,15 +494,18 @@ const WEBVIEW_MISSING: &str = "WebKitGTK could not start, so the popover cannot 
 // Pure decisions: no GTK, no D-Bus, no clock. Unit-tested below.
 // ---------------------------------------------------------------------------
 
-/// Whether an IPC message from the frame at `uri` may reach the bridge. The
-/// bridge writes `config.toml`, so only the popover's own origin may use it.
+/// WebKitGTK supplies the top-level page URI, not the sender's frame URI.
+/// Only the embedded entry page may be active, and its CSP forbids frames.
 fn ipc_allowed(uri: &str) -> bool {
-    ipc_origin::is_popover_origin(uri, Os::Linux)
+    uri == POPOVER_URL
 }
 
 /// What the WebView may do with a navigation or `window.open` to `url`.
 fn navigation_decision(url: &str) -> Navigation {
-    ipc_origin::navigation(url, Os::Linux)
+    match ipc_origin::navigation(url, Os::Linux) {
+        Navigation::Allow if url != POPOVER_URL => Navigation::Deny,
+        decision => decision,
+    }
 }
 
 /// Whether a `Focused(false)` closes the popover. One that arrives within
@@ -1871,8 +1874,7 @@ fn build_webview(
         .with_url(POPOVER_URL)
         .with_background_color(Theme::Light.background())
         .with_ipc_handler(move |request| {
-            // wry stamps the message with the sending script's absolute URL; any
-            // other origin is dropped before the parse, without a reply.
+            // Check the top-level page. The CSP, not this URI, excludes frames.
             if !ipc_allowed(&request.uri().to_string()) {
                 return;
             }
@@ -1888,11 +1890,10 @@ fn build_webview(
         // the default browser (the `open-url` command's path), the rest is denied.
         .with_navigation_handler(|url| navigation_allowed(&url))
         .with_new_window_req_handler(|url, _features| {
-            if navigation_allowed(&url) {
-                NewWindowResponse::Allow
-            } else {
-                NewWindowResponse::Deny
+            if matches!(navigation_decision(&url), Navigation::OpenExternal) {
+                browse::open(&url);
             }
+            NewWindowResponse::Deny
         })
         .build_gtk(vbox)
         .map_err(|error| error.to_string())
@@ -1920,12 +1921,14 @@ fn ipc_body_within_limit(len: usize) -> bool {
     len <= MAX_IPC_BODY_BYTES
 }
 
-/// Sent on every 200 from the `aiub` protocol: the popover has no use for
-/// frames, plugins or embedded documents, and a frame would reach the IPC
-/// bridge under the main frame's URL (wry reports that URL for subframes).
-/// Script, style, image and connect sources are deliberately left open.
-const POPOVER_CSP: &str =
-    "frame-src 'none'; child-src 'none'; object-src 'none'; frame-ancestors 'none'";
+/// Only bundled code can execute. Inline styles are used for rendering
+/// gauges and themes; card images may use data and blob URLs.
+const POPOVER_CSP: &str = concat!(
+    "default-src 'none'; script-src aiub://localhost; ",
+    "style-src aiub://localhost 'unsafe-inline'; img-src data: blob:; ",
+    "font-src data:; connect-src 'none'; frame-src 'none'; child-src 'none'; ",
+    "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+);
 
 fn protocol_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
     asset_response(request.uri().path())
@@ -2199,10 +2202,11 @@ mod tests {
     // --- IPC origin filter -------------------------------------------------
 
     #[test]
-    fn ipc_accepts_only_the_popover_origin() {
+    fn ipc_accepts_only_the_embedded_entry_page() {
         assert!(ipc_allowed("aiub://localhost/index.html"));
-        assert!(ipc_allowed("aiub://localhost/"));
-        assert!(ipc_allowed("AIUB://LOCALHOST/popover.js"));
+        assert!(!ipc_allowed("aiub://localhost/"));
+        assert!(!ipc_allowed("aiub://localhost/popover.js"));
+        assert!(!ipc_allowed("aiub://localhost/index.html?other"));
     }
 
     #[test]
@@ -2676,6 +2680,60 @@ mod tests {
     // --- Popover protocol ---------------------------------------------------
 
     #[test]
+    #[ignore = "requires WebKitGTK and a private X11 display"]
+    fn webkit_loads_the_bundled_popover_and_blocks_frames() {
+        use gtk::prelude::WidgetExt;
+
+        gtk::init().expect("initialize GTK on the test display");
+        let window = gtk::Window::new(gtk::WindowType::Toplevel);
+        let profile = tempfile::tempdir().unwrap();
+        let mut web_context = WebContext::new(Some(profile.path().to_path_buf()));
+        let (tx, rx) = mpsc::channel();
+        let webview = WebViewBuilder::new_with_web_context(&mut web_context)
+            .with_custom_protocol("aiub".into(), |_id, request| protocol_response(request))
+            .with_url(POPOVER_URL)
+            .with_ipc_handler(move |request| {
+                if ipc_allowed(&request.uri().to_string())
+                    && let Ok(value) = serde_json::from_str::<Value>(request.body())
+                    && let Some(command) = value["cmd"].as_str()
+                {
+                    let _ = tx.send(command.to_owned());
+                }
+            })
+            .build_gtk(&window)
+            .expect("build the WebKit view");
+        window.show_all();
+        let context = gtk::glib::MainContext::default();
+        let wait_for = |expected| {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                context.iteration(false);
+                if rx.try_iter().any(|command| command == expected) {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "the page never sent {expected}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait_for("ready");
+        webview
+            .evaluate_script(
+                r#"
+            document.addEventListener("securitypolicyviolation", (event) => {
+                if (event.effectiveDirective === "frame-src") {
+                    window.ipc.postMessage(JSON.stringify({cmd: "csp-frame-blocked"}));
+                }
+            });
+            const frame = document.createElement("iframe");
+            frame.src = "data:text/html,Inert frame";
+            document.body.append(frame);
+        "#,
+            )
+            .expect("request an inert frame");
+        wait_for("csp-frame-blocked");
+    }
+
+    #[test]
     fn every_served_asset_carries_the_frame_blocking_csp() {
         for path in ["/", "/index.html", "/popover.css", "/popover.js"] {
             let response = asset_response(path);
@@ -2691,26 +2749,17 @@ mod tests {
     }
 
     #[test]
-    fn the_csp_blocks_embedding_and_nothing_else() {
+    fn the_csp_limits_runtime_content_to_embedded_assets() {
         for directive in [
+            "default-src 'none'",
+            "script-src aiub://localhost",
+            "connect-src 'none'",
             "frame-src 'none'",
             "child-src 'none'",
             "object-src 'none'",
             "frame-ancestors 'none'",
         ] {
             assert!(POPOVER_CSP.contains(directive), "{directive}");
-        }
-        for open in [
-            "default-src",
-            "script-src",
-            "style-src",
-            "img-src",
-            "connect-src",
-        ] {
-            assert!(
-                !POPOVER_CSP.contains(open),
-                "{open} would restrict the page"
-            );
         }
     }
 
