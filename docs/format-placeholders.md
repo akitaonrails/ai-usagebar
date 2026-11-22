@@ -629,7 +629,7 @@ name is `xpl`.
 ## Fireworks
 
 `{fw_monthly_cost}` is the rated USD cost month-to-date (UTC). There is no
-balance, quota percentage, or reset. The vendor short name is `fw`.
+balance, quota percentage, or reset. The vendor short name is `fwk`.
 
 ## Lyceum
 

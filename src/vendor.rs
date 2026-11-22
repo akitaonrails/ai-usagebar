@@ -404,7 +404,7 @@ impl VendorId {
             VendorId::Lyceum => "lyc",
             VendorId::ExperientialLabs => "xpl",
             VendorId::MartLlm => "ull",
-            VendorId::Fireworks => "fw",
+            VendorId::Fireworks => "fwk",
             VendorId::Devin => "dvn",
             VendorId::MuseCode => "msc",
             VendorId::Cline => "cln",
@@ -621,9 +621,9 @@ impl VendorId {
             | VendorId::Lyceum
             | VendorId::ExperientialLabs
             | VendorId::MartLlm
+            | VendorId::Fireworks
             | VendorId::DeepRelay
             | VendorId::Mistral => "Add an API key in Settings, then Refresh.",
-            VendorId::Fireworks => "Set [fireworks] account_id and add an API key.",
         }
     }
 
