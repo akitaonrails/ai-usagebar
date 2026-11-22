@@ -612,6 +612,12 @@ missing resets (`—`). The current usage-history response is not quota data
 and is rejected. Live balance snapshots have no activity cost, so `{oll_cost}`
 is `—`. See [ollama-setup.md](ollama-setup.md).
 
+## MartLLM
+
+`{ull_balance}` is available prepaid USD, `{ull_total}` is the full wallet
+balance, and `{ull_held}` is the amount set aside for in-flight requests.
+No quota percentage or reset is reported. The vendor short name is `ull`.
+
 ## Lyceum
 
 `{lyceum_balance}`, `{lyceum_used}`, and `{lyceum_remaining}` are the USD

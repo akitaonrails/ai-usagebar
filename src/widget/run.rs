@@ -25,6 +25,7 @@ use crate::kilo;
 use crate::kimi;
 use crate::kiro;
 use crate::lyceum;
+use crate::martllm;
 use crate::minimax;
 use crate::mistral;
 use crate::modelstudio;
@@ -179,6 +180,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Ollama => ollama_output(cli, &config).await,
         Vendor::OrcaRouter => orcarouter_output(cli, &config).await,
         Vendor::Lyceum => lyceum_output(cli, &config).await,
+        Vendor::MartLlm => martllm_output(cli, &config).await,
         Vendor::ModelStudio => modelstudio_output(cli, &config).await,
         Vendor::Devin => devin_output(cli, &config).await,
         Vendor::Droid => droid_output(cli, &config).await,
@@ -841,6 +843,29 @@ async fn lyceum_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     Ok(lyceum::vendor::render(
         &vendor_outcome,
         &snapshot,
+        &theme_from_cli(cli),
+        &RenderOpts::from_cli(cli),
+        Utc::now(),
+    ))
+}
+
+async fn martllm_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let (api_key, cache) = api_key_target(cli, config, VendorId::MartLlm)?;
+    let client = http_client()?;
+    let outcome = match fetch_api_keyed(
+        martllm::fetch_snapshot(&client, &api_key, &cache, DEFAULT_TTL),
+        &api_key,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(martllm::render(
+        &outcome,
         &theme_from_cli(cli),
         &RenderOpts::from_cli(cli),
         Utc::now(),

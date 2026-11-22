@@ -437,6 +437,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         VendorSnapshot::Synthetic(s) => {
             (String::new(), vec![pct("week", s.weekly.utilization_pct)])
         }
+        VendorSnapshot::MartLlm(s) => (String::new(), vec![usd_cell(s.available_usd)]),
         VendorSnapshot::Lyceum(s) => (
             String::new(),
             vec![(usd(s.available_credits), PaceSeverity::Low)],
@@ -802,6 +803,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         | VendorSnapshot::Kilo(_)
         | VendorSnapshot::Novita(_)
         | VendorSnapshot::Lyceum(_)
+        | VendorSnapshot::MartLlm(_)
         | VendorSnapshot::Moonshot(_)
         | VendorSnapshot::Grok(_) => None,
     }
@@ -871,6 +873,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Novita(s) => novita_sections(s, prefs),
                 VendorSnapshot::Synthetic(s) => synthetic_sections(s, now, pace_tolerance),
                 VendorSnapshot::Lyceum(s) => lyceum_sections(s),
+                VendorSnapshot::MartLlm(s) => martllm_sections(s),
                 VendorSnapshot::Moonshot(s) => moonshot_sections(s, prefs),
                 VendorSnapshot::Grok(s) => grok_sections(s, prefs),
                 VendorSnapshot::SuperGrok(s) => supergrok_sections(s, now, pace_tolerance),
@@ -2010,6 +2013,31 @@ fn synthetic_sections(
                 credits_number(credits.used),
                 credits_number(credits.max)
             ),
+        });
+    }
+    sections
+}
+
+fn martllm_sections(s: &crate::usage::MartLlmSnapshot) -> SectionBuilder {
+    let mut sections = SectionBuilder::new(vec![
+        Section::Title {
+            left: crate::vendor::VendorId::MartLlm.display_name().into(),
+            right: None,
+        },
+        Section::Spacer,
+        Section::Text {
+            label: "Available balance".into(),
+            value: usd(s.available_usd),
+        },
+    ]);
+    if s.held_usd > 0.0 {
+        sections.push(Section::Text {
+            label: "Total balance".into(),
+            value: usd(s.balance_usd),
+        });
+        sections.push(Section::Text {
+            label: "Held for requests".into(),
+            value: usd(s.held_usd),
         });
     }
     sections
@@ -3196,6 +3224,36 @@ mod tests {
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 5, 23, 12, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn martllm_report_shows_available_balance_without_inventing_quota() {
+        for held_usd in [0.0, 0.35] {
+            let reading = VendorSnapshot::MartLlm(crate::usage::MartLlmSnapshot {
+                available_usd: 12.05,
+                balance_usd: 12.05 + held_usd,
+                held_usd,
+            });
+            assert_eq!(headline_pct(&reading), None);
+            assert_eq!(compact_cells(&reading).1[0].0, "$12.05");
+            let rows = sections_with_metadata_for(&ready(reading), now(), 5);
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| matches!(row.section, Section::Metric { .. }))
+            );
+            assert!(rows.iter().any(|row| matches!(
+                &row.section, Section::Text { label, value }
+                    if label == "Available balance" && value == "$12.05"
+            )));
+            assert_eq!(
+                rows.iter().any(|row| matches!(
+                    &row.section, Section::Text { label, value }
+                        if label == "Held for requests" && value == "$0.35"
+                )),
+                held_usd > 0.0
+            );
+        }
     }
 
     #[test]

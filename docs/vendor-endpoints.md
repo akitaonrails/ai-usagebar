@@ -18,6 +18,7 @@ defensive and includes opt-in live tests for catching response changes.
 | **Kimi** | `api.kimi.com\|.ai/coding/v1/usages` (undocumented; community-confirmed), plus `auth.kimi.com\|.ai/api/oauth/token` to refresh a Kimi Code CLI login | Weekly subscription quota + 5h rolling rate-limit window; newer accounts return a `usages` ratio map instead of the weekly block, and only the combined monthly pool (`limit_month_total`) is read from it | No — widget/TUI only; desktop protocol and marker parity are future work |
 | **MiniMax** | `api.minimax.io/v1/token_plan/remains` (official Token Plan quota route) | Token Plan rolling interval window + weekly, per model bucket (text, video) | No — widget/TUI only |
 | **Kilo** | `api.kilo.ai/api/profile/balance` (undocumented; extension-internal) | Remaining credit balance ($) | No — widget/TUI only |
+| **MartLLM** | [`api.martllm.com/v1/balance`](https://martllm.com/openapi.json) (documented) | Prepaid USD available, total and held; no quota window | No — synthetic response tests |
 | **Lyceum** | `api.lyceum.technology/api/v2/external/billing/credits` (documented) | Available USD balance and amount used; no percentage quota or reset window | No — widget/TUI only |
 | **Novita** | `api.novita.ai/openapi/v1/billing/balance/detail` (documented) | Remaining credit balance ($) | No — widget/TUI only |
 | **Synthetic** | `api.synthetic.new/v2/quotas` (documented) | Weekly regenerating credit budget: percent remaining + next regen tick | No — widget/TUI only |

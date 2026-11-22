@@ -36,7 +36,7 @@ you make while the check is running.
 #                         # | zai | openrouter | deepseek | deepinfra | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
-#                         # | orcarouter | modelstudio | lyceum | devin | cline | muse-code | droid
+#                         # | orcarouter | modelstudio | lyceum | martllm | devin | cline | muse-code | droid
 #                         # | synthetic | mistral
 # Which vendors the Overview lists, in this order. The TUI tab bar leads with
 # the same list; enabled vendors left off it follow in the canonical order.
@@ -186,6 +186,11 @@ api_key_env = "LYCEUM_API_KEY"
 # label = "work"
 # api_key_env = "LYCEUM_WORK_API_KEY"
 # api_key = "..."
+
+[martllm]
+enabled = true              # disabled by default; enable after setting a key
+api_key_env = "MARTLLM_API_KEY"
+# api_key = "..."           # inline fallback; chmod 600 the file if used
 
 [orcarouter]
 enabled = true             # disabled by default; enable once you add an API key

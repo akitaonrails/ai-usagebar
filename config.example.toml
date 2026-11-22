@@ -753,6 +753,12 @@ enabled = false
 api_key_env = "DEEPRELAY_API_KEY"   # checked first; if set + non-empty, used
 # api_key = "deeprelay_live_..."     # fallback; chmod 600 the file if you use it
 
+[martllm]
+# Prepaid USD balance from https://api.martllm.com/v1/balance.
+enabled = false
+api_key_env = "MARTLLM_API_KEY"
+# api_key = "..."             # inline fallback; chmod 600 the file if used
+
 [mistral]
 # Disabled by default — enable once you've set a key. Reads the monthly API
 # and Vibe Code budgets from https://api.mistral.ai/v1/billing/budget, the

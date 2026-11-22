@@ -84,6 +84,7 @@ pub struct Config {
     pub custom: Vec<CustomProviderConfig>,
     pub cline: ClineConfig,
     pub deeprelay: DeepRelayConfig,
+    pub martllm: MartLlmConfig,
     pub mistral: MistralConfig,
     /// Generic macOS Keychain source for vendor API keys: vendor slug (or
     /// `"vendor.label"` for a named `[[vendor.accounts]]` entry) → the
@@ -2200,6 +2201,25 @@ impl Default for DeepRelayConfig {
     }
 }
 
+/// MartLLM's prepaid wallet (`GET /v1/balance`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MartLlmConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+
+impl Default for MartLlmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: VendorId::MartLlm.api_key_env().into(),
+            api_key: None,
+        }
+    }
+}
+
 /// Mistral's monthly API and Vibe Code budgets (`GET /v1/billing/budget`).
 ///
 /// Key-only and opt-in. The key comes from `MISTRAL_API_KEY` or an inline
@@ -3089,6 +3109,7 @@ impl Config {
             self.antigravity.oauth_client_secret.as_deref(),
             self.cline.api_key.as_deref(),
             self.deeprelay.api_key.as_deref(),
+            self.martllm.api_key.as_deref(),
             self.mistral.api_key.as_deref(),
         ]
         .into_iter()
@@ -3197,6 +3218,7 @@ impl Config {
             VendorId::Droid => self.droid.enabled,
             VendorId::MuseCode => self.muse.enabled,
             VendorId::DeepRelay => self.deeprelay.enabled,
+            VendorId::MartLlm => self.martllm.enabled,
             VendorId::Mistral => self.mistral.enabled,
         }
     }
@@ -3226,6 +3248,7 @@ impl Config {
             VendorId::OrcaRouter => &self.orcarouter.api_key_env,
             VendorId::Lyceum => &self.lyceum.api_key_env,
             VendorId::DeepRelay => &self.deeprelay.api_key_env,
+            VendorId::MartLlm => &self.martllm.api_key_env,
             VendorId::Mistral => &self.mistral.api_key_env,
             VendorId::Cline => &self.cline.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
@@ -3269,6 +3292,7 @@ impl Config {
             VendorId::OrcaRouter => self.orcarouter.api_key.as_deref(),
             VendorId::Lyceum => self.lyceum.api_key.as_deref(),
             VendorId::DeepRelay => self.deeprelay.api_key.as_deref(),
+            VendorId::MartLlm => self.martllm.api_key.as_deref(),
             VendorId::Mistral => self.mistral.api_key.as_deref(),
             VendorId::Cline => self.cline.api_key.as_deref(),
             VendorId::Anthropic
@@ -3309,9 +3333,9 @@ impl Config {
 
     /// Every vendor whose key resolution goes through
     /// [`Config::resolve_account_api_key_for`] — the shared chain the
-    /// `[keychain]` table serves: the account-array vendors plus the three
+    /// `[keychain]` table serves both the account-array vendors and the
     /// single-key vendors the widget and TUI route the same way.
-    pub const KEYCHAIN_VENDORS: [VendorId; 15] = [
+    pub const KEYCHAIN_VENDORS: [VendorId; 16] = [
         VendorId::AnthropicApi,
         VendorId::Zai,
         VendorId::Openrouter,
@@ -3326,6 +3350,7 @@ impl Config {
         VendorId::Lyceum,
         VendorId::Synthetic,
         VendorId::DeepRelay,
+        VendorId::MartLlm,
         VendorId::Mistral,
     ];
 
@@ -4848,6 +4873,23 @@ enabled = false
             "#,
         );
         assert!(Config::load_from(f.path()).is_err());
+    }
+
+    #[test]
+    fn martllm_is_opt_in_and_resolves_its_inline_key() {
+        let vendor = VendorId::MartLlm;
+        let defaults = Config::default();
+        assert!(!defaults.is_enabled(vendor));
+        assert_eq!(defaults.api_key_env_for(vendor), "MARTLLM_API_KEY");
+        let file =
+            write_toml("[martllm]\nenabled = true\napi_key_env = \"\"\napi_key = \"test-key\"\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert!(config.is_enabled(vendor));
+        assert!(config.has_inline_secrets());
+        assert_eq!(
+            config.resolve_account_api_key_for(vendor, None).unwrap(),
+            "test-key"
+        );
     }
 
     #[test]

@@ -286,6 +286,7 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         | VendorId::Ollama
         | VendorId::OrcaRouter
         | VendorId::Lyceum
+        | VendorId::MartLlm
         | VendorId::Mistral => false,
     }
 }

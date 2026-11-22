@@ -517,6 +517,7 @@ pub enum VendorSnapshot {
     OrcaRouter(OrcaRouterSnapshot),
     ModelStudio(ModelStudioSnapshot),
     Lyceum(LyceumSnapshot),
+    MartLlm(MartLlmSnapshot),
     Devin(DevinSnapshot),
     Droid(DroidSnapshot),
     DeepRelay(DeepRelaySnapshot),
@@ -769,6 +770,15 @@ pub struct LyceumSnapshot {
     pub purchased_credits: f64,
 }
 impl Eq for LyceumSnapshot {}
+
+/// MartLLM's prepaid USD wallet, including funds held for running requests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MartLlmSnapshot {
+    pub available_usd: f64,
+    pub balance_usd: f64,
+    pub held_usd: f64,
+}
+impl Eq for MartLlmSnapshot {}
 
 /// Moonshot / Kimi — account balance from `/v1/users/me/balance`. Currency is
 /// USD (`api.moonshot.ai`) or CNY (`api.moonshot.cn`); there's no currency

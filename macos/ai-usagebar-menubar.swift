@@ -102,7 +102,8 @@ let POINT_CRITICAL_MIN = 10
 // `{synthetic_pct}` / `{synthetic_reset}` (65-66) carry Synthetic's
 // subscription request quota (empty when not selected). `{kimi_monthly_pct}` /
 // `{kimi_monthly_reset}` (67-68) carry Kimi's monthly pool (empty on legacy
-// weekly accounts). A final literal sentinel absorbs the widget's stale
+// weekly accounts). {ull_balance} (69) carries MartLLM's available USD.
+// A final literal sentinel absorbs the widget's stale
 // suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
              "{sonnet_pct};;{sonnet_reset};;{extra_pct};;{extra_spent};;{extra_limit};;" +
@@ -124,7 +125,7 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{cline_30d_pct};;{cline_30d_reset};;" +
              "{mst_monthly_pct};;{mst_monthly_reset};;" +
              "{synthetic_pct};;{synthetic_reset};;" +
-             "{kimi_monthly_pct};;{kimi_monthly_reset}"
+             "{kimi_monthly_pct};;{kimi_monthly_reset};;{ull_balance}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -638,6 +639,7 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     case "anthropic_api": balanceFieldIndex = 23
     case "lyceum": balanceFieldIndex = 52
     case "deepinfra": balanceFieldIndex = 53
+    case "martllm": balanceFieldIndex = 69
     default: balanceFieldIndex = nil
     }
     let balance = balanceFieldIndex.flatMap { t($0).isEmpty ? nil : t($0) }

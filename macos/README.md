@@ -120,7 +120,7 @@ The selector dynamically discovers **all providers** that ship in the binary via
 - **Included-usage pools:** Cursor (Cursor Models and Other Models, both reset
   on the billing cycle).
 - **Balance-only:** OpenRouter, DeepSeek, DeepInfra, Kilo, Novita,
-  Moonshot, Grok (xAI), Lyceum, and Anthropic API. These have no 5h/weekly
+  Moonshot, Grok (xAI), Lyceum, MartLLM, and Anthropic API. These have no 5h/weekly
   quota windows, so the app
   shows their balance/credits in the header (`cr <amount>`) and suppresses the
   session/weekly rows. Anthropic API additionally renders a spend-vs-limit

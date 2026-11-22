@@ -10,6 +10,10 @@
   agent that checks quota every turn reads a fraction of the tokens; failures
   still return the usual tool error.
 
+- **MartLLM prepaid wallet.** Enable `[martllm]` and set `MARTLLM_API_KEY`
+  to show the USD balance available for new requests, with total and held
+  funds in the details when requests are in flight (#610).
+
 - **Grouped `[[custom]]` sources as account tabs.** Setting `group` and
   `account` together on `[[custom]]` entries with the same display `name`
   groups them under one category (`custom:<group>@<account>`) with account tabs

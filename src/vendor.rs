@@ -51,6 +51,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "OLLAMA_API_KEY",
     "CLINE_API_KEY",
     "DEEPRELAY_API_KEY",
+    "MARTLLM_API_KEY",
 ];
 
 /// Env var names a `[[custom]]` provider reads its token from. They are not
@@ -191,6 +192,7 @@ pub enum VendorId {
     OrcaRouter,
     ModelStudio,
     Lyceum,
+    MartLlm,
     Devin,
     Cline,
     #[serde(rename = "muse-code")]
@@ -255,6 +257,7 @@ impl VendorId {
             VendorId::OrcaRouter => "orcarouter",
             VendorId::ModelStudio => "modelstudio",
             VendorId::Lyceum => "lyceum",
+            VendorId::MartLlm => "martllm",
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
             VendorId::Cline => "cline",
@@ -297,6 +300,7 @@ impl VendorId {
             VendorId::OrcaRouter => "OrcaRouter",
             VendorId::ModelStudio => "Model Studio",
             VendorId::Lyceum => "Lyceum",
+            VendorId::MartLlm => "MartLLM",
             VendorId::Devin => "Devin",
             VendorId::MuseCode => "Muse Code",
             VendorId::Droid => "Droid",
@@ -340,6 +344,7 @@ impl VendorId {
             // Same story for Model Studio: the `mst` short name is unique.
             VendorId::ModelStudio => VendorId::ModelStudio.short_name(),
             VendorId::Lyceum => VendorId::Lyceum.short_name(),
+            VendorId::MartLlm => VendorId::MartLlm.short_name(),
             VendorId::Devin => VendorId::Devin.short_name(),
             VendorId::MuseCode => VendorId::MuseCode.short_name(),
             VendorId::Cline => VendorId::Cline.short_name(),
@@ -385,6 +390,7 @@ impl VendorId {
             VendorId::OrcaRouter => "orc",
             VendorId::ModelStudio => "mst",
             VendorId::Lyceum => "lyc",
+            VendorId::MartLlm => "ull",
             VendorId::Devin => "dvn",
             VendorId::MuseCode => "msc",
             VendorId::Cline => "cln",
@@ -431,6 +437,7 @@ impl VendorId {
             VendorId::OrcaRouter => "orcarouter",
             VendorId::ModelStudio => "modelstudio",
             VendorId::Lyceum => "lyceum",
+            VendorId::MartLlm => "martllm",
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
             VendorId::Droid => "droid",
@@ -468,6 +475,7 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
+            | VendorId::MartLlm
             | VendorId::DeepRelay
             | VendorId::Mistral => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
@@ -513,6 +521,7 @@ impl VendorId {
             VendorId::Ollama => "OLLAMA_API_KEY",
             VendorId::OrcaRouter => "ORCAROUTER_API_KEY",
             VendorId::Lyceum => "LYCEUM_API_KEY",
+            VendorId::MartLlm => "MARTLLM_API_KEY",
             VendorId::DeepRelay => "DEEPRELAY_API_KEY",
             VendorId::Mistral => "MISTRAL_API_KEY",
             // OAuth-first, with an environment override for CI and headless
@@ -590,6 +599,7 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
+            | VendorId::MartLlm
             | VendorId::DeepRelay
             | VendorId::Mistral => "Add an API key in Settings, then Refresh.",
         }
@@ -631,6 +641,7 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
+            | VendorId::MartLlm
             | VendorId::DeepRelay
             | VendorId::Mistral => "",
         }
@@ -676,6 +687,7 @@ impl VendorId {
             VendorId::OrcaRouter,
             VendorId::ModelStudio,
             VendorId::Lyceum,
+            VendorId::MartLlm,
             VendorId::Devin,
             VendorId::Cline,
             VendorId::MuseCode,

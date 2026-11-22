@@ -265,6 +265,11 @@ func testParserBalances() {
     assertEqual(lyc?.creditBalance, "$7.77", "lyceum balance via lyceum_balance")
     assertEqual(lyc?.hasUsageWindows, false, "lyceum suppresses 5h/7d windows")
 
+    let martllm = snapshot(FORMAT, vendor: "martllm",
+                           fields: fields(through: 69, set: [69: "$12.05"]))
+    assertEqual(martllm?.creditBalance, "$12.05", "MartLLM balance via ull_balance")
+    assertEqual(martllm?.hasUsageWindows, false, "MartLLM has no quota windows")
+
     // DeepInfra: balance at 53 (appended after lyceum_balance, keeping indices stable).
     let dif = snapshot(FORMAT, vendor: "deepinfra",
                        fields: fields(through: 53, set: [53: "$15.50"]))
@@ -768,8 +773,9 @@ func testKimiMonthlyMirror() {
         (0...max).map { set[$0] ?? "" }
     }
     let tokens = FORMAT.components(separatedBy: ";;")
-    assertEqual(Array(tokens.suffix(2)), ["{kimi_monthly_pct}", "{kimi_monthly_reset}"],
-                "Kimi fields are appended to FORMAT")
+    assertEqual(Array(tokens[67...68]), ["{kimi_monthly_pct}", "{kimi_monthly_reset}"],
+                "Kimi fields retain their FORMAT indices")
+    assertEqual(tokens[69], "{ull_balance}", "MartLLM balance is appended to FORMAT")
     assertEqual(tokens[65], "{synthetic_pct}", "existing Synthetic percentage index is unchanged")
     assertEqual(tokens[66], "{synthetic_reset}", "existing Synthetic reset index is unchanged")
 
