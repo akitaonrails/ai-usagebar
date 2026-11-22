@@ -57,6 +57,14 @@
   run `grok login` when ACP cannot supply a reading. The app still leaves
   token renewal to Grok Build (#670).
 
+- **A retired Codex refresh token still fetches the live usage.** When the
+  token endpoint rejected the stored refresh token with a 4xx other than 429,
+  the fetch returned before GET usage and served the cached Codex payload,
+  though the access token could still have minutes left. An empty
+  `refresh_token` already continued with the current access token, and Claude
+  has done the same since #637; Codex now does too. A 429 or a 5xx still stops
+  before that GET (#656).
+
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
   Portal moved its plans from a credit allocation to daily, weekly and monthly
   limits, reporting consumption in `usage_window.gauges` and leaving
