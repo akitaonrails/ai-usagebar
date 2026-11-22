@@ -218,7 +218,15 @@ fn provider_report_targets(
     account: Option<&str>,
     freshness: Freshness,
 ) -> std::result::Result<Vec<ReportTarget>, String> {
-    let expanded = expand_antigravity_tabs(tabs, sessions);
+    let tabs: Vec<_> = tabs
+        .iter()
+        .filter(|tab| tab_provider_id(config, tab) == provider)
+        .cloned()
+        .collect();
+    if tabs.is_empty() {
+        return Err(format!("no enabled provider matches {provider}"));
+    }
+    let expanded = expand_antigravity_tabs(&tabs, sessions);
     let matching = report_targets_for_filter_with_config(config, &expanded, provider, account);
     let suffix = account.map_or(String::new(), |label| format!(" account {label}"));
     visible_targets_or_reason(config, matching, &format!("{provider}{suffix}"), freshness)
@@ -453,14 +461,12 @@ async fn collect_filtered_json_with(
 
     let config = Config::load().map_err(|error| error.user_message())?;
     let client = crate::widget::run::http_client().map_err(|error| error.user_message())?;
-    let tabs: Vec<TabId> = all_tabs_with_desktop(&config)
-        .into_iter()
-        .filter(|tab| tab_provider_id(&config, tab) == provider)
-        .collect();
-    if tabs.is_empty() {
-        return Err(format!("no enabled provider matches {provider}"));
-    }
-    let accounts = if provider == crate::vendor::VendorId::Antigravity.slug() {
+    let tabs = all_tabs_with_desktop(&config);
+    let accounts = if provider == crate::vendor::VendorId::Antigravity.slug()
+        && tabs
+            .iter()
+            .any(|tab| tab.vendor_id() == Some(crate::vendor::VendorId::Antigravity))
+    {
         crate::antigravity::statusline::active_accounts().unwrap_or_default()
     } else {
         Vec::new()
@@ -4742,9 +4748,8 @@ mod hidden_account_tests {
         );
     }
 
-    #[test]
-    fn a_grouped_custom_account_is_hidden_by_its_report_id() {
-        let mut config = config_hiding(&["custom:example@work"]);
+    fn example_custom_config(hidden: &[&str]) -> Config {
+        let mut config = config_hiding(hidden);
         config.custom = vec![
             custom_source(
                 "example_personal",
@@ -4756,6 +4761,12 @@ mod hidden_account_tests {
             custom_source("solo", "sol", None, "https://example.com/s"),
         ];
         config.validate().unwrap();
+        config
+    }
+
+    #[test]
+    fn a_grouped_custom_account_is_hidden_by_its_report_id() {
+        let mut config = example_custom_config(&["custom:example@work"]);
         let tabs: Vec<TabId> = config.custom.iter().map(TabId::custom).collect();
         assert_eq!(
             visible_ids(&config, &tabs, Freshness::Cached),
@@ -4766,6 +4777,38 @@ mod hidden_account_tests {
         // listing it hides nothing.
         config.ui.hidden_accounts = vec!["custom:example_work".into()];
         assert_eq!(visible_ids(&config, &tabs, Freshness::Cached).len(), 3);
+    }
+
+    #[test]
+    fn a_filtered_custom_group_obeys_hidden_accounts() {
+        let mut config = example_custom_config(&["custom:example@work"]);
+        let tabs: Vec<_> = config.custom.iter().map(TabId::custom).collect();
+        let ids = |config: &Config, provider: &str, account: Option<&str>| {
+            provider_report_targets(config, &tabs, &[], provider, account, Freshness::Cached)
+                .map(|targets| target_ids(config, &targets))
+        };
+        assert_eq!(
+            ids(&config, "custom:example", None).unwrap(),
+            ["custom:example@personal"]
+        );
+        assert_eq!(
+            ids(&config, "custom:example", Some("work")).unwrap_err(),
+            "custom:example account work is listed in [ui] hidden_accounts"
+        );
+        assert_eq!(
+            ids(&config, "custom:example_work", None).unwrap_err(),
+            "no enabled provider matches custom:example_work"
+        );
+
+        config
+            .ui
+            .hidden_accounts
+            .push("custom:example@personal".into());
+        assert_eq!(
+            ids(&config, "custom:example", None).unwrap_err(),
+            "custom:example is listed in [ui] hidden_accounts"
+        );
+        assert_eq!(ids(&config, "custom:solo", None).unwrap(), ["custom:solo"]);
     }
 
     #[test]
