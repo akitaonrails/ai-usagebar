@@ -242,7 +242,7 @@ standalone ZIP installs.
 
 ![Windows tray popover dashboard — provider cards for Claude, Codex, Cursor, SuperGrok, Antigravity and Grok Bot with capsule meters, "used / Resets in" lines under each bar, pace notes such as "Limit in 1d 9h" and "~92% left at reset", an Antigravity card showing its sign-in error, and the footer with the AI Usage version, a "Next update in" countdown and the Options menu](screenshots/windows-tray-dashboard.png)
 
-Build with a standard Rust toolchain plus **Node.js 20+** (the tray WebView is
+Build with a standard Rust toolchain plus **Node.js 20.19+ or 22.12+** (the tray WebView is
 a Vite app; `build.rs` runs `npm run build` on Windows). WebView2 Evergreen
 ships with Windows 11 and recent Windows 10:
 

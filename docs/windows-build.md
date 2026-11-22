@@ -54,17 +54,40 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Node contract tests (optional, needs Node 18+):
+Node contract tests (optional). These are the files `make desktop-test` and
+`make plugin-test` run; they import only Node built-ins and files from this
+repository, so they need no `npm install`. `windows\popover\popover.test.mjs`
+imports a TypeScript file (`src/lib/cardImage.ts`), which Node loads without a
+flag from 22.18 (23.6 on the 23 line), so that one needs Node 22.18+. The
+other nine need Node 18+:
 
 ```powershell
 node gnome-extension\marker-logic.test.mjs
 node gnome-extension\layout.test.mjs
 node gnome-extension\report-model.test.mjs
 node gnome-extension\prefs.test.mjs
+node gnome-extension\terminal.test.mjs
 node kde-plasmoid\plasmoid-logic.test.mjs
 node windows\popover\popover.test.mjs
 node omarchy\model.test.mjs
+node omarchy\priority.test.mjs
+node omarchy\notice.test.mjs
 ```
+
+The popover's rendered-screen and translation tests (`make popover-ssr-test`)
+load Vite, React and Paraglide, so they need the popover's dependencies:
+
+```powershell
+cd windows\popover
+npm ci --no-fund --no-audit
+npm test
+cd ..\..
+```
+
+`npm test` starts with `popover.test.mjs`, so it needs Node 22.18+ too. The
+tray build alone (`vite build`) runs on the range the locked Vite declares,
+`^20.19.0 || >=22.12.0`. See
+[the tray requirements](../windows/README.md#requirements).
 
 ## Run
 
@@ -144,7 +167,7 @@ compare with `docs/vendor-endpoints.md`:
 
 ```powershell
 Invoke-RestMethod `
-  -Uri "https://ollama.com/api/usage" `
+  -Uri "https://ollama.com/api/balance" `
   -Headers @{ Authorization = "Bearer $env:OLLAMA_API_KEY" }
 ```
 

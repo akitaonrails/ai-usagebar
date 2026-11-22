@@ -20,7 +20,7 @@ invariants see [CLAUDE.md](CLAUDE.md).
 | Tool | Version | Notes |
 |---|---|---|
 | Rust / Cargo | **1.90+** (MSRV) | [rustup](https://rustup.rs/) |
-| Node.js | 18+ | GNOME / KDE / Omarchy / Windows popover contract tests |
+| Node.js | 22.18+ | `make test` and `make popover-ssr-test` run `windows/popover/popover.test.mjs`, which imports a TypeScript file; Node loads one without a flag from 22.18. The GNOME / KDE / Omarchy contract tests alone need 18+, the tray popover build alone 20.19+ or 22.12+ |
 | Git | any | |
 
 On Windows you also need the **MSVC Build Tools** (linker) and **NASM**
@@ -109,7 +109,8 @@ can break them without touching Rust.
 | `make test` | `cargo test` + `desktop-test` + `plugin-test` + `mint-test` + `macos-package-test` |
 | `make status-pages-test` | `status_page_components_live`: opt-in live check that status-page component names still exist |
 | `make desktop-test` | GNOME, KDE, Windows popover `.test.mjs` |
-| `make plugin-test` | Omarchy `model.test.mjs` |
+| `make plugin-test` | Omarchy `model`, `priority` and `notice` `.test.mjs` |
+| `make popover-ssr-test` | `npm ci` + `npm test` in `windows/popover` (rendered screens, i18n); not part of `make test`, CI runs it on Ubuntu |
 | `make smoke` | `cargo test --test live -- --ignored --nocapture` |
 | `make clippy` | `cargo clippy --all-targets -- -D warnings` |
 | `make fmt` | `cargo fmt` |
@@ -157,7 +158,7 @@ See [docs/configuration.md](docs/configuration.md) for the full reference.
 ## Ollama Cloud
 
 Native provider — **not** a `[[custom]]` table. Bearer token from
-https://ollama.com/settings/keys against `GET https://ollama.com/api/usage`.
+https://ollama.com/settings/keys against `GET https://ollama.com/api/balance`.
 
 Copy the `[ollama]` section from [config.example.toml](config.example.toml)
 into your config and set `enabled = true`:
@@ -176,8 +177,8 @@ export OLLAMA_API_KEY="…"          # minted at ollama.com/settings/keys
 ```
 
 The local daemon at `127.0.0.1:11434` has **no** quota route. The Ed25519
-CLI key in `~/.ollama/id_ed25519` is a registry credential and is refused by
-`/api/usage` with 401.
+CLI key in `~/.ollama/id_ed25519` is a registry credential (`pull` / `push`),
+not an API key.
 
 Full walkthrough: [docs/ollama-setup.md](docs/ollama-setup.md).
 

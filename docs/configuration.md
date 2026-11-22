@@ -191,7 +191,7 @@ api_key_env = "ORCAROUTER_API_KEY"
 
 [ollama]
 # Disabled by default; enable after minting a key at
-# https://ollama.com/settings/keys (Bearer for https://ollama.com/api/usage).
+# https://ollama.com/settings/keys (Bearer for https://ollama.com/api/balance).
 enabled = true
 api_key_env = "OLLAMA_API_KEY"
 # api_key = "..."          # used if OLLAMA_API_KEY is unset; chmod 600 the file!
