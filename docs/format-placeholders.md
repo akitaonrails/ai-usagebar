@@ -618,6 +618,14 @@ is `—`. See [ollama-setup.md](ollama-setup.md).
 balance, and `{ull_held}` is the amount set aside for in-flight requests.
 No quota percentage or reset is reported. The vendor short name is `ull`.
 
+## Experiential Labs
+
+`{explabs_balance}` is the prepaid USD wallet balance (negative when
+overdrawn). `{explabs_pct}` and `{explabs_reset}` describe the reported
+daily allowance and are empty when unavailable. The default bar shows its
+percentage when available, otherwise the wallet balance. The vendor short
+name is `xpl`.
+
 ## Lyceum
 
 `{lyceum_balance}`, `{lyceum_used}`, and `{lyceum_remaining}` are the USD

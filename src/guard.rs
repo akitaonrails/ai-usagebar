@@ -369,6 +369,7 @@ mod tests {
             VendorId::Kilo => MacosMirror::Slot("kilo_balance"),
             VendorId::Kimi => MacosMirror::Slot("kimi_monthly_pct"),
             VendorId::Lyceum => MacosMirror::Slot("lyceum_balance"),
+            VendorId::ExperientialLabs => MacosMirror::Slot("explabs_balance"),
             VendorId::MartLlm => MacosMirror::Slot("ull_balance"),
             VendorId::Minimax => MacosMirror::Slot("minimax_video_pct"),
             VendorId::Moonshot => MacosMirror::Slot("km_balance"),

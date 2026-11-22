@@ -517,6 +517,7 @@ pub enum VendorSnapshot {
     OrcaRouter(OrcaRouterSnapshot),
     ModelStudio(ModelStudioSnapshot),
     Lyceum(LyceumSnapshot),
+    ExperientialLabs(crate::explabs::Snapshot),
     MartLlm(MartLlmSnapshot),
     Devin(DevinSnapshot),
     Droid(DroidSnapshot),

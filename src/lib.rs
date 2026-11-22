@@ -34,6 +34,7 @@ pub mod devin;
 pub mod display;
 pub mod droid;
 pub mod error;
+pub mod explabs;
 pub mod format;
 pub mod grok;
 pub mod grokbot;

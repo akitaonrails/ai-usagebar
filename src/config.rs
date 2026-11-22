@@ -84,6 +84,7 @@ pub struct Config {
     pub custom: Vec<CustomProviderConfig>,
     pub cline: ClineConfig,
     pub deeprelay: DeepRelayConfig,
+    pub explabs: ExperientialLabsConfig,
     pub martllm: MartLlmConfig,
     pub mistral: MistralConfig,
     /// Generic macOS Keychain source for vendor API keys: vendor slug (or
@@ -2205,6 +2206,25 @@ impl Default for DeepRelayConfig {
     }
 }
 
+/// Experiential Labs wallet and plan usage (`GET /api/v1/credits`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ExperientialLabsConfig {
+    pub enabled: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+
+impl Default for ExperientialLabsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            api_key_env: VendorId::ExperientialLabs.api_key_env().into(),
+            api_key: None,
+        }
+    }
+}
+
 /// MartLLM's prepaid wallet (`GET /v1/balance`).
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -3113,6 +3133,7 @@ impl Config {
             self.antigravity.oauth_client_secret.as_deref(),
             self.cline.api_key.as_deref(),
             self.deeprelay.api_key.as_deref(),
+            self.explabs.api_key.as_deref(),
             self.martllm.api_key.as_deref(),
             self.mistral.api_key.as_deref(),
         ]
@@ -3222,6 +3243,7 @@ impl Config {
             VendorId::Droid => self.droid.enabled,
             VendorId::MuseCode => self.muse.enabled,
             VendorId::DeepRelay => self.deeprelay.enabled,
+            VendorId::ExperientialLabs => self.explabs.enabled,
             VendorId::MartLlm => self.martllm.enabled,
             VendorId::Mistral => self.mistral.enabled,
         }
@@ -3252,6 +3274,7 @@ impl Config {
             VendorId::OrcaRouter => &self.orcarouter.api_key_env,
             VendorId::Lyceum => &self.lyceum.api_key_env,
             VendorId::DeepRelay => &self.deeprelay.api_key_env,
+            VendorId::ExperientialLabs => &self.explabs.api_key_env,
             VendorId::MartLlm => &self.martllm.api_key_env,
             VendorId::Mistral => &self.mistral.api_key_env,
             VendorId::Cline => &self.cline.api_key_env,
@@ -3296,6 +3319,7 @@ impl Config {
             VendorId::OrcaRouter => self.orcarouter.api_key.as_deref(),
             VendorId::Lyceum => self.lyceum.api_key.as_deref(),
             VendorId::DeepRelay => self.deeprelay.api_key.as_deref(),
+            VendorId::ExperientialLabs => self.explabs.api_key.as_deref(),
             VendorId::MartLlm => self.martllm.api_key.as_deref(),
             VendorId::Mistral => self.mistral.api_key.as_deref(),
             VendorId::Cline => self.cline.api_key.as_deref(),
@@ -3339,7 +3363,7 @@ impl Config {
     /// [`Config::resolve_account_api_key_for`] — the shared chain the
     /// `[keychain]` table serves both the account-array vendors and the
     /// single-key vendors the widget and TUI route the same way.
-    pub const KEYCHAIN_VENDORS: [VendorId; 16] = [
+    pub const KEYCHAIN_VENDORS: [VendorId; 17] = [
         VendorId::AnthropicApi,
         VendorId::Zai,
         VendorId::Openrouter,
@@ -3354,6 +3378,7 @@ impl Config {
         VendorId::Lyceum,
         VendorId::Synthetic,
         VendorId::DeepRelay,
+        VendorId::ExperientialLabs,
         VendorId::MartLlm,
         VendorId::Mistral,
     ];

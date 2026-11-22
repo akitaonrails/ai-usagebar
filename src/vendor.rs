@@ -52,6 +52,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "CLINE_API_KEY",
     "DEEPRELAY_API_KEY",
     "MARTLLM_API_KEY",
+    "EXPLABS_API_KEY",
 ];
 
 /// Env var names a `[[custom]]` provider reads its token from. They are not
@@ -193,6 +194,9 @@ pub enum VendorId {
     ModelStudio,
     Lyceum,
     MartLlm,
+    #[serde(rename = "explabs")]
+    #[value(name = "explabs")]
+    ExperientialLabs,
     Devin,
     Cline,
     #[serde(rename = "muse-code")]
@@ -257,6 +261,7 @@ impl VendorId {
             VendorId::OrcaRouter => "orcarouter",
             VendorId::ModelStudio => "modelstudio",
             VendorId::Lyceum => "lyceum",
+            VendorId::ExperientialLabs => "explabs",
             VendorId::MartLlm => "martllm",
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
@@ -300,6 +305,7 @@ impl VendorId {
             VendorId::OrcaRouter => "OrcaRouter",
             VendorId::ModelStudio => "Model Studio",
             VendorId::Lyceum => "Lyceum",
+            VendorId::ExperientialLabs => "Experiential Labs",
             VendorId::MartLlm => "MartLLM",
             VendorId::Devin => "Devin",
             VendorId::MuseCode => "Muse Code",
@@ -344,6 +350,7 @@ impl VendorId {
             // Same story for Model Studio: the `mst` short name is unique.
             VendorId::ModelStudio => VendorId::ModelStudio.short_name(),
             VendorId::Lyceum => VendorId::Lyceum.short_name(),
+            VendorId::ExperientialLabs => VendorId::ExperientialLabs.short_name(),
             VendorId::MartLlm => VendorId::MartLlm.short_name(),
             VendorId::Devin => VendorId::Devin.short_name(),
             VendorId::MuseCode => VendorId::MuseCode.short_name(),
@@ -390,6 +397,7 @@ impl VendorId {
             VendorId::OrcaRouter => "orc",
             VendorId::ModelStudio => "mst",
             VendorId::Lyceum => "lyc",
+            VendorId::ExperientialLabs => "xpl",
             VendorId::MartLlm => "ull",
             VendorId::Devin => "dvn",
             VendorId::MuseCode => "msc",
@@ -437,6 +445,7 @@ impl VendorId {
             VendorId::OrcaRouter => "orcarouter",
             VendorId::ModelStudio => "modelstudio",
             VendorId::Lyceum => "lyceum",
+            VendorId::ExperientialLabs => "explabs",
             VendorId::MartLlm => "martllm",
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
@@ -475,6 +484,7 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
+            | VendorId::ExperientialLabs
             | VendorId::MartLlm
             | VendorId::DeepRelay
             | VendorId::Mistral => AuthKind::ApiKey,
@@ -521,6 +531,7 @@ impl VendorId {
             VendorId::Ollama => "OLLAMA_API_KEY",
             VendorId::OrcaRouter => "ORCAROUTER_API_KEY",
             VendorId::Lyceum => "LYCEUM_API_KEY",
+            VendorId::ExperientialLabs => "EXPLABS_API_KEY",
             VendorId::MartLlm => "MARTLLM_API_KEY",
             VendorId::DeepRelay => "DEEPRELAY_API_KEY",
             VendorId::Mistral => "MISTRAL_API_KEY",
@@ -599,6 +610,7 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
+            | VendorId::ExperientialLabs
             | VendorId::MartLlm
             | VendorId::DeepRelay
             | VendorId::Mistral => "Add an API key in Settings, then Refresh.",
@@ -641,6 +653,7 @@ impl VendorId {
             | VendorId::Ollama
             | VendorId::OrcaRouter
             | VendorId::Lyceum
+            | VendorId::ExperientialLabs
             | VendorId::MartLlm
             | VendorId::DeepRelay
             | VendorId::Mistral => "",
@@ -687,6 +700,7 @@ impl VendorId {
             VendorId::OrcaRouter,
             VendorId::ModelStudio,
             VendorId::Lyceum,
+            VendorId::ExperientialLabs,
             VendorId::MartLlm,
             VendorId::Devin,
             VendorId::Cline,

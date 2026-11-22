@@ -10,6 +10,11 @@
   agent that checks quota every turn reads a fraction of the tokens; failures
   still return the usual tool error.
 
+- **Experiential Labs wallet and daily allowance.** Enable `[explabs]` and set
+  `EXPLABS_API_KEY`. The credits endpoint supplies the prepaid USD balance and,
+  when available, the shared Free core token pool or paid daily included credits.
+  No quota is inferred from recent requests (#585).
+
 - **MartLLM prepaid wallet.** Enable `[martllm]` and set `MARTLLM_API_KEY`
   to show the USD balance available for new requests, with total and held
   funds in the details when requests are in flight (#610).

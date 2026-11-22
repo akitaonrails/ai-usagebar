@@ -437,6 +437,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         VendorSnapshot::Synthetic(s) => {
             (String::new(), vec![pct("week", s.weekly.utilization_pct)])
         }
+        VendorSnapshot::ExperientialLabs(s) => {
+            let mut cells = vec![usd_cell(s.balance_usd)];
+            if let Some(daily) = s.daily {
+                cells.push(pct("day", i32::from(daily.percent)));
+            }
+            (s.tier_name().unwrap_or_default().into(), cells)
+        }
         VendorSnapshot::MartLlm(s) => (String::new(), vec![usd_cell(s.available_usd)]),
         VendorSnapshot::Lyceum(s) => (
             String::new(),
@@ -795,6 +802,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         .into_iter()
         .flatten()
         .max(),
+        VendorSnapshot::ExperientialLabs(s) => s.daily.map(|daily| i32::from(daily.percent)),
         VendorSnapshot::Custom(s) => s.metrics.first().map(|metric| i32::from(metric.pct)),
         VendorSnapshot::Openrouter(_)
         | VendorSnapshot::OrcaRouter(_)
@@ -873,6 +881,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Novita(s) => novita_sections(s, prefs),
                 VendorSnapshot::Synthetic(s) => synthetic_sections(s, now, pace_tolerance),
                 VendorSnapshot::Lyceum(s) => lyceum_sections(s),
+                VendorSnapshot::ExperientialLabs(s) => explabs_sections(s, now, pace_tolerance),
                 VendorSnapshot::MartLlm(s) => martllm_sections(s),
                 VendorSnapshot::Moonshot(s) => moonshot_sections(s, prefs),
                 VendorSnapshot::Grok(s) => grok_sections(s, prefs),
@@ -2014,6 +2023,38 @@ fn synthetic_sections(
                 credits_number(credits.max)
             ),
         });
+    }
+    sections
+}
+
+fn explabs_sections(
+    s: &crate::explabs::Snapshot,
+    now: DateTime<Utc>,
+    pace_tolerance: u32,
+) -> SectionBuilder {
+    let name = crate::vendor::VendorId::ExperientialLabs.display_name();
+    let mut sections = SectionBuilder::new(vec![
+        Section::Title {
+            left: s
+                .tier_name()
+                .map_or_else(|| name.into(), |tier| format!("{name} {tier}")),
+            right: None,
+        },
+        Section::Spacer,
+        Section::Text {
+            label: "Wallet balance".into(),
+            value: usd(s.balance_usd),
+        },
+    ]);
+    if let Some(daily) = s.daily {
+        push_window(
+            &mut sections,
+            daily.label(),
+            &daily.window(),
+            now,
+            pace_tolerance,
+            true,
+        );
     }
     sections
 }

@@ -138,6 +138,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         note: "key needs the billing:read scope",
     },
     KeyVendor {
+        id: VendorId::ExperientialLabs,
+        label: "Experiential Labs",
+        section: VendorId::ExperientialLabs.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "",
+    },
+    KeyVendor {
         id: VendorId::MartLlm,
         label: "MartLLM",
         section: VendorId::MartLlm.config_section(),

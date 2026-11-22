@@ -19,6 +19,7 @@ use crate::deepinfra;
 use crate::deeprelay;
 use crate::deepseek;
 use crate::error::{AppError, Result};
+use crate::explabs;
 use crate::grok;
 use crate::grokbot;
 use crate::kilo;
@@ -180,6 +181,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Ollama => ollama_output(cli, &config).await,
         Vendor::OrcaRouter => orcarouter_output(cli, &config).await,
         Vendor::Lyceum => lyceum_output(cli, &config).await,
+        Vendor::ExperientialLabs => explabs_output(cli, &config).await,
         Vendor::MartLlm => martllm_output(cli, &config).await,
         Vendor::ModelStudio => modelstudio_output(cli, &config).await,
         Vendor::Devin => devin_output(cli, &config).await,
@@ -843,6 +845,29 @@ async fn lyceum_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
     Ok(lyceum::vendor::render(
         &vendor_outcome,
         &snapshot,
+        &theme_from_cli(cli),
+        &RenderOpts::from_cli(cli),
+        Utc::now(),
+    ))
+}
+
+async fn explabs_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let (api_key, cache) = api_key_target(cli, config, VendorId::ExperientialLabs)?;
+    let client = http_client()?;
+    let outcome = match fetch_api_keyed(
+        explabs::fetch_snapshot(&client, &api_key, &cache, DEFAULT_TTL),
+        &api_key,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(explabs::render(
+        &outcome,
         &theme_from_cli(cli),
         &RenderOpts::from_cli(cli),
         Utc::now(),

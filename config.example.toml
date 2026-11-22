@@ -801,6 +801,12 @@ enabled = false
 api_key_env = "MARTLLM_API_KEY"
 # api_key = "..."             # inline fallback; chmod 600 the file if used
 
+[explabs]
+# Wallet and reported daily plan usage from Experiential Labs' credits API.
+enabled = false
+api_key_env = "EXPLABS_API_KEY"
+# api_key = "..."             # inline fallback; chmod 600 the file if used
+
 [mistral]
 # Disabled by default — enable once you've set a key. Reads the monthly API
 # and Vibe Code budgets from https://api.mistral.ai/v1/billing/budget, the

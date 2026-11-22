@@ -130,7 +130,9 @@ The selector dynamically discovers **all providers** that ship in the binary via
   quota windows, so the app
   shows their balance/credits in the header (`cr <amount>`) and suppresses the
   session/weekly rows. Anthropic API additionally renders a spend-vs-limit
-  bar when a monthly limit is configured.
+  bar when a monthly limit is configured. The legacy menu bar shows the
+  Experiential Labs wallet only; the tray popover also displays its daily
+  allowance when the API reports one.
 
 The app uses `ai-usagebar vendors --json` as its canonical metadata source so
 vendor availability, authentication status, and CLI requirements always match the

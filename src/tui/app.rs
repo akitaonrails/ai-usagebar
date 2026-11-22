@@ -1019,6 +1019,15 @@ async fn build_outcome(
             .await?;
             Ok(outcome)
         }
+        VendorId::ExperientialLabs => {
+            let (api_key, cache) = api_key_and_cache(config, vendor, tab.account.as_deref())?;
+            fetch_api_keyed(
+                crate::explabs::fetch_snapshot(client, &api_key, &cache, ttl),
+                &api_key,
+            )
+            .await
+            .map(Into::into)
+        }
         VendorId::MartLlm => {
             let (api_key, cache) = api_key_and_cache(config, vendor, tab.account.as_deref())?;
             fetch_api_keyed(
