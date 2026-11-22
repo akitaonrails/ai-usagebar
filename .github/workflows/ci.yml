@@ -143,8 +143,8 @@ jobs:
         run: |
           smoke_dir="$(mktemp -d)"
           nix develop --command bash -euc '
-            cargo new --offline --vcs none --name mold_smoke "$1"
-            cargo build --offline --manifest-path "$1/Cargo.toml" --target-dir "$1/target"
+            cargo new --offline --vcs none --name mold_smoke "$1/crate"
+            cargo build --offline --manifest-path "$1/crate/Cargo.toml" --target-dir "$1/target"
           ' _ "$smoke_dir"
           readelf --string-dump=.comment "$smoke_dir/target/debug/mold_smoke" | grep -F mold
 
