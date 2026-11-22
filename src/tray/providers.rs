@@ -57,11 +57,18 @@ pub(crate) fn sign_in_for(vendor: VendorId, macos: bool) -> SignIn {
 }
 
 /// The `providers` array of the popover payload.
-pub(crate) fn rows_json(rows: &[VendorStatus], macos: bool) -> Value {
+pub(crate) fn rows_json(rows: &[VendorStatus], os: &str) -> Value {
+    let macos = os == "macos";
     Value::Array(
         rows.iter()
             .filter_map(|row| {
                 let vendor = VendorId::from_slug(row.id)?;
+                let key = crate::tui::settings::key_vendor_for_slug(row.id);
+                let action = match (os, sign_in_for(vendor, macos)) {
+                    ("linux", SignIn::Terminal(_)) => SignIn::None,
+                    ("linux", SignIn::Settings) if key.is_none() => SignIn::None,
+                    (_, action) => action,
+                };
                 let mut entry = json!({
                     "id": row.id,
                     "name": row.name,
@@ -70,16 +77,13 @@ pub(crate) fn rows_json(rows: &[VendorStatus], macos: bool) -> Value {
                     "configured": row.configured,
                     "env": row.env,
                     "sign_in": vendor.sign_in_hint(),
-                    "action": sign_in_for(vendor, macos).kind(),
+                    "action": action.kind(),
                     "add_accounts": add_account_kinds(vendor, macos),
                 });
                 // The key dialog's fields, straight from the settings
                 // overlay's own table: the popover keeps no credential
                 // labels of its own, and only key vendors get the pair.
-                if let (Some(key), Some(obj)) = (
-                    crate::tui::settings::key_vendor_for_slug(row.id),
-                    entry.as_object_mut(),
-                ) {
+                if let (Some(key), Some(obj)) = (key, entry.as_object_mut()) {
                     obj.insert("key_label".into(), json!(key.secret_label));
                     obj.insert("key_note".into(), json!(key.note));
                 }
@@ -884,7 +888,7 @@ mod tests {
     #[test]
     fn rows_carry_every_vendor_with_hint_and_action() {
         let rows = default_rows();
-        let json = rows_json(&rows, true);
+        let json = rows_json(&rows, "macos");
         let list = json.as_array().unwrap();
         assert_eq!(list.len(), VendorId::all().len());
         let cursor = list.iter().find(|row| row["id"] == "cursor").unwrap();
@@ -897,7 +901,7 @@ mod tests {
     #[test]
     fn device_providers_sign_in_from_the_popover_with_their_words() {
         let rows = default_rows();
-        let json = rows_json(&rows, true);
+        let json = rows_json(&rows, "macos");
         let list = json.as_array().unwrap();
         let row = |id: &str| list.iter().find(|row| row["id"] == id).unwrap().clone();
         for (id, account, issuer) in [
@@ -916,6 +920,21 @@ mod tests {
             assert_eq!(row["action"], "terminal", "{id}");
             assert!(row.get("sign_in_account").is_none(), "{id}");
         }
+    }
+
+    #[test]
+    fn linux_advertises_only_usable_credential_actions() {
+        let json = rows_json(&default_rows(), "linux");
+        let list = json.as_array().unwrap();
+        let row = |id: &str| list.iter().find(|row| row["id"] == id).unwrap();
+        assert_eq!(row("anthropic")["action"], "");
+        assert_eq!(
+            row("anthropic")["sign_in"],
+            VendorId::Anthropic.sign_in_hint()
+        );
+        assert_eq!(row("openai")["action"], "device");
+        assert_eq!(row("openrouter")["action"], "settings");
+        assert!(row("openrouter")["key_label"].is_string());
     }
 
     #[test]
@@ -1017,7 +1036,7 @@ mod tests {
                 cline_signed_in: &|_| false,
             },
         );
-        let json = rows_json(&rows, true);
+        let json = rows_json(&rows, "macos");
         let list = json.as_array().unwrap();
         // Every key vendor carries the overlay's own label and note...
         for vendor in crate::tui::settings::KEY_VENDORS {

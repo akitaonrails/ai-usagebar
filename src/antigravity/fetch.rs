@@ -3484,6 +3484,8 @@ mod tests {
             r#"Command::new("lsof")"#,
             r#"Command::new("ps")"#,
             r#"Command::new("open")"#,
+            r#"command_without_vendor_secrets("open")"#,
+            r#"let program = "open";"#,
             r#"Command::new("osascript")"#,
             r#"do script \"bash "#,
         ] {
@@ -3492,7 +3494,8 @@ mod tests {
         for pinned in [
             r#"Command::new("/usr/sbin/lsof")"#,
             r#"Command::new("/bin/ps")"#,
-            r#"Command::new("/usr/bin/open")"#,
+            r#"command_without_vendor_secrets("/usr/bin/open")"#,
+            r#"let program = "/usr/bin/open";"#,
             r#"Command::new("/usr/bin/osascript")"#,
             r#"do script \"/bin/bash "#,
         ] {
@@ -4455,7 +4458,7 @@ mod tests {
         blob: &str,
     ) -> std::path::PathBuf {
         let path = dir.join("agy");
-        super::super::agy::test_support::write_script(
+        crate::test_support::write_script(
             &path,
             &format!(
                 "[ \"$1\" = -p ] && exit 1\necho \"$@\" >> '{}'\nprintf '%s' '{}' > '{}'",
@@ -4567,7 +4570,7 @@ mod tests {
     #[cfg(unix)]
     fn agy_reading(dir: &std::path::Path, runs: &std::path::Path) -> std::path::PathBuf {
         let path = dir.join("agy");
-        super::super::agy::test_support::write_script(
+        crate::test_support::write_script(
             &path,
             &format!(
                 "echo \"$@\" >> '{}'\n[ \"$1\" = -p ] || exit 1\ncat <<'EOF'\n{AGY_QUOTA}\nEOF",
@@ -4862,7 +4865,7 @@ mod tests {
                 blob["token"]["refresh_token"] = serde_json::json!("other-signin");
             }
             let agy = td.path().join("agy");
-            super::super::agy::test_support::write_script(
+            crate::test_support::write_script(
                 &agy,
                 &format!(
                     "echo run >> '{}'\nprintf '%s' '{}' > '{}'\ncat <<'EOF'\n{AGY_QUOTA}\nEOF",
@@ -4906,7 +4909,7 @@ mod tests {
             std::fs::write(&file, &original).unwrap();
             let fresh =
                 AGY_QUOTA.replace("\"remaining_fraction\":0.63", "\"remaining_fraction\":0.42");
-            super::super::agy::test_support::write_script(
+            crate::test_support::write_script(
                 &agy,
                 &format!(
                     "echo run >> '{}'\ncat <<'EOF'\n{fresh}\nEOF",
@@ -4971,7 +4974,7 @@ mod tests {
 
         // Case 2: `agy` is installed but exits non-zero.
         let failing_agy = td.path().join("agy-fail");
-        super::super::agy::test_support::write_script(&failing_agy, "exit 1");
+        crate::test_support::write_script(&failing_agy, "exit 1");
         let out = fetch_account_snapshot_at(
             &reqwest::Client::new(),
             &cache,
@@ -5118,7 +5121,7 @@ mod tests {
         let (td, cache) = fixture();
         let runs = td.path().join("runs");
         let agy = td.path().join("agy");
-        super::super::agy::test_support::write_script(
+        crate::test_support::write_script(
             &agy,
             &format!("echo \"$@\" >> '{}'\nexit 1", runs.display()),
         );
@@ -5189,7 +5192,7 @@ mod tests {
 
         // The floor passes, and `agy` stops answering.
         age_past_reading_floor(&cache);
-        super::super::agy::test_support::write_script(
+        crate::test_support::write_script(
             &agy,
             &format!("echo \"$@\" >> '{}'\nexit 1", runs.display()),
         );
@@ -5224,7 +5227,7 @@ mod tests {
         let blob = keyring_blob(VALID, true);
         let (td, cache) = fixture();
         let agy = td.path().join("agy");
-        super::super::agy::test_support::write_script(&agy, "exit 1");
+        crate::test_support::write_script(&agy, "exit 1");
         let remote = || RemoteOverride {
             agy: super::super::agy::AgyCommand::At(agy.clone()),
             ..remote(&blob, &eps)

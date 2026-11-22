@@ -36,6 +36,7 @@ interface SignInDialogProps {
   /** The host's last sign-in fact, from the payload's `sign_in`. */
   fact: SignInFact | null;
   nowMs: number;
+  terminalAvailable?: boolean;
   onClose: () => void;
   /** The provider to sign in; null closes the sheet. */
   provider: SignInProvider | null;
@@ -55,7 +56,7 @@ export function SignInDialog({ provider, ...rest }: SignInDialogProps) {
   return provider ? <OpenSignInDialog provider={provider} {...rest} /> : null;
 }
 
-function OpenSignInDialog({ fact, nowMs, onClose, provider, returnFocus }: SignInDialogProps & { provider: SignInProvider }) {
+function OpenSignInDialog({ fact, nowMs, onClose, provider, returnFocus, terminalAvailable = true }: SignInDialogProps & { provider: SignInProvider }) {
   const { language } = useI18n();
   const [pending, setPending] = useState<{ seq: number | null; sentAtMs: number }>({ seq: null, sentAtMs: 0 });
   const [copied, setCopied] = useState(false);
@@ -138,10 +139,10 @@ function OpenSignInDialog({ fact, nowMs, onClose, provider, returnFocus }: SignI
             if (pending.seq !== null) sendCommand("open-sign-in-page", { seq: pending.seq });
           }}
           onRetry={start}
-          onTerminal={() => {
+          onTerminal={terminalAvailable ? () => {
             sendCommand("sign-in-provider", { id: provider.id });
             close();
-          }}
+          } : undefined}
         />
       </DialogContent>
     </Dialog>
@@ -162,7 +163,7 @@ interface SignInDialogViewProps {
   onCopy: () => void;
   onOpenPage: () => void;
   onRetry: () => void;
-  onTerminal: () => void;
+  onTerminal?: () => void;
 }
 
 /**
@@ -235,7 +236,7 @@ export function SignInDialogView({
             <button type="button" className="action-btn" data-variant="primary" onClick={onRetry}>
               {m.sign_in_new_code(locale)}
             </button>
-          ) : phase === "unavailable" ? (
+          ) : phase === "unavailable" && onTerminal ? (
             <button type="button" className="action-btn gap-1.5 [&_svg]:size-[var(--icon-note)]" onClick={onTerminal}>
               <MdiConsole aria-hidden />
               {m.sign_in_use_terminal(locale)}

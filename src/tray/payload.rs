@@ -364,7 +364,7 @@ pub fn wrap_report(
         "update_checked_at": facts.update_checked_at,
         "repository": repository_page(),
         "accounts": accounts,
-        "providers": super::providers::rows_json(&facts.providers, host_os() == "macos"),
+        "providers": super::providers::rows_json(&facts.providers, host_os()),
         "providers_error": sanitize_untrusted_field(&facts.providers_error),
         "key_check": facts.key_check.as_ref().map(|fact| {
             let state = match fact.state {

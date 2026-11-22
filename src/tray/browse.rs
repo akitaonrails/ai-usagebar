@@ -29,27 +29,28 @@ pub fn open(raw: &str) {
     #[cfg(any(windows, target_os = "macos"))]
     let _ = command(url).spawn();
     #[cfg(all(target_os = "linux", feature = "linux-tray"))]
-    let _ = spawn_reaped(std::process::Command::new("xdg-open").arg(url));
+    let _ = spawn_reaped(&mut command(url));
 }
 
 /// The process that opens `url` in the default browser, with the URL as its
 /// only argument. On Windows that is Explorer, as for the device-code sign-in
 /// page (`nous::oauth::SystemBrowserOpener`): `cmd /C start` read the URL's
 /// `&`, `|`, `^` and `%NAME%` as cmd syntax rather than as part of the link.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(
+    windows,
+    target_os = "macos",
+    all(target_os = "linux", feature = "linux-tray")
+))]
 fn command(url: &str) -> std::process::Command {
     #[cfg(windows)]
-    {
-        let mut command = std::process::Command::new("explorer.exe");
-        command.arg(url);
-        command
-    }
+    let program = "explorer.exe";
     #[cfg(target_os = "macos")]
-    {
-        let mut command = std::process::Command::new("/usr/bin/open");
-        command.arg(url);
-        command
-    }
+    let program = "/usr/bin/open";
+    #[cfg(target_os = "linux")]
+    let program = "xdg-open";
+    let mut command = crate::vendor::command_without_vendor_secrets(program);
+    command.arg(url);
+    command
 }
 
 /// Spawns `command` and collects its exit status on a separate thread, so a
@@ -112,17 +113,28 @@ mod tests {
 
     /// A query string's `&`, `%` and `^` stay inside the opener's one
     /// argument: nothing parses the URL as shell syntax.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(
+        windows,
+        target_os = "macos",
+        all(target_os = "linux", feature = "linux-tray")
+    ))]
     #[test]
     fn the_url_is_the_openers_only_argument() {
         let url = "https://example.com/usage?a=1&b=%PATH%^";
         let command = super::command(url);
         let program = if cfg!(windows) {
             "explorer.exe"
-        } else {
+        } else if cfg!(target_os = "macos") {
             "/usr/bin/open"
+        } else {
+            "xdg-open"
         };
         assert_eq!(command.get_program(), program);
         assert_eq!(command.get_args().collect::<Vec<_>>(), [url]);
+        assert!(
+            command
+                .get_envs()
+                .any(|(key, value)| key == "OPENROUTER_API_KEY" && value.is_none())
+        );
     }
 }

@@ -102,6 +102,19 @@ pub(crate) fn vendor_secret_env_vars_to_remove(keep: &[&str]) -> Vec<&'static st
         .collect()
 }
 
+/// Desktop helpers are not providers. Keep their session environment but
+/// don't pass them provider credentials, including configured custom keys.
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub(crate) fn command_without_vendor_secrets(
+    program: impl AsRef<std::ffi::OsStr>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    for var in vendor_secret_env_vars_to_remove(&[]) {
+        command.env_remove(var);
+    }
+    command
+}
+
 /// Follow ordinary vendor redirects without forwarding non-standard API-key
 /// headers to a different origin. Reqwest strips `Authorization` on sensitive
 /// redirects, but vendors also use headers such as `x-api-key`, which are not
@@ -915,6 +928,26 @@ mod tests {
         for name in configured_defaults {
             assert!(VENDOR_SECRET_ENV_VARS.contains(&name), "missing {name}");
         }
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    fn desktop_commands_remove_builtin_and_custom_secrets() {
+        let custom = "AI_USAGEBAR_TEST_DESKTOP_TOKEN_C73B";
+        register_secret_env_vars(&[custom.into()]);
+        let command = command_without_vendor_secrets("not-executed");
+        for name in ["OPENROUTER_API_KEY", custom] {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(key, value)| key == name && value.is_none())
+            );
+        }
+        assert!(
+            !command
+                .get_envs()
+                .any(|(key, _)| key == "DISPLAY" || key == "PATH")
+        );
     }
 
     #[test]

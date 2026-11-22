@@ -1,7 +1,8 @@
 //! Nous OAuth device flow and refresh state machine.
 
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+use crate::vendor::command_without_vendor_secrets;
 use std::fmt;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -76,19 +77,25 @@ impl BrowserOpener for SystemBrowserOpener {
     fn open(&self, url: &str) -> std::io::Result<()> {
         #[cfg(target_os = "linux")]
         {
-            let _child = Command::new("xdg-open").arg(url).spawn()?;
+            let _child = command_without_vendor_secrets("xdg-open")
+                .arg(url)
+                .spawn()?;
             Ok(())
         }
         #[cfg(target_os = "macos")]
         {
-            let _child = Command::new("/usr/bin/open").arg(url).spawn()?;
+            let _child = command_without_vendor_secrets("/usr/bin/open")
+                .arg(url)
+                .spawn()?;
             Ok(())
         }
         #[cfg(target_os = "windows")]
         {
             // Keep the remotely supplied URL out of `cmd.exe`; metacharacters
             // such as `&` and `%` are data to Explorer, not shell syntax.
-            let _child = Command::new("explorer.exe").arg(url).spawn()?;
+            let _child = command_without_vendor_secrets("explorer.exe")
+                .arg(url)
+                .spawn()?;
             Ok(())
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

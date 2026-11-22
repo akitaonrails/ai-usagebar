@@ -15,9 +15,7 @@
 //!   (`hypr_linux`: the cursor at the click, a window rule, the monitor's bar);
 //!   on any other compositor it is wherever that compositor puts it, which is
 //!   accepted, not worked around;
-//! - the global shortcut is not registered: `set-shortcut` leaves it
-//!   unavailable through the same outcome/fact the other hosts use when the
-//!   registration fails;
+//! - global shortcuts and terminal launch are not supported;
 //! - clipboard text and PNG go through GTK, on the main thread.
 //!
 //! Threads: the event-loop thread owns every window, webview and menu object.
@@ -49,11 +47,10 @@ use wry::http::{Request, Response, StatusCode, header::CONTENT_TYPE};
 use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder, WebViewBuilderExtUnix};
 
 use super::browse;
-use super::hotkey;
 use super::hypr_linux as hypr;
 use super::icon::{Ink, Severity, apply_ink, tray_icon_rgba};
 use super::ipc_origin::{self, Navigation, Os};
-use super::options_menu::{self, OptionsAction, OptionsLabels};
+use super::options_menu::{self, OptionsAction, OptionsEntry, OptionsLabels};
 use super::panel;
 use super::payload::{
     HostFacts, SharedFacts, facts_snapshot, host_payload, stamp_appearance, with_facts,
@@ -312,13 +309,6 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     let facts: SharedFacts = Arc::new(Mutex::new(host_facts(&config)));
-    // No global shortcut on this host: a configured one is reported as unavailable
-    // instead of being silently dropped, the way a failed registration is.
-    if let Some(configured) = config.tray.shortcut.as_deref() {
-        let outcome = bind_shortcut(configured);
-        with_facts(&facts, |f| apply_shortcut_outcome(f, outcome));
-    }
-
     let (cmd_tx, cmd_rx) = mpsc::channel();
     spawn_worker(proxy.clone(), cmd_rx, facts.clone());
     let _ = cmd_tx.send(WorkerCmd::Refresh);
@@ -327,7 +317,7 @@ fn run_loop(lock: Option<SingleInstance>) -> Result<(), String> {
     let context_menu = Menu::new();
     options_menu::fill_menu(
         &context_menu,
-        &options_menu::options_entries(&OptionsLabels::default(), false, startup::is_enabled()),
+        &linux_options_entries(&OptionsLabels::default(), false, startup::is_enabled()),
     );
     let tray = build_tray(&empty, &context_menu)?;
 
@@ -704,16 +694,14 @@ enum IpcKind {
     Unknown,
 }
 
-/// Commands the host serves. `set-shortcut` is here: it is answered, with the
-/// shortcut unavailable. `install-update` is here too: the shared worker
+/// Commands the host serves. For `install-update`, the shared worker
 /// refuses it on Linux (`installable`), which the page shows as the release link.
-const HANDLED_COMMANDS: [&str; 24] = [
+const HANDLED_COMMANDS: [&str; 22] = [
     "ready",
     "detect",
     "providers",
     "refresh",
     "set-provider-enabled",
-    "sign-in-provider",
     "set-api-key",
     "start-sign-in",
     "cancel-sign-in",
@@ -724,7 +712,6 @@ const HANDLED_COMMANDS: [&str; 24] = [
     "toggle-startup",
     "menu-labels",
     "resize",
-    "set-shortcut",
     "set-updates",
     "set-refresh",
     "strip",
@@ -735,10 +722,11 @@ const HANDLED_COMMANDS: [&str; 24] = [
 ];
 
 /// Commands that exist in the protocol and are not served on Linux in this
-/// version: the TUI launcher (no terminal detection yet) and the macOS-only
-/// account, notification and menu-bar commands.
-const UNSUPPORTED_COMMANDS: [&str; 9] = [
+/// version: terminal launch, shortcuts, and macOS-only controls.
+const UNSUPPORTED_COMMANDS: [&str; 11] = [
     "open-tui",
+    "sign-in-provider",
+    "set-shortcut",
     "add-account",
     "switch-account",
     "prepare-account",
@@ -843,7 +831,12 @@ fn run_detection(force: bool) {
 
 fn host_facts(config: &Config) -> HostFacts {
     let mut facts = HostFacts::new(env!("CARGO_PKG_VERSION"), startup::is_enabled());
-    facts.updates = config.tray.updates().as_str().into();
+    facts.updates = match config.tray.updates() {
+        UpdateMode::Auto => UpdateMode::Notify,
+        mode => mode,
+    }
+    .as_str()
+    .into();
     facts.refresh_secs = config.tray.refresh_minutes() * 60;
     facts
 }
@@ -1040,61 +1033,16 @@ fn apply_facts(state: &mut TrayState) {
     }
 }
 
-enum ShortcutOutcome {
-    Cleared,
-    Refused { attempted: String, reason: String },
-}
-
-/// This host registers no global shortcut. An empty value clears the setting;
-/// anything else is refused with the reason, so the Settings row shows it
-/// unavailable rather than bound.
-fn bind_shortcut(text: &str) -> ShortcutOutcome {
-    if text.trim().is_empty() {
-        return ShortcutOutcome::Cleared;
-    }
-    match hotkey::normalize(text) {
-        Ok(normalized) => ShortcutOutcome::Refused {
-            attempted: normalized.canonical,
-            reason: "Global shortcuts are not available on Linux yet.".into(),
-        },
-        Err(reason) => ShortcutOutcome::Refused {
-            attempted: String::new(),
-            reason,
-        },
-    }
-}
-
-fn apply_shortcut_outcome(facts: &mut HostFacts, outcome: ShortcutOutcome) {
-    match outcome {
-        ShortcutOutcome::Cleared => {
-            facts.shortcut.clear();
-            facts.shortcut_error.clear();
-        }
-        ShortcutOutcome::Refused { attempted, reason } => {
-            facts.shortcut = attempted;
-            facts.shortcut_error = reason;
-        }
-    }
-}
-
 fn config_path() -> Option<PathBuf> {
     crate::config::resolved_path().or_else(crate::config::default_path)
 }
 
-fn set_shortcut(state: &mut TrayState, value: &str) {
-    let outcome = bind_shortcut(value);
-    // Only a cleared shortcut is persisted; a refused one never was bound.
-    if matches!(outcome, ShortcutOutcome::Cleared)
-        && let Some(path) = config_path()
-    {
-        let _ = crate::config::set_tray_value(&path, "shortcut", None);
-    }
-    with_facts(&state.facts, |f| apply_shortcut_outcome(f, outcome));
-    apply_facts(state);
+fn linux_update_mode(text: &str) -> Option<UpdateMode> {
+    UpdateMode::parse(text).filter(|mode| *mode != UpdateMode::Auto)
 }
 
 fn set_updates(state: &mut TrayState, mode_text: &str) {
-    let Some(mode) = UpdateMode::parse(mode_text) else {
+    let Some(mode) = linux_update_mode(mode_text) else {
         return;
     };
     if let Some(path) = config_path() {
@@ -1254,7 +1202,6 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             apply_facts(state);
             let _ = state.worker.send(WorkerCmd::Refresh);
         }
-        "sign-in-provider" => super::providers::sign_in(&value),
         "set-api-key" => {
             let proxy = state.proxy.clone();
             let worker = state.worker.clone();
@@ -1304,10 +1251,6 @@ fn handle_ipc(state: &mut TrayState, body: &str, control_flow: &mut ControlFlow)
             refresh_menu(state);
         }
         "resize" => handle_resize(state, &value),
-        "set-shortcut" => {
-            let text = value.get("value").and_then(Value::as_str).unwrap_or("");
-            set_shortcut(state, text);
-        }
         "set-updates" => {
             let mode = value.get("mode").and_then(Value::as_str).unwrap_or("");
             set_updates(state, mode);
@@ -1439,12 +1382,26 @@ fn toggle_startup(state: &mut TrayState) {
 fn refresh_menu(state: &TrayState) {
     options_menu::fill_menu(
         &state.context_menu,
-        &options_menu::options_entries(
+        &linux_options_entries(
             &state.menu_labels,
             state.style == PopoverStyle::Native,
             startup::is_enabled(),
         ),
     );
+}
+
+fn linux_options_entries(labels: &OptionsLabels, native: bool, startup: bool) -> Vec<OptionsEntry> {
+    let mut entries = options_menu::options_entries(labels, native, startup);
+    entries.retain(|entry| {
+        !matches!(
+            entry,
+            OptionsEntry::Item {
+                action: OptionsAction::OpenTui,
+                ..
+            }
+        )
+    });
+    entries
 }
 
 /// The navigation itself: the popover installs `__AIUB_MENU_ACTION__` on load,
@@ -1959,6 +1916,7 @@ fn asset_response(path: &str) -> Response<Cow<'static, [u8]>> {
 // ---------------------------------------------------------------------------
 
 /// Outcome of trying to take the per-user lock.
+#[derive(Debug)]
 enum Acquire {
     Held(SingleInstance),
     /// Another process of this user holds it.
@@ -1971,8 +1929,17 @@ enum Acquire {
 /// An exclusive, non-blocking `flock` on `tray.lock` in the user's cache
 /// directory. The kernel drops it when the process ends, however it ends, so a
 /// crash leaves nothing stale; it is per user because the directory is.
+#[derive(Debug)]
 struct SingleInstance {
-    _file: File,
+    file: File,
+}
+
+impl Drop for SingleInstance {
+    fn drop(&mut self) {
+        // Release immediately even if a concurrently forked helper still
+        // briefly holds a copy of the descriptor before exec.
+        let _ = FileExt::unlock(&self.file);
+    }
 }
 
 impl SingleInstance {
@@ -2032,7 +1999,7 @@ impl SingleInstance {
             return Acquire::Unavailable(reason);
         }
         match file.try_lock_exclusive() {
-            Ok(()) => Acquire::Held(Self { _file: file }),
+            Ok(()) => Acquire::Held(Self { file }),
             Err(error) if is_contended(&error) => Acquire::Busy,
             Err(error) => Acquire::Unavailable(error.to_string()),
         }
@@ -2528,38 +2495,33 @@ mod tests {
         }
     }
 
-    // --- Shortcut ----------------------------------------------------------
-
     #[test]
-    fn a_shortcut_is_refused_with_a_reason_and_never_bound() {
-        let ShortcutOutcome::Refused { attempted, reason } = bind_shortcut("ctrl+shift+u") else {
-            panic!("a shortcut must be refused on this host");
-        };
-        assert!(!attempted.is_empty());
-        assert!(!reason.is_empty());
-        let mut facts = HostFacts::new("0.0.0", false);
-        apply_shortcut_outcome(&mut facts, ShortcutOutcome::Refused { attempted, reason });
-        assert!(!facts.shortcut_error.is_empty());
+    fn linux_keeps_manual_update_options_but_never_persists_auto() {
+        let config: Config = toml::from_str("[tray]\nupdates = 'auto'").unwrap();
+        assert_eq!(config.tray.updates(), UpdateMode::Auto);
+        assert_eq!(host_facts(&config).updates, "notify");
+        assert_eq!(linux_update_mode("auto"), None);
+        assert_eq!(linux_update_mode("off"), Some(UpdateMode::Off));
+        assert_eq!(linux_update_mode("notify"), Some(UpdateMode::Notify));
     }
 
     #[test]
-    fn an_empty_shortcut_clears_the_setting() {
-        assert!(matches!(bind_shortcut("  "), ShortcutOutcome::Cleared));
-        let mut facts = HostFacts::new("0.0.0", false);
-        facts.shortcut = "Ctrl+U".into();
-        facts.shortcut_error = "old".into();
-        apply_shortcut_outcome(&mut facts, ShortcutOutcome::Cleared);
-        assert!(facts.shortcut.is_empty() && facts.shortcut_error.is_empty());
-    }
-
-    #[test]
-    fn an_unparsable_shortcut_keeps_the_parser_reason() {
-        let ShortcutOutcome::Refused { attempted, reason } = bind_shortcut("not a shortcut ++")
-        else {
-            panic!("must be refused");
-        };
-        assert!(attempted.is_empty());
-        assert!(!reason.is_empty());
+    fn linux_native_menu_hides_only_the_unsupported_terminal_button() {
+        let labels = OptionsLabels::default();
+        for native in [false, true] {
+            let linux = linux_options_entries(&labels, native, false);
+            assert_eq!(
+                linux.len() + 1,
+                options_menu::options_entries(&labels, native, false).len()
+            );
+            assert!(!linux.iter().any(|entry| matches!(
+                entry,
+                OptionsEntry::Item {
+                    action: OptionsAction::OpenTui,
+                    ..
+                }
+            )));
+        }
     }
 
     // --- Single instance ---------------------------------------------------
@@ -2569,13 +2531,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("temp dir");
         let path = dir.path().join("nested").join("tray.lock");
         let first = SingleInstance::acquire_at(&path);
-        assert!(matches!(first, Acquire::Held(_)));
+        assert!(matches!(first, Acquire::Held(_)), "{first:?}");
         assert!(matches!(SingleInstance::acquire_at(&path), Acquire::Busy));
         drop(first);
-        assert!(matches!(
-            SingleInstance::acquire_at(&path),
-            Acquire::Held(_)
-        ));
+        let reacquired = SingleInstance::acquire_at(&path);
+        assert!(matches!(reacquired, Acquire::Held(_)), "{reacquired:?}");
     }
 
     #[test]
@@ -2654,12 +2614,10 @@ mod tests {
         let path = dir.path().join("tray.lock");
         std::fs::write(&path, b"").expect("pre-existing own file");
         let first = SingleInstance::acquire_at(&path);
-        assert!(matches!(first, Acquire::Held(_)));
+        assert!(matches!(first, Acquire::Held(_)), "{first:?}");
         drop(first);
-        assert!(matches!(
-            SingleInstance::acquire_at(&path),
-            Acquire::Held(_)
-        ));
+        let reacquired = SingleInstance::acquire_at(&path);
+        assert!(matches!(reacquired, Acquire::Held(_)), "{reacquired:?}");
     }
 
     #[test]

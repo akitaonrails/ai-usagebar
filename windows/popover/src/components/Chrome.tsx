@@ -148,7 +148,7 @@ export function Footer({
           <DropdownMenuSeparator />
           <MenuItem icon={<MdiRefresh />} label={m.refresh()} onSelect={() => sendCommand("refresh")} />
           <MenuItem icon={<MdiMagnifyScan />} label={m.detect_providers()} onSelect={() => sendCommand("detect")} />
-          <MenuItem icon={<MdiConsole />} label={m.open_tui()} onSelect={() => sendCommand("open-tui")} />
+          {payload.os !== "linux" && <MenuItem icon={<MdiConsole />} label={m.open_tui()} onSelect={() => sendCommand("open-tui")} />}
           <DropdownMenuSeparator />
           <MenuItem
             checked={payload.startupEnabled}

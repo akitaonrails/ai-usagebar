@@ -782,6 +782,7 @@ export default function App() {
       <SignInDialog
         fact={payload.signIn}
         nowMs={nowMs}
+        terminalAvailable={payload.os !== "linux"}
         provider={signInProvider}
         returnFocus={signInFocus}
         onClose={closeSignIn}

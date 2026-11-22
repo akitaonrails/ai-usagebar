@@ -454,6 +454,12 @@ try {
     payload: { ...emptyPayload(''), os: 'windows' },
   });
   assert.equal((windowsNative.match(/role="tab"/g) || []).length, 3);
+  const linuxGeneral = settingsTab('general', {
+    ...settingsProps,
+    payload: { ...settingsPayload, os: 'linux', updates: 'auto', shortcut: 'Ctrl+U' },
+  });
+  assert.doesNotMatch(linuxGeneral, /Atalho global|Ctrl\+U/);
+  assert.match(linuxGeneral, /Avisar/);
   const macClassic = settingsTab('general', {
     ...settingsProps,
     layout: { ...emptyLayout(), popoverStyle: 'classic' },
@@ -786,6 +792,7 @@ try {
   const deviceOff = signInView({ phase: 'unavailable', reason: 'device-off' });
   assert.match(deviceOff, /Device sign-in is off for this account\. Turn it on in ChatGPT(?:'|&#x27;)s security settings/);
   assert.match(deviceOff, /<button[^>]*>.*?Use the terminal<\/button>/s);
+  assert.doesNotMatch(signInView({ phase: 'unavailable', reason: 'device-off', onTerminal: undefined }), /Use the terminal/);
   assert.doesNotMatch(deviceOff, /data-variant="primary"/);
   assert.match(signInView({ phase: 'unavailable', reason: 'cli-missing' }), /Codex(?:'|&#x27;)s command-line tool isn(?:'|&#x27;)t installed here/);
   assert.match(signInView({ phase: 'unavailable', reason: 'custom-path' }), /config\.toml points Codex at a login file of its own/);

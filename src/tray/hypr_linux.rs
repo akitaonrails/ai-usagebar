@@ -31,7 +31,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -216,7 +216,7 @@ fn command_at_with_cancel(
         return Err(COMMAND_CANCELLED.into());
     }
     let deadline = Instant::now() + TIMEOUT;
-    let mut child = Command::new(path)
+    let mut child = crate::vendor::command_without_vendor_secrets(path)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -928,7 +928,6 @@ pub(super) fn apply(
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
-    use std::os::unix::fs::PermissionsExt;
 
     const W: u32 = 320;
 
@@ -1949,8 +1948,7 @@ mod tests {
 
     fn script(dir: &tempfile::TempDir, body: &str) -> std::path::PathBuf {
         let path = dir.path().join("fake hyprctl");
-        std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_support::write_script(&path, body);
         path
     }
 
@@ -1970,7 +1968,7 @@ mod tests {
             let fake = script(
                 &dir,
                 &format!(
-                    "#!/bin/sh\n[ \"$#\" -eq 3 ] && [ \"$1\" = getoption ] && [ \"$2\" = decoration:rounding ] && [ \"$3\" = -j ] || exit 2\nprintf '%s' '{json}'\nexit {status}\n"
+                    "[ \"$#\" -eq 3 ] && [ \"$1\" = getoption ] && [ \"$2\" = decoration:rounding ] && [ \"$3\" = -j ] || exit 2\nprintf '%s' '{json}'\nexit {status}\n"
                 ),
             );
             assert_eq!(
@@ -1995,7 +1993,7 @@ mod tests {
         let fake = script(
             &dir,
             &format!(
-                "#!/bin/sh\nprintf '%s' \"$0\" > '{}'\nprintf '%s' '{{\"x\":12,\"y\":34}}'\n",
+                "printf '%s' \"$0\" > '{}'\nprintf '%s' '{{\"x\":12,\"y\":34}}'\n",
                 marker.display()
             ),
         );
@@ -2013,7 +2011,7 @@ mod tests {
         let pid_file = dir.path().join("child pid");
         let fake = script(
             &dir,
-            "#!/bin/sh\nprintf '%s' \"$$\" > \"$1\"\nkill -STOP \"$$\"\nexit 99\n",
+            "printf '%s' \"$$\" > \"$1\"\nkill -STOP \"$$\"\nexit 99\n",
         );
 
         let cancelled_pid = std::cell::Cell::new(None);
@@ -2035,7 +2033,9 @@ mod tests {
             cancelled_pid.get().is_some()
         });
 
-        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let pid = std::fs::read_to_string(&pid_file).unwrap_or_else(|err| {
+            panic!("hyprctl did not write its pid: {err}; result={result:?}")
+        });
         assert!(
             !Path::new("/proc").join(&pid).exists(),
             "child {pid} was not reaped: {result:?}"
@@ -2048,10 +2048,7 @@ mod tests {
     fn a_hung_hyprctl_is_killed_and_reaped_at_the_deadline() {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("pid file");
-        let fake = script(
-            &dir,
-            "#!/bin/sh\nprintf '%s' \"$$\" > \"$1\"\nexec sleep 5\n",
-        );
+        let fake = script(&dir, "printf '%s' \"$$\" > \"$1\"\nexec sleep 5\n");
         let start = Instant::now();
         let result = command_at(&fake, &[pid_file.to_str().unwrap()]);
         let elapsed = start.elapsed();
@@ -2068,13 +2065,13 @@ mod tests {
     #[test]
     fn the_runner_returns_stdout_and_turns_a_failure_into_its_message() {
         let dir = tempfile::tempdir().unwrap();
-        let ok = script(&dir, "#!/bin/sh\nprintf '%s' \"$1 $2\"\n");
+        let ok = script(&dir, "printf '%s' \"$1 $2\"\n");
         // Arguments with spaces and quotes arrive untouched: no shell.
         assert_eq!(
             command_at(&ok, &["a b", "c\"d;$(id)"]).unwrap(),
             "a b c\"d;$(id)"
         );
-        let failing = script(&dir, "#!/bin/sh\nprintf 'boom' >&2\nexit 3\n");
+        let failing = script(&dir, "printf 'boom' >&2\nexit 3\n");
         assert_eq!(command_at(&failing, &[]).unwrap_err(), "boom");
         assert!(command_at(&dir.path().join("missing"), &[]).is_err());
     }
@@ -2091,7 +2088,7 @@ mod tests {
         let redirect = if stream == "stderr" { " >&2" } else { "" };
         script(
             dir,
-            &format!("#!/bin/sh\nhead -c {bytes} /dev/zero{redirect}\nexit 0\n"),
+            &format!("head -c {bytes} /dev/zero{redirect}\nexit 0\n"),
         )
     }
 

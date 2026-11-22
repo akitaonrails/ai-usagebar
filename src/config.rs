@@ -8121,7 +8121,10 @@ enabled = true
                 let path = path.clone();
                 std::thread::spawn(move || -> Result<()> {
                     for _ in 0..50 {
-                        edit_config_document(&path, |doc| {
+                        // Exercise serialization even if the hosted Windows
+                        // runner is slow to sync 50 successive writes. The
+                        // user-facing timeout is checked separately below.
+                        edit_config_document_within(&path, Duration::from_secs(30), |doc| {
                             let count = doc
                                 .get("counter")
                                 .and_then(|table| table.get("count"))

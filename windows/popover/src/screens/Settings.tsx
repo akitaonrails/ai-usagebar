@@ -10,7 +10,7 @@ import { PopoverWidthControl } from "@/components/PopoverWidthControl";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { Card, Language, Layout, Payload } from "@/lib/types";
+import type { Card, Language, Layout, Payload, UpdateMode } from "@/lib/types";
 import { m } from "@/paraglide/messages.js";
 import { useI18n } from "@/lib/i18n";
 import { wheelScrollRef } from "@/lib/wheelScroll";
@@ -94,6 +94,8 @@ export function Settings({
   }
 
   const updateStatus = updateStatusLabel(payload, nowMs, language);
+  const linux = payload.os === "linux";
+  const updateModes: UpdateMode[] = linux ? ["notify", "off"] : ["auto", "notify", "off"];
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, current: SettingsTab) {
     const index = settingsTabs.findIndex(([name]) => name === current);
@@ -184,15 +186,17 @@ export function Settings({
             onChange={(minutes) => sendCommand("set-refresh", { minutes: Number(minutes) })}
           />
         </SettingRow>
-        <SettingRow hint={m.global_shortcut_hint()} label={m.global_shortcut()}>
-          <ShortcutRecorder
-            error={payload.shortcutError}
-            value={payload.shortcut}
-            os={payload.os}
-            onChange={(value) => sendCommand("set-shortcut", { value })}
-          />
-        </SettingRow>
-        <SettingError text={payload.shortcutError} />
+        {!linux && <>
+          <SettingRow hint={m.global_shortcut_hint()} label={m.global_shortcut()}>
+            <ShortcutRecorder
+              error={payload.shortcutError}
+              value={payload.shortcut}
+              os={payload.os}
+              onChange={(value) => sendCommand("set-shortcut", { value })}
+            />
+          </SettingRow>
+          <SettingError text={payload.shortcutError} />
+        </>}
       </Section>
       </div>
       ) : null}
@@ -343,14 +347,10 @@ export function Settings({
       {/* Native shows Updates under General only; Classic keeps it at the end of the page. */}
       {!native || tab === "general" ? (
       <Section title={m.updates()}>
-        <SettingRow hint={m.updates_hint()} label={m.updates()}>
+        <SettingRow hint={linux ? undefined : m.updates_hint()} label={m.updates()}>
           <Picker
-            options={[
-              ["auto", updateModeLabel("auto", language)],
-              ["notify", updateModeLabel("notify", language)],
-              ["off", updateModeLabel("off", language)],
-            ]}
-            value={payload.updates}
+            options={updateModes.map((mode) => [mode, updateModeLabel(mode, language)])}
+            value={linux && payload.updates === "auto" ? "notify" : payload.updates}
             onChange={(mode) => sendCommand("set-updates", { mode })}
           />
         </SettingRow>

@@ -74,6 +74,8 @@ pub mod safe_storage;
 pub mod serde_helpers;
 pub mod supergrok;
 pub mod synthetic;
+#[cfg(all(test, unix))]
+pub(crate) mod test_support;
 pub mod theme;
 pub mod tooltip;
 pub mod tray;
