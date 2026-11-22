@@ -34,8 +34,8 @@ Antigravity saved at sign-in: it asks `agy -p "/quota"` first when `agy` is
 installed, keeps `agy`'s last reading (marked stale) when `agy` does not
 answer, and asks the Cloud Code API only when there is no `agy` reading to
 keep. A product that is running but signed out reports its own sign-in error
-instead. With no source able to answer, the extension shows the last cached
-figures, then an error once those age out.
+instead. For other failures, the extension can show the last cached figures
+until they age out.
 
 The click menu can also list one Antigravity entry per account, from the
 [`agy` status-line integration](../README.md#multiple-antigravity-cli-accounts-macos-and-linux).
