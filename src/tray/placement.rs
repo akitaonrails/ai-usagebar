@@ -32,9 +32,9 @@ pub(crate) struct Insets {
 
 impl Insets {
     /// `margin` on every edge except the ones the taskbar was docked against, which get none:
-    /// the popover sits right by the taskbar, and the room kept around the window
-    /// ([`with_shadow_room`]) is what its shadow draws in. Which edges those are shows in how
-    /// the work area was pulled in from the monitor.
+    /// the popover sits right by the taskbar, and the window's invisible frame border is the
+    /// room its shadow draws in. Which edges those are shows in how the work area was pulled in
+    /// from the monitor.
     pub(crate) fn by_taskbar(monitor: Area, work: Area, margin: i32) -> Self {
         let edge = |pulled_in: bool| if pulled_in { 0 } else { margin };
         Self {
@@ -175,27 +175,9 @@ pub(crate) fn corner_near_taskbar(
     clamp_into(work, x, y, width, height, insets)
 }
 
-/// Places a `width`×`height` window that keeps `room` physical pixels clear on its left, right
-/// and bottom, where its shadow draws: `place` positions the larger footprint, the window plus
-/// that room, and the window goes inside it. The window used to carry this room itself, as the
-/// invisible frame tao keeps around an undecorated window's shadow, and every rule above was
-/// written for that footprint. The room has no top: tao's frame kept none there on Windows 10
-/// and about one pixel per 100% of scale on Windows 11, and that pixel is not kept.
-pub(crate) fn with_shadow_room(
-    width: i32,
-    height: i32,
-    room: i32,
-    place: impl FnOnce(i32, i32) -> (i32, i32),
-) -> (i32, i32) {
-    let room = room.max(0);
-    let (x, y) = place(width + 2 * room, height + room);
-    (x + room, y)
-}
-
-/// Tallest logical inner height that keeps the whole window inside `work`: `frame_height`
-/// (physical) is taken off first, so it cannot push the window's bottom edge past the work
-/// area. It is the window frame (`outer_height - inner_height`) plus any shadow room kept
-/// under the window.
+/// Tallest logical inner height that keeps the whole window inside `work`: the window frame
+/// (`outer_height - inner_height`, physical) is taken off first, so the frame cannot push the
+/// window's bottom edge past the work area.
 pub(crate) fn max_inner_height(work: Area, frame_height: i32, scale: f64) -> f64 {
     let scale = if scale.is_finite() && scale > 0.0 {
         scale
@@ -439,92 +421,6 @@ mod tests {
         let (x, y) = beside_icon(MONITOR, WORK, TASKBAR_ICON, 316, 1384, 8);
         assert_eq!((x, y), (3012, 8));
         assert!(y + 1384 <= WORK.bottom());
-    }
-
-    /// The popover as its window now is, 300 px wide with no frame, and the room its frame
-    /// used to add: 8 px at 96 DPI on the left, right and bottom, which made the 316 px
-    /// window the tests above place.
-    const ROOM: i32 = 8;
-
-    /// Where the 300×592 popover opens: from `icon`, or from the shortcut with none.
-    fn opened(monitor: Area, work: Area, icon: Option<Area>) -> (i32, i32) {
-        with_shadow_room(300, 592, ROOM, |width, height| match icon {
-            Some(icon) => beside_icon(monitor, work, icon, width, height, 8),
-            None => {
-                let insets = Insets::by_taskbar(monitor, work, 8);
-                corner_near_taskbar(monitor, work, width, height, insets)
-            }
-        })
-    }
-
-    #[test]
-    fn the_shadow_room_keeps_a_frameless_popover_off_a_bottom_taskbar() {
-        // Still centered on the icon, its bottom edge the room above the taskbar, not on it.
-        let (x, y) = opened(MONITOR, WORK, Some(TASKBAR_ICON));
-        assert_eq!((x, y), (3170 - 150, 1392 - 592 - ROOM));
-        // The shortcut: the same gap below, and the margin plus the room on the right.
-        let (x, y) = opened(MONITOR, WORK, None);
-        assert_eq!((x + 300, y + 592), (3440 - 8 - ROOM, 1392 - ROOM));
-    }
-
-    #[test]
-    fn the_shadow_room_follows_a_taskbar_on_the_left_or_right() {
-        let left = Area {
-            x: 60,
-            y: 0,
-            width: 3380,
-            height: 1440,
-        };
-        let icon = Area {
-            x: 0,
-            y: 700,
-            width: 60,
-            height: 40,
-        };
-        assert_eq!(opened(MONITOR, left, Some(icon)).0, 60 + ROOM);
-        assert_eq!(
-            opened(MONITOR, left, None),
-            (60 + ROOM, 1440 - 592 - 8 - ROOM)
-        );
-
-        let right = Area {
-            x: 0,
-            y: 0,
-            width: 3380,
-            height: 1440,
-        };
-        let icon = Area { x: 3380, ..icon };
-        assert_eq!(opened(MONITOR, right, Some(icon)).0 + 300, 3380 - ROOM);
-        assert_eq!(opened(MONITOR, right, None).0 + 300, 3380 - ROOM);
-    }
-
-    #[test]
-    fn the_shadow_room_has_no_top_so_a_top_taskbar_is_met_at_the_work_area_edge() {
-        // The room has no top, so under a top taskbar the panel starts on the work area's edge.
-        // tao's frame did the same on Windows 10 and sat about one pixel lower on Windows 11.
-        let top = Area {
-            x: 0,
-            y: 48,
-            width: 3440,
-            height: 1392,
-        };
-        let icon = Area {
-            y: 0,
-            ..TASKBAR_ICON
-        };
-        assert_eq!(opened(MONITOR, top, Some(icon)), (3170 - 150, 48));
-        assert_eq!(opened(MONITOR, top, None), (3440 - 300 - 8 - ROOM, 48));
-    }
-
-    #[test]
-    fn no_shadow_room_places_the_window_itself() {
-        let place = |width, height| {
-            assert_eq!((width, height), (316, 600));
-            (40, 50)
-        };
-        assert_eq!(with_shadow_room(316, 600, 0, place), (40, 50));
-        // A nonsense room is read as none.
-        assert_eq!(with_shadow_room(316, 600, -8, place), (40, 50));
     }
 
     #[test]
