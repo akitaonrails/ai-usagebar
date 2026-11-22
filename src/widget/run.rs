@@ -20,6 +20,7 @@ use crate::deeprelay;
 use crate::deepseek;
 use crate::error::{AppError, Result};
 use crate::explabs;
+use crate::fireworks;
 use crate::grok;
 use crate::grokbot;
 use crate::kilo;
@@ -183,6 +184,7 @@ async fn build_output(cli: &Cli) -> Result<WaybarOutput> {
         Vendor::Lyceum => lyceum_output(cli, &config).await,
         Vendor::ExperientialLabs => explabs_output(cli, &config).await,
         Vendor::MartLlm => martllm_output(cli, &config).await,
+        Vendor::Fireworks => fireworks_output(cli, &config).await,
         Vendor::ModelStudio => modelstudio_output(cli, &config).await,
         Vendor::Devin => devin_output(cli, &config).await,
         Vendor::Droid => droid_output(cli, &config).await,
@@ -890,6 +892,30 @@ async fn martllm_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
         Err(error) => return Err(error),
     };
     Ok(martllm::render(
+        &outcome,
+        &theme_from_cli(cli),
+        &RenderOpts::from_cli(cli),
+        Utc::now(),
+    ))
+}
+
+async fn fireworks_output(cli: &Cli, config: &Config) -> Result<WaybarOutput> {
+    let (key, cache) = api_key_target(cli, config, VendorId::Fireworks)?;
+    let account = config.fireworks.account_id.as_deref().unwrap_or_default();
+    let client = http_client()?;
+    let outcome = match fetch_api_keyed(
+        fireworks::fetch_snapshot(&client, &key, account, &cache, DEFAULT_TTL),
+        &key,
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_transient() => {
+            return Ok(WaybarOutput::loading(cli.icon.as_deref()));
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(fireworks::render(
         &outcome,
         &theme_from_cli(cli),
         &RenderOpts::from_cli(cli),

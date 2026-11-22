@@ -719,6 +719,11 @@ assert.match(ollamaMark, /<path\s/);
 assert.match(ollamaMark, /<svg\b[^>]*\bfill="#ffffff"/);
 assert.doesNotMatch(ollamaMark, /currentColor|<(?:script|image|foreignObject|use)\b|\bhref\s*=|\bon\w+\s*=/i);
 assert.equal(model.brandIconFile({id: 'orcarouter'}), 'orcarouter.svg');
+assert.equal(model.brandIconFile({id: 'fireworks'}), 'fireworks.svg');
+assert.ok(fs.existsSync(new URL('./icons/fireworks.svg', import.meta.url)));
+assert.equal(model.headline({
+  sections: [{type: 'text', label: 'Month-to-date spend (UTC)', value: '$10.93'}]
+}).text, '$10.93');
 assert.equal(model.brandIconFile({id: 'orcarouter@work'}), 'orcarouter.svg');
 assert.equal(model.brandIconFile({id: 'custom:orca-second', brand: 'orcarouter'}), 'orcarouter.svg');
 const orcaMark = fs.readFileSync(new URL('./icons/orcarouter.svg', import.meta.url), 'utf8');

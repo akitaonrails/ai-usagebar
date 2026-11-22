@@ -269,6 +269,14 @@ func testParserBalances() {
                            fields: fields(through: 69, set: [69: "$12.05"]))
     assertEqual(martllm?.creditBalance, "$12.05", "MartLLM balance via ull_balance")
     assertEqual(martllm?.hasUsageWindows, false, "MartLLM has no quota windows")
+    assertEqual(martllm?.amountTag, "cr", "MartLLM remains a credit balance")
+
+    let fireworks = snapshot(FORMAT, vendor: "fireworks",
+                             fields: fields(through: 71, set: [71: "$18.50"]))
+    assertEqual(fireworks?.creditBalance, "$18.50", "Fireworks cost via fw_monthly_cost")
+    assertEqual(fireworks?.amountTag, "MTD", "Fireworks does not claim a balance")
+    assertEqual(fireworks?.amountLabel, "Month-to-date cost (UTC)", "Fireworks cost label")
+    assertEqual(fireworks?.hasUsageWindows, false, "Fireworks does not claim quota windows")
 
     let explabs = snapshot(FORMAT, vendor: "explabs",
                            fields: fields(through: 70, set: [70: "-$2.00"]))
@@ -782,6 +790,7 @@ func testKimiMonthlyMirror() {
                 "Kimi fields retain their FORMAT indices")
     assertEqual(tokens[69], "{ull_balance}", "MartLLM balance is appended to FORMAT")
     assertEqual(tokens[70], "{explabs_balance}", "Experiential Labs balance is appended to FORMAT")
+    assertEqual(tokens[71], "{fw_monthly_cost}", "Fireworks cost is appended to FORMAT")
     assertEqual(tokens[65], "{synthetic_pct}", "existing Synthetic percentage index is unchanged")
     assertEqual(tokens[66], "{synthetic_reset}", "existing Synthetic reset index is unchanged")
 

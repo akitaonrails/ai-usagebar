@@ -133,6 +133,8 @@ The selector dynamically discovers **all providers** that ship in the binary via
   bar when a monthly limit is configured. The legacy menu bar shows the
   Experiential Labs wallet only; the tray popover also displays its daily
   allowance when the API reports one.
+- **Rated cost only:** Fireworks shows `MTD <amount>` for the current UTC
+  month, without balance or quota rows.
 
 The app uses `ai-usagebar vendors --json` as its canonical metadata source so
 vendor availability, authentication status, and CLI requirements always match the

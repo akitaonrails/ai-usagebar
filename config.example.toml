@@ -807,6 +807,13 @@ enabled = false
 api_key_env = "EXPLABS_API_KEY"
 # api_key = "..."             # inline fallback; chmod 600 the file if used
 
+[fireworks]
+# Rated USD cost for the current UTC month, not a quota or wallet balance.
+enabled = false
+# account_id = "my-account"  # account ID from the Fireworks console
+api_key_env = "FIREWORKS_API_KEY"
+# api_key = "..."             # inline fallback; chmod 600 the file if used
+
 [mistral]
 # Disabled by default — enable once you've set a key. Reads the monthly API
 # and Vibe Code budgets from https://api.mistral.ai/v1/billing/budget, the

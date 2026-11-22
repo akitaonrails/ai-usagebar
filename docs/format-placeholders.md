@@ -626,6 +626,11 @@ daily allowance and are empty when unavailable. The default bar shows its
 percentage when available, otherwise the wallet balance. The vendor short
 name is `xpl`.
 
+## Fireworks
+
+`{fw_monthly_cost}` is the rated USD cost month-to-date (UTC). There is no
+balance, quota percentage, or reset. The vendor short name is `fw`.
+
 ## Lyceum
 
 `{lyceum_balance}`, `{lyceum_used}`, and `{lyceum_remaining}` are the USD

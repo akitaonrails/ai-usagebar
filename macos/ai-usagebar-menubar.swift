@@ -104,6 +104,7 @@ let POINT_CRITICAL_MIN = 10
 // `{kimi_monthly_reset}` (67-68) carry Kimi's monthly pool (empty on legacy
 // weekly accounts). `{ull_balance}` (69) carries MartLLM's available USD.
 // `{explabs_balance}` (70) carries Experiential Labs's wallet balance.
+// {fw_monthly_cost} (71) carries Fireworks' rated month-to-date USD cost.
 // A final literal sentinel absorbs the widget's stale
 // suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
@@ -126,7 +127,7 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{cline_30d_pct};;{cline_30d_reset};;" +
              "{mst_monthly_pct};;{mst_monthly_reset};;" +
              "{synthetic_pct};;{synthetic_reset};;" +
-             "{kimi_monthly_pct};;{kimi_monthly_reset};;{ull_balance};;{explabs_balance}"
+             "{kimi_monthly_pct};;{kimi_monthly_reset};;{ull_balance};;{explabs_balance};;{fw_monthly_cost}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -523,6 +524,9 @@ struct Snapshot {
     /// Cursor's combined "included total usage" headline (`totalPercentUsed`),
     /// the single number its dashboard shows across both pools. nil for others.
     var cursorTotalPct: Int? = nil
+    /// Distinguish a cost headline from an available-credit balance.
+    var amountTag: String = "cr"
+    var amountLabel: String = "Credits"
 }
 
 func stripMarkup(_ s: String) -> String {
@@ -642,6 +646,7 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     case "deepinfra": balanceFieldIndex = 53
     case "martllm": balanceFieldIndex = 69
     case "explabs": balanceFieldIndex = 70
+    case "fireworks": balanceFieldIndex = 71
     default: balanceFieldIndex = nil
     }
     let balance = balanceFieldIndex.flatMap { t($0).isEmpty ? nil : t($0) }
@@ -853,7 +858,9 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
                     weeklyTag: weeklyTag,
                     sessionLabel: sessionLabel,
                     weeklyLabel: weeklyLabel,
-                    cursorTotalPct: isCursor ? n(27) : nil)
+                    cursorTotalPct: isCursor ? n(27) : nil,
+                    amountTag: vendor == "fireworks" ? "MTD" : "cr",
+                    amountLabel: vendor == "fireworks" ? "Month-to-date cost (UTC)" : "Credits")
 }
 
 // ─── Preferences UI (SwiftUI) ────────────────────────────────────────────
@@ -2863,7 +2870,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let heads: [(name: String, pct: Int, elapsed: Int?, value: String, reset: String?)] =
             items.compactMap {
                 guard visible.contains($0.id), let s = $0.snap else { return nil }
-                if let cb = s.creditBalance { return ($0.name, -1, nil, "cr \(cb)", nil) }
+                if let cb = s.creditBalance { return ($0.name, -1, nil, "\(s.amountTag) \(cb)", nil) }
                 let h = overviewHeadline(s)
                 let shortValue = h.reset.flatMap(shortReset)
                 let reset = h.reset.flatMap { resetClockLabel($0, fallback: shortValue) }
@@ -2956,7 +2963,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             a.append(run(fitted + " ", .labelColor))
             if let s = item.snap {
                 if let cb = s.creditBalance {
-                    a.append(run("cr \(cb)", .labelColor))
+                    a.append(run("\(s.amountTag) \(cb)", .labelColor))
                 } else {
                     let h = overviewHeadline(s)
                     if h.value == "Unlimited" {
@@ -3049,7 +3056,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if !SHOW_PERCENT && !SHOW_BARS { title.append(run(value, colorForPct(pct))) }
         }
         if let creditBalance = s.creditBalance {
-            title.append(run("cr ", secondaryTextColor))
+            title.append(run(s.amountTag + " ", secondaryTextColor))
             title.append(run(creditBalance, primaryTextColor))
         } else {
             let hasFiniteSession = s.session.map { !$0.unlimited } ?? false
@@ -3107,7 +3114,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if let creditBalance = s.creditBalance {
             rows["session"]?.isHidden = false
-            rows["session"]?.attributedTitle = run("Credits      \(creditBalance)", .labelColor)
+            rows["session"]?.attributedTitle = run("\(s.amountLabel)      \(creditBalance)", .labelColor)
             rows["weekly"]?.isHidden = true
             rows["sonnet"]?.isHidden = true
         } else {

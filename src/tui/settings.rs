@@ -154,6 +154,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         note: "",
     },
     KeyVendor {
+        id: VendorId::Fireworks,
+        label: "Fireworks",
+        section: VendorId::Fireworks.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "also set [fireworks] account_id",
+    },
+    KeyVendor {
         id: VendorId::Mistral,
         label: "Mistral",
         section: VendorId::Mistral.config_section(),
@@ -2585,6 +2593,7 @@ mod tests {
             VendorId::Moonshot,
             VendorId::Grok,
             VendorId::Mistral,
+            VendorId::Fireworks,
         ] {
             assert!(
                 KEY_VENDORS.iter().any(|kv| kv.id == id),

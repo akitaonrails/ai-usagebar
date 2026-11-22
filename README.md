@@ -322,6 +322,7 @@ Keychain entry is checked only after the env var and any inline key miss.
 | Mistral | API key (`MISTRAL_API_KEY` env or `[mistral] api_key` in config) | Opt in (`[mistral]`) and supply a key; ai-usagebar never discovers credentials on its own. The key needs the `see_org_inference_usage` permission. Reports the monthly API and Vibe Code budgets, plan, reset, and pay-as-you-go flags; the API budget is omitted when the plan does not expose one. |
 | MartLLM | API key (`MARTLLM_API_KEY` env or `[martllm] api_key` in config) | Opt in (`[martllm]`) to see the prepaid USD balance available for new requests. Funds held for in-flight requests are shown separately when present. No quota meter. |
 | Experiential Labs | API key (`EXPLABS_API_KEY` env or `[explabs] api_key` in config) | Opt in. Reports the wallet and the current daily Free core token pool or paid credit allowance when the API reports one. |
+| Fireworks | API key (`FIREWORKS_API_KEY` env or `[fireworks] api_key`) and `[fireworks] account_id` | Opt in for rated USD cost month-to-date (UTC), including credit-covered usage. No wallet balance or quota meter. |
 | Muse Code | Existing file-based Muse CLI OAuth login | Enable `[muse-code]` after `muse login`. Reports subscription session/weekly quota and resets. Credentials are read only; Meta can omit quotas while the session window is idle. [Setup and limitations](docs/muse-code.md). |
 
 ### Nous credits and OpenCode Go

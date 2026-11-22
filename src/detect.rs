@@ -119,6 +119,14 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::OrcaRouter => key_present(config, vendor),
         VendorId::Lyceum => key_present(config, vendor),
         VendorId::ExperientialLabs | VendorId::MartLlm => key_present(config, vendor),
+        VendorId::Fireworks => config
+            .fireworks
+            .account_id
+            .as_deref()
+            .is_some_and(|account| {
+                crate::fireworks::validate_account_id(account).is_ok()
+                    && key_present(config, vendor)
+            }),
         // File-exists only, like Grok Bot: parsing the JSON here would be
         // wasted work — the fetch reads the same file and reports honestly.
         VendorId::ModelStudio => crate::modelstudio::config_path(&config.modelstudio)
@@ -592,7 +600,12 @@ mod tests {
     fn an_opt_in_vendor_is_neither_probed_nor_counted() {
         let config = Config::default();
         let state = DetectState::default();
-        let all = [VendorId::Cursor, VendorId::Devin, VendorId::Kiro];
+        let all = [
+            VendorId::Cursor,
+            VendorId::Devin,
+            VendorId::Fireworks,
+            VendorId::Kiro,
+        ];
         for force in [false, true] {
             let probed_vendors = std::cell::RefCell::new(Vec::new());
             let plan = plan(&config, &state, &all, force, |vendor| {
@@ -602,12 +615,18 @@ mod tests {
             assert_eq!(plan.enable, vec![VendorId::Cursor, VendorId::Kiro]);
             assert_eq!(plan.probed, 2, "force={force}");
             assert!(!probed_vendors.borrow().contains(&VendorId::Devin));
+            assert!(!probed_vendors.borrow().contains(&VendorId::Fireworks));
             assert!(plan.known.contains(&VendorId::Devin));
+            assert!(plan.known.contains(&VendorId::Fireworks));
         }
         assert!(VendorId::all().iter().all(|vendor| vendor.auto_detectable()
             != matches!(
                 vendor,
-                VendorId::Devin | VendorId::MuseCode | VendorId::Droid | VendorId::Mistral
+                VendorId::Devin
+                    | VendorId::MuseCode
+                    | VendorId::Droid
+                    | VendorId::Mistral
+                    | VendorId::Fireworks
             )));
     }
 

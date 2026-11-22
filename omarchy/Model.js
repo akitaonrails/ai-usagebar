@@ -581,7 +581,7 @@ function brandIconFile(entry) {
   return brandFileFor(declared !== "" ? declared : baseProvider(entry && entry.id))
 }
 
-// Official brand marks shipped next to this file. A missing file falls back
+// Provider marks shipped next to this file. A missing file falls back
 // to the nerd-font glyph from the Rust report — the table is asset lookup,
 // not a second copy of provider names.
 function brandFileFor(provider) {
@@ -637,6 +637,8 @@ function brandFileFor(provider) {
       return "synthetic.svg"
     case "orcarouter":
       return "orcarouter.svg"
+    case "fireworks":
+      return "fireworks.svg"
     case "mistral":
     case "custom:mistral":
       return "mistral.svg"

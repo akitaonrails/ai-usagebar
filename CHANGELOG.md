@@ -15,6 +15,12 @@
   when available, the shared Free core token pool or paid daily included credits.
   No quota is inferred from recent requests (#585).
 
+- **Fireworks month-to-date cost.** Set `[fireworks] account_id` and
+  `FIREWORKS_API_KEY`, then enable the provider. AI Usage shows rated USD
+  cost for the current UTC month from Fireworks' billing summary. This is
+  cost, including usage covered by credits, rather than a balance or quota
+  percentage (#572).
+
 - **MartLLM prepaid wallet.** Enable `[martllm]` and set `MARTLLM_API_KEY`
   to show the USD balance available for new requests, with total and held
   funds in the details when requests are in flight (#610).

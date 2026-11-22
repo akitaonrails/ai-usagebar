@@ -371,6 +371,7 @@ mod tests {
             VendorId::Lyceum => MacosMirror::Slot("lyceum_balance"),
             VendorId::ExperientialLabs => MacosMirror::Slot("explabs_balance"),
             VendorId::MartLlm => MacosMirror::Slot("ull_balance"),
+            VendorId::Fireworks => MacosMirror::Slot("fw_monthly_cost"),
             VendorId::Minimax => MacosMirror::Slot("minimax_video_pct"),
             VendorId::Moonshot => MacosMirror::Slot("km_balance"),
             VendorId::Novita => MacosMirror::Slot("nv_balance"),

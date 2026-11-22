@@ -445,6 +445,13 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
             (s.tier_name().unwrap_or_default().into(), cells)
         }
         VendorSnapshot::MartLlm(s) => (String::new(), vec![usd_cell(s.available_usd)]),
+        VendorSnapshot::Fireworks(s) => (
+            String::new(),
+            vec![(
+                format!("MTD {}", usd(s.monthly_cost_usd)),
+                PaceSeverity::Low,
+            )],
+        ),
         VendorSnapshot::Lyceum(s) => (
             String::new(),
             vec![(usd(s.available_credits), PaceSeverity::Low)],
@@ -812,6 +819,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         | VendorSnapshot::Novita(_)
         | VendorSnapshot::Lyceum(_)
         | VendorSnapshot::MartLlm(_)
+        | VendorSnapshot::Fireworks(_)
         | VendorSnapshot::Moonshot(_)
         | VendorSnapshot::Grok(_) => None,
     }
@@ -883,6 +891,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Lyceum(s) => lyceum_sections(s),
                 VendorSnapshot::ExperientialLabs(s) => explabs_sections(s, now, pace_tolerance),
                 VendorSnapshot::MartLlm(s) => martllm_sections(s),
+                VendorSnapshot::Fireworks(s) => fireworks_sections(s),
                 VendorSnapshot::Moonshot(s) => moonshot_sections(s, prefs),
                 VendorSnapshot::Grok(s) => grok_sections(s, prefs),
                 VendorSnapshot::SuperGrok(s) => supergrok_sections(s, now, pace_tolerance),
@@ -2084,6 +2093,20 @@ fn martllm_sections(s: &crate::usage::MartLlmSnapshot) -> SectionBuilder {
     sections
 }
 
+fn fireworks_sections(s: &crate::usage::FireworksSnapshot) -> SectionBuilder {
+    SectionBuilder::new(vec![
+        Section::Title {
+            left: crate::vendor::VendorId::Fireworks.display_name().into(),
+            right: None,
+        },
+        Section::Spacer,
+        Section::Text {
+            label: "Month-to-date spend (UTC)".into(),
+            value: usd(s.monthly_cost_usd),
+        },
+    ])
+}
+
 fn lyceum_sections(s: &crate::usage::LyceumSnapshot) -> SectionBuilder {
     SectionBuilder::new(vec![
         Section::Title {
@@ -3265,6 +3288,25 @@ mod tests {
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 5, 23, 12, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn fireworks_report_shows_cost_without_a_balance_or_quota() {
+        let reading = VendorSnapshot::Fireworks(crate::usage::FireworksSnapshot {
+            monthly_cost_usd: 12.05,
+        });
+        assert_eq!(headline_pct(&reading), None);
+        assert_eq!(compact_cells(&reading).1[0].0, "MTD $12.05");
+        let rows = sections_with_metadata_for(&ready(reading), now(), 5);
+        assert!(
+            !rows
+                .iter()
+                .any(|row| matches!(row.section, Section::Metric { .. }))
+        );
+        assert!(rows.iter().any(|row| matches!(
+            &row.section, Section::Text { label, value }
+                if label == "Month-to-date spend (UTC)" && value == "$12.05"
+        )));
     }
 
     #[test]

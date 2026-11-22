@@ -140,6 +140,15 @@ pub fn statuses_with(cfg: &Config, probes: &Probes) -> Vec<VendorStatus> {
 /// included, where it is the headless override — and then by an inline
 /// `api_key`, and only then by its own login artifact.
 fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
+    if id == VendorId::Fireworks
+        && cfg
+            .fireworks
+            .account_id
+            .as_deref()
+            .is_none_or(|account| crate::fireworks::validate_account_id(account).is_err())
+    {
+        return false;
+    }
     let env = cfg.api_key_env_for(id);
     if !env.is_empty() && (probes.env_set)(env) {
         return true;
@@ -288,6 +297,7 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         | VendorId::Lyceum
         | VendorId::ExperientialLabs
         | VendorId::MartLlm
+        | VendorId::Fireworks
         | VendorId::Mistral => false,
     }
 }

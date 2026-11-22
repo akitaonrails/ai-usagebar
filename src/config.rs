@@ -86,6 +86,7 @@ pub struct Config {
     pub deeprelay: DeepRelayConfig,
     pub explabs: ExperientialLabsConfig,
     pub martllm: MartLlmConfig,
+    pub fireworks: FireworksConfig,
     pub mistral: MistralConfig,
     /// Generic macOS Keychain source for vendor API keys: vendor slug (or
     /// `"vendor.label"` for a named `[[vendor.accounts]]` entry) → the
@@ -2244,6 +2245,27 @@ impl Default for MartLlmConfig {
     }
 }
 
+/// Fireworks' account billing-summary endpoint.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct FireworksConfig {
+    pub enabled: bool,
+    pub account_id: Option<String>,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+}
+
+impl Default for FireworksConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            account_id: None,
+            api_key_env: VendorId::Fireworks.api_key_env().into(),
+            api_key: None,
+        }
+    }
+}
+
 /// Mistral's monthly API and Vibe Code budgets (`GET /v1/billing/budget`).
 ///
 /// Key-only and opt-in. The key comes from `MISTRAL_API_KEY` or an inline
@@ -3135,6 +3157,7 @@ impl Config {
             self.deeprelay.api_key.as_deref(),
             self.explabs.api_key.as_deref(),
             self.martllm.api_key.as_deref(),
+            self.fireworks.api_key.as_deref(),
             self.mistral.api_key.as_deref(),
         ]
         .into_iter()
@@ -3245,6 +3268,7 @@ impl Config {
             VendorId::DeepRelay => self.deeprelay.enabled,
             VendorId::ExperientialLabs => self.explabs.enabled,
             VendorId::MartLlm => self.martllm.enabled,
+            VendorId::Fireworks => self.fireworks.enabled,
             VendorId::Mistral => self.mistral.enabled,
         }
     }
@@ -3276,6 +3300,7 @@ impl Config {
             VendorId::DeepRelay => &self.deeprelay.api_key_env,
             VendorId::ExperientialLabs => &self.explabs.api_key_env,
             VendorId::MartLlm => &self.martllm.api_key_env,
+            VendorId::Fireworks => &self.fireworks.api_key_env,
             VendorId::Mistral => &self.mistral.api_key_env,
             VendorId::Cline => &self.cline.api_key_env,
             // Fixed names: OAuth-first providers whose environment override is
@@ -3321,6 +3346,7 @@ impl Config {
             VendorId::DeepRelay => self.deeprelay.api_key.as_deref(),
             VendorId::ExperientialLabs => self.explabs.api_key.as_deref(),
             VendorId::MartLlm => self.martllm.api_key.as_deref(),
+            VendorId::Fireworks => self.fireworks.api_key.as_deref(),
             VendorId::Mistral => self.mistral.api_key.as_deref(),
             VendorId::Cline => self.cline.api_key.as_deref(),
             VendorId::Anthropic
@@ -3380,6 +3406,7 @@ impl Config {
         VendorId::DeepRelay,
         VendorId::ExperientialLabs,
         VendorId::MartLlm,
+        VendorId::Fireworks,
         VendorId::Mistral,
     ];
 
@@ -3598,6 +3625,9 @@ impl Config {
     /// labels are both CLI selectors and TUI tab identities, so duplicates
     /// would make either destination ambiguous.
     pub fn validate(&self) -> Result<()> {
+        if let Some(account_id) = &self.fireworks.account_id {
+            crate::fireworks::validate_account_id(account_id)?;
+        }
         for (key, service) in &self.keychain {
             if let Err(reason) = crate::keychain::validate_service_name(service) {
                 return Err(AppError::Other(format!(
@@ -4902,6 +4932,26 @@ enabled = false
             "#,
         );
         assert!(Config::load_from(f.path()).is_err());
+    }
+
+    #[test]
+    fn fireworks_requires_an_explicit_account_and_never_enables_itself() {
+        let vendor = VendorId::Fireworks;
+        let defaults = Config::default();
+        assert!(!defaults.is_enabled(vendor));
+        assert!(!vendor.auto_detectable());
+        assert_eq!(defaults.api_key_env_for(vendor), "FIREWORKS_API_KEY");
+        let config = Config::load_from(
+            write_toml("[fireworks]\nenabled = true\naccount_id = 'my-account'\napi_key_env = ''\napi_key = 'test-key'\n").path(),
+        ).unwrap();
+        assert!(config.is_enabled(vendor) && config.has_inline_secrets());
+        assert_eq!(config.fireworks.account_id.as_deref(), Some("my-account"));
+        assert_eq!(
+            config.resolve_account_api_key_for(vendor, None).unwrap(),
+            "test-key"
+        );
+        let invalid = write_toml("[fireworks]\naccount_id = 'not/a-segment'\n");
+        assert!(Config::load_from(invalid.path()).is_err());
     }
 
     #[test]

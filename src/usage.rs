@@ -519,6 +519,7 @@ pub enum VendorSnapshot {
     Lyceum(LyceumSnapshot),
     ExperientialLabs(crate::explabs::Snapshot),
     MartLlm(MartLlmSnapshot),
+    Fireworks(FireworksSnapshot),
     Devin(DevinSnapshot),
     Droid(DroidSnapshot),
     DeepRelay(DeepRelaySnapshot),
@@ -780,6 +781,13 @@ pub struct MartLlmSnapshot {
     pub held_usd: f64,
 }
 impl Eq for MartLlmSnapshot {}
+
+/// Fireworks' rated month-to-date cost, not a wallet balance or spending cap.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FireworksSnapshot {
+    pub monthly_cost_usd: f64,
+}
+impl Eq for FireworksSnapshot {}
 
 /// Moonshot / Kimi — account balance from `/v1/users/me/balance`. Currency is
 /// USD (`api.moonshot.ai`) or CNY (`api.moonshot.cn`); there's no currency

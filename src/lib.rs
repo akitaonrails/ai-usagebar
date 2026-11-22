@@ -35,6 +35,7 @@ pub mod display;
 pub mod droid;
 pub mod error;
 pub mod explabs;
+pub mod fireworks;
 pub mod format;
 pub mod grok;
 pub mod grokbot;

@@ -36,7 +36,7 @@ you make while the check is running.
 #                         # | zai | openrouter | deepseek | deepinfra | kimi | kilo | novita
 #                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
-#                         # | orcarouter | modelstudio | lyceum | martllm | explabs | devin | cline | muse-code | droid
+#                         # | orcarouter | modelstudio | lyceum | martllm | explabs | fireworks | devin | cline | muse-code | droid
 #                         # | synthetic | mistral
 # Which vendors the Overview lists, in this order. The TUI tab bar leads with
 # the same list; enabled vendors left off it follow in the canonical order.
@@ -191,6 +191,13 @@ api_key_env = "LYCEUM_API_KEY"
 enabled = true              # disabled by default; enable after setting a key
 api_key_env = "MARTLLM_API_KEY"
 # api_key = "..."           # inline fallback; chmod 600 the file if used
+
+[fireworks]
+enabled = true              # disabled by default
+account_id = "my-account"    # explicit account ID from the Fireworks console
+api_key_env = "FIREWORKS_API_KEY"
+# api_key = "..."           # inline fallback; chmod 600 the file if used
+# Rated USD cost so far in the current UTC month. Not an available balance.
 
 [orcarouter]
 enabled = true             # disabled by default; enable once you add an API key

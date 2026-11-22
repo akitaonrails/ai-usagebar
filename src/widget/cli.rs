@@ -454,6 +454,7 @@ pub enum Vendor {
     ExperientialLabs,
     #[value(name = "martllm")]
     MartLlm,
+    Fireworks,
     Devin,
     MuseCode,
     Cline,
@@ -496,6 +497,7 @@ impl Vendor {
             Vendor::Lyceum => crate::vendor::VendorId::Lyceum,
             Vendor::ExperientialLabs => crate::vendor::VendorId::ExperientialLabs,
             Vendor::MartLlm => crate::vendor::VendorId::MartLlm,
+            Vendor::Fireworks => crate::vendor::VendorId::Fireworks,
             Vendor::Devin => crate::vendor::VendorId::Devin,
             Vendor::MuseCode => crate::vendor::VendorId::MuseCode,
             Vendor::Cline => crate::vendor::VendorId::Cline,
@@ -603,6 +605,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Lyceum => Vendor::Lyceum,
         crate::vendor::VendorId::ExperientialLabs => Vendor::ExperientialLabs,
         crate::vendor::VendorId::MartLlm => Vendor::MartLlm,
+        crate::vendor::VendorId::Fireworks => Vendor::Fireworks,
         crate::vendor::VendorId::Devin => Vendor::Devin,
         crate::vendor::VendorId::MuseCode => Vendor::MuseCode,
         crate::vendor::VendorId::Cline => Vendor::Cline,

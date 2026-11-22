@@ -53,6 +53,7 @@ pub(crate) const VENDOR_SECRET_ENV_VARS: &[&str] = &[
     "DEEPRELAY_API_KEY",
     "MARTLLM_API_KEY",
     "EXPLABS_API_KEY",
+    "FIREWORKS_API_KEY",
 ];
 
 /// Env var names a `[[custom]]` provider reads its token from. They are not
@@ -197,6 +198,7 @@ pub enum VendorId {
     #[serde(rename = "explabs")]
     #[value(name = "explabs")]
     ExperientialLabs,
+    Fireworks,
     Devin,
     Cline,
     #[serde(rename = "muse-code")]
@@ -263,6 +265,7 @@ impl VendorId {
             VendorId::Lyceum => "lyceum",
             VendorId::ExperientialLabs => "explabs",
             VendorId::MartLlm => "martllm",
+            VendorId::Fireworks => "fireworks",
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
             VendorId::Cline => "cline",
@@ -307,6 +310,7 @@ impl VendorId {
             VendorId::Lyceum => "Lyceum",
             VendorId::ExperientialLabs => "Experiential Labs",
             VendorId::MartLlm => "MartLLM",
+            VendorId::Fireworks => "Fireworks",
             VendorId::Devin => "Devin",
             VendorId::MuseCode => "Muse Code",
             VendorId::Droid => "Droid",
@@ -352,6 +356,7 @@ impl VendorId {
             VendorId::Lyceum => VendorId::Lyceum.short_name(),
             VendorId::ExperientialLabs => VendorId::ExperientialLabs.short_name(),
             VendorId::MartLlm => VendorId::MartLlm.short_name(),
+            VendorId::Fireworks => VendorId::Fireworks.short_name(),
             VendorId::Devin => VendorId::Devin.short_name(),
             VendorId::MuseCode => VendorId::MuseCode.short_name(),
             VendorId::Cline => VendorId::Cline.short_name(),
@@ -399,6 +404,7 @@ impl VendorId {
             VendorId::Lyceum => "lyc",
             VendorId::ExperientialLabs => "xpl",
             VendorId::MartLlm => "ull",
+            VendorId::Fireworks => "fw",
             VendorId::Devin => "dvn",
             VendorId::MuseCode => "msc",
             VendorId::Cline => "cln",
@@ -447,6 +453,7 @@ impl VendorId {
             VendorId::Lyceum => "lyceum",
             VendorId::ExperientialLabs => "explabs",
             VendorId::MartLlm => "martllm",
+            VendorId::Fireworks => "fireworks",
             VendorId::Devin => "devin",
             VendorId::MuseCode => "muse-code",
             VendorId::Droid => "droid",
@@ -486,6 +493,7 @@ impl VendorId {
             | VendorId::Lyceum
             | VendorId::ExperientialLabs
             | VendorId::MartLlm
+            | VendorId::Fireworks
             | VendorId::DeepRelay
             | VendorId::Mistral => AuthKind::ApiKey,
             // No credential of their own: another local product's session is
@@ -533,6 +541,7 @@ impl VendorId {
             VendorId::Lyceum => "LYCEUM_API_KEY",
             VendorId::ExperientialLabs => "EXPLABS_API_KEY",
             VendorId::MartLlm => "MARTLLM_API_KEY",
+            VendorId::Fireworks => "FIREWORKS_API_KEY",
             VendorId::DeepRelay => "DEEPRELAY_API_KEY",
             VendorId::Mistral => "MISTRAL_API_KEY",
             // OAuth-first, with an environment override for CI and headless
@@ -614,6 +623,7 @@ impl VendorId {
             | VendorId::MartLlm
             | VendorId::DeepRelay
             | VendorId::Mistral => "Add an API key in Settings, then Refresh.",
+            VendorId::Fireworks => "Set [fireworks] account_id and add an API key.",
         }
     }
 
@@ -655,19 +665,23 @@ impl VendorId {
             | VendorId::Lyceum
             | VendorId::ExperientialLabs
             | VendorId::MartLlm
+            | VendorId::Fireworks
             | VendorId::DeepRelay
             | VendorId::Mistral => "",
         }
     }
 
     /// Whether first-run detection may enable this provider from local
-    /// credentials. Devin, Muse Code, Droid and Mistral stay opt-in even when
-    /// a credential is findable: Mistral's key is supplied by the configuring
-    /// agent, never discovered on its own.
+    /// credentials. Devin, Muse Code, Droid, Mistral and Fireworks stay opt-in
+    /// even when a credential is findable.
     pub const fn auto_detectable(self) -> bool {
         !matches!(
             self,
-            VendorId::Devin | VendorId::MuseCode | VendorId::Droid | VendorId::Mistral
+            VendorId::Devin
+                | VendorId::MuseCode
+                | VendorId::Droid
+                | VendorId::Mistral
+                | VendorId::Fireworks
         )
     }
 
@@ -702,6 +716,7 @@ impl VendorId {
             VendorId::Lyceum,
             VendorId::ExperientialLabs,
             VendorId::MartLlm,
+            VendorId::Fireworks,
             VendorId::Devin,
             VendorId::Cline,
             VendorId::MuseCode,
