@@ -1,8 +1,7 @@
 //! Multi-size RGBA NotifyIcon.
 //!
-//! The glyph is the gauge the popover's About screen and the macOS menu bar's
-//! app-icon mode show (Material Design Icons `mdi:gauge`, Apache 2.0; see
-//! `macos/menu-bar-icon.LICENSE`). It is rasterized from
+//! The glyph is a linear gauge mark (dial arc, needle and hub) supplied by the
+//! user (Solar Icons style, CC BY 4.0). It is rasterized from
 //! `windows/tray-icon.svg` into one anti-aliased `windows/tray-icon-<size>.rgba`
 //! per NotifyIcon size (black ink, alpha as rendered). A dark taskbar gets the
 //! same glyph in white ([`Ink::White`]); the macOS menu bar tints it itself.
