@@ -100,6 +100,42 @@
 # Muse Code subscription quota is now a native provider: see [muse-code]
 # below and docs/muse-code.md. Legacy custom counters may retain id = "muse"
 # and short_name = "mus"; the native provider uses "muse-code" / "msc".
+#
+# Recipe: accounts signed in inside WSL, shown by the Windows tray. The Linux
+# ai-usagebar inside WSL shares selected quota figures on loopback, keyed by
+# entry ID, group, window length and label; windows/README.md ("Accounts signed in inside
+# WSL") has that half and the limits. One [[custom]] per account; entries
+# that share `group` and `name` become account tabs:
+# [[custom]]
+# id = "wsl-codex-work"
+# name = "Codex (WSL)"
+# short_name = "wcw"             # unique per entry, inside a group too
+# brand = "openai"
+# group = "wsl-codex"
+# account = "work"
+# enabled = true
+# url = "http://localhost:8765/usage.json"
+# allow_http = true              # loopback only
+# api_key_env = ""
+# api_key = "local"              # [[custom]] needs one; a static file server ignores it
+# plan_path = "/entries/openai@work/plan"
+# cache_ttl_secs = 120
+# [[custom.metrics]]
+# label = "Codex 5h"
+# percent = "/entries/openai@work/metrics/ungrouped/18000/Codex 5h/percent"
+# resets_at = "/entries/openai@work/metrics/ungrouped/18000/Codex 5h/reset_at"
+# window_secs = 18000
+# [[custom.metrics]]
+# label = "Codex weekly"
+# percent = "/entries/openai@work/metrics/ungrouped/604800/Codex weekly/percent"
+# resets_at = "/entries/openai@work/metrics/ungrouped/604800/Codex weekly/reset_at"
+# window_secs = 604800
+# [[custom.texts]]
+# label = "Stale in WSL"
+# value = "/entries/openai@work/stale"
+# [[custom.texts]]
+# label = "Published"
+# value = "/published_at"
 
 # Windows/macOS tray. The macOS menu bar also writes its options here from the
 # popover Settings → Menu Bar.

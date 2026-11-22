@@ -86,6 +86,13 @@
   Settings.` where it read `No vendors to summarize.` or drew an empty panel.
   See [docs/configuration.md](docs/configuration.md#turning-one-account-off).
 
+- **Recipe: accounts signed in inside WSL, shown by the Windows tray.**
+  Documentation only. `windows/README.md` gains "Accounts signed in inside
+  WSL": AI Usage inside WSL shares selected account figures on loopback
+  without copying login files. The Windows tray reads the figures through
+  existing `[[custom]]` sources. The guide includes a matching configuration
+  example and explains the limits of an unauthenticated local share.
+
 ### Fixed
 
 - **SuperGrok reports expired Grok Build logins.** If the saved OIDC login

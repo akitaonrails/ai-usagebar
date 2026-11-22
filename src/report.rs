@@ -4028,6 +4028,97 @@ mod tests {
         assert!(failed.sections.is_empty());
     }
 
+    /// The uncommented "accounts signed in inside WSL" recipe from
+    /// `config.example.toml`: every comment line from its first `[[custom]]`
+    /// to the end of that comment block.
+    fn shipped_wsl_recipe() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config.example.toml");
+        let example = std::fs::read_to_string(path).unwrap();
+        let (_, after_heading) = example
+            .split_once("# Recipe: accounts signed in inside WSL")
+            .expect("the WSL recipe heading is gone from config.example.toml");
+        let (_, tables) = after_heading
+            .split_once("# [[custom]]")
+            .expect("the WSL recipe has no [[custom]] table");
+        let body: Vec<&str> = tables
+            .lines()
+            .skip(1)
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| line.trim_start_matches('#').trim_start())
+            .collect();
+        format!("[[custom]]\n{}\n", body.join("\n"))
+    }
+
+    /// Verify that the example's pointers work against the publisher's
+    /// output contract without adding Python to the Cargo test requirements.
+    #[test]
+    fn shipped_wsl_recipe_projects_a_rekeyed_usage_report() {
+        let reset = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+        let mut published = json!({
+            "published_at": "2026-11-20T12:00:00Z",
+            "entries": {
+                "openai@work": {
+                    "plan": "Plus",
+                    "stale": false,
+                    "metrics": {
+                        "ungrouped": {
+                            "18000": {"Codex 5h": {"percent": 42, "reset_at": reset}},
+                            "604800": {"Codex weekly": {"percent": 17, "reset_at": reset}}
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut file, shipped_wsl_recipe().as_bytes()).unwrap();
+        std::io::Write::flush(&mut file).unwrap();
+        let config = Config::load_from(file.path()).unwrap();
+        let [spec] = config.custom.as_slice() else {
+            panic!("the WSL recipe should declare one [[custom]] source");
+        };
+        assert_eq!(spec.report_id(), "custom:wsl-codex@work");
+
+        let snapshot = crate::custom::mapping::project(&published, spec).unwrap();
+        assert_eq!(snapshot.plan.as_deref(), Some("Plus"));
+        let read: Vec<_> = snapshot
+            .metrics
+            .iter()
+            .map(|m| (m.label.as_str(), m.pct, m.resets_at))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                ("Codex 5h", 42, Some(reset)),
+                ("Codex weekly", 17, Some(reset))
+            ]
+        );
+        let texts: Vec<_> = snapshot
+            .texts
+            .iter()
+            .map(|t| (t.label.as_str(), t.value.as_str()))
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                ("Stale in WSL", "false"),
+                ("Published", "2026-11-20T12:00:00Z")
+            ]
+        );
+
+        // An account that left the report fails its card by name rather than
+        // borrowing the next entry's figures, which a positional pointer into
+        // the unfiltered `entries` array would do.
+        published["entries"] = json!({"antigravity@0a1b": {"plan": "Plus"}});
+        let error = crate::custom::mapping::project(&published, spec)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("/entries/openai@work/plan is missing"),
+            "{error}"
+        );
+    }
+
     /// Every pid is running: the scan's own liveness filtering is covered by
     /// `context::activity`, so these tests are only about where results land.
     struct EverythingRuns;

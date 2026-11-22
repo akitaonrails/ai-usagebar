@@ -64,6 +64,11 @@ test:
 	$(MAKE) plugin-test
 	$(MAKE) mint-test
 	$(MAKE) macos-package-test
+	$(MAKE) wsl-recipe-test
+
+.PHONY: wsl-recipe-test
+wsl-recipe-test:
+	python3 scripts/test-wsl-recipe.py
 
 # The provider status mark matches status-page components by exact name, so a
 # renamed component stops marking its provider without any error. This asks the

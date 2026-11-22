@@ -229,6 +229,126 @@ It has no hover tip; the popover is the readout.
 
 ![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](../screenshots/windows-tray-icon.png)
 
+## Accounts signed in inside WSL
+
+The tray reads logins on the Windows side. Two kinds of account that live
+inside WSL are out of its reach by design: a login file on a
+`\\wsl.localhost\` path can be readable while the mount does not support the
+lock a refresh needs (see "Credentials on WSL UNC paths" in
+[`docs/windows-build.md`](../docs/windows-build.md)), and
+`agy` status-line snapshots written inside WSL stay in the Linux cache
+directory.
+
+What can cross is the report. The Linux `ai-usagebar` inside WSL reads those
+logins itself; publish its `usage --json` on loopback and map it in the
+Windows `config.toml` with `[[custom]]` sources (root README, "Custom
+providers"). The recipe publishes only selected account IDs, plan names,
+freshness flags and quota figures, never the WSL login files.
+
+1. Inside WSL, save this filter as `~/aiub-wsl-rekey.py`, outside the
+   directory step 2 serves. `usage --json` lists entries and metrics as
+   arrays, and a pointer into an array follows position: when an account
+   drops out of the report, the next one would be read under its name. The
+   filter takes an explicit list of entry IDs and keys each metric by the
+   report's group, exact window length, and label. It never guesses a window
+   from its position or reset time. Duplicate IDs or indistinguishable metrics
+   in the selected accounts stop publication instead of overwriting values.
+
+   ```python
+   import json, sys, time
+
+   allowed = set(sys.argv[1:])
+   if not allowed or "" in allowed or len(allowed) != len(sys.argv) - 1:
+       sys.exit("Pass one or more distinct report entry IDs")
+   report = json.load(sys.stdin)
+   entries = {}
+   for entry in report["entries"]:
+       entry_id = entry["id"]
+       if entry_id not in allowed:
+           continue
+       if entry_id in entries:
+           sys.exit("Duplicate selected report entry ID")
+       scopes = {}
+       for metric in entry["metrics"]:
+           group = "group:" + metric["group"] if "group" in metric else "ungrouped"
+           window = str(metric.get("window_secs", "unspecified"))
+           label = metric["label"]
+           metrics = scopes.setdefault(group, {}).setdefault(window, {})
+           if label in metrics:
+               sys.exit("Duplicate metric in a selected entry's group and window")
+           metrics[label] = {"percent": metric["percent"], "reset_at": metric["reset_at"]}
+       entries[entry_id] = {
+           "plan": entry["plan"],
+           "stale": entry["stale"],
+           "metrics": scopes,
+       }
+   published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+   json.dump({"published_at": published_at, "entries": entries}, sys.stdout)
+   ```
+
+2. Inspect entry IDs locally with `ai-usagebar usage --json | jq -r '.entries[].id'`.
+   In WSL, save this publisher, replacing `openai@work` with the exact IDs you
+   want to share (one quoted argument per ID). Run this script once, then on a
+   single timer. It stages outside the served directory; a failed report or
+   filter leaves the previous complete file in place.
+
+   ```bash
+   #!/usr/bin/env bash
+   set -euo pipefail
+   umask 077
+   root="$HOME/.local/state/aiub-wsl"
+   install -d -m 700 "$root" "$root/public"
+   tmp=$(mktemp "$root/.usage.XXXXXX")
+   trap 'rm -f -- "$tmp"' EXIT
+   ai-usagebar usage --json | python3 "$HOME/aiub-wsl-rekey.py" 'openai@work' > "$tmp"
+   mv -fT -- "$tmp" "$root/public/usage.json"
+   ```
+
+   In a separate process, serve only this dedicated directory on loopback:
+
+   ```sh
+   python3 -m http.server 8765 --bind 127.0.0.1 --directory "$HOME/.local/state/aiub-wsl/public"
+   ```
+
+   A timer can run with a shorter `PATH` than your shell: give it the full
+   path to `ai-usagebar` (`command -v ai-usagebar` prints it) when the binary
+   is not installed system-wide.
+
+   WSL 2 makes a port bound to localhost inside the VM reachable from Windows
+   as `localhost:<port>` by default
+   ([`localhostForwarding`](https://learn.microsoft.com/windows/wsl/wsl-config#wslconfig)).
+
+3. In the Windows `config.toml`, add one `[[custom]]` per account. The
+   commented "accounts signed in inside WSL" recipe in `config.example.toml`
+   is the starting point. Use the keys in the published file: entry ID, then
+   under `metrics` the group (`ungrouped` or `group:<name>`), window length in
+   seconds (`unspecified` if absent), and label. Entries that share `group`
+   and `name` become account tabs. Within a pointer key, write `/` as `~1`
+   and `~` as `~0`.
+
+Limits:
+
+- Figures update only while the distribution is running; the tray never
+  starts WSL. While the port does not answer, the card keeps its last values,
+  marked stale.
+- A static file server keeps answering with the last file after the publisher
+  has stopped, and a custom source cannot tell. The recipe maps `published_at`
+  and the entry's own `stale` flag as text rows for that reason.
+- A pointer whose target is missing or `null` fails the whole card, which
+  then keeps its last values with the error: an account that is not in the
+  report (an `agy` account with no live process), a window the provider did
+  not report, or a `reset_at` that is `null`. Leave `resets_at` out for a
+  window that can be without a reset time. The card names the pointer; run
+  `ai-usagebar usage` inside WSL for the cause.
+- This is an unauthenticated, local-only share. Private file permissions
+  do not restrict the HTTP server: other processes/users that can reach
+  either loopback interface can read the selected account IDs, plan names,
+  and usage figures. The placeholder token is not authentication. Use this
+  only on a trusted personal machine. Keep other files and symlinks out of
+  the served directory, and do not expose the port to another machine.
+- These are custom cards: meters and text rows. Reset credits, session rows
+  and status-page marks stay with the Linux binary's own frontends.
+
 ## Tray icon rasters
 
 `src/tray/icon.rs` embeds `windows/tray-icon-{16,20,24,32,40,48}.rgba`
