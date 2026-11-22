@@ -163,6 +163,9 @@
 
 ### Security
 
+- Updated the locked URL parser and optional QUIC dependencies to their
+  patched releases.
+
 - **Windows tray links no longer pass through a command shell.** The tray
   passes web links directly to Explorer, as device-code sign-in already did
   (#653).
