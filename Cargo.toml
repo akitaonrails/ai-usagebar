@@ -184,3 +184,8 @@ debug = false
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+[profile.ci-test]
+inherits = "release"
+lto = "off"
+codegen-units = 16

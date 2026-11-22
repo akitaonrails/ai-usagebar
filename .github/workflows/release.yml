@@ -244,7 +244,7 @@ jobs:
 
       - name: Test (native only — aarch64 binaries can't run on x86 runner)
         if: runner.os == 'Linux' && matrix.builder == 'cargo'
-        run: cargo test --release --target ${{ matrix.target }} --locked
+        run: cargo test --profile ci-test --target ${{ matrix.target }} --locked
 
       - name: Build release binaries
         if: runner.os == 'Linux'
@@ -305,7 +305,7 @@ jobs:
       - name: Test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: cargo test --release --target ${{ matrix.target }} --locked
+        run: cargo test --profile ci-test --target ${{ matrix.target }} --locked
 
       - name: Build release binaries (Windows)
         if: runner.os == 'Windows'
@@ -378,7 +378,7 @@ jobs:
 
       - name: Test (macOS; native arch only)
         if: runner.os == 'macOS' && matrix.arch == 'aarch64'
-        run: cargo test --release --target ${{ matrix.target }} --locked
+        run: cargo test --profile ci-test --target ${{ matrix.target }} --locked
 
       - name: Build release binaries (macOS)
         if: runner.os == 'macOS'
@@ -416,6 +416,23 @@ jobs:
           tar czf ${{ matrix.artifact }}.tar.gz -C "$STAGE" .
           sidecar ${{ matrix.artifact }}.tar.gz
           rm -rf "$STAGE"
+
+      # ci-test preserves release-mode behavior but uses different codegen.
+      # Launch the actual release-profile CLI before uploading its artifacts.
+      - name: Smoke test the release CLI (native targets)
+        if: matrix.builder != 'cross' && (runner.os != 'macOS' || matrix.arch == 'aarch64')
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXPECTED_VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          bin="target/$TARGET/release/ai-usagebar"
+          if [[ "$RUNNER_OS" == Windows ]]; then bin="$bin.exe"; fi
+          actual=$("$bin" --version | tr -d '\r')
+          if [[ "$actual" != "ai-usagebar $EXPECTED_VERSION" ]]; then
+            echo "::error::The release CLI did not report version $EXPECTED_VERSION"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
