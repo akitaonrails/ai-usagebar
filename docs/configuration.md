@@ -53,6 +53,16 @@ you make while the check is running.
 # is not shown and not fetched; see "Turning one account off" below.
 # hidden_accounts = ["openai@personal", "custom:example@work"]
 
+[tray]
+# The opt-in Linux tray (`--features linux-tray`) places the popover on
+# Hyprland through `hyprctl`, including the cursor read at a click. This is
+# that executable's absolute path; `~` is expanded, and it is never searched
+# on PATH. With no key it is `/usr/bin/hyprctl`, as before. A path that does
+# not exist simply leaves placement to the compositor; an empty or relative
+# value is refused at load, like any invalid key, and the tray falls back to
+# its defaults (the reason goes to its stderr).
+# hyprctl_binary = "/usr/bin/hyprctl"
+
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui
 # projects_path = "~/.claude/projects"
@@ -574,9 +584,9 @@ credits still usable on the bar — the Portal's total usable credits, falling
 back to top-up credits and then to subscription credits — and leaves the
 consumed percentage in the meter, the severity colour and the detail line.
 
-The Omarchy panel, the KDE plasmoid and the tray popover (Windows and macOS)
-read the metric's own `headline` field out of `usage --json` rather than
-guessing from the row's label. In the popover, `"amount"` puts the money figure
+The Omarchy panel, the KDE plasmoid and the tray popover (Windows, macOS and
+the opt-in Linux tray) read the metric's own `headline` field out of
+`usage --json` rather than guessing from the row's label. In the popover, `"amount"` puts the money figure
 under the meter and moves the percentage and the detail line to its hover text;
 `"percent"` keeps the popover's used/left toggle. Waybar and GNOME build their
 bar text from the per-vendor formats, so `headline` does not reach them.

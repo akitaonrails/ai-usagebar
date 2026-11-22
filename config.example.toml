@@ -137,8 +137,10 @@
 # label = "Published"
 # value = "/published_at"
 
-# Windows/macOS tray. The macOS menu bar also writes its options here from the
-# popover Settings → Menu Bar.
+# Windows/macOS tray, and the opt-in Linux tray (`--features linux-tray`). The
+# macOS menu bar also writes its options here from the popover Settings → Menu Bar.
+# The Linux tray reads refresh_minutes; it has no global shortcut and no
+# self-update yet.
 # [tray]
 # Global shortcut that opens and closes the popover from any window.
 # Ctrl / Alt / Win plus a key; Shift may be added. Omit for none. On macOS the
@@ -148,12 +150,18 @@
 # How often the tray re-reads every provider: 1, 5, 10, 15, 30 or 60 minutes; the panel's
 # Refresh button is always immediate.
 # refresh_minutes = 5
-# Popover width in logical points, for whichever style is active. Omit it and
+# Windows/macOS popover width in logical points, for the active style. Omit it and
 # each style keeps its own width: Classic 300 on Windows and 320 on macOS,
 # Native 390. A set value is held to three quarters and three times that width,
 # and to the screen. Settings → Appearance → Popover Width writes it and applies at
 # once; its reset arrow removes the key. A hand edit applies on the next start.
 # width = 350
+# Linux tray on Hyprland: absolute path of the `hyprctl` used to place the
+# popover, including the cursor read at a click. Default "/usr/bin/hyprctl"
+# when absent; `~` is expanded. It is never searched on PATH: a missing file
+# leaves the popover where the compositor puts it, and an empty or relative
+# value makes the whole config invalid (the tray then runs on defaults).
+# hyprctl_binary = "/usr/bin/hyprctl"
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).
 # updates = "notify"

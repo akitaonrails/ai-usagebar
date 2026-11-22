@@ -23,7 +23,8 @@ codebase.
 - An optional Claude Code context view reads recent local session usage without
   scanning entire histories.
 - Native integrations are available for Omarchy, GNOME Shell, KDE Plasma 6,
-  and a macOS/Windows system-tray popover (`ai-usagebar-tray`). An experimental
+  and a macOS/Windows system-tray popover (`ai-usagebar-tray`, opt-in on Linux,
+  see [Linux tray](#linux-tray-opt-in)). An experimental
   GTK tray frontend for Linux Mint is in [`linux-mint/`](linux-mint/README.md).
 - One bar item can cycle through enabled providers. `[ui] primary` controls the
   initial provider in both the widget and TUI.
@@ -271,7 +272,7 @@ verifying their `.sha256`; all three live in the `[tray]` section of
 popover's width (`[tray] width`, in logical points); left unset, each style
 keeps its own. See [windows/README.md](windows/README.md).
 
-![Windows tray icon in the notification area — a bar-chart-in-circle mark beside the overflow chevron](screenshots/windows-tray-icon.png)
+![Windows tray icon in the notification area, beside the overflow chevron (this screenshot predates the gauge icon)](screenshots/windows-tray-icon.png)
 
 Credentials are read from the Windows user profile rather than `$HOME`:
 `%USERPROFILE%\.claude\.credentials.json` (Anthropic) and
@@ -848,8 +849,8 @@ status page flags one of the provider's own components also carries `incident`:
 `{"severity": "degraded_performance", "title": "…", "url": "https://…"}`.
 `severity` is the status the page shows — `degraded_performance`,
 `partial_outage`, `major_outage` or `under_maintenance` — and `url` is the
-status page's address. The TUI and the Windows/macOS popover give the provider's name the
-page's colour for that status (yellow, orange, red, blue) and put a `▲` / alert
+status page's address. The TUI and the tray popover (Windows, macOS and the
+opt-in Linux tray) give the provider's name the page's colour for that status (yellow, orange, red, blue) and put a `▲` / alert
 mark beside it, so the name's colour is not the only signal. The field is
 omitted when the page flags nothing or could not be reached, so its absence is
 not a health claim. `[ui] provider_status = false` turns the check off.
@@ -1019,6 +1020,34 @@ On macOS, Chart (default) shows the starred metrics:
 Logos shows one highest-usage percentage per starred provider (lowest remaining
 in Left), excluding hidden metrics, just like Quattro's auto window. ·
 Quattro: one chip with the selected provider's logo, short name and highest percentage.
+
+### Linux tray (opt-in)
+
+The same popover runs on Linux behind the `linux-tray` cargo feature, which
+is off by default:
+
+```sh
+# needs GTK 3, WebKitGTK 4.1 (webkit2gtk-4.1), libsoup 3, and Node.js/npm
+# (build.rs builds the popover UI in windows/popover, or reuses a complete
+# windows/popover/dist; with neither, the tray shows a placeholder page)
+cargo build --release --features linux-tray --bin ai-usagebar-tray
+./target/release/ai-usagebar-tray
+```
+
+The icon registers with any StatusNotifierItem tray (Waybar's `tray` module,
+KDE Plasma, GNOME with the AppIndicator extension); a left click toggles the
+popover and a right click opens the options menu. Start at Login writes
+`ai-usagebar-tray.desktop` in `$XDG_CONFIG_HOME/autostart` (default
+`~/.config/autostart`); an executable path containing `%` is refused, because
+autostart cannot launch it.
+On Hyprland the popover opens next to the bar on the monitor you clicked
+(placed through `hyprctl`); other Wayland compositors decide where it opens.
+`[tray] hyprctl_binary` sets that executable's absolute path (default
+`/usr/bin/hyprctl`, `~` expanded, never searched on `PATH`) for NixOS or other
+installs outside `/usr/bin`.
+The tray item's id is `ai-usagebar-tray`, which is what Omarchy's tray uses to
+remember a pinned icon. Not available yet on Linux: a global shortcut, Open TUI, and
+self-update (install new releases the way you installed this one).
 
 ### Desktop integrations
 

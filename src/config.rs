@@ -166,12 +166,17 @@ pub struct TrayConfig {
     /// Whether the `name` style draws the short name beside the logo.
     /// `None` → shown. A provider with no logo shows its name regardless.
     pub menu_bar_short_name: Option<bool>,
+    /// Absolute path of `hyprctl` used by the opt-in Linux tray on Hyprland.
+    /// `None` → `/usr/bin/hyprctl`. Never searched on `PATH`.
+    pub hyprctl_binary: Option<PathBuf>,
 }
 
 /// Poll intervals the tray offers, in minutes. The provider cache TTL is
 /// 60 s regardless; this only decides how often the tray asks.
 pub const TRAY_REFRESH_MINUTES: [u64; 6] = [1, 5, 10, 15, 30, 60];
 const DEFAULT_TRAY_REFRESH_MINUTES: u64 = 5;
+/// Only used when `[tray] hyprctl_binary` is absent: the historical fixed path.
+pub const DEFAULT_HYPRCTL: &str = "/usr/bin/hyprctl";
 
 /// Quota-threshold desktop notifications. On by default at 97%: the bar's
 /// whole job is to make an exhausted window visible before a request fails,
@@ -205,6 +210,12 @@ impl TrayConfig {
 
     pub fn menu_bar_short_name(&self) -> bool {
         self.menu_bar_short_name.unwrap_or(true)
+    }
+
+    pub fn hyprctl_binary(&self) -> PathBuf {
+        self.hyprctl_binary
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_HYPRCTL))
     }
 }
 
@@ -3103,6 +3114,7 @@ impl Config {
         expand_tilde_opt(&mut self.supergrok.auth_path);
         expand_tilde_opt(&mut self.supergrok.config_path);
         expand_tilde_opt(&mut self.copilot.gh_binary);
+        expand_tilde_opt(&mut self.tray.hyprctl_binary);
         if let Some(paths) = &mut self.cline.auth_paths {
             for path in paths {
                 *path = expand_tilde(path);
@@ -3747,6 +3759,27 @@ impl Config {
                 "[minimax] region must be \"global\" or \"cn\", got {:?}",
                 self.minimax.region
             )));
+        }
+        if self
+            .tray
+            .hyprctl_binary
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(AppError::Other(
+                "[tray] hyprctl_binary must not be empty".into(),
+            ));
+        }
+        // A bare name would make `Command` search PATH, which this key exists to avoid.
+        if self
+            .tray
+            .hyprctl_binary
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+        {
+            return Err(AppError::Other(
+                "[tray] hyprctl_binary must be an absolute path".into(),
+            ));
         }
         if self.supergrok.grok_binary.as_os_str().is_empty() {
             return Err(AppError::Other(
@@ -6762,6 +6795,48 @@ api_key = "sk-ant-admin01-side"
         assert!(cfg.supergrok.config_path.is_none());
         assert!(!cfg.cursor.enabled && cfg.cursor.db_path.is_none());
         assert!(!cfg.kiro.enabled && cfg.kiro.db_path.is_none());
+    }
+
+    /// The Linux tray keeps its historical fixed path when the key is absent,
+    /// so an existing config starts placing the popover exactly as before.
+    #[test]
+    fn tray_hyprctl_binary_defaults_to_usr_bin() {
+        let file = write_toml("[tray]\n");
+        let config = Config::load_from(file.path()).unwrap();
+        assert_eq!(config.tray.hyprctl_binary, None);
+        assert_eq!(
+            config.tray.hyprctl_binary(),
+            PathBuf::from("/usr/bin/hyprctl")
+        );
+    }
+
+    /// `write_toml` keeps the fixture off the real config path; `~` is expanded
+    /// by the same seam as `grok_binary`, with no need to read this machine's
+    /// home directory to prove the literal prefix is gone.
+    #[test]
+    fn tray_hyprctl_binary_expands_tilde_and_refuses_empty() {
+        let file = write_toml("[tray]\nhyprctl_binary = \"~/bin/hyprctl\"\n");
+        let config = Config::load_from(file.path()).unwrap();
+        let path = config.tray.hyprctl_binary();
+        assert!(path.is_absolute(), "{path:?}");
+        assert_ne!(path, PathBuf::from("~/bin/hyprctl"));
+        assert_eq!(path.file_name().and_then(|p| p.to_str()), Some("hyprctl"));
+
+        let file = write_toml("[tray]\nhyprctl_binary = \"\"\n");
+        let error = Config::load_from(file.path()).unwrap_err().to_string();
+        assert!(
+            error.contains("[tray] hyprctl_binary must not be empty"),
+            "{error}"
+        );
+
+        for relative in ["hyprctl", "bin/hyprctl"] {
+            let file = write_toml(&format!("[tray]\nhyprctl_binary = \"{relative}\"\n"));
+            let error = Config::load_from(file.path()).unwrap_err().to_string();
+            assert!(
+                error.contains("[tray] hyprctl_binary must be an absolute path"),
+                "{relative}: {error}"
+            );
+        }
     }
 
     #[test]

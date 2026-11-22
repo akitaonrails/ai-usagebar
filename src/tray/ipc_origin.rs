@@ -3,11 +3,12 @@
 //! The bridge answers `window.ipc.postMessage` and now writes to `config.toml`
 //! (`set-api-key`), so only the popover's own frame may reach it; and the
 //! WebView must not navigate outside that frame. Both hosts load the popover
-//! from a different origin — macOS from `aiub://localhost/index.html`,
-//! Windows from `http://aiub.localhost/index.html` — and wry hands each
-//! handler the URI to check:
+//! from two different origins — macOS and the opt-in Linux host from
+//! `aiub://localhost/index.html`, Windows from
+//! `http://aiub.localhost/index.html` — and wry hands each handler the URI to
+//! check:
 //!
-//! - the IPC handler receives a `Request` whose URI is the sending frame's
+//! - on macOS and Windows, the IPC handler receives a `Request` whose URI is the sending frame's
 //!   full absolute URL: `frameInfo.request().URL().absoluteString()` on macOS
 //!   (wry 0.57.0, `src/wkwebview/class/wry_web_view_delegate.rs:50-53,60-61`)
 //!   and `ICoreWebView2WebMessageReceivedEventArgs::Source`, "the source URL
@@ -22,24 +23,34 @@
 //!   `wry_web_view_ui_delegate.rs:180-198`).
 //!
 //! These are pure decisions over those URI strings, tested on every OS;
-//! `host_macos.rs` and `host.rs` apply them in their WebView builders.
+//! `host_macos.rs`, `host.rs` and the opt-in `host_linux.rs` apply them in
+//! their WebView builders.
+//! WebKitGTK reports the top-level URI for IPC. The Linux host uses the
+//! exact embedded page and a frame-denying CSP instead of treating that
+//! URI as the sender's origin.
 
-/// The OS the running host is on; each loads the popover from a different
-/// origin. Each host constructs only its own variant, so the other one is
-/// dead on that platform.
+/// The OS the running host is on. Each host constructs only its own variant,
+/// so the others are dead on that platform (Linux's variant only exists with
+/// the feature that builds its host).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Os {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Macos,
     #[cfg_attr(not(windows), allow(dead_code))]
     Windows,
+    #[cfg_attr(
+        not(all(target_os = "linux", feature = "linux-tray")),
+        allow(dead_code)
+    )]
+    Linux,
 }
 
 /// The scheme and host the popover loads from on `os`, exactly as the hosts'
-/// `build_webview` loads them.
+/// `build_webview` loads them. Linux shares macOS's origin on purpose: both
+/// hosts load `aiub://localhost/index.html`.
 fn expected_origin(os: Os) -> (&'static str, &'static str) {
     match os {
-        Os::Macos => ("aiub", "localhost"),
+        Os::Macos | Os::Linux => ("aiub", "localhost"),
         Os::Windows => ("http", "aiub.localhost"),
     }
 }
@@ -126,12 +137,15 @@ mod tests {
     #[test]
     fn accepts_the_popover_origin_of_its_own_os() {
         assert!(is_popover_origin("aiub://localhost/index.html", Os::Macos));
+        // Linux's host loads the same page from the same custom scheme.
+        assert!(is_popover_origin("aiub://localhost/index.html", Os::Linux));
         assert!(is_popover_origin(
             "http://aiub.localhost/index.html",
             Os::Windows
         ));
         // The bare origin and other paths of it are the origin too.
         assert!(is_popover_origin("aiub://localhost/", Os::Macos));
+        assert!(is_popover_origin("aiub://localhost/", Os::Linux));
         assert!(is_popover_origin("http://aiub.localhost", Os::Windows));
     }
 
@@ -139,6 +153,7 @@ mod tests {
     fn rejects_other_hosts_and_schemes() {
         // A host that merely starts with the origin's host is not the origin.
         assert!(!is_popover_origin("aiub://localhost.evil/", Os::Macos));
+        assert!(!is_popover_origin("aiub://localhost.evil/", Os::Linux));
         assert!(!is_popover_origin("aiub://evil/", Os::Macos));
         assert!(!is_popover_origin(
             "http://aiub.localhost.evil.com/",
@@ -147,7 +162,8 @@ mod tests {
         // A different scheme is a different origin, even for the same host.
         assert!(!is_popover_origin("https://aiub.localhost/", Os::Windows));
         assert!(!is_popover_origin("http://aiub.localhost/", Os::Macos));
-        // Each OS accepts only its own origin.
+        assert!(!is_popover_origin("http://aiub.localhost/", Os::Linux));
+        // Each OS accepts only its own origin; macOS and Linux share one.
         assert!(!is_popover_origin(
             "aiub://localhost/index.html",
             Os::Windows
@@ -155,6 +171,10 @@ mod tests {
         assert!(!is_popover_origin(
             "http://aiub.localhost/index.html",
             Os::Macos
+        ));
+        assert!(!is_popover_origin(
+            "http://aiub.localhost/index.html",
+            Os::Linux
         ));
     }
 
@@ -169,6 +189,8 @@ mod tests {
         assert!(!is_popover_origin("aiub:localhost/index.html", Os::Macos));
         assert!(!is_popover_origin("javascript:alert(1)", Os::Macos));
         assert!(!is_popover_origin("file:///etc/passwd", Os::Macos));
+        assert!(!is_popover_origin("", Os::Linux));
+        assert!(!is_popover_origin("aiub:localhost/", Os::Linux));
     }
 
     #[test]
@@ -178,14 +200,20 @@ mod tests {
             "aiub://localhost:8080/index.html",
             Os::Macos
         ));
+        assert!(!is_popover_origin(
+            "aiub://localhost:8080/index.html",
+            Os::Linux
+        ));
         assert!(!is_popover_origin("http://aiub.localhost:80/", Os::Windows));
         // In `localhost@evil` the `localhost` is a userinfo; the host is
         // `evil`. A userinfo on the right host is still the origin.
         assert!(!is_popover_origin("aiub://localhost@evil/", Os::Macos));
+        assert!(!is_popover_origin("aiub://localhost@evil/", Os::Linux));
         assert!(is_popover_origin(
             "http://user:pass@aiub.localhost/",
             Os::Windows
         ));
+        assert!(is_popover_origin("aiub://user:pass@localhost/", Os::Linux));
     }
 
     #[test]
@@ -198,10 +226,18 @@ mod tests {
             navigation("http://aiub.localhost/index.html", Os::Windows),
             Navigation::Allow
         );
+        assert_eq!(
+            navigation("aiub://localhost/index.html", Os::Linux),
+            Navigation::Allow
+        );
         // The other OS's origin is not this origin.
         assert_ne!(
             navigation("aiub://localhost/index.html", Os::Windows),
             Navigation::Allow
+        );
+        assert_eq!(
+            navigation("http://aiub.localhost/index.html", Os::Linux),
+            Navigation::OpenExternal
         );
     }
 

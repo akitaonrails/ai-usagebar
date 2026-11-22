@@ -12,9 +12,34 @@
 //! comments + blank lines + extra whitespace). We use `toml::from_str` for the
 //! same effect - Omarchy themes are valid TOML.
 
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+
+const MAX_OMARCHY_FILE: u64 = 64 * 1024;
+const OMARCHY_COLORS: &[&str] = &[
+    "background",
+    "dark_background",
+    "darker_background",
+    "lighter_background",
+    "foreground",
+    "dark_foreground",
+    "light_foreground",
+    "bright_foreground",
+    "accent",
+    "muted",
+    "selection",
+    "red",
+    "yellow",
+    "orange",
+    "green",
+    "blue",
+    "cyan",
+    "magenta",
+];
 
 /// One Dark defaults, byte-identical to claudebar:152-159.
 const ONE_DARK_GREEN: &str = "#98c379";
@@ -77,6 +102,83 @@ struct OmarchyTheme {
     color3: Option<String>,
 }
 
+/// The active theme's palette and corner radius for the Linux tray popover.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OmarchyAppearance {
+    pub mode: &'static str,
+    pub rounding: u32,
+    pub colors: BTreeMap<&'static str, String>,
+}
+
+impl OmarchyAppearance {
+    /// Load the palette from a theme directory. The compositor supplies rounding.
+    pub fn read_from(theme_dir: &Path) -> Option<Self> {
+        let palette: toml::Table = read_omarchy_toml(&theme_dir.join("colors.toml"))?;
+        let mode = match palette.get("mode").and_then(toml::Value::as_str) {
+            Some("light") => "light",
+            _ => "dark",
+        };
+        let mut colors: BTreeMap<_, _> = OMARCHY_COLORS
+            .iter()
+            .filter_map(|&key| {
+                let value = palette.get(key)?.as_str()?;
+                (value.starts_with('#') && parse_hex_rgb(value).is_some())
+                    .then(|| (key, value.to_owned()))
+            })
+            .collect();
+        if !colors.contains_key("accent")
+            && let Some(blue) = colors.get("blue")
+        {
+            colors.insert("accent", blue.clone());
+        }
+        Some(Self {
+            mode,
+            rounding: 0,
+            colors,
+        })
+    }
+
+    #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+    pub(crate) fn active_in(home: &Path) -> Option<Self> {
+        let palette = omarchy_theme_path_in(home)?;
+        Self::read_from(palette.parent()?)
+    }
+}
+
+fn read_omarchy_toml<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    toml::from_str(&read_omarchy_text(path)?).ok()
+}
+
+pub(crate) fn read_omarchy_text(path: &Path) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    // Even if the path is replaced between the checks, opening a FIFO must
+    // never stall the watcher. Symlinks to regular theme files remain usable.
+    #[cfg(unix)]
+    let file = {
+        use rustix::fs::{Mode, OFlags, open};
+        File::from(
+            open(
+                path,
+                OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+                Mode::empty(),
+            )
+            .ok()?,
+        )
+    };
+    #[cfg(not(unix))]
+    let file = File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut contents = String::new();
+    file.take(MAX_OMARCHY_FILE + 1)
+        .read_to_string(&mut contents)
+        .ok()?;
+    (contents.len() as u64 <= MAX_OMARCHY_FILE).then_some(contents)
+}
+
 impl Theme {
     /// Apply CLI `--color-*` overrides. Each `Some(_)` wins over the underlying
     /// theme; `None` preserves the resolved color.
@@ -114,10 +216,7 @@ impl Theme {
 
     /// Same as `merged_with_omarchy` but with an explicit path (for tests).
     pub fn merged_with_omarchy_file(mut self, path: &Path) -> Self {
-        let Ok(contents) = std::fs::read_to_string(path) else {
-            return self;
-        };
-        let Ok(parsed) = toml::from_str::<OmarchyTheme>(&contents) else {
+        let Some(parsed) = read_omarchy_toml::<OmarchyTheme>(path) else {
             return self;
         };
 
@@ -347,6 +446,71 @@ mod tests {
         std::fs::create_dir_all(applied.parent().unwrap()).unwrap();
         std::fs::write(&applied, "accent = \"#654321\"\n").unwrap();
         assert_eq!(omarchy_theme_path_in(home.path()), Some(applied));
+    }
+
+    #[test]
+    fn omarchy_appearance_reads_the_complete_palette() {
+        let theme = tempfile::tempdir().unwrap();
+        let palette = [
+            ("background", "#1a1b26"),
+            ("dark_background", "#13141c"),
+            ("darker_background", "#0e0e14"),
+            ("lighter_background", "#24283b"),
+            ("foreground", "#a9b1d6"),
+            ("dark_foreground", "#565f89"),
+            ("light_foreground", "#b4bee6"),
+            ("bright_foreground", "#c0caf5"),
+            ("accent", "#7aa2f7"),
+            ("muted", "#414868"),
+            ("selection", "#292e42"),
+            ("red", "#f7768e"),
+            ("yellow", "#e0af68"),
+            ("orange", "#eb927b"),
+            ("green", "#9ece6a"),
+            ("blue", "#7aa2f7"),
+            ("cyan", "#449dab"),
+            ("magenta", "#ad8ee6"),
+        ];
+        let mut colors = String::from("mode = \"light\"\nbrown = \"#75493d\"\n");
+        for (key, value) in palette {
+            colors.push_str(&format!("{key} = \"{value}\"\n"));
+        }
+        std::fs::write(theme.path().join("colors.toml"), colors).unwrap();
+        let appearance = OmarchyAppearance::read_from(theme.path()).unwrap();
+        assert_eq!(appearance.mode, "light");
+        assert_eq!(appearance.colors.len(), palette.len());
+        for (key, value) in palette {
+            assert_eq!(appearance.colors[key], value, "{key}");
+        }
+    }
+
+    #[test]
+    fn omarchy_appearance_omits_invalid_colors_and_falls_back_to_blue() {
+        let theme = tempfile::tempdir().unwrap();
+        let colors = theme.path().join("colors.toml");
+        assert!(OmarchyAppearance::read_from(theme.path()).is_none());
+        std::fs::write(
+            &colors,
+            r##"
+            background = "#abc"
+            dark_background = "123456"
+            red = "#abcdef00"
+            green = "#12345z"
+            orange = 42
+            foreground = "#123456 "
+            blue = "#ABCDEF"
+            "##,
+        )
+        .unwrap();
+        let appearance = OmarchyAppearance::read_from(theme.path()).unwrap();
+        assert_eq!(appearance.mode, "dark");
+        assert_eq!(appearance.colors.len(), 2);
+        assert_eq!(appearance.colors["blue"], "#ABCDEF");
+        assert_eq!(appearance.colors["accent"], "#ABCDEF");
+
+        // Even a valid prefix cannot make an oversized file a usable theme.
+        std::fs::write(&colors, format!("mode = \"light\"\n#{}", " ".repeat(65536))).unwrap();
+        assert!(OmarchyAppearance::read_from(theme.path()).is_none());
     }
 
     #[test]

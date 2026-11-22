@@ -1,11 +1,13 @@
-//! Build the tray WebView (Vite) before compiling the Windows/macOS host.
+//! Build the tray WebView (Vite) before compiling a supported host:
+//! Windows, macOS, or Linux with the opt-in `linux-tray` feature.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    if os != "windows" && os != "macos" {
+    let linux_tray = std::env::var_os("CARGO_FEATURE_LINUX_TRAY").is_some();
+    if !(os == "windows" || os == "macos" || (os == "linux" && linux_tray)) {
         println!("cargo:rerun-if-changed=build.rs");
         return;
     }

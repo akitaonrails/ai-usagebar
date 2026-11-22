@@ -241,6 +241,39 @@ assert.equal(parseHostPayload({ accent: { light: '#112233', dark: 'bad' } }).acc
 assert.equal(parseHostPayload({ accent: { light: '#112233' } }).accent, null);
 assert.equal(parseHostPayload({ accent: ['#112233', '#445566'] }).accent, null);
 assert.equal(emptyPayload('').accent, null);
+{
+  const appearance = {
+    mode: 'light',
+    rounding: 6,
+    colors: { background: '#AABBCC', dark_foreground: '#112233', unsupported: '#abcdef' },
+  };
+  const parsed = parseHostPayload(JSON.stringify({ os: 'linux', desktop: 'omarchy', omarchy: appearance }));
+  assert.equal(parsed.os, 'linux');
+  assert.equal(parsed.desktop, 'omarchy');
+  assert.deepEqual(parsed.omarchy, {
+    mode: 'light', rounding: 6,
+    colors: { background: '#aabbcc', dark_foreground: '#112233' },
+  });
+  assert.deepEqual(
+    parseHostPayload({ omarchy: { mode: 'dark', rounding: 0, colors: {} } }).omarchy,
+    { mode: 'dark', rounding: 0, colors: {} },
+  );
+  assert.equal(parseHostPayload({ omarchy: { ...appearance, rounding: 40 } }).omarchy.rounding, 40);
+  for (const desktop of ['Omarchy', ' omarchy', 'linux', ['omarchy'], null]) {
+    assert.equal(parseHostPayload({ desktop }).desktop, '');
+  }
+  for (const invalid of [
+    null, [], {}, 'omarchy', { ...appearance, mode: 'system' },
+    { ...appearance, colors: [] }, { ...appearance, colors: new Date(0) },
+    ...['#abc', '123456', '#123456\n', '#11223344', '#12345z', ['#112233']]
+      .map((background) => ({ ...appearance, colors: { background } })),
+    ...[-1, 41, 2.5, '6'].map((rounding) => ({ ...appearance, rounding })),
+  ]) {
+    assert.equal(parseHostPayload({ omarchy: invalid }).omarchy, null, JSON.stringify(invalid));
+  }
+  assert.equal(emptyPayload('').desktop, '');
+  assert.equal(emptyPayload('').omarchy, null);
+}
 assert.equal(Object.hasOwn(emptyPayload(''), 'menuBarShowAll'), false);
 assert.equal(Object.hasOwn(emptyPayload(''), 'menuBarHideValue'), false);
 assert.equal(Object.hasOwn(emptyPayload(''), 'menuBarNames'), false);

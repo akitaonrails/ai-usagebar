@@ -7,7 +7,7 @@ import { m } from "./paraglide/messages.js";
 
 /** @typedef {import("./lib/types").Card} Card */
 /** @typedef {import("./lib/types").Layout} Layout */
-/** @typedef {import("./lib/types").Payload} Payload */
+/** @typedef {import("./lib/types").Payload & {desktop: string, omarchy: ReturnType<typeof normalizeOmarchy>}} Payload */
 /** @typedef {import("./lib/types").Row} Row */
 /** @typedef {import("./lib/types").RowPrefs} RowPrefs */
 /** @typedef {import("./lib/types").ExplainedError} ExplainedError */
@@ -46,6 +46,8 @@ export function emptyPayload(hostError) {
     notificationsEnabled: true,
     notificationsThreshold: 97,
     os: "",
+    desktop: "",
+    omarchy: null,
     primary: "",
     entries: [],
     refreshMinutes: 5,
@@ -120,6 +122,8 @@ function normalizePayload(parsed) {
     notificationsEnabled: parsed.notifications_enabled !== false,
     notificationsThreshold: Number.isInteger(parsed.notifications_threshold) && parsed.notifications_threshold >= 1 && parsed.notifications_threshold <= 100 ? parsed.notifications_threshold : 97,
     os: normalizeOs(parsed.os),
+    desktop: normalizeDesktop(parsed.desktop),
+    omarchy: normalizeOmarchy(parsed.omarchy),
     primary: clean(parsed.primary, 180),
     entries,
     refreshMinutes: normalizeRefreshMinutes(parsed.refresh_minutes),
@@ -147,6 +151,40 @@ function normalizeAccent(value) {
   const color = /^#[0-9a-f]{6}$/i;
   if (!color.test(value.light) || !color.test(value.dark)) return null;
   return { light: value.light.toLowerCase(), dark: value.dark.toLowerCase() };
+}
+
+const OMARCHY_COLORS = [
+  "background", "dark_background", "darker_background", "lighter_background",
+  "foreground", "dark_foreground", "light_foreground", "bright_foreground",
+  "accent", "muted", "selection", "red", "yellow", "orange", "green", "blue", "cyan", "magenta",
+];
+
+function normalizeDesktop(value) {
+  return value === "omarchy" ? value : "";
+}
+
+function isPlainRecord(value) {
+  if (!isPlainObject(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** @returns {{mode: "dark" | "light", rounding: number, colors: Record<string, string>} | null} */
+function normalizeOmarchy(value) {
+  if (!isPlainRecord(value)) return null;
+  const { mode, rounding, colors: input } = value;
+  if (mode !== "dark" && mode !== "light") return null;
+  if (!Number.isInteger(rounding) || rounding < 0 || rounding > 40) return null;
+  if (!isPlainRecord(input)) return null;
+
+  const colors = {};
+  for (const key of OMARCHY_COLORS) {
+    if (!Object.hasOwn(input, key)) continue;
+    const color = input[key];
+    if (typeof color !== "string" || color.length !== 7 || !/^#[0-9a-f]{6}$/i.test(color)) return null;
+    colors[key] = color.toLowerCase();
+  }
+  return { mode, rounding, colors };
 }
 
 // The host's key-check verdict (`key_check` in the payload). Only the three

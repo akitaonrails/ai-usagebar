@@ -82,6 +82,16 @@ jobs:
           sudo apt-get install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkx11-3.0 gir1.2-xapp-1.0
           make mint-runtime-test
 
+      - name: Verify the opt-in Linux tray and WebKit bridge
+        run: |
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev xvfb xauth dbus-x11
+          cargo clippy --all-targets --locked --features linux-tray -- -D warnings
+          cargo test --locked --features linux-tray --lib tray::
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d)"
+          dbus-run-session -- xvfb-run -a cargo test --locked --features linux-tray --lib \
+            webkit_loads_the_bundled_popover_and_blocks_frames -- --ignored
+
       - name: Unused dependencies
         uses: bnjbvr/cargo-machete@431e75731b681a69a4cfdeb1315b505778bb5c70 # v0.10.1
 

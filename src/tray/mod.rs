@@ -1,8 +1,9 @@
 //! System-tray popover over `usage --json`.
 //!
 //! View-model helpers compile on every OS so Linux CI can test them. The
-//! NotifyIcon/NSStatusItem + WebView event loop is Windows/macOS-only and
-//! never pulled into the AUR/Linux graph.
+//! NotifyIcon/NSStatusItem + WebView event loop ships on Windows/macOS; on
+//! Linux it is behind the opt-in `linux-tray` feature and never pulled into
+//! the AUR/Nix build graph.
 
 mod accent;
 mod browse;
@@ -24,12 +25,24 @@ mod strip;
 
 #[cfg(windows)]
 mod host;
+#[cfg(all(target_os = "linux", feature = "linux-tray"))]
+mod host_linux;
+// Hyprland placement for the Linux popover. Compiled under `test` too, so its pure tests run in CI
+// without the feature; only `host_linux` calls it.
 #[cfg(target_os = "macos")]
 mod host_macos;
+#[cfg(all(target_os = "linux", any(test, feature = "linux-tray")))]
+#[cfg_attr(not(feature = "linux-tray"), allow(dead_code))]
+mod hypr_linux;
 #[cfg(windows)]
 mod startup;
 #[cfg(target_os = "macos")]
 #[path = "startup_macos.rs"]
+mod startup;
+// Compiled under `test` on Linux too, so the hermetic tests run in CI even
+// when the feature is off.
+#[cfg(all(target_os = "linux", any(test, feature = "linux-tray")))]
+#[path = "startup_linux.rs"]
 mod startup;
 #[cfg(windows)]
 mod taskbar_theme;
@@ -99,10 +112,18 @@ pub fn run() -> i32 {
     {
         host_macos::run()
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(all(target_os = "linux", feature = "linux-tray"))]
+    {
+        host_linux::run()
+    }
+    #[cfg(not(any(
+        windows,
+        target_os = "macos",
+        all(target_os = "linux", feature = "linux-tray")
+    )))]
     {
         eprintln!(
-            "ai-usagebar-tray is the Windows/macOS system-tray popover; it is not used on this OS."
+            "ai-usagebar-tray: this build has no system-tray host for this OS. On Linux, build it with --features linux-tray."
         );
         1
     }
