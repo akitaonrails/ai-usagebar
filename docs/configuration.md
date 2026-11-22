@@ -49,6 +49,9 @@ you make while the check is running.
 # components. false contacts no status page. Default true; see
 # vendor-endpoints.md, "Service status".
 # provider_status = true
+# Accounts turned off one by one, by `usage --json` entry id. A listed account
+# is not shown and not fetched; see "Turning one account off" below.
+# hidden_accounts = ["openai@personal", "custom:example@work"]
 
 [context]
 enabled = false           # opt in, then press c in ai-usagebar-tui
@@ -388,6 +391,69 @@ For more than one OpenRouter key, see the
 DeepSeek, DeepInfra, Kilo, Novita, Moonshot, Grok, MiniMax, OrcaRouter, and Lyceum take the same
 `[[<vendor>.accounts]]` array and `show_default_account` switch — see the
 [API-key account guide](api-key-accounts.md).
+
+### Turning one account off
+
+`[ui] hidden_accounts` turns individual accounts off without touching the rest
+of their configuration:
+
+```toml
+[ui]
+hidden_accounts = ["openai@personal", "custom:example@work"]
+```
+
+Each item is the `id` of an entry in `ai-usagebar usage --json`: `<vendor>` for
+a provider's default account, `<vendor>@<label>` for a named or discovered
+account (`[[<vendor>.accounts]]`, `[anthropic] accounts_dir`, a Claude Desktop
+profile), `custom:<group>@<account>` for a grouped `[[custom]]` source,
+`custom:<id>` for an ungrouped one, and `antigravity@<id>` for an Antigravity
+status-line session (a report entry only: the TUI has a single Antigravity
+tab, which `antigravity` hides). Run `usage --json` before hiding anything to
+read the ids.
+
+A listed account:
+
+- is left out of the TUI, `ai-usagebar usage`, `usage --json`, and every
+  frontend that reads the report: the macOS and Windows tray popovers, GNOME,
+  KDE, Omarchy, Linux Mint and the MCP server. No new JSON field is involved;
+  the entry is simply absent.
+- is not fetched. It is dropped before the report or the TUI asks any provider
+  for anything, so it costs no usage request, no status-page lookup and no
+  token refresh.
+- keeps its config block, credentials and cache. Remove the id and the account
+  is back, with nothing to set up again.
+
+The TUI Settings overlay (`s`) edits the list: its **Accounts** section has one
+on/off row for each named account, for the default account of a provider that
+has named ones, and for anything the list already names. A provider with only
+its default account has no row there; turn it off with its own `enabled`
+switch. A save that toggles no account row leaves the list exactly as you
+wrote it, and a toggle keeps the other ids on their lines, comments included.
+
+Details worth knowing:
+
+- The list is literal. Hiding every account of a provider leaves the provider
+  enabled with no entry at all; a default account suppressed by
+  `show_default_account = false` does not come back to fill the gap. With
+  every account of every provider hidden, `usage` and `usage --json` fail
+  with `every enabled account is listed in [ui] hidden_accounts`, and the TUI
+  opens on a line that points at Settings.
+- An id that matches no account does nothing, so a list can keep the id of an
+  account whose provider is off for now.
+- The bar widget is a direct request and still answers for a listed account:
+  `ai-usagebar --vendor <vendor> [--account <label>]`, which a Waybar module
+  and the GNOME top-bar text run, the same way a direct `--vendor` call still
+  uses the default key under `show_default_account = false`. Point the module
+  at another account, or remove it, to stop that request.
+- The MCP `get_usage` tool reads the report, so a listed account is absent
+  from it. Asked for a provider or account that is entirely hidden, it returns
+  an error that names the key instead of a reading.
+- The tray's **Add key** check still reaches a provider whose account is
+  listed, because it verifies the key that was just typed.
+- The tray popovers read the config on each refresh, so a change made in the
+  TUI appears there at the next one. They have no control for this list yet.
+- The standalone macOS menu bar (`macos/`) builds its own account lists and
+  fetches each entry directly; it does not apply this list yet.
 
 ### Notifications
 

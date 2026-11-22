@@ -546,18 +546,8 @@ fn status(json: bool) -> i32 {
         "accounts": cli_rows,
     });
 
-    // The menu bar consumes this exact TUI enumeration instead of duplicating
-    // profile paths and CLI/Desktop dedup policy in Swift.
-    let usage_accounts: Vec<serde_json::Value> = crate::tui::app::tabs_with_desktop(&config)
-        .into_iter()
-        .filter(|tab| tab.vendor_id() == Some(crate::vendor::VendorId::Anthropic))
-        .filter_map(|tab| {
-            Some(serde_json::json!({
-                "label": tab.account?,
-                "desktop": tab.desktop,
-            }))
-        })
-        .collect();
+    let desktop_labels = crate::tui::app::desktop_profile_labels(&config);
+    let usage_accounts = claude_usage_accounts(&config, &desktop_labels);
     let report = serde_json::json!({
         "desktop": desktop,
         "cli": cli,
@@ -570,6 +560,28 @@ fn status(json: bool) -> i32 {
     }
     print_status(&report);
     0
+}
+
+/// The `usage_accounts` half of `account status --json`: the Claude accounts
+/// of the TUI's tab list, so the standalone macOS menu bar consumes that
+/// exact enumeration instead of duplicating profile paths and CLI/Desktop
+/// dedup policy in Swift. `desktop_labels` are the saved Desktop profiles that
+/// have credentials.
+///
+/// Taken before `[ui] hidden_accounts` applies: the menu bar does not know
+/// that key, and a Claude list emptied by it would make the menu bar's own
+/// `show_default_account` rule bring the default entry back.
+fn claude_usage_accounts(config: &Config, desktop_labels: &[String]) -> Vec<serde_json::Value> {
+    crate::tui::app::build_tabs(config, desktop_labels)
+        .into_iter()
+        .filter(|tab| tab.vendor_id() == Some(crate::vendor::VendorId::Anthropic))
+        .filter_map(|tab| {
+            Some(serde_json::json!({
+                "label": tab.account?,
+                "desktop": tab.desktop,
+            }))
+        })
+        .collect()
 }
 
 /// The `codex` half of `account status --json`: which `[[openai.accounts]]`
@@ -1975,6 +1987,41 @@ mod tests {
 
         plan.opts.keep_bridge = true;
         assert!(!plan_lines(&plan).join("\n").contains("remote bridge"));
+    }
+
+    /// `usage_accounts` is what the standalone macOS menu bar builds its
+    /// Claude list from, and that menu bar does not apply
+    /// `[ui] hidden_accounts`. Emptied by the key, the list would make its
+    /// `show_default_account` rule show (and fetch) the default entry again.
+    #[test]
+    fn status_usage_accounts_are_listed_before_hidden_accounts_applies() {
+        let mut config = Config::default();
+        config.anthropic.show_default_account = false;
+        config.anthropic.accounts = vec![crate::config::AnthropicAccount {
+            label: "work".into(),
+            credentials_path: "/creds/work.json".into(),
+        }];
+        let desktop_labels = ["personal".to_string()];
+        let listed = serde_json::json!([
+            {"label": "work", "desktop": false},
+            {"label": "personal", "desktop": true},
+        ]);
+        assert_eq!(
+            serde_json::Value::from(claude_usage_accounts(&config, &desktop_labels)),
+            listed
+        );
+
+        config.ui.hidden_accounts = vec!["anthropic@work".into(), "anthropic@personal".into()];
+        // The TUI's own list has no Claude tab left.
+        assert!(
+            crate::tui::app::tabs_from_config(&config)
+                .iter()
+                .all(|tab| tab.vendor_id() != Some(crate::vendor::VendorId::Anthropic))
+        );
+        assert_eq!(
+            serde_json::Value::from(claude_usage_accounts(&config, &desktop_labels)),
+            listed
+        );
     }
 
     #[test]

@@ -210,12 +210,14 @@ pub const PROVIDER_SWITCH_COUNT: usize = VendorId::all().len();
 
 /// Which control has keyboard focus. `Key(i)` indexes into [`KEY_VENDORS`];
 /// `Vendor(i)` indexes the provider on/off rows, parallel to
-/// `SettingsState::vendors` / `VendorId::all()`.
+/// `SettingsState::vendors` / `VendorId::all()`; `Account(i)` indexes
+/// `SettingsState::accounts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Primary,
     Key(usize),
     Vendor(usize),
+    Account(usize),
     NotifyEnabled,
     NotifyThreshold,
     Save,
@@ -242,25 +244,35 @@ pub enum SettingsRow {
 }
 
 impl Focus {
-    pub fn next(self) -> Self {
+    /// The control after this one. `accounts` is how many account rows the
+    /// overlay lists (`SettingsState::accounts`); with none, the ring goes
+    /// from the last provider straight to the notification toggle.
+    pub fn next(self, accounts: usize) -> Self {
         match self {
             Focus::Primary => Focus::Key(0),
             Focus::Key(i) if i + 1 < KEY_VENDORS.len() => Focus::Key(i + 1),
             Focus::Key(_) => Focus::Vendor(0),
             Focus::Vendor(i) if i + 1 < PROVIDER_SWITCH_COUNT => Focus::Vendor(i + 1),
+            Focus::Vendor(_) if accounts > 0 => Focus::Account(0),
             Focus::Vendor(_) => Focus::NotifyEnabled,
+            Focus::Account(i) if i + 1 < accounts => Focus::Account(i + 1),
+            Focus::Account(_) => Focus::NotifyEnabled,
             Focus::NotifyEnabled => Focus::NotifyThreshold,
             Focus::NotifyThreshold => Focus::Save,
             Focus::Save => Focus::Primary,
         }
     }
-    pub fn prev(self) -> Self {
+    /// The control before this one; `accounts` as in [`Focus::next`].
+    pub fn prev(self, accounts: usize) -> Self {
         match self {
             Focus::Primary => Focus::Save,
             Focus::Key(0) => Focus::Primary,
             Focus::Key(i) => Focus::Key(i - 1),
             Focus::Vendor(0) => Focus::Key(KEY_VENDORS.len() - 1),
             Focus::Vendor(i) => Focus::Vendor(i - 1),
+            Focus::Account(0) => Focus::Vendor(PROVIDER_SWITCH_COUNT - 1),
+            Focus::Account(i) => Focus::Account(i - 1),
+            Focus::NotifyEnabled if accounts > 0 => Focus::Account(accounts - 1),
             Focus::NotifyEnabled => Focus::Vendor(PROVIDER_SWITCH_COUNT - 1),
             Focus::NotifyThreshold => Focus::NotifyEnabled,
             Focus::Save => Focus::NotifyThreshold,
@@ -379,6 +391,18 @@ pub struct ProviderSwitch {
     pub dirty: bool,
 }
 
+/// One account's on/off row, backed by `[ui] hidden_accounts`. `id` is the
+/// report entry id the list stores; `enabled = false` lists it, which leaves
+/// the account out of the TUI and the report and stops fetching it, with its
+/// config block and credentials untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountSwitch {
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
+    pub dirty: bool,
+}
+
 /// Mutable state of the overlay while open.
 #[derive(Debug, Clone)]
 pub struct SettingsState {
@@ -392,6 +416,10 @@ pub struct SettingsState {
     /// One on/off switch per known vendor ([`VendorId::all()` order), so any
     /// provider can be turned on or off from the overlay (#244).
     pub vendors: Vec<ProviderSwitch>,
+    /// One on/off switch per named account and per default account beside
+    /// them. Empty until [`Self::with_account_rows`] fills it: `settings show`
+    /// and `settings apply` do not carry accounts.
+    pub accounts: Vec<AccountSwitch>,
     /// `[notifications] enabled` toggle. Written back only once toggled.
     pub notify_enabled: bool,
     pub notify_enabled_dirty: bool,
@@ -411,6 +439,26 @@ impl SettingsState {
         Self::from_config_with(cfg, |name| {
             std::env::var_os(name).is_some_and(|v| !v.is_empty())
         })
+    }
+
+    /// This state with the account on/off rows of `cfg`, which only the TUI
+    /// overlay shows. `tabs` is the tab list before `[ui] hidden_accounts`
+    /// applies, so an account that is off still has a row to turn it on
+    /// with; which accounts get one is
+    /// [`crate::report::account_switch_rows`]'s decision. The TUI opens the
+    /// overlay with `SettingsState::from_config(&cfg)` followed by
+    /// `.with_account_rows(&cfg, &all_tabs_with_desktop(&cfg))`.
+    pub fn with_account_rows(mut self, cfg: &Config, tabs: &[crate::tui::app::TabId]) -> Self {
+        self.accounts = crate::report::account_switch_rows(cfg, tabs)
+            .into_iter()
+            .map(|(id, label)| AccountSwitch {
+                enabled: !cfg.ui.is_account_hidden(&id),
+                id,
+                label,
+                dirty: false,
+            })
+            .collect();
+        self
     }
 
     /// [`Self::from_config`] with an injected environment lookup.
@@ -474,6 +522,7 @@ impl SettingsState {
                     dirty: false,
                 })
                 .collect(),
+            accounts: Vec::new(),
             notify_enabled: cfg.notifications.enabled,
             notify_enabled_dirty: false,
             notify_threshold: KeyInput::from_config(Some(&cfg.notifications.threshold.to_string())),
@@ -494,11 +543,11 @@ impl SettingsState {
     /// Move focus through the ring. [`Focus::next`]/[`Focus::prev`] own the
     /// order; these wrappers keep the call sites reading as state methods.
     fn next_focus(&self) -> Focus {
-        self.focus.next()
+        self.focus.next(self.accounts.len())
     }
 
     fn prev_focus(&self) -> Focus {
-        self.focus.prev()
+        self.focus.prev(self.accounts.len())
     }
 }
 
@@ -593,6 +642,7 @@ pub fn handle_key(state: &mut SettingsState, code: KeyCode, mods: KeyModifiers) 
             }
         }
         Focus::Vendor(i) => handle_provider_switch(state, i, code),
+        Focus::Account(i) => handle_account_switch(state, i, code),
         Focus::NotifyEnabled => handle_notify_enabled(state, code),
         Focus::NotifyThreshold => handle_threshold_input(&mut state.notify_threshold, code),
         Focus::Save => {
@@ -689,6 +739,17 @@ fn handle_provider_switch(state: &mut SettingsState, index: usize, code: KeyCode
     }
 }
 
+/// One account row (`[ui] hidden_accounts`): the same keys as a provider
+/// row, and the same rule that only a touched row is written.
+fn handle_account_switch(state: &mut SettingsState, index: usize, code: KeyCode) {
+    if matches!(code, KeyCode::Left | KeyCode::Right | KeyCode::Char(' '))
+        && let Some(switch) = state.accounts.get_mut(index)
+    {
+        switch.enabled = !switch.enabled;
+        switch.dirty = true;
+    }
+}
+
 /// The `[notifications] threshold` field: an edit buffer that only accepts
 /// digits, so the value can never be something save would have to reject as
 /// non-numeric (range is still checked at save).
@@ -771,6 +832,19 @@ pub fn save_to_path(state: &SettingsState, path: &Path) -> Result<()> {
                 crate::config::set_vendor_enabled_in_doc(doc, id.slug(), switch.enabled)?;
             }
         }
+
+        // Account switches: only toggled rows. With none toggled the setter
+        // gets no update and leaves `[ui] hidden_accounts` exactly as it is
+        // written, which is every `settings apply` (it carries no account
+        // rows) and most overlay saves; with some, the ids it was not given
+        // keep their place and their comments.
+        let account_updates: Vec<(String, bool)> = state
+            .accounts
+            .iter()
+            .filter(|switch| switch.dirty)
+            .map(|switch| (switch.id.clone(), switch.enabled))
+            .collect();
+        crate::config::set_hidden_accounts_in_doc(doc, &account_updates)?;
 
         // [notifications]: each field is written only when the user touched it,
         // so an untouched overlay save leaves an absent/commented section alone.
@@ -1532,6 +1606,8 @@ struct BodyLayout {
     primary: usize,
     first_key: usize,
     first_vendor: usize,
+    /// First account row; meaningful only when there are account rows.
+    first_account: usize,
     notify_enabled: usize,
     notify_threshold: usize,
     save: usize,
@@ -1539,14 +1615,22 @@ struct BodyLayout {
     rows: usize,
 }
 
-fn body_layout(keys: usize, vendors: usize) -> BodyLayout {
+fn body_layout(keys: usize, vendors: usize, accounts: usize) -> BodyLayout {
     let first_key = 4;
     let first_vendor = first_key + keys + 2;
-    let notify_enabled = first_vendor + vendors + 2;
+    // The Accounts section (header, rows, blank line) exists only when it has
+    // rows, so with none every line below sits where it always did.
+    let first_account = first_vendor + vendors + 2;
+    let notify_enabled = if accounts > 0 {
+        first_account + accounts + 2
+    } else {
+        first_account
+    };
     BodyLayout {
         primary: 1,
         first_key,
         first_vendor,
+        first_account,
         notify_enabled,
         notify_threshold: notify_enabled + 1,
         save: notify_enabled + 3,
@@ -1556,11 +1640,12 @@ fn body_layout(keys: usize, vendors: usize) -> BodyLayout {
 
 /// The body line the focused control renders on.
 fn focus_line(state: &SettingsState) -> usize {
-    let layout = body_layout(KEY_VENDORS.len(), state.vendors.len());
+    let layout = body_layout(KEY_VENDORS.len(), state.vendors.len(), state.accounts.len());
     match state.focus {
         Focus::Primary => layout.primary,
         Focus::Key(i) => layout.first_key + i,
         Focus::Vendor(i) => layout.first_vendor + i,
+        Focus::Account(i) => layout.first_account + i,
         Focus::NotifyEnabled => layout.notify_enabled,
         Focus::NotifyThreshold => layout.notify_threshold,
         Focus::Save => layout.save,
@@ -1615,7 +1700,7 @@ pub fn render(
     // must be recorded at the *rendered* row (unscrolled position minus the
     // scroll offset), or a click selects the control `scroll` rows away from
     // the one the user sees.
-    let layout = body_layout(KEY_VENDORS.len(), state.vendors.len());
+    let layout = body_layout(KEY_VENDORS.len(), state.vendors.len(), state.accounts.len());
     let total = layout.rows + usize::from(!state.status.is_empty());
     let scroll = follow_focus_scroll(focus_line(state), total, chunks[0].height, state.scroll);
     state.scroll = scroll;
@@ -1702,6 +1787,39 @@ pub fn render(
     }
     lines.push(Line::from(""));
 
+    // — Accounts on/off (`[ui] hidden_accounts`) — only when a provider has
+    // named accounts, or the list already names something.
+    if !state.accounts.is_empty() {
+        lines.push(section_header(
+            "Accounts",
+            "one account of a provider; off is not fetched",
+            &bubble,
+        ));
+        // Account labels run past the 11-column padding ("Claude · work"),
+        // so pad them to the longest one and the on/off values line up.
+        let label_w = state
+            .accounts
+            .iter()
+            .map(|switch| crate::display::text_width(&switch.label))
+            .max()
+            .unwrap_or(0);
+        for (i, switch) in state.accounts.iter().enumerate() {
+            let focused = state.focus == Focus::Account(i);
+            let pad = label_w - crate::display::text_width(&switch.label);
+            let label = format!("{}{}", switch.label, " ".repeat(pad));
+            if let Some(r) = row_at(lines.len()) {
+                let (value_x, value_w) = switch_cell(&label, switch_value(switch.enabled), focused);
+                hits.push((
+                    SettingsRow::Switch(Focus::Account(i), KeyCode::Char(' '), KeyModifiers::NONE),
+                    Rect::new(r.x.saturating_add(value_x), r.y, value_w, 1),
+                ));
+                hits.push((SettingsRow::Focus(Focus::Account(i)), r));
+            }
+            lines.push(switch_row(&label, switch.enabled, focused, &bubble));
+        }
+        lines.push(Line::from(""));
+    }
+
     // — Notifications —
     lines.push(section_header(
         "Notifications",
@@ -1785,7 +1903,7 @@ pub fn render(
             ),
             ("esc", "close", Some((KeyCode::Esc, KeyModifiers::NONE))),
         ],
-        Focus::Vendor(_) | Focus::NotifyEnabled => &[
+        Focus::Vendor(_) | Focus::Account(_) | Focus::NotifyEnabled => &[
             ("↑↓/tab", "move", None),
             (
                 "←→/space",
@@ -2065,8 +2183,13 @@ fn provider_row(
     focused: bool,
     theme: &BubbleTheme,
 ) -> Line<'static> {
-    let label = padded_label(id.display_name());
-    let value = switch_value(switch.enabled);
+    switch_row(id.display_name(), switch.enabled, focused, theme)
+}
+
+/// A labelled on/off row: what a provider row and an account row both are.
+fn switch_row(label: &str, enabled: bool, focused: bool, theme: &BubbleTheme) -> Line<'static> {
+    let label = padded_label(label);
+    let value = switch_value(enabled);
     if focused {
         Line::from(vec![
             theme.span("   "),
@@ -2244,6 +2367,7 @@ mod tests {
                     dirty: false,
                 })
                 .collect(),
+            accounts: Vec::new(),
             notify_enabled: true,
             notify_enabled_dirty: false,
             notify_threshold: KeyInput::from_config(Some("97")),
@@ -2270,7 +2394,7 @@ mod tests {
         // Full cycle = Primary + N key rows + every provider switch + both
         // notification fields + Save.
         for _ in 0..(KEY_VENDORS.len() + PROVIDER_SWITCH_COUNT + 4) {
-            f = f.next();
+            f = f.next(0);
             seen.push(f);
         }
         // Primary, Key(0..n), Vendor(0..m), NotifyEnabled, NotifyThreshold,
@@ -2286,24 +2410,24 @@ mod tests {
         assert!(seen.contains(&Focus::Save));
         // prev() is the inverse of next() at every joint of the ring (#244
         // inserted the provider rows between the credentials and alerts).
-        assert_eq!(Focus::Primary.next().prev(), Focus::Primary);
-        assert_eq!(Focus::Save.prev().next(), Focus::Save);
+        assert_eq!(Focus::Primary.next(0).prev(0), Focus::Primary);
+        assert_eq!(Focus::Save.prev(0).next(0), Focus::Save);
         assert_eq!(
-            Focus::Key(KEY_VENDORS.len() - 1).next(),
+            Focus::Key(KEY_VENDORS.len() - 1).next(0),
             Focus::Vendor(0),
             "the first provider row follows the last credential"
         );
-        assert_eq!(Focus::Vendor(0).prev(), Focus::Key(KEY_VENDORS.len() - 1));
+        assert_eq!(Focus::Vendor(0).prev(0), Focus::Key(KEY_VENDORS.len() - 1));
         assert_eq!(
-            Focus::Vendor(PROVIDER_SWITCH_COUNT - 1).next(),
+            Focus::Vendor(PROVIDER_SWITCH_COUNT - 1).next(0),
             Focus::NotifyEnabled
         );
         assert_eq!(
-            Focus::NotifyEnabled.prev(),
+            Focus::NotifyEnabled.prev(0),
             Focus::Vendor(PROVIDER_SWITCH_COUNT - 1)
         );
-        assert_eq!(Focus::NotifyThreshold.next(), Focus::Save);
-        assert_eq!(Focus::Primary.prev(), Focus::Save);
+        assert_eq!(Focus::NotifyThreshold.next(0), Focus::Save);
+        assert_eq!(Focus::Primary.prev(0), Focus::Save);
     }
 
     /// The focus ring must track the real vendor enumeration, not a stale
@@ -3710,7 +3834,7 @@ enabled = true
     fn body_layout_positions_every_focusable_row_without_overlap() {
         let keys = 5;
         let vendors = 7;
-        let layout = body_layout(keys, vendors);
+        let layout = body_layout(keys, vendors, 0);
         // Credentials: header at 3, rows 4..9, blank 9.
         assert_eq!(layout.primary, 1);
         assert_eq!(layout.first_key, 4);
@@ -3739,7 +3863,7 @@ enabled = true
     #[test]
     fn focus_line_matches_the_body_layout_for_every_focus_variant() {
         let state = blank_state(VendorId::Anthropic);
-        let layout = body_layout(KEY_VENDORS.len(), state.vendors.len());
+        let layout = body_layout(KEY_VENDORS.len(), state.vendors.len(), 0);
         let cases = [
             (Focus::Primary, layout.primary),
             (Focus::Key(0), layout.first_key),
@@ -4112,5 +4236,305 @@ enabled = true
             lines.push(line.trim_end().to_string());
         }
         lines
+    }
+
+    // ─── Account switches (`[ui] hidden_accounts`) ──────────────────────────
+
+    const TWO_OPENAI_ACCOUNTS: &str = r#"# keep header
+[ui]
+primary = "openai"
+
+[anthropic]
+enabled = false
+
+[openai]
+enabled = true
+[[openai.accounts]]
+label = "work"
+codex_auth_path = "/nonexistent/work-auth.json"
+[[openai.accounts]]
+label = "personal"
+codex_auth_path = "/nonexistent/personal-auth.json"
+
+[zai]
+enabled = false
+
+[openrouter]
+enabled = false
+
+[commandcode]
+enabled = false
+"#;
+
+    /// A hermetic overlay state with the account rows of `cfg`.
+    fn state_with_accounts(cfg: &Config) -> SettingsState {
+        SettingsState::from_config_with(cfg, |_| false)
+            .with_account_rows(cfg, &crate::tui::app::all_tabs_from_config(cfg))
+    }
+
+    fn account_index(state: &SettingsState, id: &str) -> usize {
+        state
+            .accounts
+            .iter()
+            .position(|switch| switch.id == id)
+            .unwrap_or_else(|| panic!("no account row for {id} in {:?}", state.accounts))
+    }
+
+    #[test]
+    fn a_config_with_one_account_per_provider_has_no_account_rows() {
+        let state = state_with_accounts(&Config::default());
+        assert!(state.accounts.is_empty(), "{:?}", state.accounts);
+        // And the overlay is laid out exactly as before the section existed.
+        let layout = body_layout(KEY_VENDORS.len(), state.vendors.len(), 0);
+        assert_eq!(
+            layout.notify_enabled,
+            layout.first_vendor + state.vendors.len() + 2
+        );
+    }
+
+    #[test]
+    fn account_switch_hides_one_account_and_shows_it_again() {
+        let (_dir, path) = temp_config(Some(TWO_OPENAI_ACCOUNTS));
+        let cfg = Config::load_from(&path).unwrap();
+        let mut state = state_with_accounts(&cfg);
+        let ids: Vec<&str> = state.accounts.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, ["openai", "openai@work", "openai@personal"]);
+        assert!(state.accounts.iter().all(|a| a.enabled && !a.dirty));
+
+        let personal = account_index(&state, "openai@personal");
+        state.focus = Focus::Account(personal);
+        handle_key(&mut state, KeyCode::Char(' '), KeyModifiers::NONE);
+        assert!(!state.accounts[personal].enabled);
+        save_to_path(&state, &path).unwrap();
+
+        let hidden = Config::load_from(&path).unwrap();
+        assert_eq!(hidden.ui.hidden_accounts, vec!["openai@personal"]);
+        // The account itself is still configured, credentials path included.
+        assert_eq!(hidden.openai.accounts.len(), 2);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("# keep header"), "{raw}");
+        assert!(raw.contains("/nonexistent/personal-auth.json"), "{raw}");
+        // It is gone from the tab list, and still has its row in Settings.
+        assert!(!crate::tui::app::tabs_from_config(&hidden).contains(
+            &crate::tui::app::TabId::account_for(VendorId::Openai, "personal")
+        ));
+        let mut reopened = state_with_accounts(&hidden);
+        let personal = account_index(&reopened, "openai@personal");
+        assert!(!reopened.accounts[personal].enabled);
+
+        reopened.focus = Focus::Account(personal);
+        handle_key(&mut reopened, KeyCode::Right, KeyModifiers::NONE);
+        save_to_path(&reopened, &path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            TWO_OPENAI_ACCOUNTS,
+            "showing it again leaves the file as it was"
+        );
+    }
+
+    #[test]
+    fn an_untouched_account_row_writes_nothing_and_keeps_ids_it_does_not_list() {
+        let with_stale = TWO_OPENAI_ACCOUNTS.replace(
+            "primary = \"openai\"\n",
+            "primary = \"openai\"\nhidden_accounts = [\"antigravity@000000000001\"]\n",
+        );
+        let (_dir, path) = temp_config(Some(&with_stale));
+        let cfg = Config::load_from(&path).unwrap();
+        let mut state = state_with_accounts(&cfg);
+        // The listed id has no tab behind it; it still gets a row, by its id.
+        let stale = account_index(&state, "antigravity@000000000001");
+        assert_eq!(state.accounts[stale].label, "antigravity@000000000001");
+        assert!(!state.accounts[stale].enabled);
+
+        save_to_path(&state, &path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), with_stale);
+
+        // Hiding another account keeps the one already there.
+        let work = account_index(&state, "openai@work");
+        state.focus = Focus::Account(work);
+        handle_key(&mut state, KeyCode::Left, KeyModifiers::NONE);
+        save_to_path(&state, &path).unwrap();
+        assert_eq!(
+            Config::load_from(&path).unwrap().ui.hidden_accounts,
+            vec!["antigravity@000000000001", "openai@work"]
+        );
+    }
+
+    /// The list as a user lays it out by hand: one id per line, a note beside
+    /// each. `save_to_path` reaches the setter on every save, and the first
+    /// version rebuilt the list each time, which put it on one line and
+    /// dropped the notes.
+    const HAND_FORMATTED_HIDDEN_ACCOUNTS: &str = "hidden_accounts = [
+    \"antigravity@000000000001\", # old laptop
+    \"openai@personal\", # on holiday
+]
+";
+
+    fn two_openai_accounts_with_ui_line(line: &str) -> String {
+        TWO_OPENAI_ACCOUNTS.replace(
+            "primary = \"openai\"\n",
+            &format!("primary = \"openai\"\n{line}"),
+        )
+    }
+
+    #[test]
+    fn a_save_that_toggles_no_account_leaves_a_hand_formatted_list_byte_identical() {
+        for list in [HAND_FORMATTED_HIDDEN_ACCOUNTS, "hidden_accounts = []\n"] {
+            let original = two_openai_accounts_with_ui_line(list);
+            let (_dir, path) = temp_config(Some(&original));
+            let cfg = Config::load_from(&path).unwrap();
+
+            // The overlay, opened and saved with its account rows untouched.
+            save_to_path(&state_with_accounts(&cfg), &path).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+
+            // `settings apply`: the JSON bridge the native frontends use
+            // builds its state without account rows.
+            let bridge = SettingsState::from_config_with(&cfg, |_| false);
+            assert!(bridge.accounts.is_empty());
+            save_to_path(&bridge, &path).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn hiding_one_more_account_keeps_the_notes_beside_the_others() {
+        let original = two_openai_accounts_with_ui_line(HAND_FORMATTED_HIDDEN_ACCOUNTS);
+        let (_dir, path) = temp_config(Some(&original));
+        let cfg = Config::load_from(&path).unwrap();
+        let mut state = state_with_accounts(&cfg);
+
+        let work = account_index(&state, "openai@work");
+        state.focus = Focus::Account(work);
+        handle_key(&mut state, KeyCode::Char(' '), KeyModifiers::NONE);
+        save_to_path(&state, &path).unwrap();
+        let hidden = two_openai_accounts_with_ui_line(
+            "hidden_accounts = [
+    \"antigravity@000000000001\", # old laptop
+    \"openai@personal\", # on holiday
+    \"openai@work\",
+]
+",
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), hidden);
+
+        // Showing it again puts the file back as the user wrote it.
+        let mut reopened = state_with_accounts(&Config::load_from(&path).unwrap());
+        let work = account_index(&reopened, "openai@work");
+        assert!(!reopened.accounts[work].enabled);
+        reopened.focus = Focus::Account(work);
+        handle_key(&mut reopened, KeyCode::Char(' '), KeyModifiers::NONE);
+        save_to_path(&reopened, &path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn focus_ring_and_layout_include_the_account_rows() {
+        let n = 3;
+        let last_vendor = Focus::Vendor(PROVIDER_SWITCH_COUNT - 1);
+        assert_eq!(last_vendor.next(n), Focus::Account(0));
+        assert_eq!(Focus::Account(0).prev(n), last_vendor);
+        assert_eq!(Focus::Account(0).next(n), Focus::Account(1));
+        assert_eq!(Focus::Account(n - 1).next(n), Focus::NotifyEnabled);
+        assert_eq!(Focus::NotifyEnabled.prev(n), Focus::Account(n - 1));
+
+        let mut state = blank_state(VendorId::Anthropic);
+        state.accounts = (0..n)
+            .map(|i| AccountSwitch {
+                id: format!("openai@account-{i}"),
+                label: format!("Codex · account-{i}"),
+                enabled: true,
+                dirty: false,
+            })
+            .collect();
+        let layout = body_layout(KEY_VENDORS.len(), state.vendors.len(), n);
+        // Blank line and section header sit between the last provider and
+        // the first account, and between the last account and Notifications.
+        assert_eq!(
+            layout.first_account,
+            layout.first_vendor + state.vendors.len() + 2
+        );
+        assert_eq!(layout.notify_enabled, layout.first_account + n + 2);
+        for (focus, want) in [
+            (Focus::Account(0), layout.first_account),
+            (Focus::Account(n - 1), layout.first_account + n - 1),
+            (Focus::NotifyEnabled, layout.notify_enabled),
+            (Focus::Save, layout.save),
+        ] {
+            state.focus = focus;
+            assert_eq!(focus_line(&state), want, "{focus:?}");
+        }
+    }
+
+    /// The account rows are drawn where `body_layout` says, each with a switch
+    /// cell a click can toggle, and their values line up although the labels
+    /// differ in length.
+    #[test]
+    fn render_draws_the_accounts_section_with_aligned_switch_cells() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let theme = crate::theme::Theme::default();
+        let mut state = blank_state(VendorId::Anthropic);
+        state.accounts = ["Codex", "Codex · work", "Codex · personal"]
+            .iter()
+            .enumerate()
+            .map(|(i, label)| AccountSwitch {
+                id: format!("openai@{i}"),
+                label: (*label).to_string(),
+                enabled: i != 2,
+                dirty: false,
+            })
+            .collect();
+        state.focus = Focus::Account(0);
+        let mut terminal = Terminal::new(TestBackend::new(100, 90)).unwrap();
+        let mut hits = Vec::new();
+        terminal
+            .draw(|f| render(f, f.area(), &mut state, &theme, &mut hits))
+            .unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .concat();
+        assert!(screen.contains("Accounts"), "{screen}");
+        assert!(screen.contains("Codex · personal  off"), "{screen}");
+
+        let cells: Vec<Rect> = (0..3)
+            .map(|i| {
+                hits.iter()
+                    .find_map(|(row, rect)| match row {
+                        SettingsRow::Switch(Focus::Account(a), KeyCode::Char(' '), _)
+                            if *a == i =>
+                        {
+                            Some(*rect)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("account {i} has no switch cell"))
+            })
+            .collect();
+        assert!(cells.iter().all(|cell| cell.x == cells[0].x), "{cells:?}");
+        assert_eq!(cells[1].y, cells[0].y + 1);
+        assert_eq!(cells[2].y, cells[1].y + 1);
+
+        // Without account rows the section is not drawn at all.
+        let mut plain = blank_state(VendorId::Anthropic);
+        let mut hits = Vec::new();
+        terminal
+            .draw(|f| render(f, f.area(), &mut plain, &theme, &mut hits))
+            .unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<Vec<_>>()
+            .concat();
+        assert!(!screen.contains("Accounts"), "{screen}");
     }
 }

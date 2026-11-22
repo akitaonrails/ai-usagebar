@@ -160,20 +160,53 @@ impl TabId {
 /// every other vendor is a single tab. With no extra accounts and
 /// `overview_vendors` unset, the result equals `config.enabled_vendors()` in
 /// canonical order. When the list is set, listed vendors lead and unlisted
-/// enabled vendors follow in that same canonical order.
+/// enabled vendors follow in that same canonical order. Accounts named in
+/// `[ui] hidden_accounts` are left out.
 ///
 /// Config-only and pure — no Desktop profiles. Production uses
 /// [`tabs_with_desktop`]; this stays for the hermetic unit tests and any caller
 /// that only wants configured accounts.
 pub fn tabs_from_config(config: &Config) -> Vec<TabId> {
-    build_tabs(config, &[])
+    without_hidden_accounts(config, all_tabs_from_config(config))
 }
 
 /// The production aggregate-view tab list: configured accounts plus every saved
-/// Claude Desktop profile that has usable credentials. Desktop discovery is
-/// best-effort and macOS-only; anywhere else this equals [`tabs_from_config`].
+/// Claude Desktop profile that has usable credentials, minus the accounts named
+/// in `[ui] hidden_accounts`. Desktop discovery is best-effort and macOS-only;
+/// anywhere else this equals [`tabs_from_config`].
 pub fn tabs_with_desktop(config: &Config) -> Vec<TabId> {
+    without_hidden_accounts(config, all_tabs_with_desktop(config))
+}
+
+/// [`tabs_from_config`] before `[ui] hidden_accounts` is applied. The Settings
+/// overlay lists accounts from this, so one that is off can be turned on again.
+pub fn all_tabs_from_config(config: &Config) -> Vec<TabId> {
+    build_tabs(config, &[])
+}
+
+/// [`tabs_with_desktop`] before `[ui] hidden_accounts` is applied. Callers use
+/// it to tell "nothing is enabled" from "everything enabled is hidden", and
+/// the report starts from it because a status-line session gets its id only
+/// after this list is expanded.
+pub fn all_tabs_with_desktop(config: &Config) -> Vec<TabId> {
     build_tabs(config, &desktop_profile_labels(config))
+}
+
+/// Drop the tabs `[ui] hidden_accounts` names. Applied to the finished list,
+/// after the default-account rules in [`build_tabs`], so hiding every named
+/// account does not bring back a default one that `show_default_account =
+/// false` suppressed: a provider whose accounts are all hidden has no tab.
+fn without_hidden_accounts(config: &Config, tabs: Vec<TabId>) -> Vec<TabId> {
+    if config.ui.hidden_accounts.is_empty() {
+        return tabs;
+    }
+    tabs.into_iter()
+        .filter(|tab| {
+            !config
+                .ui
+                .is_account_hidden(&crate::report::tab_report_id(config, tab))
+        })
+        .collect()
 }
 
 /// Enabled vendors in `[ui] overview_vendors` order. Unlisted vendors keep
@@ -209,7 +242,7 @@ fn vendors_for_tabs(config: &Config) -> Vec<VendorId> {
 /// authenticates but reports another account's (often zero) usage, which no
 /// credential-health check can catch. The app-maintained Desktop token is the
 /// one source that avoids both the rotation war and that silent misattribution.
-fn build_tabs(config: &Config, desktop_labels: &[String]) -> Vec<TabId> {
+pub(crate) fn build_tabs(config: &Config, desktop_labels: &[String]) -> Vec<TabId> {
     let desktop_set: HashSet<&str> = desktop_labels.iter().map(String::as_str).collect();
     let mut tabs = Vec::new();
     for vendor in vendors_for_tabs(config) {
@@ -277,7 +310,7 @@ fn build_tabs(config: &Config, desktop_labels: &[String]) -> Vec<TabId> {
 /// (elsewhere there is no Desktop app); best-effort, so an unreadable profile
 /// store just yields none rather than failing the whole tab list.
 #[cfg(target_os = "macos")]
-fn desktop_profile_labels(config: &Config) -> Vec<String> {
+pub(crate) fn desktop_profile_labels(config: &Config) -> Vec<String> {
     let Ok(paths) = crate::claude_desktop::Paths::resolve(&config.anthropic) else {
         return Vec::new();
     };
@@ -292,7 +325,7 @@ fn desktop_profile_labels(config: &Config) -> Vec<String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn desktop_profile_labels(_config: &Config) -> Vec<String> {
+pub(crate) fn desktop_profile_labels(_config: &Config) -> Vec<String> {
     Vec::new()
 }
 
@@ -2253,6 +2286,67 @@ mod tests {
         assert_eq!(
             refresh_stagger(&tabs, step),
             vec![Duration::ZERO, Duration::ZERO, step]
+        );
+    }
+
+    #[test]
+    fn hidden_accounts_leave_the_tab_list_and_only_they_do() {
+        let mut config = config_with_accounts(&["work", "personal"]);
+        let all = vec![
+            TabId::vendor(VendorId::Anthropic),
+            TabId::account("work"),
+            TabId::account("personal"),
+        ];
+        assert_eq!(
+            tabs_from_config(&config),
+            all,
+            "nothing listed, nothing hidden"
+        );
+
+        // An id that matches no account is ignored, not an error.
+        config.ui.hidden_accounts = vec!["anthropic@personal".into(), "anthropic@gone".into()];
+        assert_eq!(
+            tabs_from_config(&config),
+            vec![TabId::vendor(VendorId::Anthropic), TabId::account("work")]
+        );
+        // The unfiltered list still has it, which is how Settings shows a row
+        // to turn it on again.
+        assert_eq!(all_tabs_from_config(&config), all);
+    }
+
+    #[test]
+    fn hiding_every_account_of_a_provider_leaves_it_without_a_tab() {
+        // The last visible account can be hidden like any other: the list is
+        // literal. In particular the default account that
+        // `show_default_account = false` suppressed does not come back to
+        // fill the gap, which would fetch an account the user turned off.
+        let mut config = config_with_accounts(&["work", "personal"]);
+        config.anthropic.show_default_account = false;
+        config.ui.hidden_accounts = vec!["anthropic@work".into(), "anthropic@personal".into()];
+        assert!(tabs_from_config(&config).is_empty());
+        assert_eq!(
+            all_tabs_from_config(&config),
+            vec![TabId::account("work"), TabId::account("personal")]
+        );
+    }
+
+    #[test]
+    fn a_grouped_custom_account_is_hidden_by_its_report_id() {
+        let grouped = |id: &str, account: &str| CustomProviderConfig {
+            group: Some("example".into()),
+            account: Some(account.into()),
+            ..custom_spec(id, true)
+        };
+        let mut config = config_with_accounts(&[]);
+        config.anthropic.enabled = false;
+        config.custom = vec![
+            grouped("example_work", "work"),
+            grouped("example_personal", "personal"),
+        ];
+        config.ui.hidden_accounts = vec!["custom:example@work".into()];
+        assert_eq!(
+            tabs_from_config(&config),
+            vec![TabId::custom(&config.custom[1])]
         );
     }
 

@@ -1412,6 +1412,10 @@ Press `s` while the TUI is open. The overlay lets you:
   press `Ctrl-V` to reveal or hide them. The provider's configured environment
   variable still wins at runtime; the inline key is the fallback. Saving a
   non-empty key also sets that provider's `enabled = true`.
+- Turn one account of a provider off and on again, when a provider has
+  named accounts. An account that is off is not shown and not fetched, and
+  stays configured (`[ui] hidden_accounts`; see
+  [Turning one account off](docs/configuration.md#turning-one-account-off)).
 
 Key bindings inside the overlay:
 
