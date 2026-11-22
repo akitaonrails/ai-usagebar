@@ -84,6 +84,56 @@ struct Entry {
     incident: Option<crate::incident::IncidentBanner>,
 }
 
+impl Entry {
+    /// Fill the structured pace fields and record one sparkline sample.
+    ///
+    /// The projection is deliberately withheld until 10% of the window has
+    /// elapsed: a single early reading would otherwise print four-digit
+    /// estimates. It is a pace estimate, not a prediction.
+    fn annotate(&mut self, history: &mut crate::history::History, now: DateTime<Utc>) {
+        let id = self.id.clone();
+        for section in &mut self.sections {
+            let ReportSection::Metric {
+                label,
+                percent,
+                reset_at,
+                window_secs,
+                elapsed_percent,
+                projected_percent,
+                spark,
+                spark_points,
+                ..
+            } = section
+            else {
+                continue;
+            };
+            let reset = reset_at.as_ref().map(|at| at.to_rfc3339());
+            let elapsed = (*window_secs)
+                .filter(|secs| *secs > 0)
+                .and_then(|secs| {
+                    let reset = (*reset_at)?;
+                    Some(crate::pacing::calc(
+                        i32::from(*percent),
+                        Some(reset),
+                        now,
+                        chrono::Duration::seconds(secs as i64),
+                        PACE_TOLERANCE,
+                    ))
+                })
+                .map(|pacing| pacing.elapsed_pct.clamp(0, 100) as u8);
+            *elapsed_percent = elapsed;
+            *projected_percent = elapsed.and_then(|elapsed| {
+                (elapsed >= 10 && *percent > 0).then(|| {
+                    ((i64::from(*percent) * 100) / i64::from(elapsed)).clamp(0, 999) as u16
+                })
+            });
+            let key = format!("{id}|{label}|{}", reset.as_deref().unwrap_or("none"));
+            *spark = history.record(&key, reset.as_deref(), *percent, now);
+            *spark_points = history.points(&key);
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ReportTarget {
     Tab(TabId),
@@ -338,6 +388,23 @@ enum ReportSection {
         /// month or an unstated window omits the field rather than guessing.
         #[serde(skip_serializing_if = "Option::is_none")]
         window_secs: Option<u64>,
+        /// Percent of the window already elapsed at report time. Present only
+        /// when both `reset_at` and `window_secs` are known, so a calendar
+        /// month or an unstated window stays absent rather than guessed.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        elapsed_percent: Option<u8>,
+        /// Final percent at the same pace, once at least 10% of the window has
+        /// elapsed and usage is non-zero. Capped at 999; absent when the
+        /// denominator is unknown. This is a pace estimate, not a prediction.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        projected_percent: Option<u16>,
+        /// Recent samples of this metric as Unicode blocks, oldest to newest.
+        /// Present after three samples; a compact trend for text frontends.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        spark: Option<String>,
+        /// The same samples as percentages, for frontends that draw a line.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        spark_points: Option<Vec<u16>>,
         /// Sub-group heading the metric belongs under (SuperGrok's product
         /// slices under `"Breakdown"`), so a frontend can draw it compactly
         /// beneath that heading instead of as a peer of the overall meter.
@@ -689,7 +756,7 @@ async fn entry_for_report_target(
 /// `priorities` adds the opt-in ranking (`usage --json --priorities`); `None`
 /// prints the report unchanged.
 pub async fn run(json: bool, priorities: Option<crate::recommendation::Options>) -> i32 {
-    let (entries, primary, overview) = match collect_entries().await {
+    let (mut entries, primary, overview) = match collect_entries().await {
         Ok(collected) => collected,
         Err(message) => {
             eprintln!("ai-usagebar usage: {message}");
@@ -698,6 +765,15 @@ pub async fn run(json: bool, priorities: Option<crate::recommendation::Options>)
     };
 
     if json {
+        let now = Utc::now();
+        {
+            let _lock = crate::history::lock();
+            let mut history = crate::history::History::load();
+            for entry in &mut entries {
+                entry.annotate(&mut history, now);
+            }
+            history.save();
+        }
         let history_dir = priorities.and_then(|_| crate::recommendation::default_history_dir());
         let document = usage_json(
             &entries,
@@ -705,7 +781,7 @@ pub async fn run(json: bool, priorities: Option<crate::recommendation::Options>)
             overview.as_deref(),
             priorities,
             history_dir,
-            Utc::now(),
+            now,
         )
         .await;
         println!("{document}");
@@ -835,6 +911,10 @@ fn entry_from_state(tab: &TabId, state: &TabState, now: chrono::DateTime<Utc>) -
                         .window
                         .filter(|window| window.num_seconds() > 0)
                         .map(|window| window.num_seconds() as u64),
+                    elapsed_percent: None,
+                    projected_percent: None,
+                    spark: None,
+                    spark_points: None,
                     group: projected.group.map(str::to_string),
                     regen: projected.regen,
                     percent_precise: projected.percent_precise,
@@ -1197,6 +1277,10 @@ fn session_section(session: &ContextSession) -> ReportSection {
             .into(),
         reset_at: None,
         window_secs: None,
+        elapsed_percent: None,
+        projected_percent: None,
+        spark: None,
+        spark_points: None,
         group: Some(SESSIONS_GROUP.into()),
         regen: None,
         percent_precise: None,
@@ -1432,6 +1516,10 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         severity,
                         reset_at,
                         window_secs,
+                        elapsed_percent,
+                        projected_percent,
+                        spark,
+                        spark_points,
                         group,
                         regen,
                         percent_precise,
@@ -1450,6 +1538,18 @@ fn json_rows(entries: &[Entry]) -> Vec<serde_json::Value> {
                         // Same rule as the `sections` serializer: absent, not null.
                         if let Some(secs) = window_secs {
                             metric["window_secs"] = json!(secs);
+                        }
+                        if let Some(elapsed) = elapsed_percent {
+                            metric["elapsed_percent"] = json!(elapsed);
+                        }
+                        if let Some(projected) = projected_percent {
+                            metric["projected_percent"] = json!(projected);
+                        }
+                        if let Some(spark) = spark {
+                            metric["spark"] = json!(spark);
+                        }
+                        if let Some(points) = spark_points {
+                            metric["spark_points"] = json!(points);
                         }
                         if let Some(group) = group {
                             metric["group"] = json!(group);
@@ -1710,12 +1810,56 @@ mod tests {
             severity: "mid".into(),
             reset_at: None,
             window_secs: None,
+            elapsed_percent: None,
+            projected_percent: None,
+            spark: None,
+            spark_points: None,
             group: None,
             regen: None,
             percent_precise: None,
             reading: None,
             model_pool: false,
         }
+    }
+
+    #[test]
+    fn annotation_adds_projection_and_spark() {
+        let now = Utc::now();
+        let mut section = metric("Weekly (7d)", 12, "12%", "");
+        let ReportSection::Metric {
+            reset_at,
+            window_secs,
+            ..
+        } = &mut section
+        else {
+            panic!("expected a metric");
+        };
+        *reset_at = Some(now + chrono::Duration::days(4));
+        *window_secs = Some(604_800);
+        let mut entry = entry("openai", vec![section]);
+        let mut history = crate::history::History::default();
+        let mut spark = None;
+        for step in 0..3 {
+            entry.annotate(&mut history, now + chrono::Duration::seconds(step * 60));
+            if let ReportSection::Metric { spark: current, .. } = &entry.sections[0] {
+                spark = current.clone();
+            }
+        }
+        let ReportSection::Metric {
+            elapsed_percent,
+            projected_percent,
+            spark_points,
+            ..
+        } = &entry.sections[0]
+        else {
+            panic!("expected a metric");
+        };
+        let elapsed = elapsed_percent.expect("elapsed");
+        assert!((40..=45).contains(&elapsed), "{elapsed}");
+        let projected = projected_percent.expect("projected");
+        assert!((25..=30).contains(&projected), "{projected}");
+        assert_eq!(spark.as_deref(), Some("▁▁▁"));
+        assert_eq!(spark_points.as_deref(), Some([12, 12, 12].as_slice()));
     }
 
     fn antigravity_account(index: usize) -> crate::antigravity::statusline::AccountSession {

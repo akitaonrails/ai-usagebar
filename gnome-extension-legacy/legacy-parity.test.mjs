@@ -142,7 +142,9 @@ const FIXTURE = JSON.stringify({
             sections: [
                 {type: 'metric', label: 'Codex 5h', percent: 59,
                     reset_at: '2026-11-20T17:00:00Z', window_secs: 18000,
-                    detail: 'Resets in 2h · 45% elapsed'},
+                    detail: 'Resets in 2h · 45% elapsed',
+                    elapsed_percent: 45, projected_percent: 131, spark: '▁▂▃',
+                    spark_points: [12, 18, 24]},
                 {type: 'metric', label: 'Codex weekly', percent: 9,
                     reset_at: '2026-11-23T17:00:00Z', window_secs: 604800,
                     detail: 'Resets in 3d'},

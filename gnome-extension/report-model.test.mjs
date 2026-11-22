@@ -87,6 +87,28 @@ const claude = projectEntry({
 assert.equal(claude.title, 'Claude');
 assert.equal(claude.plan, 'Claude Pro');
 assert.deepEqual(labels(claude.rows), ['metric:Session (5h)', 'metric:Weekly (7d)']);
+
+{
+    const paced = projectEntry({
+        id: 'paced',
+        sections: [{type: 'metric', label: 'Weekly (7d)', percent: 27, value: '27%',
+            headline: 'percent', severity: 'low', detail: 'Resets in 3d',
+            reset_at: '2026-09-28T18:00:00Z', window_secs: 604800,
+            elapsed_percent: 34, projected_percent: 79, spark: '▁▂▃▄',
+            spark_points: [12, 13, 14]}],
+    }, now);
+    assert.equal(paced.rows[0].projected, 79);
+    assert.equal(paced.rows[0].spark, '▁▂▃▄');
+    assert.deepEqual(paced.rows[0].sparkPoints, [12, 13, 14]);
+    const missing = projectEntry({
+        id: 'paced',
+        sections: [{type: 'metric', label: 'Weekly (7d)', percent: 27, value: '27%',
+            headline: 'percent', severity: 'low', detail: 'Resets in 3d'}],
+    }, now);
+    assert.equal(missing.rows[0].projected, null);
+    assert.equal(missing.rows[0].spark, '');
+    assert.deepEqual(missing.rows[0].sparkPoints, []);
+}
 assert.equal(claude.rows[0].valueText, '84%');
 assert.equal(claude.rows[0].severity, 'high');
 assert.equal(claude.rows[0].reset, '1h 7m');

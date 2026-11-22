@@ -823,7 +823,19 @@ unstated window gives a frontend nothing to pace against. A per-model quota
 pool's metric (Antigravity's "Gemini 4 Argon") carries `model_pool: true`, and
 the field is omitted otherwise: it is one model's own limit rather than a
 window the whole provider shares, so a frontend that sums a provider up in one
-figure ranks it below the shared windows. Cursor's On-Demand text row
+figure ranks it below the shared windows.
+
+When `reset_at` and `window_secs` are both present, a metric also carries
+`elapsed_percent` and, after at least 10% of the window has elapsed and usage
+is non-zero, `projected_percent`: the final percentage at the current pace,
+capped at 999. `spark` is a bounded Unicode sparkline of recent samples and
+`spark_points` carries the same samples as percentages for frontends that draw
+a line; both are present after three samples and reset when the window resets.
+All four are omitted, not `null`, when the data does not support them; a
+calendar month or an unstated window keeps the reset and the trend but gets no
+projection.
+
+Cursor's On-Demand text row
 may also carry `used_cents`, `limit_cents`, and `percent`: the spend and the
 prepaid cap in USD cents, and how much of that cap is already used (rounded
 half up, and above 100 when spend passes the cap). Those fields are omitted,

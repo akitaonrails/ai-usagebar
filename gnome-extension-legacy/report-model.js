@@ -103,6 +103,14 @@ function metricRow(raw, nowMs) {
         severity: severityFor(percent, String(raw.severity || '')),
         reset: formatReset(raw.reset_at, nowMs),
         elapsed: elapsedPercent(raw.reset_at, raw.window_secs, nowMs),
+        projected: raw.projected_percent == null
+            ? null
+            : Math.max(0, Math.round(Number(raw.projected_percent))),
+        spark: typeof raw.spark === 'string' ? raw.spark : '',
+        sparkPoints: Array.isArray(raw.spark_points)
+            ? raw.spark_points.filter(value => Number.isFinite(value))
+                .map(value => Math.max(0, Math.min(100, Math.round(value))))
+            : [],
         detail: metricDetail(raw.detail, raw.reset_at),
         group: clean(raw.group, 80),
         regen: clean(raw.regen, 40),

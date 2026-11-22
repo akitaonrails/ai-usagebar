@@ -141,6 +141,16 @@ and followed by `↓` (more than 10 points under), `→` (within 10 under), or
 reset time. The panel's final `__aiub_end__` literal receives any stale suffix
 so that the preceding elapsed field remains numeric.
 
+When the window has an exact length, the menu also prints `on pace for X%`
+and a compact `trend` sparkline from recent samples. A window without an
+exact length (a calendar month, an unstated reset) keeps the countdown and
+the trend but gets no projection. See the
+[forecast screenshot](../screenshots/gnome-forecast.png).
+
+The extension samples `usage --json` every five minutes while enabled, even
+with the menu closed, so the trend collects points; concurrent writers
+serialize on a history lock.
+
 Both subprocesses are spawned **asynchronously** (`Gio.Subprocess` +
 `communicate_utf8_async`) so it never blocks the shell, and all timers /
 signal handlers are torn down in `disable()`.

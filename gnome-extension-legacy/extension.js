@@ -38,6 +38,29 @@ function verticalBox(props) {
 // Report text (errors, block lines, details) has no length the menu can
 // predict. Unwrapped, one long line sets the whole menu's width, past the edge
 // of the screen; wrapped, it stays inside the menu's bounded width.
+function drawSpark(area, values) {
+    const cr = area.get_context();
+    const [width, height] = area.get_surface_size();
+    if (width <= 0 || height <= 0) {
+        cr.$dispose();
+        return;
+    }
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min;
+    const x = index => (index / (values.length - 1)) * width;
+    const y = value => span === 0
+        ? height / 2
+        : height - 1 - ((value - min) / span) * (height - 2);
+    cr.setLineWidth(1.5);
+    cr.setSourceRGBA(0.545, 0.576, 0.631, 1);
+    cr.moveTo(x(0), y(values[0]));
+    for (let i = 1; i < values.length; i++)
+        cr.lineTo(x(i), y(values[i]));
+    cr.stroke();
+    cr.$dispose();
+}
+
 function wrappedLabel(text, styleClass) {
     const label = new St.Label({text, x_expand: true, style_class: styleClass});
     label.clutter_text.line_wrap = true;
@@ -85,6 +108,8 @@ const RED = '#e06c75';
 // FORMAT's final ignored literal sentinel receives a stale suffix, keeping the
 // preceding elapsed fields numeric. It and its field indexes live in marker-logic.
 const REFRESH_TIMEOUT_SECS = 60;
+// `usage --json` records the trend history; sample it while the menu is closed.
+const REPORT_SAMPLE_SECS = 300;
 
 function esc(s) {
     return String(s)
@@ -134,6 +159,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         // independently.
         this._panelJob = newJob();
         this._reportJob = newJob();
+        this._sampleJob = newJob();
+        this._sampleTimer = 0;
 
         // Panel: one markup label holds tags + percentages + bars. The icon
         // stands in when the settings leave nothing for the label to draw,
@@ -191,6 +218,11 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
         this._refresh();
         this._restartTimer();
+        this._sampleTimer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REPORT_SAMPLE_SECS, () => {
+            if (!this.menu.isOpen)
+                this._sampleHistory();
+            return GLib.SOURCE_CONTINUE;
+        });
     }
 
     _buildMenu() {
@@ -307,9 +339,30 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                     : row.reset
                         ? (row.regen ? `Regenerates ${row.regen} in ${row.reset}` : `Resets in ${row.reset}`)
                         : '';
+                const projected = row.projected == null ? '' : `on pace for ${row.projected}%`;
                 const detail = [reset, row.detail].filter(Boolean).join(' · ');
                 if (detail)
                     box.add_child(wrappedLabel(detail, 'aiub-detail'));
+                if (row.sparkPoints.length >= 3 || projected) {
+                    const trend = new St.BoxLayout({style_class: 'aiub-trend'});
+                    if (row.sparkPoints.length >= 3) {
+                        trend.add_child(new St.Label({text: 'trend', style_class: 'aiub-trend-label'}));
+                        const area = new St.DrawingArea({
+                            style_class: 'aiub-spark',
+                            x_expand: true,
+                            y_expand: true,
+                        });
+                        area.connect('repaint', () => drawSpark(area, row.sparkPoints));
+                        trend.add_child(area);
+                    }
+                    if (projected)
+                        trend.add_child(new St.Label({
+                            text: projected,
+                            style_class: 'aiub-projected',
+                            style: `color: ${row.projected >= 100 ? colors.critical : '#8b93a1'};`,
+                        }));
+                    box.add_child(trend);
+                }
                 body.add_child(box);
             } else if (row.type === 'block') {
                 if (row.label)
@@ -526,6 +579,14 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         });
     }
 
+    _sampleHistory() {
+        this._run(this._sampleJob, [resolveBinary(this._settings), 'usage', '--json'], {
+            again: () => this._sampleHistory(),
+            failed: () => {},
+            done: () => {},
+        });
+    }
+
     _showReport(report) {
         this._report = report;
         if (report?.ok)
@@ -719,8 +780,13 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             GLib.source_remove(this._timer);
             this._timer = 0;
         }
+        if (this._sampleTimer) {
+            GLib.source_remove(this._sampleTimer);
+            this._sampleTimer = 0;
+        }
         this._stop(this._panelJob);
         this._stop(this._reportJob);
+        this._stop(this._sampleJob);
         for (const id of this._viewIds ?? [])
             this._settings.disconnect(id);
         for (const id of this._sourceIds ?? [])
