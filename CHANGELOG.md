@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.53.0] — 2026-11-22
+
 ### Added
 
 - **`get_usage` can answer in CSV.** The MCP tool takes an optional
@@ -53,7 +55,8 @@
   `%`; links open with `xdg-open`.
   On Omarchy, the Native popover follows the active theme's palette, uses
   Hyprland's corner radius, and updates when the theme changes.
-  Not in this first version: a global shortcut, Open TUI, and self-update.
+  Not in this first version: global shortcuts, launching a terminal from
+  the popover, and automatic updates. Update notifications still work.
   The default build, AUR packages, and Nix packages still need no GTK or
   WebKit (#664).
 
@@ -205,6 +208,9 @@
   build alone.
 
 ### Security
+
+- Browser openers and the Linux tray's compositor helper no longer inherit
+  provider API keys from the app's environment.
 
 - Updated the locked URL parser and optional QUIC dependencies to their
   patched releases.
@@ -5789,7 +5795,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.53.0...HEAD
+[1.53.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...v1.53.0
 [1.52.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...v1.52.3
 [1.52.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...v1.52.2
 [1.52.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.0...v1.52.1
