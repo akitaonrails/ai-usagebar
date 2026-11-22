@@ -1,0 +1,118 @@
+/* Panel label: monospace so the █/░ bar cells line up evenly. */
+.aiub-label {
+    font-family: monospace;
+    font-feature-settings: "tnum";
+    padding: 0 4px;
+}
+
+.aiub-metric {
+    spacing: 6px;
+}
+
+.aiub-heading {
+    font-weight: bold;
+}
+
+.aiub-detail {
+    font-size: 0.9em;
+}
+
+.aiub-track {
+    background-color: rgba(128, 128, 128, 0.3);
+    border-radius: 3px;
+}
+
+/* Tabbed provider panel. */
+.aiub-panel {
+    width: 360px;
+    padding: 6px 8px;
+    spacing: 12px;
+}
+
+.aiub-panel.aiub-compact {
+    padding: 3px 6px;
+    spacing: 7px;
+}
+
+.aiub-panel.aiub-compact .aiub-body {
+    spacing: 8px;
+}
+
+.aiub-panel.aiub-compact .aiub-metric {
+    spacing: 3px;
+}
+
+.aiub-header {
+    spacing: 10px;
+}
+
+.aiub-title {
+    font-weight: bold;
+    font-size: 1.15em;
+}
+
+.aiub-plan {
+    font-size: 0.75em;
+    letter-spacing: 2px;
+    color: #8b93a1;
+}
+
+.aiub-pill {
+    font-family: monospace;
+    padding: 2px 8px;
+    border: 1px solid rgba(128, 128, 128, 0.6);
+    border-radius: 4px;
+}
+
+.aiub-icon-button {
+    padding: 4px;
+    border-radius: 6px;
+}
+
+.aiub-icon-button:hover,
+.aiub-icon-button:focus {
+    background-color: rgba(128, 128, 128, 0.25);
+}
+
+.aiub-tabs {
+    spacing: 6px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.aiub-tab {
+    padding: 4px 10px;
+    border: 1px solid rgba(128, 128, 128, 0.5);
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+.aiub-tab:hover,
+.aiub-tab:focus {
+    background-color: rgba(128, 128, 128, 0.2);
+}
+
+.aiub-tab-active {
+    background-color: rgba(128, 128, 128, 0.35);
+    border-color: rgba(200, 200, 200, 0.8);
+}
+
+.aiub-body {
+    spacing: 14px;
+}
+
+.aiub-section {
+    font-size: 0.8em;
+    letter-spacing: 2px;
+    color: #8b93a1;
+}
+
+.aiub-value {
+    font-family: monospace;
+    font-feature-settings: "tnum";
+}
+
+.aiub-footer {
+    font-size: 0.8em;
+    color: #8b93a1;
+}
