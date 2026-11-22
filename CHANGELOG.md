@@ -79,6 +79,15 @@
   do not return `HTTP 401 {"error":"unauthorized"}` and block the `agy` CLI and
   saved-session fallback (#635).
 
+### Security
+
+- **Windows tray links no longer pass through `cmd.exe`.** The tray opened
+  every link, and every page the popover's WebView was sent to, with
+  `cmd /C start "" <url>`, so cmd read the URL's `&`, `|`, `^` and `%NAME%` as
+  its own syntax. It now hands the URL to Explorer as its only argument, as the
+  device-code sign-in page already did. No link the tray opens today carries
+  those characters (#653).
+
 ## [1.52.3] — 2026-11-18
 
 ### Fixed
