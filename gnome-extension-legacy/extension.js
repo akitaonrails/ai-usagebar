@@ -100,23 +100,6 @@ function newJob() {
     return {busy: false, pending: false, token: 0, timeoutId: 0, cancellable: null, proc: null};
 }
 
-function parseConfiguredVendors(out, ok) {
-    if (!out.trim() && !ok)
-        return null;
-    try {
-        const parsed = JSON.parse(out);
-        if (!parsed || !Array.isArray(parsed.vendors))
-            return null;
-        return new Set(
-            parsed.vendors
-                .filter(v => v && v.configured === true && v.enabled === true && typeof v.id === 'string')
-                .map(v => v.id)
-        );
-    } catch (e) {
-        return null;
-    }
-}
-
 function resolveBinary(settings) {
     const configured = settings.get_string('binary-path');
     if (configured && GLib.file_test(configured, GLib.FileTest.IS_EXECUTABLE))
@@ -142,7 +125,6 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         this._marks = new Map();
         this._data = null;          // parsed snapshot for redraws
         this._report = null;        // parsed `usage --json` for the menu
-        this._configuredVendors = null; // Set of configured+enabled vendor ids, or null (fail-open)
         this._panelError = '';      // why the top bar shows ⚠, shown in the menu
         this._tab = null;           // selected provider tab (entry id)
         this._reportAt = 0;
@@ -152,7 +134,6 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         // configured-vendor filter (`vendors --json`) each get their own slot.
         this._panelJob = newJob();
         this._reportJob = newJob();
-        this._vendorsJob = newJob();
 
         // Panel: one markup label holds tags + percentages + bars. The icon
         // stands in when the settings leave nothing for the label to draw,
@@ -209,7 +190,6 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         });
 
         this._refresh();
-        this._refreshVendors();
         this._restartTimer();
     }
 
@@ -359,14 +339,9 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         const panel = verticalBox({style_class: styleClass, x_expand: true});
         if (this._panelError)
             panel.add_child(wrappedLabel(`Top bar: ${this._panelError}`, 'aiub-detail'));
-        const entries = !report?.ok
-            ? []
-            : (this._configuredVendors
-                // `vendors --json` does not list `[[custom]]` sources; they
-                // only reach `usage --json` when enabled, so keep them.
-                ? report.entries.filter(e => e.id.startsWith('custom:') ||
-                    this._configuredVendors.has(e.id))
-                : report.entries);
+        // The report already selects enabled, configured accounts. Its entry
+        // ids include named accounts that the provider catalog never lists.
+        const entries = report?.ok ? report.entries : [];
         if (!report?.ok || entries.length === 0) {
             panel.add_child(wrappedLabel(!report ? 'Loading…' : report.ok ? 'No providers enabled' : report.error,
                 'aiub-detail'));
@@ -540,23 +515,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         });
     }
 
-    _refreshVendors() {
-        const argv = [resolveBinary(this._settings), 'vendors', '--json'];
-        this._run(this._vendorsJob, argv, {
-            again: () => this._refreshVendors(),
-            failed: () => {
-                this._configuredVendors = null;
-                this._paintReport(this._report);
-            },
-            done: (out, _err, ok) => {
-                this._configuredVendors = parseConfiguredVendors(out, ok);
-                this._paintReport(this._report);
-            },
-        });
-    }
-
     _refreshReport() {
-        this._refreshVendors();
         const argv = [resolveBinary(this._settings), 'usage', '--json'];
         this._run(this._reportJob, argv, {
             again: () => this._refreshReport(),
@@ -762,7 +721,6 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         }
         this._stop(this._panelJob);
         this._stop(this._reportJob);
-        this._stop(this._vendorsJob);
         for (const id of this._viewIds ?? [])
             this._settings.disconnect(id);
         for (const id of this._sourceIds ?? [])

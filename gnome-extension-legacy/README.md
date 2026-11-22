@@ -13,18 +13,16 @@ schema.
 
 This is the GNOME counterpart to the project's Waybar widget: Waybar is
 Wayland-only (Sway/Hyprland) and can't dock into the GNOME top bar, so this
-extension bridges the gap by shelling out to the same `ai-usagebar` binary and
-drawing the bars with native `St` widgets. The panel is rendered by GNOME;
-see the [screenshot](screenshot.png).
+extension calls the same `ai-usagebar` binary and draws the bars with GNOME's
+native `St` widgets.
 
 ## Vendor scope
 
 The **top bar** selector supports **Claude, Codex, OpenCode Go, Z.AI, OpenRouter,
 DeepSeek, and Google Antigravity**. The **click menu** does not use that list.
-It draws every entry `ai-usagebar usage --json` returns whose vendor is both
-configured and enabled in `ai-usagebar vendors --json` — including Cursor and
-the others the bar selector does not offer. A provider with no credential does
-not appear; its absence is not an error.
+It draws every entry `ai-usagebar usage --json` returns, including named
+accounts, enabled custom providers and providers the bar selector does not
+offer.
 
 DeepSeek is balance-only, so a DeepSeek block shows its balance and suppresses
 the 5h/weekly quota rows when the report has no percentage window. An entry
@@ -35,9 +33,12 @@ Antigravity is the first vendor with **two independent quota pools** (Gemini,
 and Claude & GPT OSS), each carrying its own 5-hour and weekly window. The menu
 shows the report's `Session` and `Weekly` headings with one row per pool, and
 the **top bar** draws one segment per pool per window — see [Two-pool vendors](#two-pool-vendors).
-Quota comes from whichever Antigravity product is running locally (the app, the
-IDE, or an interactive `agy` session); with all of them closed the extension
-shows the last cached figures, then an error once those age out.
+Quota is read locally first, from the app, IDE or an interactive `agy`
+session. If there is no local server or its `agy` session cannot be queried,
+the binary can use the saved sign-in via `agy` or the Cloud Code API. A
+running product that is signed out reports that error instead. See the
+[modern GNOME extension notes](../gnome-extension/README.md#vendor-scope)
+for the shared fallback behavior.
 
 ## Requirements
 
@@ -59,14 +60,9 @@ shows the last cached figures, then an error once those age out.
 gnome-extensions enable ai-usagebar@akitaonrails.github.io
 ```
 
-Manual equivalent:
-
-```bash
-UUID=ai-usagebar@akitaonrails.github.io
-DEST=~/.local/share/gnome-shell/extensions/$UUID
-glib-compile-schemas schemas/
-mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
-```
+The installer won't replace another extension at that UUID. If switching
+from the modern extension or a copied install, disable it and move its
+installed directory or symlink aside before running this script.
 
 ## Preferences
 
@@ -79,7 +75,7 @@ mkdir -p "$DEST" && cp -r * "$DEST"/      # or: ln -s "$PWD" "$DEST"
 | Pace arrows | off | with bars off, colors each value by pace (usage minus elapsed) and adds `↓` under, `→` on, `↑` ahead; off keeps plain numbers |
 | Bar width | 8 | cells per bar (4–20) |
 | Refresh interval | 30 s | 5–3600 |
-| Top bar vendors | `anthropic` | Top bar only. One switch per provider (Claude, Codex, OpenCode Go, Z.AI, OpenRouter, DeepSeek, Antigravity, SuperGrok); each one on gets its own indicator, marked by its brand icon. Stored as a comma-separated list in `vendor`. The click menu lists every configured and enabled provider from `vendors --json`. |
+| Top bar vendors | `anthropic` | Top bar only. One switch per provider (Claude, Codex, OpenCode Go, Z.AI, OpenRouter, DeepSeek, Antigravity, SuperGrok); each one on gets its own indicator, marked by its brand icon. Stored as a comma-separated list in `vendor`. The click menu shows the entries from `usage --json`. |
 | Panel pools | `both` | two-pool vendors only: `both`, first pool, second pool, or `auto` |
 | Auto threshold | 95 % | `auto` switches pools once the shown one reaches this usage |
 | Binary path | auto | empty = `PATH` then `~/.cargo/bin` |

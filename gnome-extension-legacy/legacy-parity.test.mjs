@@ -4,7 +4,12 @@
 // regress: no ESM syntax, and no destroy_all_children() in the menu repaint.
 
 import assert from 'node:assert/strict';
-import {readFileSync, readdirSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {
+    existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+    readlinkSync, rmSync, symlinkSync, writeFileSync,
+} from 'node:fs';
+import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
@@ -161,9 +166,99 @@ const extensionSource = readFileSync(join(here, 'extension.js'), 'utf8');
 assert.equal(extensionSource.includes('destroy_all_children'), false,
     'destroy_all_children() aborts GNOME Shell 42 (st_bin_destroy)');
 
+// Run the real menu selection path with shell widgets replaced by inert actors.
+class Widget {
+    clutter_text = {};
+    children = [];
+    add_child(child) {
+        this.children.push(child);
+    }
+}
+const extensionContext = vm.createContext({
+    imports: {
+        gi: {
+            GObject: {Object: {find_property: () => null}, registerClass: value => value},
+            St: {BoxLayout: Widget, Label: Widget},
+            Pango: {WrapMode: {}, EllipsizeMode: {}},
+        },
+        misc: {extensionUtils: {getCurrentExtension: () => ({
+            imports: {
+                'marker-logic': {exports: legacyMarker},
+                'report-model': {exports: legacyReport},
+                terminal: {exports: legacyTerminal},
+            },
+        })}},
+        ui: {panelMenu: {Button: class {}}},
+    },
+});
+const Indicator = new vm.Script(extensionSource + '\nIndicator').runInContext(extensionContext);
+const received = [];
+const view = {
+    _settings: {get_boolean: () => false},
+    _configuredVendors: new Set(['openai']),
+    _tab: 'openai@work',
+    _header: entry => entry.id,
+    _tabs: (entries, active) => received.push([Array.from(entries, e => e.id), active]),
+    _entryBody: () => null,
+    _colors: () => ({}),
+    _updatedAgo: () => '',
+    _swapPanel: () => {},
+};
+const expectedIds = ['openai@home', 'openai@work', 'custom:example@lab'];
+const ready = legacyReport.parseReport(JSON.stringify({
+    entries: expectedIds.map(id => ({id, name: id, sections: []})),
+}), NOW);
+Indicator.prototype._paintReport.call(view, ready);
+assert.deepEqual(received, [[expectedIds, 'openai@work']]);
+Indicator.prototype._paintReport.call(view, {ok: false, error: 'failed', entries: []});
+assert.equal(received.length, 1, 'a failed report must not populate account tabs');
+
 const metadata = JSON.parse(readFileSync(join(here, 'metadata.json'), 'utf8'));
 assert.deepEqual(metadata['shell-version'], ['42', '43', '44']);
 assert.equal(metadata.uuid, 'ai-usagebar@akitaonrails.github.io');
 assert.equal(metadata['settings-schema'], 'org.gnome.shell.extensions.ai-usagebar');
+
+if (process.platform === 'linux') {
+    const tmp = mkdtempSync(join(tmpdir(), 'aiub-legacy-install-'));
+    try {
+        const installer = join(here, 'install.sh');
+        const shim = join(tmp, 'bin');
+        mkdirSync(shim);
+        writeFileSync(join(shim, 'glib-compile-schemas'), '#!/bin/sh\nexit 0\n', {mode: 0o700});
+        const run = home => spawnSync('bash', [installer], {
+            env: {HOME: home, PATH: shim + ':/usr/bin:/bin'},
+            encoding: 'utf8',
+        });
+        const destination = home => join(home, '.local/share/gnome-shell/extensions', metadata.uuid);
+        const existing = join(tmp, 'existing');
+        const old = destination(existing);
+        mkdirSync(old, {recursive: true});
+        writeFileSync(join(old, 'keep'), 'existing install');
+        const conflict = run(existing);
+        assert.equal(conflict.status, 1);
+        assert.match(conflict.stderr, /Refusing to replace/);
+        assert.equal(readFileSync(join(old, 'keep'), 'utf8'), 'existing install');
+        const clean = join(tmp, 'clean');
+        const target = destination(clean);
+        for (let i = 0; i < 2; i++) {
+            const result = run(clean);
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(readlinkSync(target), here);
+        }
+        const foreign = join(tmp, 'foreign');
+        const other = destination(foreign);
+        const missing = join(tmp, 'not-installed');
+        mkdirSync(dirname(other), {recursive: true});
+        symlinkSync(missing, other);
+        const foreignLink = run(foreign);
+        assert.equal(foreignLink.status, 1);
+        assert.match(foreignLink.stderr, /Refusing to replace/);
+        assert.equal(lstatSync(other).isSymbolicLink(), true);
+        assert.equal(readlinkSync(other), missing);
+        assert.equal(existsSync(missing), false);
+    } finally {
+        rmSync(tmp, {recursive: true, force: true});
+    }
+}
 
 console.log('legacy parity: ok');

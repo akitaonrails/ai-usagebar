@@ -8,13 +8,21 @@ UUID="ai-usagebar@akitaonrails.github.io"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="$HOME/.local/share/gnome-shell/extensions/$UUID"
 
+if [[ -e "$DEST" || -L "$DEST" ]]; then
+    if [[ ! -L "$DEST" || ! "$DEST" -ef "$SRC" ]]; then
+        printf 'Refusing to replace the existing extension at %s. Move it aside before installing.\n' "$DEST" >&2
+        exit 1
+    fi
+fi
+
 echo "› Compiling schema…"
 glib-compile-schemas "$SRC/schemas"
 
-echo "› Linking $DEST → $SRC"
-mkdir -p "$(dirname "$DEST")"
-rm -rf "$DEST"
-ln -s "$SRC" "$DEST"
+if [[ ! -L "$DEST" ]]; then
+    echo "› Linking $DEST → $SRC"
+    mkdir -p "$(dirname "$DEST")"
+    ln -sT -- "$SRC" "$DEST"
+fi
 
 echo
 echo "✓ Installed (dev symlink)."
