@@ -26,10 +26,11 @@ the CLI changes.
 ai-usagebar reuses the login the CLI already wrote. It reads `auth.json` for
 the key, sends that key only in the `Authorization` header of the billing
 request, and does not copy, cache, refresh, or write the key back. Token
-refresh stays with the Grok CLI: if the bar says the login was rejected, run
-`grok` or `grok login` again. If that HTTPS call fails, the widget falls back
-to the CLI's `x.ai/billing` ACP extension (`grok agent stdio`), which asks the
-CLI itself for the same document.
+refresh stays with the Grok CLI. If the saved OIDC access token has expired,
+the widget skips the direct billing request. It still tries the CLI's
+`x.ai/billing` ACP extension (`grok agent stdio`) as it does on a direct
+request failure. If neither returns a reading, run `grok login` and refresh
+the widget.
 
 ### What the bar shows
 
