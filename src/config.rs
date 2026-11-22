@@ -3760,26 +3760,22 @@ impl Config {
                 self.minimax.region
             )));
         }
-        if self
-            .tray
-            .hyprctl_binary
-            .as_ref()
-            .is_some_and(|path| path.as_os_str().is_empty())
+        // Only Linux uses this executable. A shared config should not
+        // reject a Unix path when read by a Windows or macOS host.
+        if cfg!(target_os = "linux")
+            && let Some(path) = &self.tray.hyprctl_binary
         {
-            return Err(AppError::Other(
-                "[tray] hyprctl_binary must not be empty".into(),
-            ));
-        }
-        // A bare name would make `Command` search PATH, which this key exists to avoid.
-        if self
-            .tray
-            .hyprctl_binary
-            .as_ref()
-            .is_some_and(|path| !path.is_absolute())
-        {
-            return Err(AppError::Other(
-                "[tray] hyprctl_binary must be an absolute path".into(),
-            ));
+            if path.as_os_str().is_empty() {
+                return Err(AppError::Other(
+                    "[tray] hyprctl_binary must not be empty".into(),
+                ));
+            }
+            // A bare name would make `Command` search PATH.
+            if !path.is_absolute() {
+                return Err(AppError::Other(
+                    "[tray] hyprctl_binary must be an absolute path".into(),
+                ));
+            }
         }
         if self.supergrok.grok_binary.as_os_str().is_empty() {
             return Err(AppError::Other(
@@ -6813,6 +6809,7 @@ api_key = "sk-ant-admin01-side"
     /// `write_toml` keeps the fixture off the real config path; `~` is expanded
     /// by the same seam as `grok_binary`, with no need to read this machine's
     /// home directory to prove the literal prefix is gone.
+    #[cfg(target_os = "linux")]
     #[test]
     fn tray_hyprctl_binary_expands_tilde_and_refuses_empty() {
         let file = write_toml("[tray]\nhyprctl_binary = \"~/bin/hyprctl\"\n");
@@ -6837,6 +6834,13 @@ api_key = "sk-ant-admin01-side"
                 "{relative}: {error}"
             );
         }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn a_linux_tray_path_can_be_shared_with_other_platforms() {
+        let file = write_toml("[tray]\nhyprctl_binary = \"/usr/bin/hyprctl\"\n");
+        assert!(Config::load_from(file.path()).is_ok());
     }
 
     #[test]

@@ -160,7 +160,7 @@
 # popover, including the cursor read at a click. Default "/usr/bin/hyprctl"
 # when absent; `~` is expanded. It is never searched on PATH: a missing file
 # leaves the popover where the compositor puts it, and an empty or relative
-# value makes the whole config invalid (the tray then runs on defaults).
+# value makes the config invalid on Linux (the tray then runs on defaults).
 # hyprctl_binary = "/usr/bin/hyprctl"
 # New releases: auto (download, verify and restart unattended) | notify
 # (banner with an Install button; default) | off (no background checks).

@@ -59,7 +59,7 @@ you make while the check is running.
 # that executable's absolute path; `~` is expanded, and it is never searched
 # on PATH. With no key it is `/usr/bin/hyprctl`, as before. A path that does
 # not exist simply leaves placement to the compositor; an empty or relative
-# value is refused at load, like any invalid key, and the tray falls back to
+# value is refused at load on Linux, and the tray falls back to
 # its defaults (the reason goes to its stderr).
 # hyprctl_binary = "/usr/bin/hyprctl"
 
