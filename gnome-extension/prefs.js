@@ -260,9 +260,10 @@ export default class AiUsageBarPrefs extends ExtensionPreferences {
         const poolValues = ['both', 'primary', 'secondary', 'auto'];
         const pools = new Adw.ComboRow({
             title: _('Panel pools'),
-            subtitle: _('for providers with two independent pools (e.g. Antigravity: Gemini and Claude & GPT OSS)'),
+            use_markup: false,
             model: Gtk.StringList.new(poolLabels),
         });
+        pools.subtitle = _('for providers with two independent pools (e.g. Antigravity: Gemini and Claude & GPT OSS)');
         bindCombo(settings, 'panel-pools', pools, poolValues);
         display.add(pools);
 

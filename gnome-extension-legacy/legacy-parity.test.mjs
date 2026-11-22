@@ -218,6 +218,13 @@ assert.deepEqual(metadata['shell-version'], ['42', '43', '44']);
 assert.equal(metadata.uuid, 'ai-usagebar@akitaonrails.github.io');
 assert.equal(metadata['settings-schema'], 'org.gnome.shell.extensions.ai-usagebar');
 
+const prefsSource = readFileSync(join(here, 'prefs.js'), 'utf8');
+const poolControls = prefsSource.match(/const pools = new Adw\.ComboRow\(\{[\s\S]*?\}\);/);
+assert.match(poolControls?.[0] ?? '', /HAS_USE_MARKUP \? \{use_markup:\s*false\}/);
+assert.doesNotMatch(poolControls?.[0] ?? '', /subtitle:/);
+assert.match(prefsSource,
+    /pools\.subtitle\s*=\s*HAS_USE_MARKUP \? poolSubtitle : GLib\.markup_escape_text\(poolSubtitle, -1\)/);
+
 if (process.platform === 'linux') {
     const tmp = mkdtempSync(join(tmpdir(), 'aiub-legacy-install-'));
     try {

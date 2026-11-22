@@ -325,9 +325,12 @@ class AiUsageBarPrefs {
         const poolSubtitle = _('for providers with two independent pools (e.g. Antigravity: Gemini and Claude & GPT OSS)');
         const pools = new Adw.ComboRow({
             title: _('Panel pools'),
-            subtitle: HAS_USE_MARKUP ? poolSubtitle : GLib.markup_escape_text(poolSubtitle, -1),
+            ...(HAS_USE_MARKUP ? {use_markup: false} : {}),
             model: Gtk.StringList.new(poolLabels),
         });
+        // Apply plain text after construction, once the row has set up
+        // its label's use-markup binding.
+        pools.subtitle = HAS_USE_MARKUP ? poolSubtitle : GLib.markup_escape_text(poolSubtitle, -1);
         bindCombo(settings, 'panel-pools', pools, poolValues);
         display.add(pools);
 
