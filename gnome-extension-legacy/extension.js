@@ -130,8 +130,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         this._reportAt = 0;
         this._destroyed = false;
         this._timer = 0;
-        // The top bar (`--vendor --format`), the menu (`usage --json`), and the
-        // configured-vendor filter (`vendors --json`) each get their own slot.
+        // The top bar (`--vendor --format`) and menu (`usage --json`) refresh
+        // independently.
         this._panelJob = newJob();
         this._reportJob = newJob();
 
