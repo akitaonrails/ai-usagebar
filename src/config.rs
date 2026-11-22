@@ -4973,7 +4973,9 @@ enabled = false
         let config = Config::load_from(
             write_toml("[fireworks]\nenabled = true\naccount_id = 'my-account'\napi_key_env = ''\napi_key = 'test-key'\n").path(),
         ).unwrap();
-        assert!(config.is_enabled(vendor) && config.has_inline_secrets());
+        assert!(config.is_enabled(vendor));
+        #[cfg(unix)]
+        assert!(config.has_inline_secrets());
         assert_eq!(config.fireworks.account_id.as_deref(), Some("my-account"));
         assert_eq!(
             config.resolve_account_api_key_for(vendor, None).unwrap(),
@@ -4993,6 +4995,7 @@ enabled = false
             write_toml("[martllm]\nenabled = true\napi_key_env = \"\"\napi_key = \"test-key\"\n");
         let config = Config::load_from(file.path()).unwrap();
         assert!(config.is_enabled(vendor));
+        #[cfg(unix)]
         assert!(config.has_inline_secrets());
         assert_eq!(
             config.resolve_account_api_key_for(vendor, None).unwrap(),
