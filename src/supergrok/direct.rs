@@ -10,6 +10,7 @@
 
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use crate::error::{AppError, Result};
@@ -31,7 +32,20 @@ pub async fn fetch_billing(auth_path: &Path) -> Result<BillingResponse> {
 }
 
 pub async fn fetch_billing_with(auth_path: &Path, base_url: &str) -> Result<BillingResponse> {
-    let key = read_billing_key(auth_path)?;
+    fetch_billing_at(auth_path, base_url, Utc::now()).await
+}
+
+async fn fetch_billing_at(
+    auth_path: &Path,
+    base_url: &str,
+    now: DateTime<Utc>,
+) -> Result<BillingResponse> {
+    let (key, expires_at) = read_billing_login(auth_path)?;
+    if expires_at.is_some_and(|expiry| expiry <= now) {
+        return Err(AppError::Credentials(
+            "Grok Build login expired; run `grok login`".into(),
+        ));
+    }
     let client = reqwest::Client::builder()
         .timeout(HTTP_CLIENT_TIMEOUT)
         .redirect(same_origin_redirect_policy())
@@ -104,6 +118,10 @@ pub async fn fetch_plan_display_with(auth_path: &Path, base_url: &str) -> Result
 /// `key`. The first non-empty key wins; parsing stays bounded so a replaced
 /// or oversized file cannot stall or exhaust the fetch.
 pub(crate) fn read_billing_key(auth_path: &Path) -> Result<String> {
+    read_billing_login(auth_path).map(|(key, _)| key)
+}
+
+fn read_billing_login(auth_path: &Path) -> Result<(String, Option<DateTime<Utc>>)> {
     let metadata = std::fs::metadata(auth_path).map_err(|_| {
         AppError::Credentials("Grok Build login file not found; run `grok login`".into())
     })?;
@@ -128,7 +146,18 @@ pub(crate) fn read_billing_key(auth_path: &Path) -> Result<String> {
         if let Some(key) = entry.get("key").and_then(Value::as_str) {
             let key = key.trim();
             if !key.is_empty() {
-                return Ok(key.to_string());
+                let expires_at = if entry["auth_mode"].as_str() == Some("oidc") {
+                    entry["expires_at"]
+                        .as_str()
+                        .and_then(|s| s.parse::<DateTime<Utc>>().ok())
+                        .or_else(|| {
+                            let exp = crate::jwt::claims(key)?.get("exp")?.as_i64()?;
+                            DateTime::from_timestamp(exp, 0)
+                        })
+                } else {
+                    None
+                };
+                return Ok((key.to_string(), expires_at));
             }
         }
     }
@@ -150,9 +179,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expired_oidc_login_skips_direct_billing_and_names_a_fix() {
+        let file = auth_file(
+            br#"{"issuer::client":{"auth_mode":"oidc","key":"test-key","expires_at":"2026-10-01T12:00:00Z"}}"#,
+        );
+        let mut server = mockito::Server::new_async().await;
+        let billing = server
+            .mock("GET", "/v1/billing?format=credits")
+            .expect(0)
+            .create_async()
+            .await;
+        let now = "2026-10-01T12:00:00Z".parse().unwrap();
+        let error = fetch_billing_at(file.path(), &server.url(), now)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Credentials(message) if message == "Grok Build login expired; run `grok login`"
+        ));
+        billing.assert_async().await;
+    }
+
+    #[tokio::test]
     async fn billing_key_is_read_from_the_issuer_scoped_login_record() {
         let file = auth_file(
-            br#"{"https://auth.x.ai::client-a":{"auth_mode":"oidc","key":"  secret-key  ","user_id":"person@example.test"}}"#,
+            br#"{"https://auth.x.ai::client-a":{"auth_mode":"oidc","key":"  secret-key  ","expires_at":"2026-10-01T12:00:00Z","user_id":"person@example.test"}}"#,
         );
         let mut server = mockito::Server::new_async().await;
         let m = server
@@ -162,7 +213,8 @@ mod tests {
             .with_body(r#"{"config":{"creditUsagePercent":10.0,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-09-05T18:45:31Z"}}}"#)
             .create_async()
             .await;
-        let response = fetch_billing_with(file.path(), &server.url())
+        let now = "2026-10-01T11:59:59Z".parse().unwrap();
+        let response = fetch_billing_at(file.path(), &server.url(), now)
             .await
             .unwrap();
         m.assert_async().await;

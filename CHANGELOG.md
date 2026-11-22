@@ -52,6 +52,11 @@
 
 ### Fixed
 
+- **SuperGrok reports expired Grok Build logins.** If the saved OIDC login
+  has expired, direct billing skips the unusable credential and tells you to
+  run `grok login` when ACP cannot supply a reading. The app still leaves
+  token renewal to Grok Build (#670).
+
 - **Nous Research: a plan with rolling limits no longer reads `$0.00`.** The
   Portal moved its plans from a credit allocation to daily, weekly and monthly
   limits, reporting consumption in `usage_window.gauges` and leaving
