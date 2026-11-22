@@ -1438,6 +1438,9 @@ fn show_popover(state: &mut TrayState) {
     if state.last_anchor.is_none() {
         state.last_anchor = Some(cocoa_mouse());
     }
+    if state.popover_width.is_some() {
+        resize_popover(state);
+    }
     position_popover(state);
     state.window.set_visible(true);
     state.popover_open = true;

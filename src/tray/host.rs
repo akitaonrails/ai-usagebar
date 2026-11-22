@@ -1072,7 +1072,7 @@ fn resize_popover(state: &TrayState) {
     let width = state.style.configured_width(
         WINDOW_WIDTH,
         state.popover_width,
-        work_area_width(&state.window),
+        work_area_width(&state.window, state.last_tray_rect),
     );
     state
         .window
@@ -1168,15 +1168,28 @@ fn work_area_height(window: &Window) -> f64 {
     placement::max_inner_height(work, frame, monitor.scale_factor())
 }
 
-/// Logical inner width of the work area on the monitor the popover sits on (primary as
-/// fallback), less the window frame; `None` when no monitor answers.
-fn work_area_width(window: &Window) -> Option<f64> {
-    let monitor = window
-        .current_monitor()
-        .or_else(|| window.primary_monitor())?;
+/// Use the same destination for width and placement, even before the hidden window
+/// moves there. The frame is measured at the window's current DPI, not the destination's.
+fn work_area_width(window: &Window, tray_rect: Option<Rect>) -> Option<f64> {
+    let monitor = popover_monitor(window, tray_rect)?;
     let (_, work) = monitor_areas(&monitor);
     let frame = window.outer_size().width as i32 - window.inner_size().width as i32;
-    Some(f64::from(work.width - frame) / monitor.scale_factor())
+    Some(placement::max_inner_width(
+        work,
+        monitor.scale_factor(),
+        frame,
+        window.scale_factor(),
+    ))
+}
+
+fn popover_monitor(window: &Window, tray_rect: Option<Rect>) -> Option<MonitorHandle> {
+    tray_rect
+        .and_then(|rect| {
+            let center_x = rect.position.x + f64::from(rect.size.width) / 2.0;
+            let center_y = rect.position.y + f64::from(rect.size.height) / 2.0;
+            window.monitor_from_point(center_x, center_y)
+        })
+        .or_else(|| window.primary_monitor())
 }
 
 /// A monitor's full rectangle and its work area (`rcWork`: less the taskbar and docked app
@@ -1276,6 +1289,9 @@ fn open_popover_action(state: &mut TrayState, action: OptionsAction) {
 fn show_popover(state: &mut TrayState, tray_rect: Option<Rect>) {
     state.last_tray_rect = tray_rect;
     state.last_press_hide = None;
+    if state.popover_width.is_some() {
+        resize_popover(state);
+    }
     position_window(&state.window, tray_rect);
     guard_blur(state);
     state.window.set_visible(true);
@@ -1487,12 +1503,7 @@ fn position_window(window: &Window, tray_rect: Option<Rect>) {
     let (x, y) = if let Some(rect) = tray_rect {
         // Centered on the tray icon, on the side away from whichever edge the taskbar is on.
         let icon = icon_area(rect);
-        let center_x = rect.position.x + f64::from(rect.size.width) / 2.0;
-        let center_y = rect.position.y + f64::from(rect.size.height) / 2.0;
-        match window
-            .monitor_from_point(center_x, center_y)
-            .or_else(|| window.primary_monitor())
-        {
+        match popover_monitor(window, tray_rect) {
             Some(monitor) => {
                 let (full, work) = monitor_areas(&monitor);
                 placement::beside_icon(full, work, icon, width, height, POPOVER_MARGIN)
@@ -1502,7 +1513,7 @@ fn position_window(window: &Window, tray_rect: Option<Rect>) {
                 (icon.y - height - POPOVER_MARGIN).max(POPOVER_MARGIN),
             ),
         }
-    } else if let Some(monitor) = window.primary_monitor() {
+    } else if let Some(monitor) = popover_monitor(window, None) {
         // The global shortcut: no icon to hang from, so the corner by the taskbar.
         let (full, work) = monitor_areas(&monitor);
         let insets = Insets::by_taskbar(full, work, POPOVER_MARGIN);

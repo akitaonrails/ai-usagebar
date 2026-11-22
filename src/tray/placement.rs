@@ -179,12 +179,23 @@ pub(crate) fn corner_near_taskbar(
 /// (`outer_height - inner_height`, physical) is taken off first, so the frame cannot push the
 /// window's bottom edge past the work area.
 pub(crate) fn max_inner_height(work: Area, frame_height: i32, scale: f64) -> f64 {
-    let scale = if scale.is_finite() && scale > 0.0 {
+    f64::from((work.height - frame_height.max(0)).max(0)) / valid_scale(scale)
+}
+
+/// Logical width on the destination screen, less the logical frame width
+/// currently measured on the window's screen.
+pub(crate) fn max_inner_width(work: Area, screen_scale: f64, frame: i32, window_scale: f64) -> f64 {
+    (f64::from(work.width) / valid_scale(screen_scale)
+        - f64::from(frame.max(0)) / valid_scale(window_scale))
+    .max(0.0)
+}
+
+fn valid_scale(scale: f64) -> f64 {
+    if scale.is_finite() && scale > 0.0 {
         scale
     } else {
         1.0
-    };
-    f64::from((work.height - frame_height.max(0)).max(0)) / scale
+    }
 }
 
 #[cfg(test)]
@@ -435,5 +446,24 @@ mod tests {
     fn a_nonsense_scale_or_frame_is_read_as_none() {
         assert_eq!(max_inner_height(WORK, -5, 0.0), 1392.0);
         assert_eq!(max_inner_height(WORK, 0, f64::NAN), 1392.0);
+    }
+
+    #[test]
+    fn the_width_budget_uses_the_destination_dpi_without_rescaling_the_frame() {
+        let destination = Area {
+            width: 1024,
+            ..WORK
+        };
+        let available = max_inner_width(destination, 2.0, 16, 1.0);
+        assert_eq!(available, 496.0);
+        assert_eq!(available, max_inner_width(destination, 2.0, 32, 2.0));
+        assert_eq!(
+            crate::tray::style::PopoverStyle::Classic.configured_width(
+                300.0,
+                Some(650),
+                Some(available)
+            ),
+            464.0
+        );
     }
 }
