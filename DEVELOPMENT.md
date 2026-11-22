@@ -48,8 +48,12 @@ Binaries land at:
 | TUI | `target/release/ai-usagebar-tui` |
 | Windows tray | `target/release/ai-usagebar-tray` (Windows only) |
 
-Debug builds (`cargo build`) are fine for iterating; the first release build
-is slow because of `reqwest` / `ring`.
+Development builds keep line tables for this crate and omit debug info for
+dependencies. To get full debug info for this crate, run
+`CARGO_PROFILE_DEV_DEBUG=true cargo build`. For a dependency, set its
+`profile.dev.package.<name>.debug` override in your local Cargo configuration.
+On Linux, `nix develop` uses mold for native Cargo links; published builds
+do not use the development shell.
 
 Install to `$PREFIX` (default `/usr/local`):
 

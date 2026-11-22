@@ -124,6 +124,17 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
+      - name: Check the Linux development shell links with mold
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          smoke_dir="$(mktemp -d)"
+          nix develop --command bash -euc '
+            cargo new --offline --vcs none --name mold_smoke "$1"
+            cargo build --offline --manifest-path "$1/Cargo.toml" --target-dir "$1/target"
+          ' _ "$smoke_dir"
+          readelf --string-dump=.comment "$smoke_dir/target/debug/mold_smoke" | grep -F mold
+
       - name: Build and test the flake
         run: nix flake check --print-build-logs
 
