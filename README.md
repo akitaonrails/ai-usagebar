@@ -746,7 +746,22 @@ It exposes two read-only tools:
   arguments it queries every enabled provider. `provider` accepts a built-in
   slug such as `anthropic` or `openai`, or `custom:<id>` (`custom:<group>` for
   grouped `[[custom]]` sources); optional `account` narrows it to one named
-  account.
+  account. `format: "csv"` returns the same
+  selection as compact text instead: one row per gauge (an entry without
+  gauges gets one row carrying its `status`), resets in UTC to the minute, and
+  a `note` on the entry's first row for `stale`, unavailable models, and
+  banked reset credits. Error messages are left out; an entry that failed
+  reads `error` in the `severity` column. Use JSON when you need balances
+  or other non-gauge values. CSV is intended for MCP clients; if importing
+  it into a spreadsheet, import the text columns as text because provider
+  and account labels are untrusted.
+
+  ```csv
+  id,label,percent,reset_at,severity,note
+  anthropic@work,Session (5h),42,2026-11-19T13:04Z,low,stale
+  anthropic@work,Weekly (7d),7,2026-11-24T09:00Z,low,
+  custom:example,,,,error,
+  ```
 - `list_providers` returns the local `vendors --json` catalog without making
   network requests or exposing credential values.
 

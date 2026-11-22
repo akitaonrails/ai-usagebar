@@ -48,6 +48,7 @@ pub mod kimi;
 pub mod kiro;
 pub mod lyceum;
 pub mod mcp;
+pub(crate) mod mcp_csv;
 pub mod minimax;
 pub mod mistral;
 pub mod modelstudio;
