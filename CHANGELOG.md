@@ -50,14 +50,10 @@
 
 - **Recipe: accounts signed in inside WSL, shown by the Windows tray.**
   Documentation only. `windows/README.md` gains "Accounts signed in inside
-  WSL": the Linux binary inside WSL publishes its `usage --json` on loopback,
-  re-keyed by entry id and metric label, and the Windows tray reads it through
-  grouped `[[custom]]` sources, so no credential leaves WSL and the tray gains
-  no code. `config.example.toml` carries the matching commented recipe, and a
-  test projects a rendered report through it so the recipe cannot drift from
-  the report shape. The section states the limits: the publisher is the
-  user's to run, figures update only while the distribution runs, and a
-  missing account fails its card.
+  WSL": AI Usage inside WSL shares selected account figures on loopback
+  without copying login files. The Windows tray reads the figures through
+  existing `[[custom]]` sources. The guide includes a matching configuration
+  example and explains the limits of an unauthenticated local share.
 
 ### Fixed
 

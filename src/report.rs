@@ -3901,59 +3901,26 @@ mod tests {
         format!("[[custom]]\n{}\n", body.join("\n"))
     }
 
-    /// The part of what `~/aiub-wsl-rekey.py` in `windows/README.md` publishes
-    /// that the recipe reads: entries keyed by `id`, metrics keyed by `label`.
-    /// The filter also numbers a label that repeats inside one entry; no label
-    /// repeats in this test, so that part is not copied. Kept in step with the
-    /// filter by hand — a test cannot run Python.
-    fn rekeyed_for_the_wsl_recipe(report: &serde_json::Value) -> serde_json::Value {
-        let mut entries = serde_json::Map::new();
-        for entry in report["entries"].as_array().unwrap() {
-            let metrics: serde_json::Map<String, serde_json::Value> = entry["metrics"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|metric| {
-                    (
-                        metric["label"].as_str().unwrap().to_string(),
-                        metric.clone(),
-                    )
-                })
-                .collect();
-            entries.insert(
-                entry["id"].as_str().unwrap().into(),
-                json!({ "plan": entry["plan"], "stale": entry["stale"], "metrics": metrics }),
-            );
-        }
-        json!({ "published_at": "2026-11-20T12:00:00Z", "entries": entries })
-    }
-
-    fn resetting_metric(label: &str, percent: u16, reset_at: DateTime<Utc>) -> ReportSection {
-        let mut section = metric(label, percent, &format!("{percent}%"), "");
-        if let ReportSection::Metric { reset_at: at, .. } = &mut section {
-            *at = Some(reset_at);
-        }
-        section
-    }
-
-    /// The WSL recipe is documentation users copy, and its pointers reach into
-    /// the shape `usage --json` has today. Rendering a report with the real
-    /// renderer and projecting it through the shipped recipe fails here when a
-    /// field the recipe points at is renamed or moved — otherwise the first
-    /// sign would be a broken card on a Windows machine nobody tests.
+    /// Verify that the example's pointers work against the publisher's
+    /// output contract without adding Python to the Cargo test requirements.
     #[test]
     fn shipped_wsl_recipe_projects_a_rekeyed_usage_report() {
         let reset = DateTime::from_timestamp(1_800_000_000, 0).unwrap();
-        let mut codex = entry(
-            "openai@work",
-            vec![
-                resetting_metric("Codex 5h", 42, reset),
-                resetting_metric("Codex weekly", 17, reset),
-            ],
-        );
-        codex.plan = Some("Plus".into());
-
-        let published = rekeyed_for_the_wsl_recipe(&render_json_value(&[codex], None, None));
+        let mut published = json!({
+            "published_at": "2026-11-20T12:00:00Z",
+            "entries": {
+                "openai@work": {
+                    "plan": "Plus",
+                    "stale": false,
+                    "metrics": {
+                        "ungrouped": {
+                            "18000": {"Codex 5h": {"percent": 42, "reset_at": reset}},
+                            "604800": {"Codex weekly": {"percent": 17, "reset_at": reset}}
+                        }
+                    }
+                }
+            }
+        });
 
         let mut file = tempfile::NamedTempFile::new().unwrap();
         std::io::Write::write_all(&mut file, shipped_wsl_recipe().as_bytes()).unwrap();
@@ -3994,9 +3961,8 @@ mod tests {
         // An account that left the report fails its card by name rather than
         // borrowing the next entry's figures, which a positional pointer into
         // the unfiltered `entries` array would do.
-        let agy_only = entry("antigravity@0a1b", vec![metric("Gemini", 5, "5%", "")]);
-        let without_codex = rekeyed_for_the_wsl_recipe(&render_json_value(&[agy_only], None, None));
-        let error = crate::custom::mapping::project(&without_codex, spec)
+        published["entries"] = json!({"antigravity@0a1b": {"plan": "Plus"}});
+        let error = crate::custom::mapping::project(&published, spec)
             .unwrap_err()
             .to_string();
         assert!(
