@@ -3401,7 +3401,7 @@ impl Config {
     /// [`Config::resolve_account_api_key_for`] — the shared chain the
     /// `[keychain]` table serves both the account-array vendors and the
     /// single-key vendors the widget and TUI route the same way.
-    pub const KEYCHAIN_VENDORS: [VendorId; 17] = [
+    pub const KEYCHAIN_VENDORS: [VendorId; 18] = [
         VendorId::AnthropicApi,
         VendorId::Zai,
         VendorId::Openrouter,
