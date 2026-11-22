@@ -428,6 +428,7 @@ try {
     payload: { ...settingsPayload, ...payload },
   });
   assert.match(widthPreferences({ popoverWidth: 337 }), /aria-valuenow="337"/);
+  assert.doesNotMatch(widthPreferences({ os: 'linux' }), /Largura do popover|role="spinbutton"/);
   // A stored width outside the active style's limits is shown at the limit, as the host draws it.
   assert.match(widthPreferences({ popoverWidth: 100 }), /aria-valuenow="293"/);
   // So is a hand-edited 0, and the reset arrow stays enabled: the key is set.

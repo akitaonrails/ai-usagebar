@@ -277,15 +277,19 @@ export function Settings({
             onChange={onPopoverStyle}
           />
         </SettingRow>
-        <SettingRow hint={m.popover_width_hint()} label={m.popover_width()}>
-          <PopoverWidthControl
-            value={payload.popoverWidth}
-            original={payload.popoverWidthDefaults[layout.popoverStyle]}
-            error={payload.popoverWidthError}
-            onChange={(width) => sendCommand("set-popover-width", { width })}
-          />
-        </SettingRow>
-        <SettingError text={payload.popoverWidthError} />
+        {payload.os !== "linux" && (
+          <>
+            <SettingRow hint={m.popover_width_hint()} label={m.popover_width()}>
+              <PopoverWidthControl
+                value={payload.popoverWidth}
+                original={payload.popoverWidthDefaults[layout.popoverStyle]}
+                error={payload.popoverWidthError}
+                onChange={(width) => sendCommand("set-popover-width", { width })}
+              />
+            </SettingRow>
+            <SettingError text={payload.popoverWidthError} />
+          </>
+        )}
         <SettingRow hint={m.time_format_hint()} label={m.time_format()}>
           <Picker
             options={[

@@ -3,7 +3,8 @@
 # Both ignores are transitive-only crates pinned by the tray/webview stack
 # (tray-icon → gtk/glib, wry → webkit2gtk → gtk/glib). Neither is removable
 # without upstream wry/tao moving to a newer gtk; revisit on each wry/tao
-# upgrade. ai-usagebar never calls either crate directly.
+# upgrade. The opt-in Linux host uses GTK's GLib event loop, not the
+# affected GLib variant-iteration API.
 [advisories]
 ignore = [
     # proc-macro-error is unmaintained (2024-09). Reached only through
