@@ -165,6 +165,12 @@ for (const file of readdirSync(here).filter(f => f.endsWith('.js'))) {
 }
 
 const extensionSource = readFileSync(join(here, 'extension.js'), 'utf8');
+for (const source of [extensionSource, readFileSync(join(here, '../gnome-extension/extension.js'), 'utf8')]) {
+    const openMenu = source.slice(source.indexOf("'open-state-changed'")).split('});', 1)[0];
+    assert.ok(openMenu.indexOf('this._trendUnsupportedFor = null;') >= 0
+        && openMenu.indexOf('this._trendUnsupportedFor = null;') < openMenu.indexOf('this._refreshReport();'),
+        'opening the menu must retry trend support after a binary upgrade');
+}
 assert.equal(extensionSource.includes('destroy_all_children'), false,
     'destroy_all_children() aborts GNOME Shell 42 (st_bin_destroy)');
 

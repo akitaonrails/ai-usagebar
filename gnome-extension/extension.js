@@ -209,6 +209,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open) {
+                // The package can replace an older binary at the same path.
+                this._trendUnsupportedFor = null;
                 this._refresh();
                 this._refreshReport();
             }
