@@ -144,9 +144,10 @@ impl Default for RemoteOverride<'_> {
 }
 
 /// One probe target: the listener's base URL and, when it came from
-/// discovery, the process that owns it. A `missing CSRF` answer spares only
-/// the *same process's* remaining listeners, so the pid is what keeps a
-/// second Antigravity product's ports reachable.
+/// discovery, the process that owns it. A `missing CSRF` answer spares the
+/// *same process's* remaining listeners and supersedes earlier errors from its
+/// sibling listeners, while leaving every other product's ports and errors
+/// untouched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     /// Normalized `scheme://authority` URL the RPC paths are appended to.
@@ -484,6 +485,14 @@ fn remote_fallback_reason(error: &AppError) -> Option<RemoteFallbackReason> {
     }
 }
 
+/// One failed candidate probe paired with its owning pid, so a process's
+/// later `missing CSRF` verdict can drop earlier errors from its own
+/// sibling listeners without touching any other process's failure.
+struct ProbeError {
+    pid: Option<u32>,
+    error: AppError,
+}
+
 /// Walk every candidate language server until one identifies itself. A machine
 /// can host more than one — the desktop app, the IDE and an interactive `agy`
 /// session each run their own — and only some of them are signed in.
@@ -508,7 +517,7 @@ async fn open_session(
         return Err(no_local_server());
     }
 
-    let mut errors = Vec::new();
+    let mut errors: Vec<ProbeError> = Vec::new();
     // Products already proved unusable. Skipping *their* remaining ports —
     // not the whole list — is what keeps a second product's RPC listener
     // reachable: the candidates are flattened rank by rank, so the port after
@@ -529,19 +538,30 @@ async fn open_session(
                 });
             }
             Err(e) => {
-                // agy exposes no token-discovery route and requires CSRF. Once
-                // confirmed, probing this process's other ports only triggers
-                // the same rejection or spurious Go TLS handshake error logs.
+                // `agy` — and Antigravity 2.0 when authenticated UI bootstrap
+                // omits `csrfToken` — require a CSRF token we cannot discover.
+                // Once confirmed on a process's RPC listener, skip its
+                // remaining ports and drop earlier errors from that same
+                // process's sibling listeners (such as an auxiliary HTTP
+                // listener on a higher ephemeral port answering plain `401
+                // unauthorized`), so a companion listener cannot mask this
+                // process's missing-CSRF verdict and block the fallback.
                 if is_missing_csrf(&e)
                     && let Some(pid) = candidate.pid
                 {
                     blocked_pids.insert(pid);
+                    errors.retain(|entry| entry.pid != Some(pid));
                 }
-                errors.push(e);
+                errors.push(ProbeError {
+                    pid: candidate.pid,
+                    error: e,
+                });
             }
         }
     }
-    Err(select_probe_error(errors))
+    Err(select_probe_error(
+        errors.into_iter().map(|entry| entry.error),
+    ))
 }
 
 /// Which failure to report when no candidate answered.
@@ -560,7 +580,7 @@ async fn open_session(
 /// tie-breaking — see [`is_tls_echo`]. Being an `Http`, it is not transient, so
 /// letting it stand as "the last failure" turns a product that simply is not
 /// serving RPC into a visible error about a protocol the user never chose.
-fn select_probe_error(errors: Vec<AppError>) -> AppError {
+fn select_probe_error(errors: impl IntoIterator<Item = AppError>) -> AppError {
     let mut actionable = None;
     let mut missing_csrf = None;
     let mut last = None;
@@ -4221,6 +4241,221 @@ mod tests {
         ide_quota.assert_async().await;
         assert_eq!(outcome.snapshot.source, AntigravitySource::Local);
         assert_eq!(outcome.snapshot.plan, "Pro");
+    }
+
+    /// Antigravity 2.0's `language_server` (`hub-2.34.0`) can bind an
+    /// auxiliary loopback HTTP listener on a higher ephemeral port than its
+    /// `LanguageServerService` listener, answering plain `401 unauthorized\n`
+    /// while its RPC listener serves an empty `csrfToken` (authenticated UI
+    /// bootstrap) and answers `unauthenticated: missing CSRF token`. Because
+    /// both listeners belong to the same process, the auxiliary `401` must not
+    /// outrank the process's own missing-CSRF verdict and block the fallback.
+    #[tokio::test]
+    async fn same_process_auxiliary_401_does_not_mask_its_missing_csrf_fallback() {
+        let mut aux = mockito::Server::new_async().await;
+        let mut rpc = mockito::Server::new_async().await;
+        let mut tls = mockito::Server::new_async().await;
+        let eps = endpoints(&rpc);
+        let status_path = format!("/{STATUS_RPC}");
+
+        let aux_root = aux
+            .mock("GET", "/")
+            .with_status(401)
+            .with_body("unauthorized\n")
+            .expect(1)
+            .create_async()
+            .await;
+        let aux_status = aux
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body("unauthorized\n")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let rpc_root = rpc
+            .mock("GET", "/")
+            .with_status(200)
+            .with_body(r#"<html><script>{"csrfToken":""}</script></html>"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let rpc_status = rpc
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body(
+                r#"{"code":"unauthenticated","message":"unauthenticated: missing CSRF token"}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let quota = quota_mock(&mut rpc, "KEYRING-AT")
+            .expect(1)
+            .create_async()
+            .await;
+        let plan = rpc
+            .mock("POST", "/daily/plan")
+            .match_header("authorization", "Bearer KEYRING-AT")
+            .with_status(200)
+            .with_body(r#"{"currentTier":{"name":"google_ai_pro"}}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        // Same process's remaining TLS listener is still spared once RPC
+        // confirms missing CSRF.
+        let tls_root = tls.mock("GET", "/").expect(0).create_async().await;
+        let tls_status = tls
+            .mock("POST", status_path.as_str())
+            .expect(0)
+            .create_async()
+            .await;
+
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+
+        let outcome = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Blob(&blob),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![
+                    Candidate {
+                        base: aux.url(),
+                        pid: Some(9539),
+                        ide: false,
+                    },
+                    Candidate {
+                        base: rpc.url(),
+                        pid: Some(9539),
+                        ide: false,
+                    },
+                    Candidate {
+                        base: tls.url(),
+                        pid: Some(9539),
+                        ide: false,
+                    },
+                ]),
+                ..Default::default()
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect("same-process auxiliary 401 must not block the fallback");
+
+        aux_root.assert_async().await;
+        aux_status.assert_async().await;
+        rpc_root.assert_async().await;
+        rpc_status.assert_async().await;
+        tls_root.assert_async().await;
+        tls_status.assert_async().await;
+        quota.assert_async().await;
+        plan.assert_async().await;
+        assert_eq!(outcome.snapshot.source, AntigravitySource::Remote);
+    }
+
+    /// Superseding earlier sibling-port errors is scoped strictly to the same
+    /// pid: an actionable auth rejection from a *different* process still
+    /// outranks missing-CSRF and prevents remote fallback (#405, #500).
+    #[tokio::test]
+    async fn missing_csrf_only_supersedes_errors_from_the_same_process() {
+        let mut aux = mockito::Server::new_async().await;
+        let mut signed_out = mockito::Server::new_async().await;
+        let mut rpc = mockito::Server::new_async().await;
+        let eps = endpoints(&rpc);
+        let status_path = format!("/{STATUS_RPC}");
+
+        let aux_root = aux
+            .mock("GET", "/")
+            .with_status(401)
+            .with_body("unauthorized\n")
+            .expect(1)
+            .create_async()
+            .await;
+        let aux_status = aux
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body("unauthorized\n")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let signed_out_root = signed_out
+            .mock("GET", "/")
+            .with_status(404)
+            .expect(1)
+            .create_async()
+            .await;
+        let signed_out_status = signed_out
+            .mock("POST", status_path.as_str())
+            .with_status(403)
+            .with_body(r#"{"error":"forbidden"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let rpc_root = rpc
+            .mock("GET", "/")
+            .with_status(200)
+            .with_body(r#"<html><script>{"csrfToken":""}</script></html>"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let rpc_status = rpc
+            .mock("POST", status_path.as_str())
+            .with_status(401)
+            .with_body(
+                r#"{"code":"unauthenticated","message":"unauthenticated: missing CSRF token"}"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let quota = quota_mock(&mut rpc, "KEYRING-AT")
+            .expect(0)
+            .create_async()
+            .await;
+
+        let blob = keyring_blob(VALID, true);
+        let (_td, cache) = fixture();
+
+        let err = run(
+            &cache,
+            RemoteOverride {
+                credential: SavedCredential::Blob(&blob),
+                endpoints: Some(&eps),
+                local_bases: Some(vec![
+                    Candidate {
+                        base: aux.url(),
+                        pid: Some(7),
+                        ide: false,
+                    },
+                    Candidate {
+                        base: signed_out.url(),
+                        pid: Some(9539),
+                        ide: false,
+                    },
+                    Candidate {
+                        base: rpc.url(),
+                        pid: Some(7),
+                        ide: false,
+                    },
+                ]),
+                ..Default::default()
+            },
+            Duration::ZERO,
+        )
+        .await
+        .expect_err("signed-out process must still outrank another process's missing CSRF");
+
+        aux_root.assert_async().await;
+        aux_status.assert_async().await;
+        signed_out_root.assert_async().await;
+        signed_out_status.assert_async().await;
+        rpc_root.assert_async().await;
+        rpc_status.assert_async().await;
+        quota.assert_async().await;
+        // Proves pid 7's earlier 401 was dropped while pid 9539's 403 survived.
+        assert!(matches!(err, AppError::Http { status: 403, .. }), "{err}");
     }
 
     /// The refreshed token is persisted under the session's fingerprint, so
