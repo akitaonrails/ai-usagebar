@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The Linux tray popover opens beside the bar on a rotated monitor.** On
+  Hyprland, `hyprctl monitors` reports a monitor's width and height before
+  its rotation, and popover placement used them as they came. On a monitor
+  turned to portrait (`transform` 1, 3, 5 or 7), a click on a bar along its
+  bottom edge opened the popover on another monitor, and a click near its
+  right edge placed the popover past that edge. Placement now swaps width
+  and height for those transforms, as Hyprland's own layout does (#677).
+
 ## [1.53.0] — 2026-11-22
 
 ### Added

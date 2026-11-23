@@ -83,8 +83,26 @@ pub(super) struct Monitor {
     width: f64,
     height: f64,
     scale: f64,
+    /// The output transform, 0 to 7: an odd one turns the monitor a quarter.
+    #[serde(default)]
+    transform: u8,
     /// Space taken by layer surfaces (the bar): left, top, right, bottom.
     reserved: [f64; 4],
+}
+
+impl Monitor {
+    /// The monitor's width and height in the layout, in logical pixels.
+    /// `width` and `height` are the mode's, before the rotation: a quarter
+    /// turn swaps them, as Hyprland's own layout size does, and the scale
+    /// divides the result.
+    fn logical_size(&self) -> (f64, f64) {
+        let (width, height) = if self.transform % 2 == 1 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
+        (width / self.scale, height / self.scale)
+    }
 }
 
 /// Where the popover goes, in global layout pixels, and its size.
@@ -432,7 +450,7 @@ pub(super) fn parse_monitors(json: &str) -> Result<Vec<Monitor>, String> {
         // `reserved` is in logical pixels: left and right against the logical
         // width, top and bottom against the logical height.
         let [left, top, right, bottom] = m.reserved;
-        let (logical_w, logical_h) = (m.width / m.scale, m.height / m.scale);
+        let (logical_w, logical_h) = m.logical_size();
         (0.0..=logical_w).contains(&left)
             && (0.0..=logical_w).contains(&right)
             && (0.0..=logical_h).contains(&top)
@@ -498,11 +516,12 @@ fn monitor_for_anchor(anchor: Anchor, monitors: &[Monitor]) -> Option<&Monitor> 
     monitors
         .iter()
         .find(|m| {
+            let (width, height) = m.logical_size();
             m.scale > 0.0
                 && anchor.x >= m.x
-                && anchor.x < m.x + m.width / m.scale
+                && anchor.x < m.x + width
                 && anchor.y >= m.y
-                && anchor.y < m.y + m.height / m.scale
+                && anchor.y < m.y + height
         })
         .or_else(|| monitors.first())
 }
@@ -525,10 +544,7 @@ pub(super) fn frame_with_gap(
         return None;
     }
     let width = width.max(1);
-    let (screen_w, screen_h) = (
-        monitor.width / monitor.scale,
-        monitor.height / monitor.scale,
-    );
+    let (screen_w, screen_h) = monitor.logical_size();
     let [left, top, right, bottom] = monitor.reserved;
     let gap_px = gap.map_or(0.0, f64::from);
     let margin = gap.map_or(DEFAULT_MARGIN, f64::from);
@@ -1100,6 +1116,30 @@ mod tests {
                 y: 30,
                 width: W,
                 height: 900
+            }
+        );
+    }
+
+    #[test]
+    fn a_rotated_monitor_is_measured_with_width_and_height_swapped() {
+        // DP-2's 2560x1440 mode is turned to portrait (`transform` 1): in the
+        // layout it is 1440 wide and 2560 tall, with its bar along the bottom.
+        const PORTRAIT: &str = r#"[
+            {"name":"DP-1","x":0,"y":0,"width":2560,"height":1440,"scale":1,"reserved":[0,26,0,0]},
+            {"name":"DP-2","x":2560,"y":0,"width":2560,"height":1440,"scale":1,"transform":1,"reserved":[0,0,0,30]}
+        ]"#;
+        let list = monitors(PORTRAIT);
+        // A click on that bar, at y = 2545, is on DP-2...
+        let bar = at(3900.0, 2545.0);
+        assert_eq!(monitor_for_anchor(bar, &list).unwrap().name, "DP-2");
+        // ...and the frame stays within its 1440 width, flush with the bar.
+        assert_eq!(
+            frame(bar, &list, W, 360).unwrap(),
+            Frame {
+                x: 2560 + 1440 - 8 - W as i32,
+                y: 2560 - 30 - 360,
+                width: W,
+                height: 360
             }
         );
     }
