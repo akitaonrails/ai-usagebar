@@ -386,13 +386,9 @@ vendor's response shape drifts:
   latter never instantiates the full representation.
 - `packaging/aur/PKGBUILD` — source-build AUR pkg
 - `packaging/aur/PKGBUILD-bin` — prebuilt-binary AUR pkg (multi-arch)
-- `packaging/homebrew/ai-usagebar.rb.in` — Homebrew cask template.
-  `publish-homebrew` renders version and per-arch hashes from the published
-  sidecars and pushes it to `akitaonrails/homebrew-tap` (`HOMEBREW_TAP_TOKEN`).
-  Homebrew quarantines a cask's download and Gatekeeper kills a quarantined
-  ad-hoc binary, so the cask depends on `sign-macos`: Developer ID signing and
-  notarization under the `release-signing` environment's `APPLE_*` secrets.
-  `release` waits for it, so missing Apple secrets block every channel.
+- `.github/workflows/homebrew.yml` — independent, manually dispatched cask
+  workflow for an already-published release. When preparing or publishing a
+  cask, follow the [cask release steps](macos/INSTALL.md#publish-the-homebrew-cask).
 - `.github/workflows/release.yml` — tag-driven release (x86_64 + aarch64)
 - `tests/anthropic_e2e.rs` — mockito + insta snapshot tests
 - `tests/live.rs` — `#[ignore]`d smoke tests against real APIs

@@ -455,6 +455,7 @@ function normalizeUpdate(raw) {
   const url = clean(raw.url, 400);
   return {
     error: clean(raw.error, 300),
+    homebrew: raw.homebrew === true,
     installable: raw.installable === true,
     state: UPDATE_STATES.indexOf(state) < 0 ? "available" : state,
     url: url.startsWith(UPDATE_URL_PREFIX) ? url : "",
@@ -2390,6 +2391,7 @@ export function updateMessage(update, locale) {
       return update.error ? m.update_failed_with_error({ what, error: update.error }, options) : what + ".";
     }
     default:
+      if (update.homebrew) return "brew upgrade --cask ai-usagebar";
       if (update.installable) return version ? m.ready_to_install({ version }, options) : m.new_version_ready({}, options);
       return version ? m.update_available_uninstallable({ version }, options) : m.new_version_uninstallable({}, options);
   }

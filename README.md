@@ -990,15 +990,15 @@ privileges, and does not overwrite user configuration.
 
 ### macOS menu bar and Windows tray
 
-On macOS, install **AI Usage.app**, `ai-usagebar` and `ai-usagebar-tui` with Homebrew:
+On macOS, when the cask is available in the tap, install **AI Usage.app**,
+`ai-usagebar` and `ai-usagebar-tui` with Homebrew:
 
 ```bash
 brew install --cask akitaonrails/tap/ai-usagebar
 ```
 
-Open **AI Usage** from Applications. The app updates itself through Settings →
-Updates, and `brew upgrade` replaces it with the current release whenever
-Homebrew sees an older bundle version.
+Open **AI Usage** from Applications. Upgrade the cask with
+`brew upgrade --cask ai-usagebar`. The tray can notify you about new releases.
 
 For a manual install, move **AI Usage.app** from the release archive into
 `/Applications` and open it. The bundle includes the tray, CLI and TUI, and

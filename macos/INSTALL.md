@@ -87,8 +87,13 @@ pgrep -lf ai-usagebar-tray
 
 **Update**
 
-A tray in a writable application bundle (such as `/Applications/AI Usage.app`)
-or copied somewhere of your own (such as `~/.local/bin`) updates
+For a Homebrew cask install, run `brew upgrade --cask ai-usagebar` to replace
+the signed app bundle. The tray can check for updates and shows the command
+when a newer release is available.
+
+A tray installed manually in a writable application bundle (such as
+`/Applications/AI Usage.app`) or copied somewhere of your own (such as
+`~/.local/bin`) updates
 itself: it checks GitHub once an hour, and Options → Check for Updates asks
 right away. When a release ships a macOS binary for your Mac, Install
 downloads it, verifies its SHA-256, swaps it in place and restarts the tray;
@@ -97,9 +102,9 @@ if they are already there as plain files. Settings → Updates chooses
 Automatic, Notify me or Off.
 
 The tray leaves itself alone, and offers the release page instead, when
-another tool owns the file — a Homebrew formula or Nix install, a link into place, or
-a copy running straight from cargo's `target/` directory — when it may not
-write its directory, and when a release has no macOS binary. Run from the
+another tool owns the file — a Homebrew formula or Nix install, a link into
+place, or a copy running straight from cargo's `target/` directory — when it
+may not write its directory, and when a release has no macOS binary. Run from the
 source tree, it follows the tree; rebuild:
 
 ```bash
@@ -133,3 +138,25 @@ system notifications.
 | Hidden Bar hides the tray even outside its hidden section on macOS 27 | launch **AI Usage.app** from `/Applications`, update Launch at Login as above, then expand Hidden Bar, Command-drag AI Usage to the right of its arrow, and collapse it again |
 | No usage in the glyph | star metrics in Settings → Providers (max two per provider); turn on Chart Icon Only in the Menu tab |
 | macOS blocks the binary (Gatekeeper) | local build — launch from Terminal; if Finder blocks it, right-click → **Open** once |
+
+## Publish the Homebrew cask
+
+1. After a regular release with the Homebrew updater guard is published, run
+   **Homebrew cask** in GitHub Actions with its tag and leave `validated_run`
+   empty. The `release-signing` environment supplies the `APPLE_*` secrets.
+   The run uploads two signed archives and an `ai-usagebar.rb` test cask.
+2. On an Apple Silicon Mac and an Intel Mac, put that file in a temporary
+   Homebrew tap. Run these commands from the directory containing the file:
+
+   ```bash
+   brew tap-new --no-git smoke/ai-usagebar
+   mkdir -p "$(brew --repository smoke/ai-usagebar)/Casks"
+   cp ai-usagebar.rb "$(brew --repository smoke/ai-usagebar)/Casks/"
+   brew install --cask smoke/ai-usagebar/ai-usagebar
+   ```
+
+   Launch **AI Usage** from Applications, open its tray popover, and use
+   **Open TUI** to check that the TUI starts in Terminal on both Macs.
+3. Run **Homebrew cask** again for the same tag with the tested run ID in
+   `validated_run`. Publication requires `HOMEBREW_TAP_TOKEN` and checks the
+   cask file, including both archive hashes, against the tested run.

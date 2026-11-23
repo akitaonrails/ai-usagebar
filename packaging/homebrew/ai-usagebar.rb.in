@@ -5,7 +5,7 @@ cask "ai-usagebar" do
   sha256 arm:   "@ARM_SHA256@",
          intel: "@INTEL_SHA256@"
 
-  url "https://github.com/akitaonrails/ai-usagebar/releases/download/v#{version}/ai-usagebar-macos-#{arch}.tar.gz"
+  url "https://github.com/@REPOSITORY@/releases/download/v#{version}/ai-usagebar-homebrew-macos-#{arch}.tar.gz"
   name "AI Usage"
   desc "Menu bar app for tracking AI plan usage"
   homepage "https://github.com/akitaonrails/ai-usagebar"
@@ -15,7 +15,6 @@ cask "ai-usagebar" do
     strategy :github_latest
   end
 
-  auto_updates true
   depends_on :macos
 
   app "AI Usage.app"

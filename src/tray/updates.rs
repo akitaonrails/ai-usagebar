@@ -191,7 +191,10 @@ impl Updates {
                 let snoozed =
                     !manual && self.state.snoozed_version.as_deref() == Some(&release.version);
                 let version = release.version.clone();
-                let fact = fact_for(&release, "available", String::new(), installable);
+                let fact = UpdateFact {
+                    homebrew: update_flow::homebrew_managed(),
+                    ..fact_for(&release, "available", String::new(), installable)
+                };
                 self.pending = Some((release, installable));
                 with_facts(&self.facts, |f| {
                     f.update_checked_at = now;
@@ -342,6 +345,7 @@ fn fact_for(release: &Release, state: &str, error: String, installable: bool) ->
         state: state.into(),
         url: release.html_url.clone(),
         version: release.version.clone(),
+        ..UpdateFact::default()
     }
 }
 

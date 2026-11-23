@@ -30,6 +30,8 @@ def package_app(bin_dir: Path, output: Path, version: str) -> None:
     executables.mkdir(parents=True)
     resources = contents / "Resources"
     resources.mkdir()
+    # The cask signing workflow changes this before sealing the bundle.
+    (resources / "update-owner").write_text("self\n", encoding="ascii")
     shutil.copy2(Path(__file__).with_name("AIUsage.icns"), resources / "AIUsage.icns")
     for name in ("menu-bar-icon.LICENSE", "LICENSE-APACHE-2.0"):
         shutil.copy2(Path(__file__).with_name(name), resources / name)

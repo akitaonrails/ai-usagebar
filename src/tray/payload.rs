@@ -204,6 +204,8 @@ pub struct SignInFact {
 pub struct UpdateFact {
     /// Human-readable reason when `state` is "failed", or empty.
     pub error: String,
+    /// The signed cask bundle hands upgrades to Homebrew.
+    pub homebrew: bool,
     /// The release ships this OS/arch and the install directory is writable;
     /// otherwise the popover links the release page instead of installing.
     pub installable: bool,
@@ -313,6 +315,7 @@ pub fn wrap_report(
             "url": sanitize_untrusted_field(&u.url),
             "state": u.state,
             "error": sanitize_untrusted_field(&u.error),
+            "homebrew": u.homebrew,
             "installable": u.installable,
         })
     });
@@ -770,6 +773,7 @@ mod tests {
             state: "available".into(),
             url: "https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.11.0".into(),
             version: "1.11.0".into(),
+            ..UpdateFact::default()
         });
         let payload = wrap_report(&sample_report(), &host, 0, None);
         assert_eq!(payload["shortcut"], "Ctrl+Shift+U");

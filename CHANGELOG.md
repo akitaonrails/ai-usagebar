@@ -3,15 +3,9 @@
 ### Added
 
 - **Homebrew cask for macOS.** Install AI Usage.app and its CLI and TUI on
-  Apple Silicon or Intel from `akitaonrails/tap/ai-usagebar`. Releases publish
-  the cask automatically, and the tray keeps its built-in updater (#622).
-
-### Changed
-
-- **macOS releases are signed and notarized.** The app bundle and the
-  standalone `ai-usagebar`, `ai-usagebar-tui` and `ai-usagebar-tray` binaries
-  carry a Developer ID signature, and the bundle is notarized and stapled, so
-  Gatekeeper accepts a quarantined download such as Homebrew's (#622).
+  Apple Silicon or Intel from `akitaonrails/tap/ai-usagebar` once the cask is
+  published. Its bundle is signed and notarized, and Homebrew owns upgrades
+  with `brew upgrade --cask ai-usagebar` (#622).
 
 ## [1.54.0] — 2026-11-23
 

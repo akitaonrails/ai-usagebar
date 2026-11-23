@@ -39,6 +39,7 @@ class PackageAppTests(unittest.TestCase):
         self.assertEqual(info["CFBundleExecutable"], "ai-usagebar-tray")
         icon = contents / "Resources" / (info["CFBundleIconFile"] + ".icns")
         self.assertEqual(icon.read_bytes()[:4], b"icns")
+        self.assertEqual((contents / "Resources" / "update-owner").read_bytes(), b"self\n")
         for name in ("menu-bar-icon.LICENSE", "LICENSE-APACHE-2.0"):
             self.assertEqual(
                 (contents / "Resources" / name).read_bytes(),

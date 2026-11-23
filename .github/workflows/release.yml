@@ -436,9 +436,7 @@ jobs:
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          # macOS uploads under `unsigned-`: sign-macos publishes the real name,
-          # and the downloads below take only `ai-usagebar-*`.
-          name: ${{ runner.os == 'macOS' && format('unsigned-{0}', matrix.artifact) || matrix.artifact }}
+          name: ${{ matrix.artifact }}
           # Linux produces the tarball pair; Windows the zip, the bare exes
           # and their sidecars; macOS the tarball and the bare binaries.
           # Missing globs are fine (one OS each).
@@ -455,122 +453,8 @@ jobs:
             *-macos-x86_64
             *-macos-x86_64.sha256
 
-  # Developer ID signing and notarization for the macOS artifacts, after
-  # ai-jail's sign-macos. Homebrew quarantines a cask's download, and
-  # Gatekeeper kills a quarantined ad-hoc binary on first run (#622), so the
-  # cask is only installable from signed, notarized archives. The unsigned
-  # input keeps its own artifact name, so a failed upload here can be re-run,
-  # and only the signed output carries the `ai-usagebar-*` name `release` takes.
-  sign-macos:
-    needs: [build]
-    runs-on: macos-15
-    environment: release-signing
-    permissions:
-      contents: read
-    strategy:
-      matrix:
-        arch: [aarch64, x86_64]
-    env:
-      ARTIFACT: ai-usagebar-macos-${{ matrix.arch }}
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: unsigned-ai-usagebar-macos-${{ matrix.arch }}
-          path: input
-
-      - name: Verify unsigned artifacts
-        working-directory: input
-        run: shasum -a 256 -c ./*.sha256
-
-      - name: Require signing credentials
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -eu
-          for value in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            eval "test -n \"\${$value:-}\"" || { echo "::error::$value is required to sign the macOS release"; exit 1; }
-          done
-
-      - name: Sign, notarize, staple and repackage
-        working-directory: input
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          keychain="$RUNNER_TEMP/build.keychain-db"
-          keychain_password="$(uuidgen)"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
-          security list-keychains -d user -s "$keychain" login.keychain
-          rm -f "$RUNNER_TEMP/cert.p12"
-
-          sign() { codesign --force --sign "$APPLE_SIGNING_IDENTITY" --options runtime --timestamp "$@"; }
-          mkdir stage
-          tar xzf "$ARTIFACT.tar.gz" -C stage
-          app="stage/AI Usage.app"
-          # Inside out: the nested tools first, then the bundle, which signs
-          # its main executable and seals the rest.
-          sign "$app/Contents/MacOS/ai-usagebar" "$app/Contents/MacOS/ai-usagebar-tui"
-          sign "$app"
-          sign stage/ai-usagebar-tray stage/ai-usagebar stage/ai-usagebar-tui
-          codesign --verify --strict --deep "$app"
-
-          ditto -c -k stage "$RUNNER_TEMP/notarize.zip"
-          notary() { xcrun notarytool "$@" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"; }
-          id=$(notary submit "$RUNNER_TEMP/notarize.zip" --output-format json | jq -r .id)
-          echo "Notarization submission $id"
-          notary wait "$id" --timeout 1h --output-format json > "$RUNNER_TEMP/notary.json" || true
-          status=$(jq -r '.status // "unknown"' "$RUNNER_TEMP/notary.json")
-          if [ "$status" != Accepted ]; then
-            notary log "$id" || true
-            echo "::error::Notarization finished as $status"
-            exit 1
-          fi
-          # Stapling covers the bundle only; bare Mach-O binaries cannot carry
-          # a ticket, so Gatekeeper checks theirs online.
-          xcrun stapler staple "$app"
-          spctl --assess --type execute -vv "$app"
-
-          sidecar() {
-            local hash
-            hash=$(shasum -a 256 "$1" | awk '{print $1}')
-            echo "$hash  $1" > "$1.sha256"
-            cat "$1.sha256"
-          }
-          for bin in ai-usagebar-tray ai-usagebar ai-usagebar-tui; do
-            cp "stage/$bin" "$bin-macos-${{ matrix.arch }}"
-            sidecar "$bin-macos-${{ matrix.arch }}"
-          done
-          tar czf "$ARTIFACT.tar.gz" -C stage .
-          sidecar "$ARTIFACT.tar.gz"
-          rm -rf stage
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ai-usagebar-macos-${{ matrix.arch }}
-          if-no-files-found: error
-          path: |
-            input/ai-usagebar-macos-${{ matrix.arch }}.tar.gz
-            input/ai-usagebar-macos-${{ matrix.arch }}.tar.gz.sha256
-            input/*-macos-${{ matrix.arch }}
-            input/*-macos-${{ matrix.arch }}.sha256
-
   release:
-    needs: [verify-version, build, sign-macos]
+    needs: [verify-version, build]
     runs-on: ubuntu-latest
     # Only this job publishes anything to the repo; the rest read.
     permissions:
@@ -585,7 +469,6 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
-          pattern: ai-usagebar-*
           merge-multiple: true
 
       - name: Generate release body
@@ -814,7 +697,6 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
-          pattern: ai-usagebar-*
           merge-multiple: true
 
       # Compute the real sha256s and inject them into both PKGBUILDs so the
@@ -955,76 +837,3 @@ jobs:
           git commit -m "ai-usagebar ${TAG}"
           git push origin HEAD
           rm -f "$askpass"
-
-  publish-homebrew:
-    needs: [verify-version, build, release]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.ref != ''
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-
-      - name: Check HOMEBREW_TAP_TOKEN presence
-        id: homebrew_token
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "::error::No HOMEBREW_TAP_TOKEN secret set — the Homebrew tap cannot be published. Set the secret (a PAT with push access to akitaonrails/homebrew-tap) and re-run this workflow."
-            exit 1
-          fi
-          echo "set=true" >> "$GITHUB_OUTPUT"
-
-      - name: Pin version, URLs and hashes for the tag
-        if: steps.homebrew_token.outputs.set == 'true'
-        env:
-          TAG: ${{ inputs.ref || github.ref_name }}
-        run: |
-          set -euo pipefail
-          version="${TAG#v}"
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          release_hash() {
-            local asset="ai-usagebar-macos-$1.tar.gz" hash
-            hash=$(curl -fsSL "$base/$asset.sha256" | awk 'NR == 1 {print $1}') || return 1
-            if ! [[ "$hash" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "::error::Invalid SHA-256 sidecar for $asset" >&2
-              return 1
-            fi
-            printf '%s\n' "$hash"
-          }
-          arm_sha=$(release_hash aarch64)
-          intel_sha=$(release_hash x86_64)
-          sed -e "s|@VERSION@|$version|" \
-              -e "s|@ARM_SHA256@|$arm_sha|" -e "s|@INTEL_SHA256@|$intel_sha|" \
-              packaging/homebrew/ai-usagebar.rb.in > ai-usagebar.rb
-          ruby -c ai-usagebar.rb
-
-      - name: Push cask to homebrew-tap
-        if: steps.homebrew_token.outputs.set == 'true'
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          TAG: ${{ inputs.ref || github.ref_name }}
-        run: |
-          set -euo pipefail
-          askpass=$(mktemp)
-          trap 'rm -f "$askpass"' EXIT
-          cat > "$askpass" <<'EOF'
-          #!/bin/sh
-          printf '%s' "$HOMEBREW_TAP_TOKEN"
-          EOF
-          chmod 700 "$askpass"
-          export GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0
-          git clone --depth 1 https://x-access-token@github.com/akitaonrails/homebrew-tap.git tap
-          mkdir -p tap/Casks
-          cp ai-usagebar.rb tap/Casks/ai-usagebar.rb
-          cd tap
-          git config user.name "AkitaOnRails (GitHub Actions)"
-          git config user.email "boss@akitaonrails.com"
-          git add Casks/ai-usagebar.rb
-          if git diff --cached --quiet; then
-            echo "Tap already at ${TAG} — nothing to push"
-            exit 0
-          fi
-          git commit -m "ai-usagebar ${TAG}"
-          git push origin HEAD
