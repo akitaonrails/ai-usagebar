@@ -142,7 +142,9 @@ const FIXTURE = JSON.stringify({
             sections: [
                 {type: 'metric', label: 'Codex 5h', percent: 59,
                     reset_at: '2026-11-20T17:00:00Z', window_secs: 18000,
-                    detail: 'Resets in 2h · 45% elapsed'},
+                    detail: 'Resets in 2h · 45% elapsed',
+                    elapsed_percent: 45, projected_percent: 131, spark: '▁▂▃',
+                    spark_points: [12, 18, 24]},
                 {type: 'metric', label: 'Codex weekly', percent: 9,
                     reset_at: '2026-11-23T17:00:00Z', window_secs: 604800,
                     detail: 'Resets in 3d'},
@@ -163,6 +165,12 @@ for (const file of readdirSync(here).filter(f => f.endsWith('.js'))) {
 }
 
 const extensionSource = readFileSync(join(here, 'extension.js'), 'utf8');
+for (const source of [extensionSource, readFileSync(join(here, '../gnome-extension/extension.js'), 'utf8')]) {
+    const openMenu = source.slice(source.indexOf("'open-state-changed'")).split('});', 1)[0];
+    assert.ok(openMenu.indexOf('this._trendUnsupportedFor = null;') >= 0
+        && openMenu.indexOf('this._trendUnsupportedFor = null;') < openMenu.indexOf('this._refreshReport();'),
+        'opening the menu must retry trend support after a binary upgrade');
+}
 assert.equal(extensionSource.includes('destroy_all_children'), false,
     'destroy_all_children() aborts GNOME Shell 42 (st_bin_destroy)');
 

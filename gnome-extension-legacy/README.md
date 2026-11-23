@@ -142,6 +142,12 @@ and followed by `↓` (more than 10 points under), `→` (within 10 under), or
 reset time. The panel's final `__aiub_end__` literal receives any stale suffix
 so that the preceding elapsed field remains numeric.
 
+For a fresh, active quota with an exact window length, the menu can show
+`on pace for X%`. The trend line appears after three recent samples.
+The extension requests `usage --json --trend` only when refreshing an open
+menu; it does not poll for history while closed. Older binaries still show
+the normal report menu.
+
 Both subprocesses are spawned **asynchronously** (`Gio.Subprocess` +
 `communicate_utf8_async`) so it never blocks the shell, and all timers /
 signal handlers are torn down in `disable()`.

@@ -20,7 +20,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {barMarkup, colorForDelta, colorForPct, disambiguateTags, field, FIELD, FORMAT, hasUsageWindows, integer,
     isGrouped, MARKER, markerElapsed, paceGlyph, plainTextFromPango, selectPools,
     splitFormatOutput} from './marker-logic.js';
-import {commandFailure, errorLine, parseReport} from './report-model.js';
+import {commandFailure, errorLine, parseReport, trendUnsupported} from './report-model.js';
 import {terminalCandidates} from './terminal.js';
 
 const ROLE = 'ai-usagebar';
@@ -38,9 +38,30 @@ function verticalBox(props) {
         : {vertical: true, ...props});
 }
 
-// Report text (errors, block lines, details) has no length the menu can
-// predict. Unwrapped, one long line sets the whole menu's width, past the edge
-// of the screen; wrapped, it stays inside the menu's bounded width.
+function drawSpark(area, values) {
+    const cr = area.get_context();
+    const [width, height] = area.get_surface_size();
+    if (width <= 0 || height <= 0) {
+        cr.$dispose();
+        return;
+    }
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min;
+    const x = index => 1 + (index / (values.length - 1)) * Math.max(0, width - 2);
+    const y = value => span === 0
+        ? height / 2
+        : height - 1 - ((value - min) / span) * (height - 2);
+    cr.setLineWidth(1.5);
+    cr.setSourceRGBA(0.545, 0.576, 0.631, 1);
+    cr.moveTo(x(0), y(values[0]));
+    for (let i = 1; i < values.length; i++)
+        cr.lineTo(x(i), y(values[i]));
+    cr.stroke();
+    cr.$dispose();
+}
+
+// Keep long errors, block lines and details inside the bounded menu width.
 function wrappedLabel(text, styleClass) {
     const label = new St.Label({text, x_expand: true, style_class: styleClass});
     label.clutter_text.line_wrap = true;
@@ -137,6 +158,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         // separate commands on separate schedules; each gets its own slot.
         this._panelJob = newJob();
         this._reportJob = newJob();
+        this._trendUnsupportedFor = null;
 
         // Panel: one markup label holds tags + percentages + bars. The icon
         // stands in when the settings leave nothing for the label to draw,
@@ -187,6 +209,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open) {
+                // The package can replace an older binary at the same path.
+                this._trendUnsupportedFor = null;
                 this._refresh();
                 this._refreshReport();
             }
@@ -300,9 +324,30 @@ class AiUsageBarIndicator extends PanelMenu.Button {
                     : row.reset
                         ? (row.regen ? `Regenerates ${row.regen} in ${row.reset}` : `Resets in ${row.reset}`)
                         : '';
+                const projected = row.projected == null ? '' : `on pace for ${row.projected}%`;
                 const detail = [reset, row.detail].filter(Boolean).join(' · ');
                 if (detail)
                     box.add_child(wrappedLabel(detail, 'aiub-detail'));
+                if (row.sparkPoints.length >= 3 || projected) {
+                    const trend = new St.BoxLayout({style_class: 'aiub-trend'});
+                    if (row.sparkPoints.length >= 3) {
+                        trend.add_child(new St.Label({text: 'trend', style_class: 'aiub-trend-label'}));
+                        const area = new St.DrawingArea({
+                            style_class: 'aiub-spark',
+                            x_expand: true,
+                            y_expand: true,
+                        });
+                        area.connect('repaint', () => drawSpark(area, row.sparkPoints));
+                        trend.add_child(area);
+                    }
+                    if (projected)
+                        trend.add_child(new St.Label({
+                            text: projected,
+                            style_class: 'aiub-projected',
+                            style: `color: ${row.projected >= 100 ? colors.critical : '#8b93a1'};`,
+                        }));
+                    box.add_child(trend);
+                }
                 body.add_child(box);
             } else if (row.type === 'block') {
                 if (row.label)
@@ -506,13 +551,25 @@ class AiUsageBarIndicator extends PanelMenu.Button {
     }
 
     _refreshReport() {
-        const argv = [resolveBinary(this._settings), 'usage', '--json'];
+        const binary = resolveBinary(this._settings);
+        const trend = this.menu.isOpen && this._trendUnsupportedFor !== binary;
+        const argv = [binary, 'usage', '--json'];
+        if (trend)
+            argv.push('--trend');
         this._run(this._reportJob, argv, {
             again: () => this._refreshReport(),
             failed: (short, detail) =>
                 this._showReport({ok: false, error: errorLine(short, detail), entries: []}),
-            done: (out, err, ok) =>
-                this._showReport(!out.trim() && !ok ? commandFailure(err) : parseReport(out)),
+            done: (out, err, ok) => {
+                // A separately installed extension can outlive the binary,
+                // so older versions keep their ordinary report menu.
+                if (trend && !ok && !out.trim() && trendUnsupported(err)) {
+                    this._trendUnsupportedFor = binary;
+                    this._refreshReport();
+                    return;
+                }
+                this._showReport(!out.trim() && !ok ? commandFailure(err) : parseReport(out));
+            },
         });
     }
 

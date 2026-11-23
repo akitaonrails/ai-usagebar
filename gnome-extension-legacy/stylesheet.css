@@ -116,3 +116,21 @@
     font-size: 0.8em;
     color: #8b93a1;
 }
+
+.aiub-trend {
+    spacing: 8px;
+}
+
+.aiub-trend-label {
+    font-size: 0.75em;
+    color: #8b93a1;
+}
+
+.aiub-spark {
+    height: 18px;
+}
+
+.aiub-projected {
+    font-size: 0.8em;
+    color: #8b93a1;
+}

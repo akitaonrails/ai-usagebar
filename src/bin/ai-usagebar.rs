@@ -92,6 +92,7 @@ fn main() {
     // per-entry fetch/auth failures stay inside the document.
     if let Some(Command::Usage {
         json,
+        trend,
         priorities,
         recent_hours,
         alert_unused_percent,
@@ -105,7 +106,9 @@ fn main() {
                 hours: *alert_hours,
             },
         });
-        std::process::exit(rt.block_on(ai_usagebar::report::run(*json, priorities)));
+        std::process::exit(rt.block_on(ai_usagebar::report::run_with_trend(
+            *json, priorities, *trend,
+        )));
     }
     let code = rt.block_on(run(cli));
     std::process::exit(code);

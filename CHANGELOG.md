@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Added
+
+- **Pace forecasts and trend sparklines in `usage --json`.** Active, fixed
+  quota windows with an exact duration can report `elapsed_percent` and
+  `projected_percent`. Optional `--trend` records bounded local samples and
+  adds `spark` and `spark_points`. The GNOME menus show them while open
+  without adding a background poller. (#674)
+
 ### Fixed
 
 - **The Linux tray popover opens beside the bar on a rotated monitor.** On
