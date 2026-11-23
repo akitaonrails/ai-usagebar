@@ -2,17 +2,10 @@
 
 ### Fixed
 
-- **Antigravity:** drop earlier sibling-port probe errors from the same PID
-  once that process's `LanguageServerService` listener confirms
-  `missing CSRF token`. Antigravity 2.0's `language_server` (`hub-2.34.0`)
-  can bind an auxiliary loopback HTTP listener on a higher ephemeral port
-  that answers plain-text `HTTP 401 unauthorized`, while its RPC listener
-  omits `csrfToken` under authenticated UI bootstrap and returns
-  `unauthenticated: missing CSRF token`; discarding earlier errors from the
-  same PID prevents that companion listener from masking the missing-CSRF
-  verdict and blocking fallback to `agy -p "/quota"` / the saved session,
-  while still preserving actionable `401`/`403` errors from other processes
-  (#673).
+- **Antigravity:** an auxiliary listener's bare `401 unauthorized` no longer
+  blocks fallback to `agy` quota or the saved session when the same process's
+  RPC listener confirms it requires an unavailable CSRF token. Other
+  authentication rejections still surface (#673).
 
 ## [1.53.0] — 2026-11-22
 

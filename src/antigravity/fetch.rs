@@ -145,9 +145,8 @@ impl Default for RemoteOverride<'_> {
 
 /// One probe target: the listener's base URL and, when it came from
 /// discovery, the process that owns it. A `missing CSRF` answer spares the
-/// *same process's* remaining listeners and supersedes earlier errors from its
-/// sibling listeners, while leaving every other product's ports and errors
-/// untouched.
+/// *same process's* remaining listeners and can supersede an ambiguous 401
+/// from one of its auxiliary listeners.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Candidate {
     /// Normalized `scheme://authority` URL the RPC paths are appended to.
@@ -485,11 +484,10 @@ fn remote_fallback_reason(error: &AppError) -> Option<RemoteFallbackReason> {
     }
 }
 
-/// One failed candidate probe paired with its owning pid, so a process's
-/// later `missing CSRF` verdict can drop earlier errors from its own
-/// sibling listeners without touching any other process's failure.
+/// A failure can be superseded only if it was a bare 401, sent without a
+/// discovered CSRF token to a loopback listener with a known owner.
 struct ProbeError {
-    pid: Option<u32>,
+    auxiliary_401_pid: Option<u32>,
     error: AppError,
 }
 
@@ -540,20 +538,32 @@ async fn open_session(
             Err(e) => {
                 // `agy` — and Antigravity 2.0 when authenticated UI bootstrap
                 // omits `csrfToken` — require a CSRF token we cannot discover.
-                // Once confirmed on a process's RPC listener, skip its
-                // remaining ports and drop earlier errors from that same
-                // process's sibling listeners (such as an auxiliary HTTP
-                // listener on a higher ephemeral port answering plain `401
-                // unauthorized`), so a companion listener cannot mask this
-                // process's missing-CSRF verdict and block the fallback.
-                if is_missing_csrf(&e)
-                    && let Some(pid) = candidate.pid
-                {
-                    blocked_pids.insert(pid);
-                    errors.retain(|entry| entry.pid != Some(pid));
+                // The explicit override can share a port number with a
+                // discovered listener without naming the same endpoint.
+                // Only use the discovery address form for superseding errors.
+                let sibling_pid = candidate.pid.filter(|_| {
+                    candidate
+                        .base
+                        .strip_prefix("http://127.0.0.1:")
+                        .is_some_and(|port| port.parse::<u16>().is_ok())
+                });
+                if is_missing_csrf(&e) {
+                    if let Some(pid) = candidate.pid {
+                        blocked_pids.insert(pid);
+                    }
+                    if csrf.is_none()
+                        && let Some(pid) = sibling_pid
+                    {
+                        errors.retain(|entry| entry.auxiliary_401_pid != Some(pid));
+                    }
                 }
+                let auxiliary_401_pid = sibling_pid.filter(|_| {
+                    csrf.is_none()
+                        && matches!(&e, AppError::Http { status: 401, body }
+                            if body.trim_ascii().eq_ignore_ascii_case("unauthorized"))
+                });
                 errors.push(ProbeError {
-                    pid: candidate.pid,
+                    auxiliary_401_pid,
                     error: e,
                 });
             }
@@ -4456,6 +4466,81 @@ mod tests {
         quota.assert_async().await;
         // Proves pid 7's earlier 401 was dropped while pid 9539's 403 survived.
         assert!(matches!(err, AppError::Http { status: 403, .. }), "{err}");
+    }
+
+    #[tokio::test]
+    async fn missing_csrf_does_not_hide_a_genuine_or_unowned_auth_rejection() {
+        let mut rejected = mockito::Server::new_async().await;
+        let mut rpc = mockito::Server::new_async().await;
+        let path = format!("/{STATUS_RPC}");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let rpc_root = rpc
+            .mock("GET", "/")
+            .with_status(200)
+            .with_body(r#"{"csrfToken":""}"#)
+            .expect(4)
+            .create_async()
+            .await;
+        let rpc_status = rpc
+            .mock("POST", path.as_str())
+            .with_status(401)
+            .with_body(r#"{"code":"unauthenticated","message":"missing CSRF token"}"#)
+            .expect(4)
+            .create_async()
+            .await;
+        for (owner, token, status, body) in [
+            (Some(7), None, 401, r#"{"error":"sign in again"}"#),
+            (Some(7), None, 403, "unauthorized\n"),
+            (Some(7), Some("test-csrf"), 401, "unauthorized\n"),
+            (None, None, 401, "unauthorized\n"),
+        ] {
+            let root = rejected
+                .mock("GET", "/")
+                .with_status(200)
+                .with_body(serde_json::json!({ "csrfToken": token.unwrap_or("") }).to_string())
+                .expect(1)
+                .create_async()
+                .await;
+            let response = rejected.mock("POST", path.as_str());
+            let response = if let Some(token) = token {
+                response.match_header("x-codeium-csrf-token", token)
+            } else {
+                response.match_header("x-codeium-csrf-token", mockito::Matcher::Missing)
+            };
+            let response = response
+                .with_status(status)
+                .with_body(body)
+                .expect(1)
+                .create_async()
+                .await;
+            let candidates = [
+                Candidate {
+                    base: rejected.url(),
+                    pid: owner,
+                    ide: false,
+                },
+                Candidate {
+                    base: rpc.url(),
+                    pid: Some(7),
+                    ide: false,
+                },
+            ];
+            let Err(error) = open_session(&client, Some(&candidates), true).await else {
+                panic!("both listeners rejected the request");
+            };
+            assert!(
+                matches!(&error, AppError::Http { status: code, body: raw }
+                    if *code == status as u16 && raw == body),
+                "rejection from {owner:?} (token: {token:?}, HTTP {status}) must survive: {error:?}"
+            );
+            assert!(remote_fallback_reason(&error).is_none());
+            root.assert_async().await;
+            response.assert_async().await;
+            root.remove_async().await;
+            response.remove_async().await;
+        }
+        rpc_root.assert_async().await;
+        rpc_status.assert_async().await;
     }
 
     /// The refreshed token is persisted under the session's fingerprint, so
