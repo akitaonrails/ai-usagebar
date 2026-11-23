@@ -87,6 +87,13 @@ pub(super) struct Monitor {
     reserved: [f64; 4],
 }
 
+impl Monitor {
+    /// The monitor's width and height in the layout, in logical pixels.
+    fn logical_size(&self) -> (f64, f64) {
+        (self.width / self.scale, self.height / self.scale)
+    }
+}
+
 /// Where the popover goes, in global layout pixels, and its size.
 #[derive(Debug, PartialEq)]
 pub(super) struct Frame {
@@ -432,7 +439,7 @@ pub(super) fn parse_monitors(json: &str) -> Result<Vec<Monitor>, String> {
         // `reserved` is in logical pixels: left and right against the logical
         // width, top and bottom against the logical height.
         let [left, top, right, bottom] = m.reserved;
-        let (logical_w, logical_h) = (m.width / m.scale, m.height / m.scale);
+        let (logical_w, logical_h) = m.logical_size();
         (0.0..=logical_w).contains(&left)
             && (0.0..=logical_w).contains(&right)
             && (0.0..=logical_h).contains(&top)
@@ -498,11 +505,12 @@ fn monitor_for_anchor(anchor: Anchor, monitors: &[Monitor]) -> Option<&Monitor> 
     monitors
         .iter()
         .find(|m| {
+            let (width, height) = m.logical_size();
             m.scale > 0.0
                 && anchor.x >= m.x
-                && anchor.x < m.x + m.width / m.scale
+                && anchor.x < m.x + width
                 && anchor.y >= m.y
-                && anchor.y < m.y + m.height / m.scale
+                && anchor.y < m.y + height
         })
         .or_else(|| monitors.first())
 }
@@ -525,10 +533,7 @@ pub(super) fn frame_with_gap(
         return None;
     }
     let width = width.max(1);
-    let (screen_w, screen_h) = (
-        monitor.width / monitor.scale,
-        monitor.height / monitor.scale,
-    );
+    let (screen_w, screen_h) = monitor.logical_size();
     let [left, top, right, bottom] = monitor.reserved;
     let gap_px = gap.map_or(0.0, f64::from);
     let margin = gap.map_or(DEFAULT_MARGIN, f64::from);
