@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Antigravity status line on Linux when `agy` symlinks to `antigravity`.**
+  Official Linux installs (including `mise` and release tarballs) ship `agy` as
+  a symlink to `antigravity`, so `/proc/<pid>/exe` resolves to `.../antigravity`
+  while `/proc/<pid>/comm` is `agy`. `is_agy_executable` now accepts both `agy`
+  and `antigravity` basenames so status-line ingestion and live-session
+  tracking work instead of silently ignoring payloads.
+
 ## [1.53.0] — 2026-11-22
 
 ### Added
