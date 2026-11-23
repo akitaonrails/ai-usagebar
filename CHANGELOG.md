@@ -15,6 +15,11 @@
   when the process name is exactly `agy`; a direct `antigravity` process
   remains distinct (#675).
 
+- **Antigravity:** an auxiliary listener's bare `401 unauthorized` no longer
+  blocks fallback to `agy` quota or the saved session when the same process's
+  RPC listener confirms it requires an unavailable CSRF token. Other
+  authentication rejections still surface (#673).
+
 ## [1.53.0] — 2026-11-22
 
 ### Added
