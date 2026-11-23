@@ -1252,6 +1252,9 @@ Public account IDs are opaque and stable on this machine; sessions remain listed
 while `agy` is running, with snapshots marked stale after 15 minutes without a
 new status-line payload.
 
+On Linux, an `agy` launcher symlinked to `antigravity` is recognized when the
+process name is still `agy`.
+
 This integration reads only the CLI's status-line payload. It does not read,
 copy, or store OAuth tokens, prompts, project paths, or transcripts. When no
 valid `agy` status-line snapshot is available, the existing single-account
