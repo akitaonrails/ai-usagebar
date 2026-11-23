@@ -10,6 +10,11 @@
   right edge placed the popover past that edge. Placement now swaps width
   and height for those transforms, as Hyprland's own layout does (#677).
 
+- **Antigravity status-line sessions launched through the Linux `agy` symlink
+  now appear.** The Linux process reader recognizes the `antigravity` binary
+  when the process name is exactly `agy`; a direct `antigravity` process
+  remains distinct (#675).
+
 ## [1.53.0] — 2026-11-22
 
 ### Added

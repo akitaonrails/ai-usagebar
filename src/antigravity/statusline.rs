@@ -189,6 +189,15 @@ impl ProcessInspector for LinuxProcessInspector {
         {
             let name = file_name.to_string_lossy();
             let stripped = name.strip_suffix(" (deleted)").unwrap_or(&name);
+            // When the Linux CLI is launched through its `agy` symlink,
+            // procfs reports the target in `exe` and the launch name in
+            // `comm`. Require both; neither the target nor `comm` alone
+            // should override a valid executable name.
+            if stripped == "antigravity"
+                && std::fs::read_to_string(dir.join("comm")).is_ok_and(|comm| comm == "agy\n")
+            {
+                return Some(std::ffi::OsString::from("agy"));
+            }
             if !stripped.is_empty() {
                 return Some(std::ffi::OsString::from(stripped));
             }
@@ -1309,7 +1318,11 @@ mod tests {
     #[test]
     fn executable_basename_must_be_exact_agy() {
         assert!(is_agy_executable(OsStr::new("/usr/local/bin/agy")));
+        assert!(!is_agy_executable(OsStr::new(
+            "/home/user/.local/share/mise/installs/antigravity-cli/1.5.15/antigravity"
+        )));
         assert!(!is_agy_executable(OsStr::new("agy-helper")));
+        assert!(!is_agy_executable(OsStr::new("antigravity-helper")));
     }
 
     #[test]
@@ -1834,5 +1847,88 @@ mod tests {
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].masked_email, "l***@example.com");
         assert_eq!(accounts[0].snapshot.plan, "Google AI Pro");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linux_process_inspector_accepts_agy_symlinked_to_antigravity() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let proc_root = temp.path().join("proc");
+        let sessions = temp.path().join("sessions");
+
+        // Official Linux packages ship `agy` as a symlink to `antigravity`, so
+        // `/proc/<pid>/comm` is `agy` while `/proc/<pid>/exe` resolves to `.../antigravity`.
+        let p300 = proc_root.join("300");
+        fs::create_dir_all(&p300).unwrap();
+        fs::write(p300.join("stat"), "300 (agy) S 1 1 1 0 -1").unwrap();
+        fs::write(p300.join("comm"), "agy\n").unwrap();
+        symlink(
+            "/home/user/.local/share/mise/installs/antigravity-cli/1.5.15/antigravity",
+            p300.join("exe"),
+        )
+        .unwrap();
+
+        let p301 = proc_root.join("301");
+        fs::create_dir_all(&p301).unwrap();
+        fs::write(p301.join("stat"), "301 (ai-usagebar) S 300 300 300 0 -1").unwrap();
+        symlink("/usr/bin/ai-usagebar", p301.join("exe")).unwrap();
+
+        let inspector = LinuxProcessInspector::at(&proc_root);
+        let body = payload(
+            "symlink@example.com",
+            json!({
+                "gemini-weekly": {
+                    "remaining_fraction": 0.60,
+                    "reset_time": "2026-11-20T00:00:00Z",
+                    "reset_in_seconds": 604800
+                }
+            }),
+        );
+        let now = "2026-11-19T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let outcome =
+            ingest_with(body.to_string().as_bytes(), &sessions, &inspector, 301, now).unwrap();
+        assert_eq!(outcome, IngestOutcome::Written);
+
+        let accounts = read_active_accounts(&sessions, &inspector);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].masked_email, "s***@example.com");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linux_process_inspector_requires_the_exact_alias_for_antigravity() {
+        use std::os::unix::fs::symlink;
+
+        let proc_root = TempDir::new().unwrap();
+        let inspector = LinuxProcessInspector::at(proc_root.path());
+        for (pid, executable, comm) in [
+            (300, "antigravity", Some("antigravity\n")),
+            (301, "antigravity", None),
+            (302, "antigravity", Some(" agy\n")),
+            (303, "antigravity", Some("agy-helper\n")),
+            (304, "sh", Some("agy\n")),
+        ] {
+            let dir = proc_root.path().join(pid.to_string());
+            fs::create_dir(&dir).unwrap();
+            symlink(Path::new("/usr/bin").join(executable), dir.join("exe")).unwrap();
+            if let Some(comm) = comm {
+                fs::write(dir.join("comm"), comm).unwrap();
+            }
+            fs::write(dir.join("stat"), format!("{pid} (fake) S 1 1 1")).unwrap();
+            let child = proc_root.path().join((pid + 100).to_string());
+            fs::create_dir(&child).unwrap();
+            fs::write(
+                child.join("stat"),
+                format!("{} (ai-usagebar) S {pid} 1 1", pid + 100),
+            )
+            .unwrap();
+            assert_eq!(
+                inspector.executable_name(pid).as_deref(),
+                Some(OsStr::new(executable))
+            );
+            assert_eq!(find_agy_ancestor(&inspector, pid + 100), None);
+        }
     }
 }
