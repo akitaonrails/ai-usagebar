@@ -594,6 +594,8 @@ function brandFileFor(provider) {
       return "openai.svg"
     case "copilot":
       return "copilot.svg"
+    case "commandcode":
+      return "commandcode.svg"
     case "devin":
       return "devin.svg"
     case "droid":

@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Added
+
+- **Command Code mark.** Added the official Command Code logo to the Omarchy
+  icon set (`omarchy/icons/commandcode.svg`) and wired it into `Model.js`, so
+  the bar and panel show the mark instead of the `cmc` short-name fallback.
+
 ## [1.54.0] — 2026-11-23
 
 ### Added
