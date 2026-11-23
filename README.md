@@ -837,6 +837,8 @@ contains the same percentages (clamped to 100), with up to 12 points from one
 reset window. The cache retains up to 256 metric/window series and prunes
 samples older than eight days on the next update. It contains percentages,
 timestamps and hashed metric identities, not account names or credentials.
+Samples follow the configured report entry. Replacing the account in the same
+entry can reuse its samples until the reset changes or the samples expire.
 Plain `usage --json` neither reads nor writes this trend cache. Fields that
 don't apply are omitted.
 

@@ -1,12 +1,14 @@
 ## [Unreleased]
 
+## [1.54.0] — 2026-11-23
+
 ### Added
 
 - **Pace forecasts and trend sparklines in `usage --json`.** Active, fixed
   quota windows with an exact duration can report `elapsed_percent` and
   `projected_percent`. Optional `--trend` records bounded local samples and
   adds `spark` and `spark_points`. The GNOME menus show them while open
-  without adding a background poller. (#674)
+  without adding a background poller (#674).
 
 ### Fixed
 
@@ -27,6 +29,11 @@
   blocks fallback to `agy` quota or the saved session when the same process's
   RPC listener confirms it requires an unavailable CSRF token. Other
   authentication rejections still surface (#673).
+
+### Security
+
+- Updated the tray's locked `cookie` dependency to the patched release for
+  RUSTSEC-2026-0594.
 
 ## [1.53.0] — 2026-11-22
 
@@ -5823,7 +5830,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.53.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.54.0...HEAD
+[1.54.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...v1.53.0
 [1.52.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...v1.52.3
 [1.52.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.1...v1.52.2
