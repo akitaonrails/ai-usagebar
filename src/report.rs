@@ -90,14 +90,19 @@ impl Entry {
     /// The projection is deliberately withheld until 10% of the window has
     /// elapsed: a single early reading would otherwise print four-digit
     /// estimates. It is a pace estimate, not a prediction.
-    fn annotate(&mut self, history: &mut crate::history::History, now: DateTime<Utc>) {
-        let id = self.id.clone();
+    fn annotate(&mut self, mut history: Option<&mut crate::history::History>, now: DateTime<Utc>) {
+        if self.stale || self.error.is_some() {
+            return;
+        }
         for section in &mut self.sections {
             let ReportSection::Metric {
                 label,
                 percent,
+                percent_precise,
                 reset_at,
                 window_secs,
+                group,
+                regen,
                 elapsed_percent,
                 projected_percent,
                 spark,
@@ -107,30 +112,62 @@ impl Entry {
             else {
                 continue;
             };
-            let reset = reset_at.as_ref().map(|at| at.to_rfc3339());
-            let elapsed = (*window_secs)
-                .filter(|secs| *secs > 0)
-                .and_then(|secs| {
-                    let reset = (*reset_at)?;
-                    Some(crate::pacing::calc(
-                        i32::from(*percent),
-                        Some(reset),
-                        now,
-                        chrono::Duration::seconds(secs as i64),
-                        PACE_TOLERANCE,
-                    ))
-                })
-                .map(|pacing| pacing.elapsed_pct.clamp(0, 100) as u8);
-            *elapsed_percent = elapsed;
-            *projected_percent = elapsed.and_then(|elapsed| {
-                (elapsed >= 10 && *percent > 0).then(|| {
-                    ((i64::from(*percent) * 100) / i64::from(elapsed)).clamp(0, 999) as u16
-                })
-            });
-            let key = format!("{id}|{label}|{}", reset.as_deref().unwrap_or("none"));
-            *spark = history.record(&key, reset.as_deref(), *percent, now);
-            *spark_points = history.points(&key);
+            if group.as_deref() == Some(SESSIONS_GROUP)
+                || reset_at.is_some_and(|reset| reset <= now)
+            {
+                continue;
+            }
+            // Refill budgets are not a constant-rate allowance until reset.
+            if regen.is_none() {
+                let usage = percent_precise
+                    .filter(|pct| pct.is_finite() && *pct >= 0.0)
+                    .unwrap_or(f64::from(*percent));
+                (*elapsed_percent, *projected_percent) =
+                    usage_pace(usage, *reset_at, *window_secs, now);
+            }
+            if let Some(history) = history.as_deref_mut() {
+                let key = crate::history::metric_key(&self.id, group.as_deref(), label, *reset_at);
+                if let Some((line, points)) = history.record(key, *percent, now) {
+                    *spark = Some(line);
+                    *spark_points = Some(points);
+                }
+            }
         }
+    }
+}
+
+fn usage_pace(
+    used: f64,
+    reset: Option<DateTime<Utc>>,
+    window_secs: Option<u64>,
+    now: DateTime<Utc>,
+) -> (Option<u8>, Option<u16>) {
+    let Some((reset, secs)) = reset.zip(window_secs.filter(|secs| *secs > 0)) else {
+        return (None, None);
+    };
+    if reset <= now {
+        return (None, None);
+    }
+    let total = i128::from(secs) * 1000;
+    let remaining = i128::from(reset.signed_duration_since(now).num_milliseconds());
+    let elapsed = (total - remaining).max(0);
+    let projection = (elapsed * 10 >= total && used > 0.0)
+        .then(|| (used * total as f64 / elapsed as f64).min(999.0) as u16);
+    (Some((elapsed * 100 / total) as u8), projection)
+}
+
+fn annotate_usage(entries: &mut [Entry], trend_dir: Option<&std::path::Path>, now: DateTime<Utc>) {
+    if let Some(dir) = trend_dir
+        && crate::history::with_at(dir, now, |history| {
+            for entry in &mut *entries {
+                entry.annotate(Some(history), now);
+            }
+        })
+    {
+        return;
+    }
+    for entry in entries {
+        entry.annotate(None, now);
     }
 }
 
@@ -753,9 +790,17 @@ async fn entry_for_report_target(
     }
 }
 
-/// `priorities` adds the opt-in ranking (`usage --json --priorities`); `None`
-/// prints the report unchanged.
+/// Print usage, optionally adding the `usage --json --priorities` ranking.
 pub async fn run(json: bool, priorities: Option<crate::recommendation::Options>) -> i32 {
+    run_with_trend(json, priorities, false).await
+}
+
+/// Run the same report with optional local sampling for `usage --json --trend`.
+pub async fn run_with_trend(
+    json: bool,
+    priorities: Option<crate::recommendation::Options>,
+    trend: bool,
+) -> i32 {
     let (mut entries, primary, overview) = match collect_entries().await {
         Ok(collected) => collected,
         Err(message) => {
@@ -766,14 +811,8 @@ pub async fn run(json: bool, priorities: Option<crate::recommendation::Options>)
 
     if json {
         let now = Utc::now();
-        {
-            let _lock = crate::history::lock();
-            let mut history = crate::history::History::load();
-            for entry in &mut entries {
-                entry.annotate(&mut history, now);
-            }
-            history.save();
-        }
+        let trend_dir = trend.then(crate::history::default_dir).flatten();
+        annotate_usage(&mut entries, trend_dir.as_deref(), now);
         let history_dir = priorities.and_then(|_| crate::recommendation::default_history_dir());
         let document = usage_json(
             &entries,
@@ -1823,43 +1862,94 @@ mod tests {
     }
 
     #[test]
-    fn annotation_adds_projection_and_spark() {
-        let now = Utc::now();
-        let mut section = metric("Weekly (7d)", 12, "12%", "");
-        let ReportSection::Metric {
-            reset_at,
-            window_secs,
-            ..
-        } = &mut section
-        else {
-            panic!("expected a metric");
-        };
-        *reset_at = Some(now + chrono::Duration::days(4));
-        *window_secs = Some(604_800);
-        let mut entry = entry("openai", vec![section]);
-        let mut history = crate::history::History::default();
-        let mut spark = None;
-        for step in 0..3 {
-            entry.annotate(&mut history, now + chrono::Duration::seconds(step * 60));
-            if let ReportSection::Metric { spark: current, .. } = &entry.sections[0] {
-                spark = current.clone();
+    fn trend_is_opt_in_and_skips_stale_errors_and_context_rows() {
+        let now = "2026-11-23T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let section = || {
+            let mut section = metric("Weekly (7d)", 12, "12%", "");
+            if let ReportSection::Metric {
+                reset_at,
+                window_secs,
+                ..
+            } = &mut section
+            {
+                *reset_at = Some(now + chrono::Duration::days(4));
+                *window_secs = Some(604_800);
             }
-        }
-        let ReportSection::Metric {
-            elapsed_percent,
-            projected_percent,
-            spark_points,
-            ..
-        } = &entry.sections[0]
-        else {
-            panic!("expected a metric");
+            section
         };
-        let elapsed = elapsed_percent.expect("elapsed");
-        assert!((40..=45).contains(&elapsed), "{elapsed}");
-        let projected = projected_percent.expect("projected");
-        assert!((25..=30).contains(&projected), "{projected}");
-        assert_eq!(spark.as_deref(), Some("▁▁▁"));
-        assert_eq!(spark_points.as_deref(), Some([12, 12, 12].as_slice()));
+        let mut entries = [
+            entry("fresh", vec![section()]),
+            entry("stale", vec![section()]),
+            entry("failed", vec![section()]),
+            entry("context", vec![section()]),
+        ];
+        entries[1].stale = true;
+        entries[2].error = Some("not available".into());
+        if let ReportSection::Metric { group, .. } = &mut entries[3].sections[0] {
+            *group = Some(SESSIONS_GROUP.into());
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("trend-cache");
+        for step in 0..3 {
+            annotate_usage(
+                &mut entries,
+                None,
+                now + chrono::Duration::seconds(step * 60),
+            );
+        }
+        assert!(!directory.exists());
+        let plain = json_rows(&entries);
+        let row = &plain[0]["sections"][0];
+        assert_eq!(row["elapsed_percent"], 42);
+        assert_eq!(row["projected_percent"], 27);
+        assert!(row.get("spark").is_none());
+        assert!(row.get("spark_points").is_none());
+        for step in 0..3 {
+            annotate_usage(
+                &mut entries,
+                Some(&directory),
+                now + chrono::Duration::seconds(step * 60),
+            );
+        }
+        let rows = json_rows(&entries);
+        assert_eq!(rows[0]["sections"][0]["spark"], "▁▁▁");
+        assert_eq!(rows[0]["sections"][0]["spark_points"], json!([12, 12, 12]));
+        for row in &rows[1..] {
+            assert!(row["sections"][0].get("elapsed_percent").is_none());
+            assert!(row["sections"][0].get("projected_percent").is_none());
+            assert!(row["sections"][0].get("spark").is_none());
+            assert!(row["sections"][0].get("spark_points").is_none());
+        }
+        let state: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.join("history.json")).unwrap())
+                .unwrap();
+        assert_eq!(state["series"].as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pace_uses_precise_elapsed_time_and_only_an_active_known_window() {
+        let now = "2026-11-23T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let after = |millis| Some(now + chrono::Duration::milliseconds(millis));
+        assert_eq!(
+            usage_pace(10.0, after(89_500), Some(100), now),
+            (Some(10), Some(95))
+        );
+        assert_eq!(
+            usage_pace(10.0, after(90_001), Some(100), now),
+            (Some(9), None)
+        );
+        assert_eq!(
+            usage_pace(0.0, after(50_000), Some(100), now),
+            (Some(50), None)
+        );
+        assert_eq!(
+            usage_pace(200.0, after(90_000), Some(100), now),
+            (Some(10), Some(999))
+        );
+        assert_eq!(usage_pace(10.0, after(50_000), None, now), (None, None));
+        assert_eq!(usage_pace(10.0, None, Some(100), now), (None, None));
+        assert_eq!(usage_pace(10.0, after(0), Some(100), now), (None, None));
+        assert_eq!(usage_pace(10.0, after(-100), Some(100), now), (None, None));
     }
 
     fn antigravity_account(index: usize) -> crate::antigravity::statusline::AccountSession {

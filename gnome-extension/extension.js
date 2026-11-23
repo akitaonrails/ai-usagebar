@@ -20,7 +20,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {barMarkup, colorForDelta, colorForPct, disambiguateTags, field, FIELD, FORMAT, hasUsageWindows, integer,
     isGrouped, MARKER, markerElapsed, paceGlyph, plainTextFromPango, selectPools,
     splitFormatOutput} from './marker-logic.js';
-import {commandFailure, errorLine, parseReport} from './report-model.js';
+import {commandFailure, errorLine, parseReport, trendUnsupported} from './report-model.js';
 import {terminalCandidates} from './terminal.js';
 
 const ROLE = 'ai-usagebar';
@@ -38,9 +38,6 @@ function verticalBox(props) {
         : {vertical: true, ...props});
 }
 
-// Report text (errors, block lines, details) has no length the menu can
-// predict. Unwrapped, one long line sets the whole menu's width, past the edge
-// of the screen; wrapped, it stays inside the menu's bounded width.
 function drawSpark(area, values) {
     const cr = area.get_context();
     const [width, height] = area.get_surface_size();
@@ -51,7 +48,7 @@ function drawSpark(area, values) {
     const min = Math.min(...values);
     const max = Math.max(...values);
     const span = max - min;
-    const x = index => (index / (values.length - 1)) * width;
+    const x = index => 1 + (index / (values.length - 1)) * Math.max(0, width - 2);
     const y = value => span === 0
         ? height / 2
         : height - 1 - ((value - min) / span) * (height - 2);
@@ -64,6 +61,7 @@ function drawSpark(area, values) {
     cr.$dispose();
 }
 
+// Keep long errors, block lines and details inside the bounded menu width.
 function wrappedLabel(text, styleClass) {
     const label = new St.Label({text, x_expand: true, style_class: styleClass});
     label.clutter_text.line_wrap = true;
@@ -111,8 +109,6 @@ const RED = '#e06c75';
 // FORMAT's final ignored literal sentinel receives a stale suffix, keeping the
 // preceding elapsed fields numeric. It and its field indexes live in marker-logic.
 const REFRESH_TIMEOUT_SECS = 60;
-// `usage --json` records the trend history; sample it while the menu is closed.
-const REPORT_SAMPLE_SECS = 300;
 
 function esc(s) {
     return String(s)
@@ -162,8 +158,7 @@ class AiUsageBarIndicator extends PanelMenu.Button {
         // separate commands on separate schedules; each gets its own slot.
         this._panelJob = newJob();
         this._reportJob = newJob();
-        this._sampleJob = newJob();
-        this._sampleTimer = 0;
+        this._trendUnsupportedFor = null;
 
         // Panel: one markup label holds tags + percentages + bars. The icon
         // stands in when the settings leave nothing for the label to draw,
@@ -221,11 +216,6 @@ class AiUsageBarIndicator extends PanelMenu.Button {
 
         this._refresh();
         this._restartTimer();
-        this._sampleTimer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, REPORT_SAMPLE_SECS, () => {
-            if (!this.menu.isOpen)
-                this._sampleHistory();
-            return GLib.SOURCE_CONTINUE;
-        });
     }
 
     _buildMenu() {
@@ -559,21 +549,25 @@ class AiUsageBarIndicator extends PanelMenu.Button {
     }
 
     _refreshReport() {
-        const argv = [resolveBinary(this._settings), 'usage', '--json'];
+        const binary = resolveBinary(this._settings);
+        const trend = this.menu.isOpen && this._trendUnsupportedFor !== binary;
+        const argv = [binary, 'usage', '--json'];
+        if (trend)
+            argv.push('--trend');
         this._run(this._reportJob, argv, {
             again: () => this._refreshReport(),
             failed: (short, detail) =>
                 this._showReport({ok: false, error: errorLine(short, detail), entries: []}),
-            done: (out, err, ok) =>
-                this._showReport(!out.trim() && !ok ? commandFailure(err) : parseReport(out)),
-        });
-    }
-
-    _sampleHistory() {
-        this._run(this._sampleJob, [resolveBinary(this._settings), 'usage', '--json'], {
-            again: () => this._sampleHistory(),
-            failed: () => {},
-            done: () => {},
+            done: (out, err, ok) => {
+                // A separately installed extension can outlive the binary,
+                // so older versions keep their ordinary report menu.
+                if (trend && !ok && !out.trim() && trendUnsupported(err)) {
+                    this._trendUnsupportedFor = binary;
+                    this._refreshReport();
+                    return;
+                }
+                this._showReport(!out.trim() && !ok ? commandFailure(err) : parseReport(out));
+            },
         });
     }
 
@@ -770,13 +764,8 @@ class AiUsageBarIndicator extends PanelMenu.Button {
             GLib.source_remove(this._timer);
             this._timer = 0;
         }
-        if (this._sampleTimer) {
-            GLib.source_remove(this._sampleTimer);
-            this._sampleTimer = 0;
-        }
         this._stop(this._panelJob);
         this._stop(this._reportJob);
-        this._stop(this._sampleJob);
         for (const id of this._viewIds ?? [])
             this._settings.disconnect(id);
         for (const id of this._sourceIds ?? [])

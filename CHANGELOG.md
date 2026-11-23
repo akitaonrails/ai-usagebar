@@ -2,15 +2,11 @@
 
 ### Added
 
-- **Pace forecasts and trend sparklines in `usage --json`.** Metrics with a
-  known reset window now carry `elapsed_percent`, `projected_percent`, a
-  bounded `spark` and its numeric `spark_points`. The GNOME menus draw a small
-  `trend` line and `on pace for X%` next to each window; a projection at or
-  above 100% uses the critical
-  colour. Windows without an exact length keep the trend but no projection,
-  because the denominator is unknown. The extension samples the report in the
-  background so the line fills while the menu is closed; a history lock
-  serializes concurrent writers.
+- **Pace forecasts and trend sparklines in `usage --json`.** Active, fixed
+  quota windows with an exact duration can report `elapsed_percent` and
+  `projected_percent`. Optional `--trend` records bounded local samples and
+  adds `spark` and `spark_points`. The GNOME menus show them while open
+  without adding a background poller. (#674)
 
 ## [1.53.0] — 2026-11-22
 

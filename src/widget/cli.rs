@@ -166,6 +166,9 @@ pub enum Command {
         /// Machine-readable output.
         #[arg(long)]
         json: bool,
+        /// Sample fresh quota readings locally and include recent trends.
+        #[arg(long, requires = "json")]
+        trend: bool,
         /// Add a usage-priority ranking to the JSON document: which provider's
         /// weekly quota is projected to reset unused. Records a small local
         /// history of quota percentages to estimate the recent pace. Off by
@@ -783,11 +786,22 @@ mod tests {
             cli.command,
             Some(Command::Usage {
                 json: true,
+                trend: false,
                 priorities: false,
                 recent_hours: 3,
                 alert_unused_percent: 50,
                 alert_hours: 24,
             })
+        ));
+    }
+
+    #[test]
+    fn trends_require_json() {
+        assert!(Cli::try_parse_from(["ai-usagebar", "usage", "--trend"]).is_err());
+        let cli = Cli::parse_from(["ai-usagebar", "usage", "--json", "--trend"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Usage { trend: true, .. })
         ));
     }
 

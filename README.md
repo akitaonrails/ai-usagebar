@@ -825,15 +825,20 @@ the field is omitted otherwise: it is one model's own limit rather than a
 window the whole provider shares, so a frontend that sums a provider up in one
 figure ranks it below the shared windows.
 
-When `reset_at` and `window_secs` are both present, a metric also carries
-`elapsed_percent` and, after at least 10% of the window has elapsed and usage
-is non-zero, `projected_percent`: the final percentage at the current pace,
-capped at 999. `spark` is a bounded Unicode sparkline of recent samples and
-`spark_points` carries the same samples as percentages for frontends that draw
-a line; both are present after three samples and reset when the window resets.
-All four are omitted, not `null`, when the data does not support them; a
-calendar month or an unstated window keeps the reset and the trend but gets no
-projection.
+For a fresh, active fixed quota with an exact duration and reset time, the
+report includes `elapsed_percent` and, after at least 10% of the window has
+elapsed and usage is non-zero, `projected_percent`: what the final percentage
+would be at the current pace, capped at 999. An unknown duration or a refill
+budget does not get a projection.
+
+`ai-usagebar usage --json --trend` also records fresh quota samples in the local
+cache. After three samples, `spark` is a Unicode sparkline and `spark_points`
+contains the same percentages (clamped to 100), with up to 12 points from one
+reset window. The cache retains up to 256 metric/window series and prunes
+samples older than eight days on the next update. It contains percentages,
+timestamps and hashed metric identities, not account names or credentials.
+Plain `usage --json` neither reads nor writes this trend cache. Fields that
+don't apply are omitted.
 
 Cursor's On-Demand text row
 may also carry `used_cents`, `limit_cents`, and `percent`: the spend and the

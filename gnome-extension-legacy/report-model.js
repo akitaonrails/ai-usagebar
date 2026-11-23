@@ -87,6 +87,10 @@ function metricDetail(detail, resetAt) {
     return text.trim();
 }
 
+function trendUnsupported(error) {
+    return /(?:^|\n)error: unexpected argument '--trend' found(?:\r?\n|$)/.test(error);
+}
+
 function metricRow(raw, nowMs) {
     // A window the report does not include must not become a 0% bar.
     const percent = finitePercent(raw.percent);
@@ -103,13 +107,12 @@ function metricRow(raw, nowMs) {
         severity: severityFor(percent, String(raw.severity || '')),
         reset: formatReset(raw.reset_at, nowMs),
         elapsed: elapsedPercent(raw.reset_at, raw.window_secs, nowMs),
-        projected: raw.projected_percent == null
-            ? null
-            : Math.max(0, Math.round(Number(raw.projected_percent))),
-        spark: typeof raw.spark === 'string' ? raw.spark : '',
+        projected: Number.isInteger(raw.projected_percent)
+            && raw.projected_percent >= 0 && raw.projected_percent <= 999
+            ? raw.projected_percent : null,
         sparkPoints: Array.isArray(raw.spark_points)
-            ? raw.spark_points.filter(value => Number.isFinite(value))
-                .map(value => Math.max(0, Math.min(100, Math.round(value))))
+            ? raw.spark_points.slice(-12).filter(value => Number.isInteger(value)
+                && value >= 0 && value <= 100)
             : [],
         detail: metricDetail(raw.detail, raw.reset_at),
         group: clean(raw.group, 80),
@@ -241,6 +244,7 @@ function parseReport(raw, nowMs = Date.now()) {
 }
 
 var exports = {
+    trendUnsupported,
     finitePercent,
     formatDuration,
     formatReset,
