@@ -1121,6 +1121,30 @@ mod tests {
     }
 
     #[test]
+    fn a_rotated_monitor_is_measured_with_width_and_height_swapped() {
+        // DP-2's 2560x1440 mode is turned to portrait (`transform` 1): in the
+        // layout it is 1440 wide and 2560 tall, with its bar along the bottom.
+        const PORTRAIT: &str = r#"[
+            {"name":"DP-1","x":0,"y":0,"width":2560,"height":1440,"scale":1,"reserved":[0,26,0,0]},
+            {"name":"DP-2","x":2560,"y":0,"width":2560,"height":1440,"scale":1,"transform":1,"reserved":[0,0,0,30]}
+        ]"#;
+        let list = monitors(PORTRAIT);
+        // A click on that bar, at y = 2545, is on DP-2...
+        let bar = at(3900.0, 2545.0);
+        assert_eq!(monitor_for_anchor(bar, &list).unwrap().name, "DP-2");
+        // ...and the frame stays within its 1440 width, flush with the bar.
+        assert_eq!(
+            frame(bar, &list, W, 360).unwrap(),
+            Frame {
+                x: 2560 + 1440 - 8 - W as i32,
+                y: 2560 - 30 - 360,
+                width: W,
+                height: 360
+            }
+        );
+    }
+
+    #[test]
     fn the_lower_half_opens_upward_and_a_monitor_with_no_room_gives_no_frame() {
         let list = monitors(TWO);
         let bottom = frame(at(3000.0, 1300.0), &list, W, 900).unwrap();
