@@ -49,7 +49,8 @@ When Antigravity uses the Cloud Code fallback, the TUI labels the source
 the CLI token file. If a local product's RPC listener confirms it requires a
 CSRF token it did not publish, a bare unauthorized reply from its own
 auxiliary listener does not prevent fallback. A separate product's auth
-failure or a rejection after sending a discovered token still takes priority.
+failure, a rejection after sending a discovered token, or an explicit
+`ANTIGRAVITY_LS_ADDRESS` rejection still takes priority.
 
 
 ## Providers evaluated and not added

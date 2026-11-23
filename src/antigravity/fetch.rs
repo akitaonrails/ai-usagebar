@@ -491,6 +491,13 @@ struct ProbeError {
     error: AppError,
 }
 
+struct ProbePlan {
+    candidates: Vec<Candidate>,
+    // A configured address keeps its precedence even if discovery saw it
+    // too, associated it with a PID, and deduplicated the discovered entry.
+    explicit_base: Option<String>,
+}
+
 /// Walk every candidate language server until one identifies itself. A machine
 /// can host more than one — the desktop app, the IDE and an interactive `agy`
 /// session each run their own — and only some of them are signed in.
@@ -506,11 +513,18 @@ async fn open_session(
     bases: Option<&[Candidate]>,
     ide_language_server: bool,
 ) -> Result<Session> {
-    let candidates = bases.map_or_else(
+    let plan = bases.map_or_else(
         || candidate_bases(ide_language_server),
-        <[Candidate]>::to_vec,
+        |bases| ProbePlan {
+            candidates: bases.to_vec(),
+            explicit_base: None,
+        },
     );
-    let candidates: Vec<Candidate> = candidates.into_iter().filter(|c| !c.ide).collect();
+    probe_session(client, plan).await
+}
+
+async fn probe_session(client: &reqwest::Client, plan: ProbePlan) -> Result<Session> {
+    let candidates: Vec<Candidate> = plan.candidates.into_iter().filter(|c| !c.ide).collect();
     if candidates.is_empty() {
         return Err(no_local_server());
     }
@@ -538,15 +552,12 @@ async fn open_session(
             Err(e) => {
                 // `agy` — and Antigravity 2.0 when authenticated UI bootstrap
                 // omits `csrfToken` — require a CSRF token we cannot discover.
-                // The explicit override can share a port number with a
-                // discovered listener without naming the same endpoint.
-                // Only use the discovery address form for superseding errors.
-                let sibling_pid = candidate.pid.filter(|_| {
-                    candidate
-                        .base
-                        .strip_prefix("http://127.0.0.1:")
-                        .is_some_and(|port| port.parse::<u16>().is_ok())
-                });
+                // The configured endpoint never participates in error
+                // supersession, even if discovery attributed its port to a
+                // known PID. It can still spare that PID's remaining probes.
+                let sibling_pid = candidate
+                    .pid
+                    .filter(|_| plan.explicit_base.as_deref() != Some(candidate.base.as_str()));
                 if is_missing_csrf(&e) {
                     if let Some(pid) = candidate.pid {
                         blocked_pids.insert(pid);
@@ -1349,7 +1360,7 @@ fn parse_reset(value: &serde_json::Value, field: &str) -> Result<Option<DateTime
 /// Base URLs worth probing, most specific first. With `ide_language_server`
 /// false, listeners owned by the Antigravity IDE's language server are marked
 /// so [`open_session`] skips them (#405).
-fn candidate_bases(ide_language_server: bool) -> Vec<Candidate> {
+fn candidate_bases(ide_language_server: bool) -> ProbePlan {
     let discovered = discover_ls_ports();
     // Identifying the IDE's listeners costs an extra lookup per pid, so it
     // runs only when they are actually unwanted.
@@ -1372,16 +1383,17 @@ fn candidate_bases_with(
     override_addr: Option<&str>,
     discovered: Vec<(u32, u16)>,
     ide_pids: &std::collections::HashSet<u32>,
-) -> Vec<Candidate> {
+) -> ProbePlan {
     let mut candidates = Vec::new();
-    if let Some(base) = override_addr.and_then(normalize_base) {
+    let explicit_base = override_addr.and_then(normalize_base);
+    if let Some(base) = &explicit_base {
         // An override that names a port discovery also saw belongs to that
         // process: its missing-CSRF answer must spare the process's sibling
         // listeners too. It is never marked as the IDE's — an explicit
         // address is the user's target and stays a candidate regardless.
-        let pid = base_port(&base).and_then(|port| unique_owner(&discovered, port));
+        let pid = base_port(base).and_then(|port| unique_owner(&discovered, port));
         candidates.push(Candidate {
-            base,
+            base: base.clone(),
             pid,
             ide: false,
         });
@@ -1403,7 +1415,10 @@ fn candidate_bases_with(
         }
     }
 
-    candidates
+    ProbePlan {
+        candidates,
+        explicit_base,
+    }
 }
 
 /// Does this executable belong to the Antigravity IDE rather than the
@@ -2863,7 +2878,7 @@ mod tests {
             ide: false,
         };
         assert_eq!(
-            candidate_bases_with(Some("127.0.0.1:1234"), vec![(10, 5678)], &no_ide()),
+            candidate_bases_with(Some("127.0.0.1:1234"), vec![(10, 5678)], &no_ide()).candidates,
             vec![
                 candidate("http://127.0.0.1:1234", None),
                 candidate("http://127.0.0.1:5678", Some(10)),
@@ -2871,7 +2886,7 @@ mod tests {
         );
         // Trailing slashes are trimmed.
         assert_eq!(
-            candidate_bases_with(Some("127.0.0.1:1234/"), vec![(10, 5678)], &no_ide()),
+            candidate_bases_with(Some("127.0.0.1:1234/"), vec![(10, 5678)], &no_ide()).candidates,
             vec![
                 candidate("http://127.0.0.1:1234", None),
                 candidate("http://127.0.0.1:5678", Some(10)),
@@ -2880,17 +2895,17 @@ mod tests {
         // Duplicate base URL is omitted — and the override inherits the pid of
         // the process discovery saw on that port.
         assert_eq!(
-            candidate_bases_with(Some("127.0.0.1:5678"), vec![(10, 5678)], &no_ide()),
+            candidate_bases_with(Some("127.0.0.1:5678"), vec![(10, 5678)], &no_ide()).candidates,
             vec![candidate("http://127.0.0.1:5678", Some(10))]
         );
         // Duplicate discovered ports are omitted.
         assert_eq!(
-            candidate_bases_with(None, vec![(10, 5678), (10, 5678)], &no_ide()),
+            candidate_bases_with(None, vec![(10, 5678), (10, 5678)], &no_ide()).candidates,
             vec![candidate("http://127.0.0.1:5678", Some(10))]
         );
         // An address that already carries a scheme is left alone.
         assert_eq!(
-            candidate_bases_with(Some("https://host:9"), vec![], &no_ide()),
+            candidate_bases_with(Some("https://host:9"), vec![], &no_ide()).candidates,
             vec![candidate("https://host:9", None)]
         );
     }
@@ -3112,7 +3127,7 @@ mod tests {
     #[test]
     fn every_discovered_port_is_probed_in_order() {
         assert_eq!(
-            candidate_bases_with(None, vec![(10, 33875), (10, 37435)], &no_ide()),
+            candidate_bases_with(None, vec![(10, 33875), (10, 37435)], &no_ide()).candidates,
             vec![
                 Candidate {
                     base: "http://127.0.0.1:33875".to_string(),
@@ -3134,8 +3149,16 @@ mod tests {
     /// Antigravity or set ANTIGRAVITY_LS_ADDRESS" error instead.
     #[test]
     fn empty_discovery_yields_no_candidates() {
-        assert!(candidate_bases_with(None, vec![], &no_ide()).is_empty());
-        assert!(candidate_bases_with(Some(""), vec![], &no_ide()).is_empty());
+        assert!(
+            candidate_bases_with(None, vec![], &no_ide())
+                .candidates
+                .is_empty()
+        );
+        assert!(
+            candidate_bases_with(Some(""), vec![], &no_ide())
+                .candidates
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3374,7 +3397,7 @@ mod tests {
     fn an_override_with_no_authority_is_dropped_not_probed() {
         for junk in ["/", "///", "http://", "https://", "  /  "] {
             assert_eq!(
-                candidate_bases_with(Some(junk), vec![(10, 4242)], &no_ide()),
+                candidate_bases_with(Some(junk), vec![(10, 4242)], &no_ide()).candidates,
                 vec![Candidate {
                     base: "http://127.0.0.1:4242".to_string(),
                     pid: Some(10),
@@ -3383,7 +3406,11 @@ mod tests {
                 "{junk:?} should not survive as a candidate"
             );
         }
-        assert!(candidate_bases_with(Some("/"), vec![], &no_ide()).is_empty());
+        assert!(
+            candidate_bases_with(Some("/"), vec![], &no_ide())
+                .candidates
+                .is_empty()
+        );
     }
 
     #[test]
@@ -3588,7 +3615,7 @@ mod tests {
     #[test]
     fn blank_override_falls_through_to_discovery() {
         assert_eq!(
-            candidate_bases_with(Some("   "), vec![(10, 4242)], &no_ide()),
+            candidate_bases_with(Some("   "), vec![(10, 4242)], &no_ide()).candidates,
             vec![Candidate {
                 base: "http://127.0.0.1:4242".to_string(),
                 pid: Some(10),
@@ -3646,12 +3673,14 @@ mod tests {
     fn ide_owned_listeners_are_marked_but_an_explicit_override_is_not() {
         let ide: std::collections::HashSet<u32> = [10].into_iter().collect();
 
-        let candidates = candidate_bases_with(None, vec![(10, 40001), (20, 50001)], &ide);
+        let candidates =
+            candidate_bases_with(None, vec![(10, 40001), (20, 50001)], &ide).candidates;
         assert_eq!(candidates.len(), 2);
         assert!(candidates[0].ide, "pid 10 is the IDE's language server");
         assert!(!candidates[1].ide);
 
-        let candidates = candidate_bases_with(Some("127.0.0.1:40001"), vec![(10, 40001)], &ide);
+        let candidates =
+            candidate_bases_with(Some("127.0.0.1:40001"), vec![(10, 40001)], &ide).candidates;
         assert_eq!(
             candidates,
             vec![Candidate {
@@ -4539,6 +4568,70 @@ mod tests {
             root.remove_async().await;
             response.remove_async().await;
         }
+        rpc_root.assert_async().await;
+        rpc_status.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn an_explicit_loopback_probe_remains_explicit_after_discovery_deduplication() {
+        let mut auxiliary = mockito::Server::new_async().await;
+        let mut rpc = mockito::Server::new_async().await;
+        let path = format!("/{STATUS_RPC}");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let auxiliary_root = auxiliary
+            .mock("GET", "/")
+            .with_status(401)
+            .expect(1)
+            .create_async()
+            .await;
+        let auxiliary_status = auxiliary
+            .mock("POST", path.as_str())
+            .with_status(401)
+            .with_body("unauthorized\n")
+            .expect(1)
+            .create_async()
+            .await;
+        let rpc_root = rpc
+            .mock("GET", "/")
+            .with_body(r#"{"csrfToken":""}"#)
+            .expect(2)
+            .create_async()
+            .await;
+        let rpc_status = rpc
+            .mock("POST", path.as_str())
+            .with_status(401)
+            .with_body(r#"{"code":"unauthenticated","message":"missing CSRF token"}"#)
+            .expect(2)
+            .create_async()
+            .await;
+        let discovered = vec![
+            (7, auxiliary.socket_address().port()),
+            (7, rpc.socket_address().port()),
+        ];
+
+        let explicit_auxiliary =
+            candidate_bases_with(Some(&auxiliary.url()), discovered.clone(), &no_ide());
+        assert_eq!(
+            explicit_auxiliary.candidates.len(),
+            2,
+            "override deduplicated"
+        );
+        assert_eq!(explicit_auxiliary.candidates[0].pid, Some(7));
+        let Err(error) = probe_session(&client, explicit_auxiliary).await else {
+            panic!("neither listener accepted the request");
+        };
+        assert!(matches!(&error, AppError::Http { status: 401, body } if body == "unauthorized\n"));
+        assert!(remote_fallback_reason(&error).is_none());
+
+        // The known PID is still used to skip sibling probes when the
+        // explicit endpoint itself needs a CSRF token it did not publish.
+        let explicit_rpc = candidate_bases_with(Some(&rpc.url()), discovered, &no_ide());
+        let Err(error) = probe_session(&client, explicit_rpc).await else {
+            panic!("explicit RPC listener requires CSRF");
+        };
+        assert!(is_missing_csrf(&error));
+        auxiliary_root.assert_async().await;
+        auxiliary_status.assert_async().await;
         rpc_root.assert_async().await;
         rpc_status.assert_async().await;
     }
