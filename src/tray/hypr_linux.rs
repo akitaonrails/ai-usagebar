@@ -83,14 +83,25 @@ pub(super) struct Monitor {
     width: f64,
     height: f64,
     scale: f64,
+    /// The output transform, 0 to 7: an odd one turns the monitor a quarter.
+    #[serde(default)]
+    transform: u8,
     /// Space taken by layer surfaces (the bar): left, top, right, bottom.
     reserved: [f64; 4],
 }
 
 impl Monitor {
     /// The monitor's width and height in the layout, in logical pixels.
+    /// `width` and `height` are the mode's, before the rotation: a quarter
+    /// turn swaps them, as Hyprland's own layout size does, and the scale
+    /// divides the result.
     fn logical_size(&self) -> (f64, f64) {
-        (self.width / self.scale, self.height / self.scale)
+        let (width, height) = if self.transform % 2 == 1 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
+        (width / self.scale, height / self.scale)
     }
 }
 
