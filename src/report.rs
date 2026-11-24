@@ -1927,6 +1927,36 @@ mod tests {
     }
 
     #[test]
+    fn a_reset_that_jitters_between_fetches_keeps_one_trend() {
+        // Successive fetches report the same window's reset a fraction of a
+        // second apart (see `notify::RESET_MOVE_TOLERANCE_SECS`), here across
+        // a second boundary.
+        let now = "2026-11-23T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        // 14:59:59.661, so the later readings land past 15:00:00.
+        let reset = now + chrono::Duration::milliseconds(10_799_661);
+        let temp = tempfile::tempdir().unwrap();
+        let mut entries = [entry("claude", Vec::new())];
+        let readings = [(10, 0), (14, 488), (18, 700)];
+        for (step, (percent, jitter)) in readings.into_iter().enumerate() {
+            let mut section = metric("Session (5h)", percent, "", "");
+            if let ReportSection::Metric {
+                reset_at,
+                window_secs,
+                ..
+            } = &mut section
+            {
+                *reset_at = Some(reset + chrono::Duration::milliseconds(jitter));
+                *window_secs = Some(18_000);
+            }
+            entries[0].sections = vec![section];
+            let at = now + chrono::Duration::minutes(5 * step as i64);
+            annotate_usage(&mut entries, Some(temp.path()), at);
+        }
+        let rows = json_rows(&entries);
+        assert_eq!(rows[0]["sections"][0]["spark_points"], json!([10, 14, 18]));
+    }
+
+    #[test]
     fn pace_uses_precise_elapsed_time_and_only_an_active_known_window() {
         let now = "2026-11-23T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
         let after = |millis| Some(now + chrono::Duration::milliseconds(millis));
