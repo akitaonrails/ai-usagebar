@@ -748,7 +748,13 @@ assert.match(museMark, /<path\s/);
 assert.match(museMark, /<svg\b[^>]*\bfill="#ffffff"/);
 assert.doesNotMatch(museMark, /currentColor|<(?:script|image|foreignObject|use)\b|\bhref\s*=|\bon\w+\s*=/i);
 assert.equal(model.brandIconFile({id: 'lyceum'}), '');
-assert.equal(model.brandIconFile({id: 'commandcode'}), '');
+assert.equal(model.brandIconFile({id: 'commandcode'}), 'commandcode.svg');
+assert.equal(model.brandIconFile({id: 'custom:cmd-second', brand: 'commandcode'}), 'commandcode.svg');
+const commandcodeMark = fs.readFileSync(new URL('./icons/commandcode.svg', import.meta.url), 'utf8');
+assert.match(commandcodeMark, /<path\s/);
+assert.match(commandcodeMark, /\bfill="#fff(?:fff)?"/i);
+assert.doesNotMatch(commandcodeMark, /\bfill="(?:#000(?:000)?|black)"/i);
+assert.doesNotMatch(commandcodeMark, /currentColor|<(?:script|image|foreignObject|use)\b|\bhref\s*=|\bon\w+\s*=/i);
 assert.equal(model.brandIconFile({id: 'anthropic_api'}), 'anthropic.svg');
 assert.equal(model.brandIconFile({id: 'grok'}), model.brandIconFile({id: 'supergrok'}));
 assert.notEqual(model.brandIconFile({id: 'grokbot'}), model.brandIconFile({id: 'grok'}));
@@ -760,7 +766,7 @@ assert.equal(model.brandIconFile({id: 'custom:oc-second', brand: 'opencode-go'})
 assert.equal(model.brandIconFile({id: 'custom:oc-second'}), '');
 // A brand the artwork does not cover degrades to the nerd-font tag rather
 // than to a blank mark, and so does an older binary's report.
-assert.equal(model.brandIconFile({id: 'custom:oc-second', brand: 'commandcode'}), '');
+assert.equal(model.brandIconFile({id: 'custom:oc-second', brand: 'lyceum'}), '');
 assert.equal(model.brandIconFile({id: 'anthropic', brand: undefined}), 'claude.svg');
 // `brand` wins over the id: that is the whole point of declaring it.
 assert.equal(model.brandIconFile({id: 'anthropic', brand: 'openai'}), 'openai.svg');
@@ -2184,13 +2190,13 @@ assert.equal(model.cursorPoolOf(null), '');
   assert.deepEqual(Array.from(tagged(true, true).map(chip => chip.label)), ['cld 10%', 'gpt 20%']);
   assert.deepEqual(Array.from(tagged(true, true).map(chip => chip.labelOnly)), [false, false], 'the marks keep their own box');
   const brandless = model.parseReport(JSON.stringify({entries: [
-    {id: 'commandcode', short_name: 'cmd', icon: 'X', sections: [{type: 'metric', label: 'Session', percent: 5}]}
+    {id: 'lyceum', short_name: 'lyc', icon: 'X', sections: [{type: 'metric', label: 'Session', percent: 5}]}
   ]})).entries;
   const bare = (showProvider) =>
     model.barChips(brandless, brandless[0], false, true, showProvider, false, false, false, 'auto', 'used', true)[0];
-  assert.equal(bare(false).label, 'cmd 5%', 'a provider with no mark leads with its tag, spaced');
+  assert.equal(bare(false).label, 'lyc 5%', 'a provider with no mark leads with its tag, spaced');
   assert.equal(bare(false).icon, '');
-  assert.equal(bare(true).label, 'cmd 5%', 'and does not repeat it when the provider name is on');
+  assert.equal(bare(true).label, 'lyc 5%', 'and does not repeat it when the provider name is on');
 }
 
 {
