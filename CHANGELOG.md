@@ -7,6 +7,13 @@
   published. Its bundle is signed and notarized, and Homebrew owns upgrades
   with `brew upgrade --cask ai-usagebar` (#622).
 
+### Fixed
+
+- **macOS:** a second click on the menu-bar icon closes the tray popover
+  instead of reopening it. The press closed the popover, then the icon's
+  mouse-up opened it again. The macOS host now swallows that mouse-up the way
+  the Windows host already did (#680).
+
 ## [1.54.0] — 2026-11-23
 
 ### Added
