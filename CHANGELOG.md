@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- **`usage --json --trend` draws Claude's trend line.** The trend history
+  told windows apart by their exact reset instant, and Anthropic reports the
+  same window's reset a fraction of a second apart on each fetch. Every
+  refetch therefore started a new series, so the sparkline never appeared
+  or stayed flat. A series now starts over only when the reset moves by more
+  than the tolerance notifications already allow for this jitter (#682).
+
 ## [1.55.0] — 2026-11-24
 
 ### Added
