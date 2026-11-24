@@ -2,6 +2,11 @@
 
 ### Added
 
+- **Command Code mark.** Added the official Command Code logo to the Omarchy
+  icon set (`omarchy/icons/commandcode.svg`) and wired it into `Model.js`, so
+  the bar and panel show the mark instead of the `cmc` short-name fallback
+  (#679).
+
 - **Homebrew cask for macOS.** Install AI Usage.app and its CLI and TUI on
   Apple Silicon or Intel from `akitaonrails/tap/ai-usagebar` once the cask is
   published. Its bundle is signed and notarized, and Homebrew owns upgrades
