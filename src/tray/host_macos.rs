@@ -80,7 +80,7 @@ enum UserEvent {
     Ipc(String),
     Report(Value),
     FocusPopover,
-    /// A mouse press in another app while the popover is open.
+    /// A mouse press while the popover is open, in another app or on our own status item.
     ClickOutside,
     Hotkey,
     Facts,
@@ -163,6 +163,9 @@ struct TrayState {
     popover_open: bool,
     /// The global mouse-down monitor, installed while the popover is open.
     outside_clicks: Option<Retained<AnyObject>>,
+    /// The last hide caused by a mouse press, and when, in Cocoa points: the status item's
+    /// mouse-up that follows a press on it then closes the popover instead of reopening it.
+    last_press_hide: Option<(Instant, super::blur::PressHide)>,
     /// Cocoa (points, y-up) location of the last click / shortcut, used to
     /// keep the popover on that screen instead of tao's primary-display space.
     last_anchor: Option<(f64, f64)>,
@@ -293,6 +296,7 @@ fn run_loop() -> Result<(), String> {
         js_ready: false,
         popover_open: false,
         outside_clicks: None,
+        last_press_hide: None,
         last_anchor: None,
         popover_height: WINDOW_HEIGHT,
         popover_width: config.tray.width,
@@ -338,8 +342,10 @@ fn run_loop() -> Result<(), String> {
                 }
             }
             Event::UserEvent(UserEvent::ClickOutside) => {
+                // The global monitor also fires for a press on our own status item, ahead of
+                // the item's own mouse events, so a second icon click usually closes it here.
                 if state.popover_open {
-                    hide_popover(&mut state);
+                    hide_popover_for_press(&mut state);
                 }
             }
             Event::WindowEvent {
@@ -349,7 +355,8 @@ fn run_loop() -> Result<(), String> {
                 if state.popover_open
                     && super::blur::macos_verdict(mouse_button_down()) == super::blur::Verdict::Hide
                 {
-                    hide_popover(&mut state);
+                    // A Hide verdict means a button is down.
+                    hide_popover_for_press(&mut state);
                 }
             }
             Event::WindowEvent {
@@ -885,14 +892,23 @@ fn handle_tray(state: &mut TrayState, event: TrayIconEvent) {
     {
         match button {
             MouseButton::Left => {
+                let press = state.last_press_hide.take();
+                let elapsed_ms = press.map_or(u128::MAX, |(at, _)| at.elapsed().as_millis());
                 if state.popover_open {
                     hide_popover(state);
+                } else if status_item_area(&state.tray).is_some_and(|icon| {
+                    super::blur::is_toggle_close(press.map(|(_, p)| p), elapsed_ms, icon)
+                }) {
+                    // The press on the icon already closed the popover (the outside-click
+                    // monitor or the focus loss); this mouse-up is the rest of that click, so it
+                    // stays closed.
                 } else {
                     state.last_anchor = Some(cocoa_mouse());
                     show_popover(state);
                 }
             }
             MouseButton::Right => {
+                state.last_press_hide = None;
                 // Close first so the menu does not land on the open panel; the
                 // anchor also feeds `show_popover` if a screen item reopens it.
                 if state.popover_open {
@@ -1435,6 +1451,7 @@ fn open_popover_action(state: &mut TrayState, action: OptionsAction) {
 }
 
 fn show_popover(state: &mut TrayState) {
+    state.last_press_hide = None;
     if state.last_anchor.is_none() {
         state.last_anchor = Some(cocoa_mouse());
     }
@@ -1474,11 +1491,20 @@ fn hide_popover(state: &mut TrayState) {
     }
 }
 
+/// Hides the popover for a mouse press and remembers where the press landed, so the status
+/// item's mouse-up that belongs to it closes the popover instead of reopening it.
+fn hide_popover_for_press(state: &mut TrayState) {
+    hide_popover(state);
+    let (x, y) = cocoa_mouse();
+    state.last_press_hide = Some((Instant::now(), super::blur::cocoa_press(x, y)));
+}
+
 /// Close on a click in another app. A focus loss alone does not say whether the user clicked
 /// elsewhere or an app brought itself forward, and once the popover has lost focus macOS sends
 /// no second loss for the click that should close it. A global monitor only receives events
-/// meant for other processes, so a click on the popover, the status item or one of our menus
-/// never arrives here.
+/// meant for other processes, so a click on the popover or one of our menus never arrives
+/// here. A press on our own status item does arrive, before the item's mouse-down reaches
+/// tray-icon, which is why the hide records the press for `handle_tray`'s toggle check.
 fn watch_outside_clicks(state: &mut TrayState) {
     if state.outside_clicks.is_some() {
         return;
@@ -1639,6 +1665,22 @@ fn protocol_response(request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> 
 fn cocoa_mouse() -> (f64, f64) {
     let point = NSEvent::mouseLocation();
     (point.x, point.y)
+}
+
+/// The status item's window frame in Cocoa points (y-up, global), the space `cocoa_mouse`
+/// reports, so a recorded press can be tested against it. tray-icon builds its click rect from
+/// the same window frame, flipped and scaled; staying in Cocoa points skips that conversion.
+/// `None` when AppKit has no button or window for the item, which leaves the click reopening.
+fn status_item_area(tray: &TrayIcon) -> Option<super::placement::Area> {
+    let mtm = MainThreadMarker::new()?;
+    let item = tray.ns_status_item()?;
+    let frame = item.button(mtm)?.window()?.frame();
+    Some(super::blur::cocoa_area(
+        frame.origin.x,
+        frame.origin.y,
+        frame.size.width,
+        frame.size.height,
+    ))
 }
 
 fn ns_rect_to_cocoa(rect: NSRect) -> CocoaRect {

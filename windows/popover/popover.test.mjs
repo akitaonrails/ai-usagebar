@@ -906,6 +906,7 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(full.updates, 'auto');
   assert.deepEqual(full.update, {
     error: '',
+    homebrew: false,
     installable: false,
     state: 'downloading',
     url: 'https://github.com/akitaonrails/ai-usagebar/releases/tag/v1.12.0',
@@ -1221,6 +1222,9 @@ assert.equal(resetAlternate(badStampRow, 'exact', resetNow, utc), '');
   assert.equal(updateAction(withUpdate('failed').update, repo).cmd, 'install-update');
   assert.equal(updateMessage(withUpdate('available', { installable: true }).update), 'AI Usage v1.11.0 is ready to install.');
   assert.match(updateMessage(withUpdate('available').update), /release page/);
+  const caskUpdate = withUpdate('available', { homebrew: true }).update;
+  assert.equal(updateAction(caskUpdate, repo).cmd, 'open-url');
+  assert.equal(updateMessage(caskUpdate), 'brew upgrade --cask ai-usagebar');
   assert.equal(updateMessage(withUpdate('failed', { error: 'offline' }).update), "Couldn't update: offline");
   assert.equal(updateMessage(withUpdate('failed', { error: 'HTTP 503', version: '' }).update), "Couldn't check: HTTP 503");
   assert.equal(updateMessage(null), '');

@@ -386,6 +386,9 @@ vendor's response shape drifts:
   latter never instantiates the full representation.
 - `packaging/aur/PKGBUILD` — source-build AUR pkg
 - `packaging/aur/PKGBUILD-bin` — prebuilt-binary AUR pkg (multi-arch)
+- `.github/workflows/homebrew.yml` — independent, manually dispatched cask
+  workflow for an already-published release. When preparing or publishing a
+  cask, follow the [cask release steps](macos/INSTALL.md#publish-the-homebrew-cask).
 - `.github/workflows/release.yml` — tag-driven release (x86_64 + aarch64)
 - `tests/anthropic_e2e.rs` — mockito + insta snapshot tests
 - `tests/live.rs` — `#[ignore]`d smoke tests against real APIs

@@ -220,6 +220,7 @@ export type UpdateState = "available" | "checking" | "downloading" | "failed" | 
 
 export interface UpdateInfo {
   error: string;
+  homebrew: boolean;
   /** The release ships this OS/arch and the install directory is writable. */
   installable: boolean;
   state: UpdateState;

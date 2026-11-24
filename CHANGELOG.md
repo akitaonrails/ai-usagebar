@@ -4,7 +4,20 @@
 
 - **Command Code mark.** Added the official Command Code logo to the Omarchy
   icon set (`omarchy/icons/commandcode.svg`) and wired it into `Model.js`, so
-  the bar and panel show the mark instead of the `cmc` short-name fallback.
+  the bar and panel show the mark instead of the `cmc` short-name fallback
+  (#679).
+
+- **Homebrew cask for macOS.** Install AI Usage.app and its CLI and TUI on
+  Apple Silicon or Intel from `akitaonrails/tap/ai-usagebar` once the cask is
+  published. Its bundle is signed and notarized, and Homebrew owns upgrades
+  with `brew upgrade --cask ai-usagebar` (#622).
+
+### Fixed
+
+- **macOS:** a second click on the menu-bar icon closes the tray popover
+  instead of reopening it. The press closed the popover, then the icon's
+  mouse-up opened it again. The macOS host now swallows that mouse-up the way
+  the Windows host already did (#680).
 
 ## [1.54.0] — 2026-11-23
 
