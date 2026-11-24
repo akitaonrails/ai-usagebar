@@ -1,0 +1,227 @@
+name: Homebrew cask
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag (e.g. v1.52.3)
+        required: true
+        type: string
+      validated_run:
+        description: Prepare run ID after install, tray and Open TUI pass on Apple Silicon and Intel. Leave empty to prepare.
+        type: string
+
+permissions:
+  contents: read
+
+concurrency: homebrew-cask
+
+env:
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  release-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require a published stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATED_RUN: ${{ inputs.validated_run }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo '::error::Expected a release tag such as v1.52.3'; exit 1; }
+          [[ -z "$VALIDATED_RUN" || "$VALIDATED_RUN" =~ ^[0-9]+$ ]] || { echo '::error::Expected a numeric workflow run ID'; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" | jq -e '.draft == false and .prerelease == false'
+
+  sign-macos:
+    needs: release-tag
+    if: inputs.validated_run == ''
+    runs-on: macos-15
+    environment: release-signing
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch: [aarch64, x86_64]
+    env:
+      SOURCE: ai-usagebar-macos-${{ matrix.arch }}.tar.gz
+      CASK: ai-usagebar-homebrew-macos-${{ matrix.arch }}.tar.gz
+      MACH_ARCH: ${{ matrix.arch == 'aarch64' && 'arm64' || matrix.arch }}
+    steps:
+      - name: Download the published app bundle
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")
+          if jq -e --arg name "$CASK" 'any(.assets[]; .name == $name and .state == "uploaded")' <<< "$release"; then
+            echo "$CASK already exists. Reusing the published archive."
+            exit 0
+          fi
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE" --pattern "$SOURCE.sha256"
+          expected=$(awk 'NR == 1 { print $1 }' "$SOURCE.sha256")
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$expected" "$SOURCE" | shasum -a 256 -c
+          mkdir stage
+          tar xzf "$SOURCE" -C stage './AI Usage.app'
+          # The marker is present only in builds that know how to read it.
+          owner='stage/AI Usage.app/Contents/Resources/update-owner'
+          if [ ! -f "$owner" ] || [ "$(cat "$owner")" != self ]; then
+            echo '::error::The released app predates the Homebrew updater guard'
+            exit 1
+          fi
+          printf 'homebrew\n' > "$owner"
+          echo 'sign=true' >> "$GITHUB_OUTPUT"
+
+      - name: Sign, notarize and staple the cask bundle
+        if: steps.source.outputs.sign == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for value in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!value}" ]; then
+              echo "::error::$value is required to sign the cask bundle"
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          cert="$RUNNER_TEMP/cert.p12"
+          trap 'rm -f "$cert"; security delete-keychain "$keychain" >/dev/null 2>&1 || true' EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$cert"
+          keychain_password=$(uuidgen)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+          rm -f "$cert"
+
+          sign() { codesign --force --sign "$APPLE_SIGNING_IDENTITY" --options runtime --timestamp "$@"; }
+          app='stage/AI Usage.app'
+          for bin in ai-usagebar-tray ai-usagebar ai-usagebar-tui; do
+            lipo -verify_arch "$MACH_ARCH" "$app/Contents/MacOS/$bin"
+          done
+          sign "$app/Contents/MacOS/ai-usagebar" "$app/Contents/MacOS/ai-usagebar-tui"
+          sign "$app"
+          codesign --verify --strict --deep "$app"
+
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/notarize.zip"
+          notary() { xcrun notarytool "$@" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"; }
+          id=$(notary submit "$RUNNER_TEMP/notarize.zip" --output-format json | jq -er '.id | strings | select(length > 0)')
+          echo "Notarization submission $id"
+          notary wait "$id" --timeout 1h --output-format json > "$RUNNER_TEMP/notary.json" || true
+          status=$(jq -r '.status // "unknown"' "$RUNNER_TEMP/notary.json")
+          if [ "$status" != Accepted ]; then
+            notary log "$id" || true
+            echo "::error::Notarization finished as ${status:-unknown}"
+            exit 1
+          fi
+          xcrun stapler staple "$app"
+          tar czf "$CASK" -C stage 'AI Usage.app'
+          mkdir verify
+          tar xzf "$CASK" -C verify
+          xcrun stapler validate 'verify/AI Usage.app'
+          spctl --assess --type execute -vv 'verify/AI Usage.app'
+
+      - name: Upload the signed archive for testing
+        if: steps.source.outputs.sign == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A tested cask must keep pointing at the same bytes across retries.
+        run: gh release upload "$TAG" "$CASK" --repo "$GITHUB_REPOSITORY"
+
+  cask:
+    needs: [release-tag, sign-macos]
+    if: >-
+      !cancelled() && needs.release-tag.result == 'success' &&
+      (needs.sign-macos.result == 'success' || inputs.validated_run != '')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Render the cask from the published archive digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG")
+          release_hash() {
+            jq -er --arg name "ai-usagebar-homebrew-macos-$1.tar.gz" '
+              .assets[] | select(.name == $name and .state == "uploaded")
+              | .digest | strings | select(test("^sha256:[0-9a-f]{64}$")) | ltrimstr("sha256:")
+            ' <<< "$release"
+          }
+          arm_sha=$(release_hash aarch64)
+          intel_sha=$(release_hash x86_64)
+          sed -e "s|@REPOSITORY@|$GITHUB_REPOSITORY|" \
+              -e "s|@VERSION@|${TAG#v}|" \
+              -e "s|@ARM_SHA256@|$arm_sha|" \
+              -e "s|@INTEL_SHA256@|$intel_sha|" \
+              packaging/homebrew/ai-usagebar.rb.in > ai-usagebar.rb
+          ruby -c ai-usagebar.rb
+
+      - name: Upload the cask for install testing
+        if: inputs.validated_run == ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: homebrew-${{ inputs.tag }}
+          path: ai-usagebar.rb
+          if-no-files-found: error
+
+      - name: Download the tested cask
+        if: inputs.validated_run != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.validated_run }}
+          name: homebrew-${{ inputs.tag }}
+          path: tested
+
+      - name: Publish the tested cask to the tap
+        if: inputs.validated_run != ''
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! cmp -s ai-usagebar.rb tested/ai-usagebar.rb; then
+            echo '::error::The current cask differs from the tested cask. Prepare and test it again.'
+            exit 1
+          fi
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo '::error::HOMEBREW_TAP_TOKEN is required to publish the cask'
+            exit 1
+          fi
+          askpass=$(mktemp)
+          trap 'rm -f "$askpass"' EXIT
+          cat > "$askpass" <<'ASKPASS'
+          #!/bin/sh
+          printf '%s' "$HOMEBREW_TAP_TOKEN"
+          ASKPASS
+          chmod 700 "$askpass"
+          export GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0
+          git clone --depth 1 https://x-access-token@github.com/akitaonrails/homebrew-tap.git tap
+          mkdir -p tap/Casks
+          cp ai-usagebar.rb tap/Casks/ai-usagebar.rb
+          cd tap
+          git config user.name 'AkitaOnRails (GitHub Actions)'
+          git config user.email 'boss@akitaonrails.com'
+          git add Casks/ai-usagebar.rb
+          if git diff --cached --quiet; then
+            echo "Tap already at $TAG"
+            exit 0
+          fi
+          git commit -m "ai-usagebar $TAG"
+          git push origin HEAD

@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import plistlib
+import re
 import tempfile
 import unittest
 
@@ -38,6 +39,7 @@ class PackageAppTests(unittest.TestCase):
         self.assertEqual(info["CFBundleExecutable"], "ai-usagebar-tray")
         icon = contents / "Resources" / (info["CFBundleIconFile"] + ".icns")
         self.assertEqual(icon.read_bytes()[:4], b"icns")
+        self.assertEqual((contents / "Resources" / "update-owner").read_bytes(), b"self\n")
         for name in ("menu-bar-icon.LICENSE", "LICENSE-APACHE-2.0"):
             self.assertEqual(
                 (contents / "Resources" / name).read_bytes(),
@@ -48,6 +50,18 @@ class PackageAppTests(unittest.TestCase):
             self.assertEqual(binary.read_bytes(), (self.bins / name).read_bytes())
             self.assertEqual(binary.stat().st_mode & 0o777, 0o755)
             self.assertFalse(binary.is_symlink())
+
+    def test_homebrew_cask_links_tools_in_the_installed_bundle(self):
+        package.package_app(self.bins, self.app, "1.32.0")
+        root = Path(__file__).resolve().parents[1]
+        cask = (root / "packaging/homebrew/ai-usagebar.rb.in").read_text()
+        self.assertIn(f'  app "{self.app.name}"', cask.splitlines())
+        links = re.findall(r'^  binary "#\{appdir\}/(.+)"$', cask, re.MULTILINE)
+        self.assertCountEqual(
+            [Path(link).name for link in links], ["ai-usagebar", "ai-usagebar-tui"]
+        )
+        for link in links:
+            self.assertTrue((self.app.parent / link).is_file(), link)
 
     def test_missing_binary_does_not_leave_a_partial_application(self):
         (self.bins / "ai-usagebar-tui").unlink()

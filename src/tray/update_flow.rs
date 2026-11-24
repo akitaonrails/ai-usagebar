@@ -109,7 +109,24 @@ pub fn installable(release: &Release) -> bool {
 /// [`self_update_blocker`] for the running process.
 fn blocker() -> Option<&'static str> {
     let exe = std::env::current_exe().ok()?;
+    if bundle_is_homebrew_managed(&exe) {
+        return Some("managed by Homebrew. Run brew upgrade --cask ai-usagebar");
+    }
     self_update_blocker(&exe, is_link(&exe), Path::is_file)
+}
+
+pub fn homebrew_managed() -> bool {
+    std::env::current_exe().is_ok_and(|exe| bundle_is_homebrew_managed(&exe))
+}
+
+fn bundle_is_homebrew_managed(exe: &Path) -> bool {
+    exe.parent()
+        .filter(|dir| dir.ends_with("Contents/MacOS"))
+        .and_then(Path::parent)
+        .is_some_and(|contents| {
+            std::fs::read(contents.join("Resources/update-owner"))
+                .is_ok_and(|owner| owner == b"homebrew\n")
+        })
 }
 
 fn is_link(path: &Path) -> bool {
@@ -223,6 +240,25 @@ pub fn install_dir() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_cask_bundles_are_homebrew_managed() {
+        let dir = tempfile::tempdir().unwrap();
+        let contents = dir.path().join("custom appdir/AI Usage.app/Contents");
+        let resources = contents.join("Resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        let exe = contents.join("MacOS/ai-usagebar-tray");
+        let owner = resources.join("update-owner");
+
+        assert!(!bundle_is_homebrew_managed(&exe));
+        std::fs::write(&owner, b"self\n").unwrap();
+        assert!(!bundle_is_homebrew_managed(&exe));
+        std::fs::write(&owner, b"homebrew\n").unwrap();
+        assert!(bundle_is_homebrew_managed(&exe));
+        assert!(!bundle_is_homebrew_managed(
+            &dir.path().join("ai-usagebar-tray")
+        ));
+    }
 
     fn release_json(tag: &str, prerelease: bool) -> String {
         format!(

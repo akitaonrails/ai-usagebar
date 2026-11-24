@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Added
+
+- **Homebrew cask for macOS.** Install AI Usage.app and its CLI and TUI on
+  Apple Silicon or Intel from `akitaonrails/tap/ai-usagebar` once the cask is
+  published. Its bundle is signed and notarized, and Homebrew owns upgrades
+  with `brew upgrade --cask ai-usagebar` (#622).
+
 ### Fixed
 
 - **macOS:** a second click on the menu-bar icon closes the tray popover
