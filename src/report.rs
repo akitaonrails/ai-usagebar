@@ -126,8 +126,8 @@ impl Entry {
                     usage_pace(usage, *reset_at, *window_secs, now);
             }
             if let Some(history) = history.as_deref_mut() {
-                let key = crate::history::metric_key(&self.id, group.as_deref(), label, *reset_at);
-                if let Some((line, points)) = history.record(key, *percent, now) {
+                let key = crate::history::metric_key(&self.id, group.as_deref(), label);
+                if let Some((line, points)) = history.record(key, *reset_at, *percent, now) {
                     *spark = Some(line);
                     *spark_points = Some(points);
                 }

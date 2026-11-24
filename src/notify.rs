@@ -50,7 +50,7 @@ const HYSTERESIS_PCT: i32 = 7;
 /// maximum an hour; the tray refreshes every ten at most) and stays far below
 /// the shortest window, so a real new window still moves the instant by more
 /// than this.
-const RESET_MOVE_TOLERANCE_SECS: i64 = 90 * 60;
+pub(crate) const RESET_MOVE_TOLERANCE_SECS: i64 = 90 * 60;
 
 /// How long before a banked reset credit's expiry the warning fires.
 const CREDIT_WARNING_SECS: i64 = 48 * 3600;
