@@ -74,9 +74,11 @@ pub(crate) struct PressHide {
 }
 
 /// Whether a tray-icon click is the second half of the press that just closed the popover.
-/// Pressing the icon while the popover is open takes the foreground to the shell and hides it;
-/// the mouse-up then arrives as a click on the icon. Without this the click reopened what the
-/// press had just closed, so the icon could never toggle the popover off.
+/// Pressing the icon while the popover is open hides it (on Windows the foreground moves to the
+/// shell; on macOS the outside-click monitor sees the press); the mouse-up then arrives as a
+/// click on the icon.
+/// Without this the click reopened what the press had just closed, so the icon could never
+/// toggle the popover off.
 pub(crate) fn is_toggle_close(hide: Option<PressHide>, elapsed_ms: u128, icon: Area) -> bool {
     hide.is_some_and(|press| {
         elapsed_ms <= TOGGLE_WINDOW_MS
@@ -85,6 +87,33 @@ pub(crate) fn is_toggle_close(hide: Option<PressHide>, elapsed_ms: u128, icon: A
             && press.y >= icon.y
             && press.y < icon.y + icon.height
     })
+}
+
+/// A press location in Cocoa points (`NSEvent::mouseLocation`) on the integer grid
+/// [`is_toggle_close`] compares. It floors, like [`cocoa_area`]'s origin, so a press on the
+/// icon's first point lands inside it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn cocoa_press(x: f64, y: f64) -> PressHide {
+    PressHide {
+        x: x.floor() as i32,
+        y: y.floor() as i32,
+    }
+}
+
+/// A status item's window frame in Cocoa points, as the [`Area`] [`is_toggle_close`] takes.
+/// The origin floors and the far edge ceils, so the fractional frame a scaled display reports
+/// is covered whole. Cocoa's y axis points up; `is_toggle_close` only asks whether the press
+/// falls inside the box, so that does not matter.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn cocoa_area(x: f64, y: f64, width: f64, height: f64) -> Area {
+    let left = x.floor();
+    let bottom = y.floor();
+    Area {
+        x: left as i32,
+        y: bottom as i32,
+        width: ((x + width).ceil() - left) as i32,
+        height: ((y + height).ceil() - bottom) as i32,
+    }
 }
 
 #[cfg(test)]
@@ -172,5 +201,50 @@ mod tests {
         let elsewhere = Some(PressHide { x: 1200, y: 700 });
         assert!(!is_toggle_close(elsewhere, 120, ICON));
         assert!(!is_toggle_close(None, 0, ICON));
+    }
+
+    #[test]
+    fn a_macos_press_on_the_status_item_is_a_toggle_close() {
+        // A status item at the top of a 1117-pt-high screen, with the fractional origin and
+        // size a scaled display reports. The far edges (1240.7, 1116.6) are fractional so the
+        // ceil in `cocoa_area` is what puts the last point inside: x [1203, 1241), y [1093, 1117).
+        let icon = cocoa_area(1203.5, 1093.0, 37.2, 23.6);
+        assert!(is_toggle_close(
+            Some(cocoa_press(1220.4, 1104.7)),
+            120,
+            icon
+        ));
+        assert!(is_toggle_close(
+            Some(cocoa_press(1203.6, 1093.2)),
+            120,
+            icon
+        ));
+        assert!(is_toggle_close(
+            Some(cocoa_press(1240.4, 1116.3)),
+            120,
+            icon
+        ));
+    }
+
+    #[test]
+    fn a_macos_press_below_or_beside_the_status_item_does_not_swallow_the_click() {
+        let icon = cocoa_area(1203.5, 1093.0, 37.2, 23.6);
+        // Just below the menu bar, inside the popover.
+        assert!(!is_toggle_close(
+            Some(cocoa_press(1220.0, 1092.5)),
+            120,
+            icon
+        ));
+        // Beside it, on another status item.
+        assert!(!is_toggle_close(
+            Some(cocoa_press(1250.0, 1104.0)),
+            120,
+            icon
+        ));
+        assert!(!is_toggle_close(
+            Some(cocoa_press(1220.0, 1104.0)),
+            TOGGLE_WINDOW_MS + 1,
+            icon
+        ));
     }
 }

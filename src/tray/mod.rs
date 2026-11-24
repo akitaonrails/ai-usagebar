@@ -64,7 +64,8 @@ mod updates;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod placement;
 // When the popover closes on a blur or a press outside it. Pure decisions, compiled everywhere
-// like `placement`; the Windows host calls most of them, the macOS host only `macos_verdict`.
+// like `placement`; the Windows host calls most of them, the macOS host `macos_verdict` and the
+// toggle-close check.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod blur;
 // The `copy-image` IPC's validation: the page posts the card's PNG as base64 and the host
