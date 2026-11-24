@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.55.0] — 2026-11-24
+
 ### Added
 
 - **Command Code mark.** Added the official Command Code logo to the Omarchy
@@ -5849,7 +5851,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.54.0...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.55.0...HEAD
+[1.55.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.54.0...v1.55.0
 [1.54.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.3...v1.53.0
 [1.52.3]: https://github.com/akitaonrails/ai-usagebar/compare/v1.52.2...v1.52.3
