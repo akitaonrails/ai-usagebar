@@ -81,6 +81,7 @@ pub mod theme;
 pub mod tooltip;
 pub mod tray;
 pub mod tui;
+pub mod unlid;
 pub mod update;
 pub mod usage;
 pub mod vendor;

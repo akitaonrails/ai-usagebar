@@ -105,6 +105,7 @@ let POINT_CRITICAL_MIN = 10
 // weekly accounts). `{ull_balance}` (69) carries MartLLM's available USD.
 // `{explabs_balance}` (70) carries Experiential Labs's wallet balance.
 // {fw_monthly_cost} (71) carries Fireworks' rated month-to-date USD cost.
+// {ul_balance} (72) carries Unlid's USD balance.
 // A final literal sentinel absorbs the widget's stale
 // suffix, preserving these fields.
 let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_reset};;" +
@@ -127,7 +128,7 @@ let FORMAT = "{plan};;{session_pct};;{session_reset};;{weekly_pct};;{weekly_rese
              "{cline_30d_pct};;{cline_30d_reset};;" +
              "{mst_monthly_pct};;{mst_monthly_reset};;" +
              "{synthetic_pct};;{synthetic_reset};;" +
-             "{kimi_monthly_pct};;{kimi_monthly_reset};;{ull_balance};;{explabs_balance};;{fw_monthly_cost}"
+             "{kimi_monthly_pct};;{kimi_monthly_reset};;{ull_balance};;{explabs_balance};;{fw_monthly_cost};;{ul_balance}"
 
 let FORMAT_WITH_SENTINEL = FORMAT + ";;__aiub_end__"
 
@@ -647,6 +648,7 @@ func parse(_ text: String, vendor: String) -> Snapshot? {
     case "martllm": balanceFieldIndex = 69
     case "explabs": balanceFieldIndex = 70
     case "fireworks": balanceFieldIndex = 71
+    case "unlid": balanceFieldIndex = 72
     default: balanceFieldIndex = nil
     }
     let balance = balanceFieldIndex.flatMap { t($0).isEmpty ? nil : t($0) }
@@ -1223,7 +1225,7 @@ func claudeAccountLabels() -> [String] {
 /// The API-key vendors whose config takes a `[[<vendor>.accounts]]` array —
 /// Rust's `Config::API_KEY_ACCOUNT_VENDORS`, by slug.
 let API_KEY_ACCOUNT_VENDORS = [
-    "anthropic_api", "zai", "openrouter", "deepseek", "deepinfra", "kilo", "novita", "moonshot", "grok", "minimax", "orcarouter", "lyceum",
+    "anthropic_api", "zai", "openrouter", "deepseek", "deepinfra", "kilo", "novita", "unlid", "moonshot", "grok", "minimax", "orcarouter", "lyceum",
 ]
 
 /// Explicit `[[<vendor>.accounts]]` labels for one API-key vendor.

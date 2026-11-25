@@ -375,6 +375,7 @@ mod tests {
             VendorId::Minimax => MacosMirror::Slot("minimax_video_pct"),
             VendorId::Moonshot => MacosMirror::Slot("km_balance"),
             VendorId::Novita => MacosMirror::Slot("nv_balance"),
+            VendorId::Unlid => MacosMirror::Slot("ul_balance"),
             VendorId::Synthetic => MacosMirror::Slot("synthetic_pct"),
             VendorId::Ollama => MacosMirror::Slot("oll_monthly_pct"),
             VendorId::OpenCodeGo => MacosMirror::Slot("ocg_monthly_pct"),

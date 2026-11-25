@@ -984,6 +984,20 @@ async fn build_outcome(
             .await?;
             Ok(outcome)
         }
+        VendorId::Unlid => {
+            let (api_key, cache) = api_key_and_cache(config, vendor, tab.account.as_deref())?;
+            let endpoints = crate::unlid::fetch::Endpoints::default();
+            let outcome = fetch_api_keyed(
+                async {
+                    crate::unlid::fetch_snapshot(client, &api_key, &cache, &endpoints, ttl)
+                        .await
+                        .map(Into::into)
+                },
+                &api_key,
+            )
+            .await?;
+            Ok(outcome)
+        }
         VendorId::Synthetic => {
             let (api_key, cache) = api_key_and_cache(config, vendor, tab.account.as_deref())?;
             let endpoints = crate::synthetic::fetch::Endpoints::default();

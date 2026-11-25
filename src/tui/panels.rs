@@ -434,6 +434,7 @@ pub fn compact_cells(snapshot: &VendorSnapshot) -> (String, Vec<(String, PaceSev
         }
         VendorSnapshot::Kilo(s) => (String::new(), vec![usd_cell(s.balance)]),
         VendorSnapshot::Novita(s) => (String::new(), vec![usd_cell(s.available)]),
+        VendorSnapshot::Unlid(s) => (String::new(), vec![usd_cell(s.balance)]),
         VendorSnapshot::Synthetic(s) => {
             (String::new(), vec![pct("week", s.weekly.utilization_pct)])
         }
@@ -817,6 +818,7 @@ pub fn headline_pct(snapshot: &VendorSnapshot) -> Option<i32> {
         | VendorSnapshot::Deepinfra(_)
         | VendorSnapshot::Kilo(_)
         | VendorSnapshot::Novita(_)
+        | VendorSnapshot::Unlid(_)
         | VendorSnapshot::Lyceum(_)
         | VendorSnapshot::MartLlm(_)
         | VendorSnapshot::Fireworks(_)
@@ -887,6 +889,7 @@ pub(crate) fn sections_with_metadata_for(
                 VendorSnapshot::Kimi(s) => kimi_sections(s, now, pace_tolerance),
                 VendorSnapshot::Kilo(s) => kilo_sections(s, prefs),
                 VendorSnapshot::Novita(s) => novita_sections(s, prefs),
+                VendorSnapshot::Unlid(s) => unlid_sections(s, prefs),
                 VendorSnapshot::Synthetic(s) => synthetic_sections(s, now, pace_tolerance),
                 VendorSnapshot::Lyceum(s) => lyceum_sections(s),
                 VendorSnapshot::ExperientialLabs(s) => explabs_sections(s, now, pace_tolerance),
@@ -1950,6 +1953,34 @@ fn kilo_sections(s: &crate::usage::KiloSnapshot, prefs: DisplayPrefs) -> Section
         None,
         prefs,
     );
+    v
+}
+
+fn unlid_sections(s: &crate::usage::UnlidSnapshot, prefs: DisplayPrefs) -> SectionBuilder {
+    let mut v = SectionBuilder::new(vec![
+        Section::Title {
+            left: "Unlid".into(),
+            right: None,
+        },
+        Section::Spacer,
+    ]);
+    push_balance_headline(
+        &mut v,
+        "Balance",
+        s.balance,
+        "USD",
+        crate::unlid::vendor::severity(s),
+        None,
+        prefs,
+    );
+    v.push(Section::Block {
+        label: "Breakdown".into(),
+        body: vec![format!(
+            "held {} · this month {}",
+            usd(s.held),
+            usd(s.month_spend)
+        )],
+    });
     v
 }
 
@@ -6408,6 +6439,27 @@ mod tests {
         ));
     }
 
+    /// Unlid is balance-only: the balance is the headline and the breakdown
+    /// carries the held and month-spend amounts.
+    #[test]
+    fn unlid_shows_the_balance_with_a_held_and_month_breakdown() {
+        let snapshot = VendorSnapshot::Unlid(crate::usage::UnlidSnapshot {
+            balance: 12.34,
+            held: 0.5,
+            month_spend: 6.78,
+        });
+        let sections = sections_with_metadata_for(&ready(snapshot), now(), 5);
+        assert!(matches!(
+            &balance_row(&sections).section,
+            Section::Text { value, .. } if value == "$12.34"
+        ));
+        assert!(sections.iter().any(|projection| matches!(
+            &projection.section,
+            Section::Block { label, body }
+                if label == "Breakdown" && body == &["held $0.50 · this month $6.78"]
+        )));
+    }
+
     /// A tank turns the same row into a consumed meter. The default headline
     /// for a balance vendor is the money figure, and setting `display_limit`
     /// alone does not change that — the percentage rides in the detail.
@@ -6531,6 +6583,11 @@ mod tests {
                 cash: 50.0,
                 credit_limit: 0.0,
                 outstanding: 0.0,
+            }),
+            VendorSnapshot::Unlid(crate::usage::UnlidSnapshot {
+                balance: 50.0,
+                held: 0.0,
+                month_spend: 0.0,
             }),
             VendorSnapshot::Moonshot(crate::usage::MoonshotSnapshot {
                 available: 50.0,

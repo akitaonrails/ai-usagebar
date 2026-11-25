@@ -500,6 +500,7 @@ pub enum VendorSnapshot {
     Kimi(KimiSnapshot),
     Kilo(KiloSnapshot),
     Novita(NovitaSnapshot),
+    Unlid(UnlidSnapshot),
     Synthetic(SyntheticSnapshot),
     Moonshot(MoonshotSnapshot),
     Grok(GrokSnapshot),
@@ -726,6 +727,19 @@ pub struct NovitaSnapshot {
 }
 
 impl Eq for NovitaSnapshot {}
+
+/// Unlid — account balance from `GET /v1/me`. All three amounts are USD.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnlidSnapshot {
+    /// Spendable balance (`balance_usd`).
+    pub balance: f64,
+    /// Reserved by in-flight requests (`held_usd`).
+    pub held: f64,
+    /// Spend so far this calendar month (`month_spend_usd`).
+    pub month_spend: f64,
+}
+
+impl Eq for UnlidSnapshot {}
 
 /// Synthetic's sole limit from `/v2/quotas`: the regenerating weekly credit
 /// budget (`planWeeklyLimit`, percentage-only) or its credit-denominated

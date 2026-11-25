@@ -287,6 +287,7 @@ fn credential_present(cfg: &Config, id: VendorId, probes: &Probes) -> bool {
         | VendorId::Deepinfra
         | VendorId::Kilo
         | VendorId::Novita
+        | VendorId::Unlid
         | VendorId::Synthetic
         | VendorId::DeepRelay
         | VendorId::Moonshot

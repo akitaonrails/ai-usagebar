@@ -192,7 +192,7 @@ Kiro `data.sqlite3`; Kimi `~/.kimi-code/credentials`; SuperGrok
 `GITHUB_COPILOT_TOKEN` or the `gh` CLI `hosts.yml`; Antigravity a running
 local product, or the Google session token an earlier fetch cached; Nous
 Research the saved OAuth credential; and every API-key
-vendor (Z.AI, OpenRouter, DeepSeek, Grok, Kilo, Novita, Moonshot, MiniMax,
+vendor (Z.AI, OpenRouter, DeepSeek, Grok, Kilo, Novita, Unlid, Moonshot, MiniMax,
 OpenCode Go, Anthropic API, Mistral) its env var or the `api_key` in
 `config.toml`.
 

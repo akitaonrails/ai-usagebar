@@ -15,7 +15,7 @@
 # var and any inline api_key miss. If the entry is set and the item is
 # missing, locked or denied, the error names the Keychain item.
 # Served sections: anthropic_api, zai, openrouter, deepseek, deepinfra, kilo,
-# novita, moonshot, grok, minimax, orcarouter, lyceum, synthetic, deeprelay,
+# novita, unlid, moonshot, grok, minimax, orcarouter, lyceum, synthetic, deeprelay,
 # mistral. An entry for any other section is a config error.
 # macOS only. On other platforms an entry is validated but never read, and
 # it does not mark the vendor as configured.
@@ -27,7 +27,7 @@
 # Which vendor the widget shows when `--vendor` is omitted, AND which tab
 # is selected when the TUI opens. Comment out to default to Anthropic.
 # Valid: anthropic | anthropic_api | openai | copilot | zai | openrouter | deepseek
-#        | kimi | kilo | novita | moonshot | grok | supergrok | grokbot | antigravity
+#        | kimi | kilo | novita | unlid | moonshot | grok | supergrok | grokbot | antigravity
 #        | cursor | minimax | kiro | nous | opencode-go | commandcode | ollama
 #        | orcarouter | modelstudio | lyceum | devin | cline | muse-code | droid | synthetic | mistral
 # When unset, the TUI opens on the Overview (all vendors at once); set this to
@@ -370,7 +370,7 @@ api_key_env = "OPENROUTER_API_KEY"
 # management_api_key_env = "OPENROUTER_WORK_MANAGEMENT_API_KEY"  # optional
 #
 # The same array works for [anthropic_api], [zai], [deepseek], [deepinfra],
-# [kilo], [novita], [moonshot], [grok], [minimax], [orcarouter], and [lyceum] - e.g.
+# [kilo], [novita], [unlid], [moonshot], [grok], [minimax], [orcarouter], and [lyceum] - e.g.
 # [[deepinfra.accounts]] — with the same show_default_account switch.
 # Region/team/organization/display settings stay per provider. See
 # docs/api-key-accounts.md.
@@ -486,6 +486,17 @@ api_key_env = "KILO_API_KEY"       # checked first; if set + non-empty, used
 # api.novita.ai/openapi/v1/billing/balance/detail endpoint.
 enabled = false
 api_key_env = "NOVITA_API_KEY"     # checked first; if set + non-empty, used
+# api_key = "..."                  # fallback; chmod 600 the file if you use it
+# display_limit = 200              # tank size in USD; see the group note above
+# headline = "amount"              # "amount" | "percent"
+
+[unlid]
+# Disabled by default — enable once you've set a key (env var or inline).
+# Saving a key in the Settings overlay writes the inline fallback AND flips
+# `enabled` to true; clearing the field removes the inline key again.
+# Remaining balance from the api.unlid.ai/v1/me endpoint.
+enabled = false
+api_key_env = "UNLID_API_KEY"      # checked first; if set + non-empty, used
 # api_key = "..."                  # fallback; chmod 600 the file if you use it
 # display_limit = 200              # tank size in USD; see the group note above
 # headline = "amount"              # "amount" | "percent"

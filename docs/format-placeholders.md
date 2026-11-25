@@ -70,6 +70,7 @@ slide rather than reset, so every weekly reset placeholder is empty by design.
 | DeepInfra | `dif` | | |
 | Kimi | `kmi` | Kilo | `klo` |
 | Novita | `nvt` | Moonshot | `msh` |
+| Unlid | `unl` | | |
 | Lyceum | `lyc` | Grok | `grk` |
 | Anthropic API | `aac` | Antigravity | `agy` |
 | Cursor | `cur` | MiniMax | `mmx` |
@@ -353,6 +354,12 @@ says "No included allowance" instead of drawing a meter.
 
 `{nv_balance}`, `{nv_cash}`, `{nv_credit_limit}`, `{nv_owed}` report the USD
 balance and its breakdown from `api.novita.ai/openapi/v1/billing/balance/detail`.
+
+## Unlid
+
+`{ul_balance}`, `{ul_held}`, `{ul_month}` report the USD balance, the amount
+held by in-flight requests and this month's spend from `api.unlid.ai/v1/me`.
+The default bar format is `{ul_balance}`.
 
 ## Moonshot
 

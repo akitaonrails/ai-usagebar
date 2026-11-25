@@ -16,6 +16,7 @@ The array works for these sections:
 | `[deepinfra]` | DeepInfra |
 | `[kilo]` | Kilo |
 | `[novita]` | Novita |
+| `[unlid]` | Unlid |
 | `[moonshot]` | Moonshot |
 | `[grok]` | Grok (xAI management key) |
 | `[minimax]` | MiniMax |

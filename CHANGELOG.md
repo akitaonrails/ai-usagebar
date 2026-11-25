@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Added
+
+- **Unlid balance provider.** Shows the account balance from `GET /v1/me`
+  over `UNLID_API_KEY` (or `[unlid] api_key`), with held and this-month spend
+  in the tooltip. Opt-in; placeholders `{ul_balance}`, `{ul_held}`,
+  `{ul_month}` (#681).
+
 ## [1.55.0] — 2026-11-24
 
 ### Added
