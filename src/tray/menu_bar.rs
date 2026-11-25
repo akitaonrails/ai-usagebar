@@ -138,6 +138,38 @@ pub(super) fn fallback_menu_attached(webview_built: bool) -> bool {
     !webview_built
 }
 
+/// One entry of the hidden macOS `NSApplication.mainMenu` Edit submenu.
+///
+/// An `ActivationPolicy::Accessory` app displays no top menu bar, and `tao`
+/// leaves `mainMenu` unset, so `wry`'s `WryWebViewParent::keyDown:` otherwise
+/// drops `Cmd+V`, `Cmd+C`, `Cmd+X`, `Cmd+A`, and `Cmd+Z`. Keeping the menu
+/// definition here lets Linux CI verify its structure alongside the host guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EditMenuItem {
+    Undo,
+    Redo,
+    Separator,
+    Cut,
+    Copy,
+    Paste,
+    PasteAndMatchStyle,
+    SelectAll,
+}
+
+/// The standard macOS Edit submenu items in native order.
+pub(super) fn edit_menu_items() -> &'static [EditMenuItem] {
+    &[
+        EditMenuItem::Undo,
+        EditMenuItem::Redo,
+        EditMenuItem::Separator,
+        EditMenuItem::Cut,
+        EditMenuItem::Copy,
+        EditMenuItem::Paste,
+        EditMenuItem::PasteAndMatchStyle,
+        EditMenuItem::SelectAll,
+    ]
+}
+
 /// One provider's visible logo (or short name) and summary value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LogoSegment {
@@ -1317,5 +1349,49 @@ mod tests {
             &[],
         );
         assert_eq!(chart_fractions(&content), vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn macos_edit_menu_covers_standard_clipboard_and_text_shortcuts() {
+        let items = edit_menu_items();
+        for required in [
+            EditMenuItem::Undo,
+            EditMenuItem::Redo,
+            EditMenuItem::Cut,
+            EditMenuItem::Copy,
+            EditMenuItem::Paste,
+            EditMenuItem::PasteAndMatchStyle,
+            EditMenuItem::SelectAll,
+        ] {
+            assert!(
+                items.contains(&required),
+                "macOS Edit menu must include {required:?}"
+            );
+        }
+    }
+
+    /// Guard: `host_macos.rs` must install an AppKit `mainMenu` with the Edit
+    /// submenu and hold it on `TrayState` (dropping a `muda::Menu` clears
+    /// `NSApplication.mainMenu`), otherwise `Cmd+V`/`Cmd+C`/`Cmd+X`/`Cmd+A`
+    /// stop working in WKWebView inputs.
+    #[test]
+    fn macos_host_installs_and_retains_the_edit_menu() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tray/host_macos.rs"),
+        )
+        .expect("read src/tray/host_macos.rs");
+        let code = crate::guard::production_code(&source);
+        assert!(
+            code.contains("edit_menu_items()"),
+            "host_macos.rs must build the Edit submenu from menu_bar::edit_menu_items()"
+        );
+        assert!(
+            code.contains("init_for_nsapp()"),
+            "host_macos.rs must register the Edit menu as NSApplication.mainMenu"
+        );
+        assert!(
+            code.contains("_app_menu: Menu"),
+            "TrayState must keep the Menu alive so Drop does not clear NSApplication.mainMenu"
+        );
     }
 }
