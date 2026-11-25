@@ -59,6 +59,7 @@ pub fn has_local_credentials(vendor: VendorId, config: &Config) -> bool {
         VendorId::Kimi => crate::kimi::resolve_auth(&config.kimi).is_ok(),
         VendorId::Kilo => key_present(config, vendor),
         VendorId::Novita => key_present(config, vendor),
+        VendorId::Unlid => key_present(config, vendor),
         VendorId::Synthetic => key_present(config, vendor),
         VendorId::DeepRelay => key_present(config, vendor),
         // Mistral is opt-in and key-only: the environment or an inline key is

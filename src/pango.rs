@@ -247,7 +247,7 @@ fn parse_xml_char(digits: &str, radix: u32) -> Option<u32> {
 #[cfg(test)]
 mod tests {
 
-    /// Five vendors carried this ladder. Grok, Kilo and Novita bill only in
+    /// Five vendors carried this ladder. Grok, Kilo, Novita and Unlid bill only in
     /// USD; DeepSeek and Moonshot also sell in CNY, and the two of them had
     /// the scaled row while the other three did not. Pin both rows so a
     /// "running low" balance cannot come to mean two different amounts.

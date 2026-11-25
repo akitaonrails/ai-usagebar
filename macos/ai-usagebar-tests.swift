@@ -278,6 +278,12 @@ func testParserBalances() {
     assertEqual(fireworks?.amountLabel, "Month-to-date cost (UTC)", "Fireworks cost label")
     assertEqual(fireworks?.hasUsageWindows, false, "Fireworks does not claim quota windows")
 
+    let unlid = snapshot(FORMAT, vendor: "unlid",
+                         fields: fields(through: 72, set: [72: "$7.25"]))
+    assertEqual(unlid?.creditBalance, "$7.25", "Unlid balance via ul_balance")
+    assertEqual(unlid?.hasUsageWindows, false, "Unlid has no quota windows")
+    assertEqual(unlid?.amountTag, "cr", "Unlid remains a credit balance")
+
     let explabs = snapshot(FORMAT, vendor: "explabs",
                            fields: fields(through: 70, set: [70: "-$2.00"]))
     assertEqual(explabs?.creditBalance, "-$2.00", "Experiential Labs mirrors its wallet")
@@ -791,6 +797,7 @@ func testKimiMonthlyMirror() {
     assertEqual(tokens[69], "{ull_balance}", "MartLLM balance is appended to FORMAT")
     assertEqual(tokens[70], "{explabs_balance}", "Experiential Labs balance is appended to FORMAT")
     assertEqual(tokens[71], "{fw_monthly_cost}", "Fireworks cost is appended to FORMAT")
+    assertEqual(tokens[72], "{ul_balance}", "Unlid balance is appended to FORMAT")
     assertEqual(tokens[65], "{synthetic_pct}", "existing Synthetic percentage index is unchanged")
     assertEqual(tokens[66], "{synthetic_reset}", "existing Synthetic reset index is unchanged")
 

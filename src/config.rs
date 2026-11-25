@@ -57,6 +57,7 @@ pub struct Config {
     pub kimi: KimiConfig,
     pub kilo: KiloConfig,
     pub novita: NovitaConfig,
+    pub unlid: UnlidConfig,
     pub synthetic: SyntheticConfig,
     pub moonshot: MoonshotConfig,
     pub grok: GrokConfig,
@@ -2156,6 +2157,41 @@ impl Default for NovitaConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
+pub struct UnlidConfig {
+    pub enabled: bool,
+    /// Extra accounts beyond the default key (#221's array, generalized).
+    /// Each account gets a separate aggregate-view entry and cache directory.
+    pub accounts: Vec<ApiKeyAccount>,
+    /// Whether aggregate views include the default (unnamed) key when named
+    /// accounts exist. Ignored when `accounts` is empty so Unlid never
+    /// loses its only tab.
+    pub show_default_account: bool,
+    pub api_key_env: String,
+    pub api_key: Option<String>,
+    /// Tank size in USD, so the balance can be drawn as a meter. See
+    /// [`DisplayPrefs`].
+    pub display_limit: Option<f64>,
+    /// Which number goes on the bar. See [`DisplayPrefs`].
+    pub headline: Headline,
+}
+
+impl Default for UnlidConfig {
+    fn default() -> Self {
+        // Opt-in like DeepSeek/Kilo/Novita: needs an explicit API key.
+        Self {
+            enabled: false,
+            accounts: Vec::new(),
+            show_default_account: true,
+            api_key_env: "UNLID_API_KEY".to_string(),
+            api_key: None,
+            display_limit: None,
+            headline: Headline::Amount,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
 pub struct SyntheticConfig {
     pub enabled: bool,
     pub api_key_env: String,
@@ -3155,6 +3191,7 @@ impl Config {
             self.kimi.api_key.as_deref(),
             self.kilo.api_key.as_deref(),
             self.novita.api_key.as_deref(),
+            self.unlid.api_key.as_deref(),
             self.synthetic.api_key.as_deref(),
             self.minimax.api_key.as_deref(),
             self.moonshot.api_key.as_deref(),
@@ -3257,6 +3294,7 @@ impl Config {
             VendorId::Kimi => self.kimi.enabled,
             VendorId::Kilo => self.kilo.enabled,
             VendorId::Novita => self.novita.enabled,
+            VendorId::Unlid => self.unlid.enabled,
             VendorId::Synthetic => self.synthetic.enabled,
             VendorId::Moonshot => self.moonshot.enabled,
             VendorId::Grok => self.grok.enabled,
@@ -3301,6 +3339,7 @@ impl Config {
             VendorId::Kimi => &self.kimi.api_key_env,
             VendorId::Kilo => &self.kilo.api_key_env,
             VendorId::Novita => &self.novita.api_key_env,
+            VendorId::Unlid => &self.unlid.api_key_env,
             VendorId::Synthetic => &self.synthetic.api_key_env,
             VendorId::Moonshot => &self.moonshot.api_key_env,
             VendorId::Grok => &self.grok.api_key_env,
@@ -3347,6 +3386,7 @@ impl Config {
             VendorId::Kimi => self.kimi.api_key.as_deref(),
             VendorId::Kilo => self.kilo.api_key.as_deref(),
             VendorId::Novita => self.novita.api_key.as_deref(),
+            VendorId::Unlid => self.unlid.api_key.as_deref(),
             VendorId::Synthetic => self.synthetic.api_key.as_deref(),
             VendorId::Moonshot => self.moonshot.api_key.as_deref(),
             VendorId::Grok => self.grok.api_key.as_deref(),
@@ -3382,7 +3422,7 @@ impl Config {
     /// The API-key vendors that take a `[[<vendor>.accounts]]` array —
     /// OpenRouter's (#221), generalized. Kimi is left out on purpose: its
     /// fallback is the Kimi Code CLI's single OAuth login, not a key.
-    pub const API_KEY_ACCOUNT_VENDORS: [VendorId; 12] = [
+    pub const API_KEY_ACCOUNT_VENDORS: [VendorId; 13] = [
         VendorId::AnthropicApi,
         VendorId::Zai,
         VendorId::Openrouter,
@@ -3390,6 +3430,7 @@ impl Config {
         VendorId::Deepinfra,
         VendorId::Kilo,
         VendorId::Novita,
+        VendorId::Unlid,
         VendorId::Moonshot,
         VendorId::Grok,
         VendorId::Minimax,
@@ -3401,7 +3442,7 @@ impl Config {
     /// [`Config::resolve_account_api_key_for`] — the shared chain the
     /// `[keychain]` table serves both the account-array vendors and the
     /// single-key vendors the widget and TUI route the same way.
-    pub const KEYCHAIN_VENDORS: [VendorId; 18] = [
+    pub const KEYCHAIN_VENDORS: [VendorId; 19] = [
         VendorId::AnthropicApi,
         VendorId::Zai,
         VendorId::Openrouter,
@@ -3409,6 +3450,7 @@ impl Config {
         VendorId::Deepinfra,
         VendorId::Kilo,
         VendorId::Novita,
+        VendorId::Unlid,
         VendorId::Moonshot,
         VendorId::Grok,
         VendorId::Minimax,
@@ -3433,6 +3475,7 @@ impl Config {
             VendorId::Deepinfra => Some(&self.deepinfra.accounts),
             VendorId::Kilo => Some(&self.kilo.accounts),
             VendorId::Novita => Some(&self.novita.accounts),
+            VendorId::Unlid => Some(&self.unlid.accounts),
             VendorId::Moonshot => Some(&self.moonshot.accounts),
             VendorId::Grok => Some(&self.grok.accounts),
             VendorId::Minimax => Some(&self.minimax.accounts),
@@ -3453,6 +3496,7 @@ impl Config {
             VendorId::Deepinfra => self.deepinfra.show_default_account,
             VendorId::Kilo => self.kilo.show_default_account,
             VendorId::Novita => self.novita.show_default_account,
+            VendorId::Unlid => self.unlid.show_default_account,
             VendorId::Moonshot => self.moonshot.show_default_account,
             VendorId::Grok => self.grok.show_default_account,
             VendorId::Minimax => self.minimax.show_default_account,
@@ -3611,6 +3655,7 @@ impl Config {
             VendorId::Novita => {
                 DisplayPrefs::balance(self.novita.display_limit, self.novita.headline)
             }
+            VendorId::Unlid => DisplayPrefs::balance(self.unlid.display_limit, self.unlid.headline),
             VendorId::Moonshot => {
                 DisplayPrefs::balance(self.moonshot.display_limit, self.moonshot.headline)
             }
@@ -3732,6 +3777,7 @@ impl Config {
             ("deepinfra", self.deepinfra.display_limit),
             ("kilo", self.kilo.display_limit),
             ("novita", self.novita.display_limit),
+            ("unlid", self.unlid.display_limit),
             ("moonshot", self.moonshot.display_limit),
             ("grok", self.grok.display_limit),
         ] {
@@ -4265,6 +4311,7 @@ mod tests {
             VendorId::Kimi,
             VendorId::Kilo,
             VendorId::Novita,
+            VendorId::Unlid,
             VendorId::Moonshot,
             VendorId::Grok,
             VendorId::Supergrok,
@@ -4588,7 +4635,7 @@ enabled = false
     #[test]
     fn display_limit_must_be_positive_and_finite_on_every_balance_vendor() {
         // `[openrouter]` is absent on purpose: it has no `display_limit`.
-        for section in ["deepseek", "kilo", "novita", "moonshot", "grok"] {
+        for section in ["deepseek", "kilo", "novita", "unlid", "moonshot", "grok"] {
             for value in ["0", "-1", "inf", "nan"] {
                 let file = write_toml(&format!("[{section}]\ndisplay_limit = {value}\n"));
                 let error = Config::load_from(file.path()).unwrap_err().to_string();
@@ -4629,6 +4676,7 @@ enabled = false
             VendorId::Deepseek,
             VendorId::Kilo,
             VendorId::Novita,
+            VendorId::Unlid,
             VendorId::Moonshot,
             VendorId::Grok,
         ] {

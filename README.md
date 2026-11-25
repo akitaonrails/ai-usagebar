@@ -301,6 +301,7 @@ Keychain entry is checked only after the env var and any inline key miss.
 | Kimi | Existing Kimi Code CLI login **or** API key (`KIMI_API_KEY` or config) | Opt in, then either log in with `kimi` (nothing to paste) or set an API key, which wins when present. A Kimi For Coding subscription can issue one at kimi.com/code/console. |
 | Kilo | API key (`KILO_API_KEY` env or `[kilo] api_key` in config) | Set either. Opt-in. For a team balance, also set `[kilo] organization_id`; omit it for the personal balance. |
 | Novita | API key (`NOVITA_API_KEY` env or `[novita] api_key` in config) | Set either. Opt-in. |
+| Unlid | API key (`UNLID_API_KEY` env or `[unlid] api_key` in config) | Set either. Opt-in. |
 | Synthetic | API key (`SYNTHETIC_API_KEY` env or `[synthetic] api_key` in config) | Set either. Opt-in. Reports the regenerating weekly credit quota. |
 | Lyceum | API key (`LYCEUM_API_KEY` env or `[lyceum] api_key` in config) | Opt-in. Reports the available USD balance and amount used; no percentage quota or reset is inferred. |
 | OrcaRouter | API key (`ORCAROUTER_API_KEY` env or `[orcarouter] api_key` in config) | Set either. Opt-in. Reports the credit card (spend / total limit / remaining, key expiry) from the one-api compatible dashboard billing endpoints. |
@@ -447,7 +448,7 @@ separate `[supergrok]` provider. Setup and the limits of each path are in
 
 #### Giving a prepaid balance a tank
 
-DeepSeek, DeepInfra, Kilo, Novita, Moonshot and prepaid Grok report money **left** and no
+DeepSeek, DeepInfra, Kilo, Novita, Unlid, Moonshot and prepaid Grok report money **left** and no
 denominator, so their row is a plain balance rather than a meter. Tell them how
 big the tank is and it becomes one:
 
@@ -468,7 +469,7 @@ take `headline`. Full rules in
 ### Enabling a vendor
 
 `enabled = true` is what makes a vendor fetch. Anthropic API, GitHub Copilot,
-DeepSeek, DeepInfra, Kimi, Kilo, Novita, Moonshot, Grok, SuperGrok, Grok Bot, Antigravity,
+DeepSeek, DeepInfra, Kimi, Kilo, Novita, Unlid, Moonshot, Grok, SuperGrok, Grok Bot, Antigravity,
 Cursor, MiniMax, Mistral, and Kiro CLI all default to **disabled** so that existing
 installs are unaffected until you opt in. Use either method:
 
@@ -1317,7 +1318,7 @@ Waybar examples.
 
 ### Multiple keys for other API-key providers
 
-Z.AI, DeepSeek, DeepInfra, Kilo, Novita, Moonshot, Grok, MiniMax, OrcaRouter, and Lyceum take the
+Z.AI, DeepSeek, DeepInfra, Kilo, Novita, Unlid, Moonshot, Grok, MiniMax, OrcaRouter, and Lyceum take the
 same array: one `[[<vendor>.accounts]]` entry per extra key, selected with
 `--vendor <vendor> --account <label>`. Region, team, organization, and display
 settings stay per provider. See the

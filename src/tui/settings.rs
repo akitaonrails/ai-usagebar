@@ -122,6 +122,14 @@ pub const KEY_VENDORS: &[KeyVendor] = &[
         note: "",
     },
     KeyVendor {
+        id: VendorId::Unlid,
+        label: "Unlid",
+        section: VendorId::Unlid.config_section(),
+        config_key: "api_key",
+        secret_label: "API key",
+        note: "",
+    },
+    KeyVendor {
         id: VendorId::Synthetic,
         label: "Synthetic",
         section: VendorId::Synthetic.config_section(),
@@ -2589,6 +2597,7 @@ mod tests {
             VendorId::Deepinfra,
             VendorId::Kilo,
             VendorId::Novita,
+            VendorId::Unlid,
             VendorId::Synthetic,
             VendorId::Moonshot,
             VendorId::Grok,
@@ -4001,7 +4010,7 @@ enabled = true
         let theme = crate::theme::Theme::default();
         let mut state = blank_state(VendorId::Anthropic);
         state.focus = Focus::Vendor(0);
-        let mut terminal = Terminal::new(TestBackend::new(100, 80)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(100, 82)).unwrap();
         let mut hits = Vec::new();
         terminal
             .draw(|f| render(f, f.area(), &mut state, &theme, &mut hits))

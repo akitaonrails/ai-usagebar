@@ -33,7 +33,7 @@ you make while the check is running.
 # is selected when the TUI opens. Defaults to anthropic when not set.
 # Only a vendor that is enabled can be primary.
 # primary = "anthropic"   # any vendor slug, e.g. anthropic | openai | copilot | ollama | cline
-#                         # | zai | openrouter | deepseek | deepinfra | kimi | kilo | novita
+#                         # | zai | openrouter | deepseek | deepinfra | kimi | kilo | novita | unlid
 #                         # | moonshot | grok | supergrok | grokbot | antigravity | cursor
 #                         # | minimax | kiro | nous | opencode-go | commandcode
 #                         # | orcarouter | modelstudio | lyceum | martllm | explabs | fireworks | devin | cline | muse-code | droid
@@ -185,6 +185,13 @@ api_key_env = "KILO_API_KEY"
 enabled = true             # disabled by default; enable once you add an API key
 api_key_env = "NOVITA_API_KEY"
 # api_key = "..."          # used if NOVITA_API_KEY is unset; chmod 600 the file!
+# display_limit = 200      # tank size in USD; see "Balance tanks" below
+# headline = "amount"      # "amount" | "percent"
+
+[unlid]
+enabled = true             # disabled by default; enable once you add an API key
+api_key_env = "UNLID_API_KEY"
+# api_key = "..."          # used if UNLID_API_KEY is unset; chmod 600 the file!
 # display_limit = 200      # tank size in USD; see "Balance tanks" below
 # headline = "amount"      # "amount" | "percent"
 
@@ -416,7 +423,7 @@ accounts unless `show_default_account = false`.
 For more than one OpenRouter key, see the
 [OpenRouter account guide](openrouter-accounts.md). The existing singular
 `[openrouter]` key remains the default account and needs no migration. Z.AI,
-DeepSeek, DeepInfra, Kilo, Novita, Moonshot, Grok, MiniMax, OrcaRouter, and Lyceum take the same
+DeepSeek, DeepInfra, Kilo, Novita, Unlid, Moonshot, Grok, MiniMax, OrcaRouter, and Lyceum take the same
 `[[<vendor>.accounts]]` array and `show_default_account` switch — see the
 [API-key account guide](api-key-accounts.md).
 
@@ -524,7 +531,7 @@ overlay (`s`).
 
 ### Balance tanks
 
-DeepSeek, DeepInfra, Kilo, Novita, Moonshot and prepaid Grok report how much money is
+DeepSeek, DeepInfra, Kilo, Novita, Unlid, Moonshot and prepaid Grok report how much money is
 **left** and nothing else. There is no denominator in those responses, so
 there is nothing to draw a meter against and the row is a plain balance.
 

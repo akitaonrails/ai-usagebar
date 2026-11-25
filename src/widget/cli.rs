@@ -122,7 +122,7 @@ pub struct Cli {
     pub creds_path: Option<std::path::PathBuf>,
 
     /// Select a named Claude, Codex (OpenAI), GitHub Copilot, Devin, or API-key
-    /// vendor (Anthropic API, Z.AI, OpenRouter, DeepSeek, DeepInfra, Kilo, Novita, Moonshot,
+    /// vendor (Anthropic API, Z.AI, OpenRouter, DeepSeek, DeepInfra, Kilo, Novita, Unlid, Moonshot,
     /// Grok, MiniMax, OrcaRouter, Lyceum) account from the matching `[[...accounts]]` config array.
     /// Without it, the vendor's default account and original cache path are
     /// unchanged. For Claude it conflicts with the lower-level `--creds-path`
@@ -430,6 +430,7 @@ pub enum Vendor {
     Kimi,
     Kilo,
     Novita,
+    Unlid,
     Synthetic,
     Moonshot,
     Grok,
@@ -482,6 +483,7 @@ impl Vendor {
             Vendor::Kimi => crate::vendor::VendorId::Kimi,
             Vendor::Kilo => crate::vendor::VendorId::Kilo,
             Vendor::Novita => crate::vendor::VendorId::Novita,
+            Vendor::Unlid => crate::vendor::VendorId::Unlid,
             Vendor::Synthetic => crate::vendor::VendorId::Synthetic,
             Vendor::Moonshot => crate::vendor::VendorId::Moonshot,
             Vendor::Grok => crate::vendor::VendorId::Grok,
@@ -590,6 +592,7 @@ fn id_to_vendor(id: crate::vendor::VendorId) -> Vendor {
         crate::vendor::VendorId::Kimi => Vendor::Kimi,
         crate::vendor::VendorId::Kilo => Vendor::Kilo,
         crate::vendor::VendorId::Novita => Vendor::Novita,
+        crate::vendor::VendorId::Unlid => Vendor::Unlid,
         crate::vendor::VendorId::Synthetic => Vendor::Synthetic,
         crate::vendor::VendorId::Moonshot => Vendor::Moonshot,
         crate::vendor::VendorId::Grok => Vendor::Grok,

@@ -126,7 +126,7 @@ The selector dynamically discovers **all providers** that ship in the binary via
 - **Included-usage pools:** Cursor (Cursor Models and Other Models, both reset
   on the billing cycle).
 - **Balance-only:** OpenRouter, DeepSeek, DeepInfra, Kilo, Novita,
-  Moonshot, Grok (xAI), Lyceum, MartLLM, and Anthropic API. These have no 5h/weekly
+  Unlid, Moonshot, Grok (xAI), Lyceum, MartLLM, and Anthropic API. These have no 5h/weekly
   quota windows, so the app
   shows their balance/credits in the header (`cr <amount>`) and suppresses the
   session/weekly rows. Anthropic API additionally renders a spend-vs-limit
@@ -318,7 +318,7 @@ Selecting an entry changes whose usage is displayed, not the active Codex login.
 ## Multiple API-key accounts
 
 Entries from `[[openrouter.accounts]]` - and the same array under `[anthropic_api]`,
-`[zai]`, `[deepseek]`, `[deepinfra]`, `[kilo]`, `[novita]`, `[moonshot]`, `[grok]`, `[minimax]`,
+`[zai]`, `[deepseek]`, `[deepinfra]`, `[kilo]`, `[novita]`, `[unlid]`, `[moonshot]`, `[grok]`, `[minimax]`,
 `[orcarouter]`, and `[lyceum]` - appear as separate menu choices and use
 `--vendor <vendor> --account <label>` behind the scenes. Each account keeps its
 own cache. Set `show_default_account = false` in the provider's section when
