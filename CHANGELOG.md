@@ -2,12 +2,19 @@
 
 ### Fixed
 
+- **`usage --json --trend` draws Claude's trend line.** The trend history
+  told windows apart by their exact reset instant, and Anthropic reports the
+  same window's reset a fraction of a second apart on each fetch. Every
+  refetch therefore started a new series, so the sparkline never appeared
+  or stayed flat. A series now starts over only when the reset moves by more
+  than the tolerance notifications already allow for this jitter (#682).
+
 - **macOS tray popover inputs now respond to `Cmd+V` and other standard Edit
   shortcuts.** `ai-usagebar-tray` runs as an accessory app and previously left
   `NSApplication.mainMenu` unset, so `WKWebView` dropped `Cmd+V`, `Cmd+C`,
   `Cmd+X`, `Cmd+A`, and `Cmd+Z` in text inputs such as the Add API Key dialog.
   The macOS host now registers a minimal main menu with an Edit submenu (while
-  remaining an accessory app with no Dock icon or visible menu bar).
+  remaining an accessory app with no Dock icon or visible menu bar) (#685).
 
 ## [1.55.0] — 2026-11-24
 
