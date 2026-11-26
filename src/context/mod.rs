@@ -304,7 +304,7 @@ fn parse_tail(bytes: &[u8]) -> TailData {
                 capture_string(&value, "customTitle", &mut out.title);
                 capture_string(&value, "title", &mut out.title);
             }
-            Some("assistant") => {
+            Some("assistant") if !is_synthetic(&value) => {
                 if let Some(model) = value.pointer("/message/model").and_then(Value::as_str) {
                     out.model = Some(sanitize_display(model));
                 }
@@ -330,6 +330,16 @@ fn capture_string(value: &Value, key: &str, target: &mut Option<String>) {
             *target = Some(value);
         }
     }
+}
+
+/// The model Claude Code names on the notices it writes itself as assistant
+/// records: a usage limit, an API error, "No response requested.". They carry
+/// all-zero usage and are not API responses, so they say nothing about the
+/// session's model or context size.
+const SYNTHETIC_MODEL: &str = "<synthetic>";
+
+fn is_synthetic(value: &Value) -> bool {
+    value.pointer("/message/model").and_then(Value::as_str) == Some(SYNTHETIC_MODEL)
 }
 
 fn input_tokens(value: &Value) -> Option<u64> {
