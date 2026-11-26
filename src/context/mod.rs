@@ -524,6 +524,53 @@ mod tests {
     }
 
     #[test]
+    fn a_synthetic_notice_keeps_the_last_reading() {
+        // Claude Code writes a usage limit or an API error as an assistant
+        // record from `<synthetic>`, with all-zero usage.
+        let dir = TempDir::new().unwrap();
+        write_session(
+            dir.path(),
+            "project",
+            "session",
+            &[
+                assistant("session", "/work/project", "claude-test", 10, 20, 30),
+                assistant("session", "/work/project", "<synthetic>", 0, 0, 0),
+            ],
+        );
+        let mut config = ContextConfig::default();
+        config
+            .model_context_window_tokens
+            .insert("claude-test".into(), 100);
+
+        let scan = scan_dir(dir.path(), &config).unwrap();
+        let session = &scan.sessions[0];
+        assert_eq!(session.model.as_deref(), Some("claude-test"));
+        assert_eq!(
+            session.usage,
+            ContextUsage::Available {
+                input_tokens: 60,
+                window_tokens: Some(100),
+                percent: Some(60),
+            }
+        );
+    }
+
+    #[test]
+    fn a_session_with_only_a_synthetic_notice_is_unknown_not_zero() {
+        let dir = TempDir::new().unwrap();
+        write_session(
+            dir.path(),
+            "project",
+            "main",
+            &[assistant("main", "/work/project", "<synthetic>", 0, 0, 0)],
+        );
+
+        let scan = scan_dir(dir.path(), &ContextConfig::default()).unwrap();
+        assert!(scan.sessions[0].model.is_none());
+        assert_eq!(scan.sessions[0].usage, ContextUsage::Unknown);
+    }
+
+    #[test]
     fn corrupt_or_truncated_records_do_not_hide_the_last_good_usage() {
         let dir = TempDir::new().unwrap();
         let path = write_session(
