@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Claude context sessions keep their reading after a usage-limit notice.**
+  Claude Code writes its own notices (a usage limit, an API error, "No
+  response requested.") as assistant records from the model `<synthetic>`,
+  with all-zero usage. The context reader took them as the latest response,
+  so a session that had just hit its limit read 0 tokens, with the model
+  `<synthetic>`, in the TUI overlay and in the `usage` Sessions group. They
+  are now skipped (#692).
+
 ## [1.55.1] — 2026-11-26
 
 ### Fixed
