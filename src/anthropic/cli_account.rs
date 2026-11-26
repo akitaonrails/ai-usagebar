@@ -82,9 +82,13 @@ pub fn account_email_in(claude_json: &Path) -> Option<String> {
 }
 
 /// The login a `.claude.json` marker names, as [`resolve_active_label`] and
-/// [`adopt_current`] compare it.
+/// [`adopt_current`] compare it: an account, and the organization it is signed
+/// into when the marker records one. One person in two organizations (a
+/// personal plan and a team seat) has one `accountUuid` and two logins, each
+/// with its own credential, which only `organizationUuid` tells apart.
 struct Identity {
     account: String,
+    organization: Option<String>,
 }
 
 impl Identity {
@@ -98,11 +102,20 @@ impl Identity {
         };
         Some(Self {
             account: field("accountUuid")?,
+            organization: field("organizationUuid"),
         })
     }
 
+    /// The same account in the same organization. A marker that records no
+    /// organization matches on the account alone.
     fn is(&self, other: &Self) -> bool {
-        self.account == other.account
+        if self.account != other.account {
+            return false;
+        }
+        match (&self.organization, &other.organization) {
+            (Some(ours), Some(theirs)) => ours == theirs,
+            _ => true,
+        }
     }
 }
 
