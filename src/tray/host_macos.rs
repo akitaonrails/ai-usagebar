@@ -36,7 +36,7 @@ use tao::platform::macos::{
     ActivationPolicy, EventLoopExtMacOS, WindowBuilderExtMacOS, WindowExtMacOS,
 };
 use tao::window::{Window, WindowBuilder};
-use tray_icon::menu::{ContextMenu, Menu, MenuEvent, MenuItem};
+use tray_icon::menu::{ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use wry::http::{Request, Response, StatusCode, header::CONTENT_TYPE};
 use wry::{NewWindowResponse, WebView, WebViewBuilder, WebViewBuilderExtDarwin};
@@ -146,8 +146,12 @@ struct TrayState {
     window: Window,
     webview: Option<WebView>,
     tray: TrayIcon,
+    /// AppKit main menu holding the standard Edit shortcuts (`Cmd+V/C/X/A/Z`).
+    /// Kept alive for the event loop's lifetime because dropping a `muda::Menu`
+    /// clears `NSApplication.mainMenu`.
+    _app_menu: Menu,
     /// Emergency status-item menu, attached only when `webview` is `None`
-    /// (#249): an accessory app has no app menu, so this is the only quit
+    /// (#249): an accessory app shows no app menu, so this is the only quit
     /// affordance when the popover cannot be built.
     fallback_menu: Option<FallbackMenu>,
     /// Labels for the right-click Options menu; the popover refreshes them by
@@ -214,6 +218,7 @@ pub fn run() -> i32 {
 fn run_loop() -> Result<(), String> {
     let mut event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     event_loop.set_activation_policy(ActivationPolicy::Accessory);
+    let app_menu = install_edit_menu();
     let proxy = event_loop.create_proxy();
 
     {
@@ -272,7 +277,7 @@ fn run_loop() -> Result<(), String> {
     let theme = Theme::Light;
     let webview = build_webview(&window, proxy.clone()).ok();
     // #249: when the WKWebView could not be built there is no popover, and an
-    // accessory app has no app menu — attach the emergency menu so the status
+    // accessory app shows no app menu — attach the emergency menu so the status
     // item still offers Refresh and a clean Quit. Normal operation never
     // attaches one (see `build_tray`).
     let fallback_menu = if menu_bar::fallback_menu_attached(webview.is_some()) {
@@ -287,6 +292,7 @@ fn run_loop() -> Result<(), String> {
         window,
         webview,
         tray,
+        _app_menu: app_menu,
         fallback_menu,
         menu_labels: OptionsLabels::default(),
         pending_menu_action: None,
@@ -971,6 +977,40 @@ fn attach_fallback_menu(tray: &TrayIcon) -> FallbackMenu {
     tray.set_show_menu_on_left_click(true);
     tray.set_show_menu_on_right_click(true);
     FallbackMenu { refresh, quit }
+}
+
+/// Install a minimal `NSApplication.mainMenu` with the standard macOS Edit
+/// submenu so `WKWebView` text inputs respond to `Cmd+V`, `Cmd+C`, `Cmd+X`,
+/// `Cmd+A`, `Cmd+Z`, and `Cmd+Shift+Z`.
+///
+/// An `ActivationPolicy::Accessory` app displays no top menu bar, and `tao`
+/// leaves `mainMenu` unset, so `wry`'s `WryWebViewParent::keyDown:` otherwise
+/// finds no menu to forward key equivalents through. The returned `Menu` must
+/// stay alive for the event loop's lifetime — dropping it clears `mainMenu`.
+fn install_edit_menu() -> Menu {
+    let menu = Menu::new();
+    // AppKit treats the first top-level item of `mainMenu` as the application
+    // menu; the Edit submenu sits behind it.
+    let app_submenu = Submenu::new("AI Usage", true);
+    let edit_submenu = Submenu::new("Edit", true);
+    for item in menu_bar::edit_menu_items() {
+        let predefined = match item {
+            menu_bar::EditMenuItem::Undo => PredefinedMenuItem::undo(None),
+            menu_bar::EditMenuItem::Redo => PredefinedMenuItem::redo(None),
+            menu_bar::EditMenuItem::Separator => PredefinedMenuItem::separator(),
+            menu_bar::EditMenuItem::Cut => PredefinedMenuItem::cut(None),
+            menu_bar::EditMenuItem::Copy => PredefinedMenuItem::copy(None),
+            menu_bar::EditMenuItem::Paste => PredefinedMenuItem::paste(None),
+            menu_bar::EditMenuItem::PasteAndMatchStyle => {
+                PredefinedMenuItem::paste_and_match_style(None)
+            }
+            menu_bar::EditMenuItem::SelectAll => PredefinedMenuItem::select_all(None),
+        };
+        let _ = edit_submenu.append(&predefined);
+    }
+    let _ = menu.append_items(&[&app_submenu, &edit_submenu]);
+    menu.init_for_nsapp();
+    menu
 }
 
 fn persist_menu_bar_value(key: &str, value: toml_edit::Value) {

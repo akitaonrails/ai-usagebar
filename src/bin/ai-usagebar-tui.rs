@@ -411,12 +411,9 @@ where
                         continue;
                     }
                     // Context overlay consumes all keys while open.
-                    if app.context.is_some() {
+                    if let Some(context) = app.context.as_mut() {
                         use ai_usagebar::tui::context::{Action as CAction, handle_key as chandle};
-                        let action = {
-                            let context = app.context.as_mut().expect("checked above");
-                            chandle(context, k.code, k.modifiers)
-                        };
+                        let action = chandle(context, k.code, k.modifiers);
                         match action {
                             CAction::Continue => {}
                             CAction::Close => app.context = None,

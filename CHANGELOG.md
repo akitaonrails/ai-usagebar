@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+
+- **macOS tray popover inputs now respond to `Cmd+V` and other standard Edit
+  shortcuts.** `ai-usagebar-tray` runs as an accessory app and previously left
+  `NSApplication.mainMenu` unset, so `WKWebView` dropped `Cmd+V`, `Cmd+C`,
+  `Cmd+X`, `Cmd+A`, and `Cmd+Z` in text inputs such as the Add API Key dialog.
+  The macOS host now registers a minimal main menu with an Edit submenu (while
+  remaining an accessory app with no Dock icon or visible menu bar).
+
 ## [1.55.0] — 2026-11-24
 
 ### Added
