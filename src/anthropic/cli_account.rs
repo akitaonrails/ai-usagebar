@@ -81,6 +81,35 @@ pub fn account_email_in(claude_json: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The login a `.claude.json` marker names, as [`resolve_active_label`] and
+/// [`adopt_current`] compare it.
+struct Identity {
+    account: String,
+}
+
+impl Identity {
+    fn of(oauth_account: &Value) -> Option<Self> {
+        let field = |key: &str| {
+            oauth_account
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        Some(Self {
+            account: field("accountUuid")?,
+        })
+    }
+
+    fn is(&self, other: &Self) -> bool {
+        self.account == other.account
+    }
+}
+
+fn identity_in(claude_json: &Path) -> Option<Identity> {
+    Identity::of(&oauth_account_in(claude_json)?)
+}
+
 /// Which managed label the live CLI login belongs to.
 ///
 /// `None` when the CLI is signed into something we do not manage — a plain
@@ -91,11 +120,12 @@ pub fn resolve_active_label(
     home_claude_json: &Path,
     accounts: &[AnthropicAccount],
 ) -> Option<String> {
-    let live = account_uuid_in(home_claude_json)?;
+    let live = identity_in(home_claude_json)?;
     accounts
         .iter()
         .find(|account| {
-            account_uuid_in(&account.config_dir().join(CLAUDE_JSON)) == Some(live.clone())
+            identity_in(&account.config_dir().join(CLAUDE_JSON))
+                .is_some_and(|identity| identity.is(&live))
         })
         .map(|account| account.label.clone())
 }
@@ -306,17 +336,13 @@ pub fn adopt_current(
                 .into(),
         )
     })?;
-    let live_uuid = live
-        .get("accountUuid")
-        .and_then(Value::as_str)
-        .filter(|uuid| !uuid.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            AppError::Credentials("the live `claude` login records no account uuid".into())
-        })?;
+    let live_identity = Identity::of(&live).ok_or_else(|| {
+        AppError::Credentials("the live `claude` login records no account uuid".into())
+    })?;
     if let Some(owner) = accounts.iter().find(|other| {
         other.label != account.label
-            && account_uuid_in(&marker_path(&other.config_dir())).as_deref() == Some(&live_uuid)
+            && identity_in(&marker_path(&other.config_dir()))
+                .is_some_and(|identity| identity.is(&live_identity))
     }) {
         return Err(AppError::Credentials(format!(
             "the live `claude` login already belongs to account {:?}",
