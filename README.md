@@ -1446,7 +1446,8 @@ The reader handles Claude Code's undocumented local JSONL defensively:
 
 - it reads bounded tails from the 100 most recently modified top-level
   sessions;
-- it ignores corrupt records and `subagents` sidechains;
+- it ignores corrupt records, `subagents` sidechains, and the `<synthetic>`
+  notices Claude Code writes for a usage limit or an API error;
 - it does not follow discovered symlinks;
 - it performs filesystem work off the UI thread.
 
