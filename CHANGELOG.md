@@ -2,6 +2,15 @@
 
 ### Fixed
 
+- **`account switch` no longer deletes a Claude login when one person has two
+  organizations.** One account signed into two organizations, such as a
+  personal plan and a team seat, has one account uuid and two logins. With
+  both managed as labels, the live login resolved to whichever label came
+  first, so switching to that label deleted its only stored credential as a
+  duplicate, and a switch could save the live credential over the other
+  label's own. A login is now matched by its account and its organization
+  (#694).
+
 - **Claude context sessions keep their reading after a usage-limit notice.**
   Claude Code writes its own notices (a usage limit, an API error, "No
   response requested.") as assistant records from the model `<synthetic>`,

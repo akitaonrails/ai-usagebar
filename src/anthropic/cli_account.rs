@@ -81,6 +81,48 @@ pub fn account_email_in(claude_json: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The login a `.claude.json` marker names, as [`resolve_active_label`] and
+/// [`adopt_current`] compare it: an account, and the organization it is signed
+/// into when the marker records one. One person in two organizations (a
+/// personal plan and a team seat) has one `accountUuid` and two logins, each
+/// with its own credential, which only `organizationUuid` tells apart.
+struct Identity {
+    account: String,
+    organization: Option<String>,
+}
+
+impl Identity {
+    fn of(oauth_account: &Value) -> Option<Self> {
+        let field = |key: &str| {
+            oauth_account
+                .get(key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        Some(Self {
+            account: field("accountUuid")?,
+            organization: field("organizationUuid"),
+        })
+    }
+
+    /// The same account in the same organization. A marker that records no
+    /// organization matches on the account alone.
+    fn is(&self, other: &Self) -> bool {
+        if self.account != other.account {
+            return false;
+        }
+        match (&self.organization, &other.organization) {
+            (Some(ours), Some(theirs)) => ours == theirs,
+            _ => true,
+        }
+    }
+}
+
+fn identity_in(claude_json: &Path) -> Option<Identity> {
+    Identity::of(&oauth_account_in(claude_json)?)
+}
+
 /// Which managed label the live CLI login belongs to.
 ///
 /// `None` when the CLI is signed into something we do not manage — a plain
@@ -91,11 +133,12 @@ pub fn resolve_active_label(
     home_claude_json: &Path,
     accounts: &[AnthropicAccount],
 ) -> Option<String> {
-    let live = account_uuid_in(home_claude_json)?;
+    let live = identity_in(home_claude_json)?;
     accounts
         .iter()
         .find(|account| {
-            account_uuid_in(&account.config_dir().join(CLAUDE_JSON)) == Some(live.clone())
+            identity_in(&account.config_dir().join(CLAUDE_JSON))
+                .is_some_and(|identity| identity.is(&live))
         })
         .map(|account| account.label.clone())
 }
@@ -306,17 +349,13 @@ pub fn adopt_current(
                 .into(),
         )
     })?;
-    let live_uuid = live
-        .get("accountUuid")
-        .and_then(Value::as_str)
-        .filter(|uuid| !uuid.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            AppError::Credentials("the live `claude` login records no account uuid".into())
-        })?;
+    let live_identity = Identity::of(&live).ok_or_else(|| {
+        AppError::Credentials("the live `claude` login records no account uuid".into())
+    })?;
     if let Some(owner) = accounts.iter().find(|other| {
         other.label != account.label
-            && account_uuid_in(&marker_path(&other.config_dir())).as_deref() == Some(&live_uuid)
+            && identity_in(&marker_path(&other.config_dir()))
+                .is_some_and(|identity| identity.is(&live_identity))
     }) {
         return Err(AppError::Credentials(format!(
             "the live `claude` login already belongs to account {:?}",
@@ -548,6 +587,14 @@ mod tests {
         format!(r#"{{"oauthAccount":{{"accountUuid":"{uuid}","emailAddress":"{email}"}}}}"#)
     }
 
+    /// A marker that also records the organization its login is signed into.
+    fn org_marker(uuid: &str, organization: &str) -> String {
+        serde_json::json!({
+            "oauthAccount": {"accountUuid": uuid, "organizationUuid": organization}
+        })
+        .to_string()
+    }
+
     struct Fixture {
         _root: tempfile::TempDir,
         home: PathBuf,
@@ -662,6 +709,90 @@ mod tests {
         write(&f.home, &marker("uuid-main", "me@main.test"));
         let error = adopt_current(&f.home, &f.accounts, &f.accounts[0], &f.store).unwrap_err();
         assert!(error.to_string().contains("two copies"), "{error}");
+    }
+
+    #[test]
+    fn one_account_in_two_organizations_is_two_logins() {
+        // `work` is the same person as `personal`, signed into a team
+        // organization: one account uuid, two logins with their own credentials.
+        let f = fixture();
+        write(
+            &f.accounts[0].config_dir().join(CLAUDE_JSON),
+            &org_marker("uuid-me", "org-team"),
+        );
+        write(
+            &f.accounts[1].config_dir().join(CLAUDE_JSON),
+            &org_marker("uuid-me", "org-personal"),
+        );
+        write(&f.home, &org_marker("uuid-me", "org-personal"));
+        assert_eq!(
+            resolve_active_label(&f.home, &f.accounts).as_deref(),
+            Some("personal")
+        );
+
+        let outcome = switch_cli_account(
+            &f.home,
+            &f.accounts,
+            "work",
+            CliSwitchOpts::default(),
+            &f.store,
+        )
+        .unwrap();
+
+        // A switch, not a duplicate removal: `work`'s credential moves into the
+        // default slot instead of being deleted.
+        assert_eq!(
+            outcome,
+            CliSwitchOutcome::Switched {
+                outgoing: Some("personal".into())
+            }
+        );
+        assert_eq!(f.store.default.borrow().as_deref(), Some("work-saved"));
+        assert_eq!(
+            f.store.named.borrow()[&f.accounts[1].config_dir()],
+            "personal-live"
+        );
+        assert_eq!(
+            resolve_active_label(&f.home, &f.accounts).as_deref(),
+            Some("work")
+        );
+    }
+
+    #[test]
+    fn adopting_takes_the_same_account_in_another_organization() {
+        let f = fixture();
+        write(
+            &f.accounts[1].config_dir().join(CLAUDE_JSON),
+            &org_marker("uuid-personal", "org-personal"),
+        );
+        write(&f.home, &org_marker("uuid-personal", "org-team"));
+        let team = AnthropicAccount {
+            label: "team".into(),
+            credentials_path: f
+                .home
+                .parent()
+                .unwrap()
+                .join("team")
+                .join(".credentials.json"),
+        };
+        let mut accounts = f.accounts.clone();
+        accounts.push(team.clone());
+
+        adopt_current(&f.home, &accounts, &team, &f.store).unwrap();
+        assert_eq!(
+            resolve_active_label(&f.home, &accounts).as_deref(),
+            Some("team")
+        );
+    }
+
+    #[test]
+    fn a_marker_without_an_organization_matches_on_the_account_alone() {
+        let f = fixture();
+        write(&f.home, &org_marker("uuid-personal", "org-personal"));
+        assert_eq!(
+            resolve_active_label(&f.home, &f.accounts).as_deref(),
+            Some("personal")
+        );
     }
 
     #[test]

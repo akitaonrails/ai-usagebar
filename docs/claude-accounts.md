@@ -212,6 +212,11 @@ account from that default slot while its own slot is empty, which is exactly
 what the switch leaves behind, so a rotating refresh token is never live in
 two places.
 
+The active login is matched by its account and its organization. One person
+signed into two organizations, such as a personal plan and a team seat, has
+two logins, so each can be its own label and a switch moves each credential to
+its own slot.
+
 A `CLAUDE_CONFIG_DIR` layout is the other case. There every directory keeps its
 own live login, and two of them can hold the *same* account, which is what the
 active-account marker records. An account whose own slot still holds a
