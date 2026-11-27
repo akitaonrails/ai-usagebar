@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.55.2] — 2026-11-27
+
 ### Fixed
 
 - **`account switch` no longer deletes a Claude login when one person has two
@@ -5888,7 +5890,8 @@ vendors. Highlights:
 - Live API smoke test suite (`make smoke`) that exercises the real
   undocumented endpoints to detect schema drift before users do.
 
-[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.55.1...HEAD
+[Unreleased]: https://github.com/akitaonrails/ai-usagebar/compare/v1.55.2...HEAD
+[1.55.2]: https://github.com/akitaonrails/ai-usagebar/compare/v1.55.1...v1.55.2
 [1.55.1]: https://github.com/akitaonrails/ai-usagebar/compare/v1.55.0...v1.55.1
 [1.55.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.54.0...v1.55.0
 [1.54.0]: https://github.com/akitaonrails/ai-usagebar/compare/v1.53.0...v1.54.0
